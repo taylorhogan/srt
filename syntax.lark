@@ -1,11 +1,16 @@
-command: image_command | status_command | control_command
-
-image_command: "image"i dso_descriptor ["using"i recipe]?
-
-dso_descriptor: "m"i integer | "ngc"i integer
+start: image_command | status_command | control_command
+image_command: "image"i " " dso_descriptor
+dso_descriptor: messier_object | ngc_object
+messier_object: ("m"i " "* integer)
+ngc_object: ("ngc"i " "* integer)
 
 integer: /[0-9]+/
-
-status_command: "status":
+status_command: "status"i | "help"i
 
 control_command: "boot"i | "park"i | "shutdown"i
+%import common.NEWLINE -> _NL
+%import common.WORD
+%import common.INT
+%import common.FLOAT
+%import common.SIGNED_FLOAT
+

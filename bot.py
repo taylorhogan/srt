@@ -2,6 +2,7 @@ from mastodon import Mastodon, StreamListener
 import baseconfig as cfg
 
 
+
 config = cfg.FlowConfig().config
 
 def do_notification(notification, m):
@@ -39,6 +40,7 @@ the_mastodon = Mastodon(
     access_token=config["mastodon"]["access_token"],
     api_base_url=config["mastodon"]["api_base_url"]
 )
+
 the_mastodon.status_post("I am awake")
 user = the_mastodon.stream_user(TheStreamListener(the_mastodon))
 print("end")
