@@ -1,0 +1,11 @@
+command: image_command | status_command | control_command
+
+image_command: "image"i dso_descriptor ["using"i recipe]?
+
+dso_descriptor: "m"i integer | "ngc"i integer
+
+integer: /[0-9]+/
+
+status_command: "status":
+
+control_command: "boot"i | "park"i | "shutdown"i
