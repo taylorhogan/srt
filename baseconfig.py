@@ -11,27 +11,24 @@ class BaseConfig(object):
             "user_name": "indi-allsky",
             "password": "Foo14me!",
             "broker_url": "raspberrypi.local",
-            "port": 1883,
+            "port": 1883
         },
         "weather": {
             "api_key": "ed8baa5b5b9c64b42fafc6836e75a3a3",
         },
-        "pushover":
-            {
-                "token": "a7fycu94si1ctfnubk3sfqhbsioct2",
-                "user": "ggd66ig5wrpo8z9y7eyncfihor4b33",
-            },
-        "mastodon":
-            {
-                "access_token": 'GVgekfjZX73Dc11ZljO8UWILG46YMjAyNEBVzlyNaWc',
-                "api_base_url": 'https://mastodon.social/'
-            },
-        "location":
-            {
-                "city": "Hartford",
-                "latitude": "",
-                "longitude": ""
-            }
+        "pushover": {
+            "token": "a7fycu94si1ctfnubk3sfqhbsioct2",
+            "user": "ggd66ig5wrpo8z9y7eyncfihor4b33",
+        },
+        "mastodon": {
+            "access_token": 'GVgekfjZX73Dc11ZljO8UWILG46YMjAyNEBVzlyNaWc',
+            "api_base_url": 'https://mastodon.social/'
+        },
+        "location": {
+            "city": "Hartford",
+            "latitude": "",
+            "longitude": ""
+        }
 
     })
 
