@@ -5,5 +5,6 @@ with open('syntax.lark', 'r') as file:
 l = Lark(data)
 
 
-print (l.parse ("image m32"))
+tree =  (l.parse ("@tmhobservatory image m32 thanks"))
 
+print (tree)

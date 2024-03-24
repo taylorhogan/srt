@@ -22,12 +22,13 @@ class BaseConfig(object):
         },
         "mastodon": {
             "access_token": 'GVgekfjZX73Dc11ZljO8UWILG46YMjAyNEBVzlyNaWc',
-            "api_base_url": 'https://mastodon.social/'
+            "api_base_url": 'https://mastodon.social/',
+            "me": '@Thogan'
         },
         "location": {
             "city": "Hartford",
-            "latitude": "",
-            "longitude": ""
+            "latitude": "41.8096",
+            "longitude": "-72.8305"
         }
 
     })

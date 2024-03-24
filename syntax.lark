@@ -1,9 +1,9 @@
-start: image_command | status_command | control_command
+start: anything image_command | status_command | control_command anything
 image_command: "image"i " " dso_descriptor
 dso_descriptor: messier_object | ngc_object
 messier_object: ("m"i " "* integer)
 ngc_object: ("ngc"i " "* integer)
-
+anything: /[\s\S]*/
 integer: /[0-9]+/
 status_command: "status"i | "help"i
 
