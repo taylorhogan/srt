@@ -1,10 +1,10 @@
+import http
 import random
+import urllib
 
 from paho.mqtt import client as mqtt_client
 
 import baseconfig as cfg
-import http
-import urllib
 
 config = cfg.FlowConfig().config
 
@@ -12,11 +12,12 @@ broker = config["mqtt"]["broker_url"]
 port = config["mqtt"]["port"]
 topic = "flow/pushover"
 
-
 client_id = f'subscribe-{random.randint(0, 100)}'
 username = config["mqtt"]["user_name"]
 password = config["mqtt"]["password"]
 
+token = config['pushover']['token']
+user = config['pushover']['user']
 
 def connect_mqtt() -> mqtt_client:
     def on_connect(client, userdata, flags, rc):
@@ -42,9 +43,22 @@ def subscribe(client: mqtt_client):
     conn = http.client.HTTPSConnection("api.pushover.net:443")
     conn.request("POST", "/1/messages.json",
                  urllib.parse.urlencode({
-                     "token": "a7fycu94si1ctfnubk3sfqhbsioct2",
-                     "user": "ggd66ig5wrpo8z9y7eyncfihor4b33",
+                     "token": token,
+                     "user": user,
                      "message": "hello world",
                  }), {"Content-type": "application/x-www-form-urlencoded"})
     output = conn.getresponse().read().decode('utf-8')
     print(output)
+
+
+def push_message(message):
+    conn = http.client.HTTPSConnection("api.pushover.net:443")
+    conn.request("POST", "/1/messages.json",
+                 urllib.parse.urlencode({
+                     "token": "a7fycu94si1ctfnubk3sfqhbsioct2",
+                     "user": "ggd66ig5wrpo8z9y7eyncfihor4b33",
+                     "message": message,
+                 }), {"Content-type": "application/x-www-form-urlencoded"})
+    output = conn.getresponse().read().decode('utf-8')
+    print(output)
+
