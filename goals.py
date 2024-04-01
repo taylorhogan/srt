@@ -26,11 +26,11 @@ def is_scope_safe():
 
 
 def is_roof_open():
-    return False
+    return debug_roof_open_switch
 
 
 def is_roof_closed():
-    return True
+    return debug_roof_closed_switch
 
 
 def get_manual_stop():
@@ -44,22 +44,28 @@ def get_manual_start():
 def debug_on_open_roof():
     global debug_roof_open_switch, debug_roof_closed_switch
     debug_roof_open_switch = True
+    print("Roof is open")
     debug_roof_closed_switch = False
 
 
 def debug_on_close_roof():
     global debug_roof_open_switch, debug_roof_closed_switch
     debug_roof_open_switch = False
+    print ("Roof is closed")
     debug_roof_closed_switch = True
 
 
 def open_roof():
-    t_open = watchdog(5, debug_on_open_roof)
+    print ("Opening Roof")
+    t_open = watchdog.Watchdog(5, debug_on_open_roof)
+    t_open.start()
     return True
 
 
 def close_roof():
-    t_open = watchdog(5, debug_on_open_roof)
+    print ("Closing Roof")
+    t_close = watchdog.Watchdog(5, debug_on_close_roof)
+    t_close.start()
     return True
 
 
@@ -73,7 +79,7 @@ def search_for_actions():
     old_start_imaging = None
     old_stop_imaging = None
     timer = watchdog.Watchdog(15, timer_done)
-    pushover.push_message("Starting Observatory")
+    #pushover.push_message("Starting Observatory")
     while not get_manual_stop():
         good_weather = w.is_good_weather()
         many_stars = enough_stars()
@@ -102,6 +108,7 @@ def search_for_actions():
             time.sleep(10)
         else:
             time.sleep(5)
+
 
 
 search_for_actions()
