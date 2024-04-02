@@ -1,3 +1,7 @@
+
+// todo figure out open/close wiring and default stat
+// todo add in i2c display of door state, action, and incoming commands
+
 #include <SPI.h>
 #include <Wire.h>
 #include <Adafruit_GFX.h>
@@ -41,11 +45,11 @@ void setup() {
   //pin relay as OUTPUT
   pinMode(toggle_direction, OUTPUT);
 
-  // SSD1306_SWITCHCAPVCC = generate display voltage from 3.3V internally
-  //if(!display.begin(SSD1306_SWITCHCAPVCC, SCREEN_ADDRESS)) {
-  //  Serial.println(F("SSD1306 allocation failed"));
-  //  for(;;); // Don't proceed, loop forever
-  //}
+  //SSD1306_SWITCHCAPVCC = generate display voltage from 3.3V internally
+  if(!display.begin(SSD1306_SWITCHCAPVCC, SCREEN_ADDRESS)) {
+    Serial.println(F("SSD1306 allocation failed"));
+    for(;;); // Don't proceed, loop forever
+  }
 
 
 
@@ -54,8 +58,6 @@ void setup() {
   pinMode(opened, INPUT_PULLUP);
   pinMode(safe, INPUT_PULLUP);
 
-  //Relay state
-  digitalWrite(toggle_direction, LOW);
 
 
   Serial.write("RRCI#");  //init string
@@ -65,18 +67,10 @@ void loop() {
 
  
 
-  if (digitalRead(safe) == LOW) {
-
-    digitalWrite(led, HIGH);  // Turn the LED on
-  } else if (digitalRead(safe) == HIGH) {
-
-    digitalWrite(led, LOW);  // Turn the LED on
-  }
-
   //Verify connection by serial
+
   while (Serial.available() > 0) {
     //Read  Serial data and alocate on serialin
-
     serialin = Serial.readStringUntil('#');
 
 
@@ -155,6 +149,6 @@ void loop() {
   }
 
   serialin = "";
-  //str = "";
+
 }
 

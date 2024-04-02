@@ -16,8 +16,6 @@ class Watchdog:
         return self.timer_going
 
 def my_done():
-    print("mydone")
+    print("i am done")
 
 
-w = Watchdog(1, my_done)
-w.start()

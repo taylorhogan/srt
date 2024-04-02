@@ -5,6 +5,23 @@ import baseconfig as cfg
 config = cfg.FlowConfig().config
 
 
+def get_weather_string(json):
+    y = json["main"]
+    z = json["weather"]
+    weather_description = z[0]["description"]
+    cloud_percentage = json["clouds"]["all"]
+    wind_speed = json["wind"]["speed"]
+    current_temperature = y["temp"]
+    current_humidity = y["humidity"]
+
+    description = "Temp (F): " + str(int((current_temperature - 273.15) * 9 / 5 + 32)) + "\n"
+    description += "Humidity: " + str(current_humidity) + "\n"
+    description += "Description: " + str(weather_description) + "\n"
+    description += "Cloud%: " + str(cloud_percentage) + "\n"
+    description += "Wind Speed: " + str(wind_speed) + "\n"
+    return description, cloud_percentage, wind_speed
+
+
 def get_weather():
     api_key = config["weather"]["api_key"]
     city_name = config["location"]["city"]
@@ -31,45 +48,11 @@ def get_weather():
     # "404", means city is found otherwise,
     # city is not found
     if x["cod"] != "404":
-        # store the value of "main"
-        # key in variable y
-        y = x["main"]
-
-        # store the value corresponding
-        # to the "temp" key of y
-        current_temperature = y["temp"]
-
-        # store the value corresponding
-        # to the "pressure" key of y
-        current_pressure = y["pressure"]
-
-        # store the value corresponding
-        # to the "humidity" key of y
-        current_humidity = y["humidity"]
-
-        # store the value of "weather"
-        # key in variable z
-        z = x["weather"]
-
-        # store the value corresponding
-        # to the "description" key at
-        # the 0th index of z
-        weather_description = z[0]["description"]
-
-        # print following values
-        print(" Temperature (F) = " +
-              str(int((current_temperature - 273.15) * 9 / 5 + 32)) +
-              "\n atmospheric pressure (in hPa unit) = " +
-              str(current_pressure) +
-              "\n humidity (in percentage) = " +
-              str(current_humidity) +
-              "\n description = " +
-              str(weather_description))
-
+        description, clouds, wind_speed,  = get_weather_string(x)
         message_list = list()
         message_list.append({
             'topic': 'flow/weather',
-            'payload': str(weather_description),
+            'payload': str(description),
             'qos': 1,
             'retain': True,
         })
@@ -85,8 +68,8 @@ def get_weather():
         #     tls={'ca_certs': '/etc/ssl/certs/ca-certificates.crt', 'cert_reqs': ssl.CERT_NONE, 'insecure': True},
         #
         # )
-        return weather_description
-
+        print (description)
+        return description, clouds, wind_speed
 
     else:
         print(" City Not Found ")
@@ -94,8 +77,14 @@ def get_weather():
 
 
 def is_good_weather():
-    condition = get_weather()
-    if condition == 'clear sky' or condition == 'clear':
-        return True
-    else:
+    weather_description , cloud_percentage, wind_speed, = get_weather()
+    if cloud_percentage > 75:
         return False
+    if wind_speed > 20:
+        return False
+    if "rain" in weather_description:
+        return False
+    if "snow" in weather_description:
+        return False
+
+    return True
