@@ -54,12 +54,13 @@ def subscribe(client: mqtt_client):
 def push_message(message):
     conn = http.client.HTTPSConnection("api.pushover.net:443")
     conn.request("POST", "/1/messages.json",
+
                  urllib.parse.urlencode({
                      "token": token,
                      "user": user,
                      "message": message,
                      "verify": False,
-                 }), {"Content-type": "application/x-www-form-urlencoded"})
+                 }), {"Content-type": "application/x-www-form-urlencoded","verify":False,})
     output = conn.getresponse().read().decode('utf-8')
     print(output)
 
