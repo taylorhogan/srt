@@ -19,6 +19,7 @@ def get_weather_string(json):
     description += "Description: " + str(weather_description) + "\n"
     description += "Cloud%: " + str(cloud_percentage) + "\n"
     description += "Wind Speed: " + str(wind_speed) + "\n"
+
     return description, cloud_percentage, wind_speed
 
 

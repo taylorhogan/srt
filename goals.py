@@ -5,6 +5,7 @@ import pushover
 import sun as s
 import watchdog
 import weather
+import moon
 
 
 debug_roof_open_switch = False
@@ -82,12 +83,13 @@ def search_for_actions():
     old_start_imaging = None
     old_stop_imaging = None
     timer = watchdog.Watchdog(15, timer_done)
-    # pushover.push_message("Starting Observatory")
+    pushover.push_message("Starting Observatory")
     while not get_manual_stop():
         is_night, angle = s.is_night()
         good_weather = weather.is_good_weather()
         many_stars = enough_stars()
         no_clouds = is_clouds_ok()
+        moon_ok = moon.is_moon_ok()
 
         roof_open = is_roof_open()
         roof_closed = is_roof_closed()
@@ -99,11 +101,11 @@ def search_for_actions():
         # What is going on when it's dark?
 
         old_is_night = is_night
-        start_imaging = roof_closed and good_weather and many_stars and is_night and scope_safe and not roof_open and not currently_imaging
-        stop_imaging = currently_imaging and roof_open and (not good_weather or not many_stars or not is_night)
+        start_imaging = roof_closed and good_weather and moon_ok and many_stars and is_night and scope_safe and not roof_open and not currently_imaging
+        stop_imaging = currently_imaging and roof_open and (not good_weather or not many_stars or not is_night or not moon_ok)
         if is_night and not old_is_night and not currently_imaging and not start_imaging:
             d,c,w = weather.get_weather()
-            pushover.push_message("Not Imaging" + d)
+            pushover.push_message("Not Imaging\n" + d)
 
         if start_imaging:
             start_imaging_time = current_time
