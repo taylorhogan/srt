@@ -21,11 +21,11 @@ String str;       //store the state  of opened/closed/safe pins
 #define safe 13    // scope  safety sensor
 
 // display stuff
-#define SCREEN_WIDTH 128 // OLED display width, in pixels
-#define SCREEN_HEIGHT 32 // OLED display height, in pixels
-#define SCREEN_ADDRESS 0x3C ///< See datasheet for Address; 0x3D for 128x64, 0x3C for 128x32
+#define SCREEN_WIDTH 128     // OLED display width, in pixels
+#define SCREEN_HEIGHT 32     // OLED display height, in pixels
+#define SCREEN_ADDRESS 0x3C  ///< See datasheet for Address; 0x3D for 128x64, 0x3C for 128x32
 // Declaration for an SSD1306 display connected to I2C (SDA, SCL pins)
-#define OLED_RESET     -1 // Reset pin # (or -1 if sharing Arduino reset pin)
+#define OLED_RESET -1  // Reset pin # (or -1 if sharing Arduino reset pin)
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 
 
@@ -41,14 +41,15 @@ void setup() {
 
   //Begin Serial Comunication(configured  for 9600baud)
   Serial.begin(9600);
-  
+
   //pin relay as OUTPUT
   pinMode(toggle_direction, OUTPUT);
 
   //SSD1306_SWITCHCAPVCC = generate display voltage from 3.3V internally
-  if(!display.begin(SSD1306_SWITCHCAPVCC, SCREEN_ADDRESS)) {
+  if (!display.begin(SSD1306_SWITCHCAPVCC, SCREEN_ADDRESS)) {
     Serial.println(F("SSD1306 allocation failed"));
-    for(;;); // Don't proceed, loop forever
+    for (;;)
+      ;  // Don't proceed, loop forever
   }
 
 
@@ -61,17 +62,40 @@ void setup() {
 
 
   Serial.write("RRCI#");  //init string
+  display.clearDisplay();
+  display.setTextColor(SSD1306_WHITE);  // Draw white text
+  display.setCursor(0, 0);              // Start at top-left corner
+  display.println(F("TMH Observatory"));
+  display.display();
 }
 
 void loop() {
 
- 
+
+  display.setTextSize(1);               // Normal 1:1 pixel scale
+  display.setTextColor(SSD1306_WHITE);  // Draw white text
+  display.setCursor(0, 0);              // Start at top-left corner
+  display.println(F("TMH Observatory"));
+  display.setTextColor(SSD1306_WHITE);  // Draw white text
+  display.setCursor(0, 10);             // Start at top-left corner
+  display.println(F("Roof Closed"));
+  display.setCursor(0, 20);
+
+  display.println(F("Snow"));
+  display.display();
+
 
   //Verify connection by serial
 
   while (Serial.available() > 0) {
     //Read  Serial data and alocate on serialin
     serialin = Serial.readStringUntil('#');
+    display.clearDisplay();
+    display.display();
+    display.setCursor(0, 0);  // Start at top-left corner
+    display.println(serialin);
+    display.setTextColor(SSD1306_WHITE);
+    display.display();
 
 
     if (serialin == "on") {  // turn scope sensor on
@@ -89,66 +113,64 @@ void loop() {
 
     else if (serialin == "open") {
       simStatus = 2;
-      
+
       simStatus = 1;
       digitalWrite(toggle_direction, HIGH);
       delay(1000);
       digitalWrite(toggle_direction, LOW);
 
     }
-    
+
 
     else if (serialin == "close") {
-    
+
       simStatus = 3;
-      
+
       simStatus = 0;
       digitalWrite(toggle_direction, HIGH);
       delay(1000);
       digitalWrite(toggle_direction, LOW);
     }
+
+
+
+    if (serialin == "Parkstatus") {  // exteranl query command to fetch RRCI data
+
+      Serial.println("0#");
+      serialin = "";
+    }
+
+    if (serialin == "get") {
+
+      if (simStatus == 0) {
+        str += "closed,safe,";
+      } else if (simStatus == 1) {
+        str += "open,safe,";
+      } else {
+        str += "unknown,safe,";
+      }
+
+
+
+
+      if (simStatus == 1 && (lost == false)) {
+        str += "not_moving_o#";
+        end_time = millis() + 60000;  //reset the timer
+      }
+
+      if (simStatus == 0 && (lost == false)) {
+        str += "not_moving_c#";
+        end_time = millis() + 60000;  //reset the timer
+      }
+      if (simStatus == 4 && (lost == false)) {
+        str += "moving#";
+      }
+
+      Serial.println(str);  //send serial data
+      serialin = "";
+      str = "";
+      //delay(100);
+    }
   }
-
-  
-  if (serialin == "Parkstatus") {  // exteranl query command to fetch RRCI data
-
-    Serial.println("0#");
-    serialin = "";
-  }
-
-  if (serialin == "get") { 
-
-    if (simStatus == 0) {
-      str += "closed,safe,";
-    } else if (simStatus == 1) {
-      str += "open,safe,";
-    } else {
-      str += "unknown,safe,";
-    }
-
-
-
-
-    if (simStatus == 1 && (lost == false)) {
-      str += "not_moving_o#";
-      end_time = millis() + 60000;  //reset the timer
-    }
-
-    if (simStatus == 0 && (lost == false)) {
-      str += "not_moving_c#";
-      end_time = millis() + 60000;  //reset the timer
-    }
-    if (simStatus == 4 && (lost == false)) {
-      str += "moving#";
-    }
-
-    Serial.println(str);  //send serial data
-    serialin = "";
-    str = "";
-    //delay(100);
-  }
-
   serialin = "";
-
 }
-

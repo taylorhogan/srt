@@ -60,7 +60,7 @@ def push_message(message):
                      "user": user,
                      "message": message,
                      "verify": False,
-                 }), {"Content-type": "application/x-www-form-urlencoded","verify":False,})
+                 }), {"Content-type": "application/x-www-form-urlencoded", "verify" : False})
     output = conn.getresponse().read().decode('utf-8')
     print(output)
 
