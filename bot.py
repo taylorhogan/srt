@@ -75,10 +75,7 @@ class TheStreamListener(StreamListener):
         do_notification(notification, self.m)
 
 
-the_mastodon = Mastodon(
-    access_token=config["mastodon"]["access_token"],
-    api_base_url=config["mastodon"]["api_base_url"]
-)
+
 
 
 def post_mastodon_message(message):
@@ -88,5 +85,9 @@ def post_mastodon_message(message):
     )
     m.status_post(message)
 
+the_mastodon = Mastodon(
+    access_token=config["mastodon"]["access_token"],
+    api_base_url=config["mastodon"]["api_base_url"]
+)
 user = the_mastodon.stream_user(TheStreamListener(the_mastodon))
 
