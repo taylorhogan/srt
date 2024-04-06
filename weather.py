@@ -1,6 +1,7 @@
 import requests
-
+import moon
 import baseconfig as cfg
+
 
 config = cfg.FlowConfig().config
 
@@ -13,14 +14,18 @@ def get_weather_string(json):
     wind_speed = json["wind"]["speed"]
     current_temperature = y["temp"]
     current_humidity = y["humidity"]
+    moon_phase = moon.get_moon_phase()
+
 
     description = "Temp (F): " + str(int((current_temperature - 273.15) * 9 / 5 + 32)) + "\n"
     description += "Humidity: " + str(current_humidity) + "\n"
     description += "Description: " + str(weather_description) + "\n"
     description += "Cloud%: " + str(cloud_percentage) + "\n"
     description += "Wind Speed: " + str(wind_speed) + "\n"
+    description += "Moon Phase: " + str (moon_phase) + "\n"
 
-    return description, cloud_percentage, wind_speed
+
+    return description, cloud_percentage, wind_speed, moon_phase
 
 
 def get_weather():
@@ -49,7 +54,7 @@ def get_weather():
     # "404", means city is found otherwise,
     # city is not found
     if x["cod"] != "404":
-        description, clouds, wind_speed,  = get_weather_string(x)
+        description, clouds, wind_speed, moon_phase  = get_weather_string(x)
         message_list = list()
         message_list.append({
             'topic': 'flow/weather',
@@ -70,7 +75,7 @@ def get_weather():
         #
         # )
         print (description)
-        return description, clouds, wind_speed
+        return description, clouds, wind_speed,moon_phase
 
     else:
         print(" City Not Found ")
@@ -78,7 +83,7 @@ def get_weather():
 
 
 def is_good_weather():
-    weather_description , cloud_percentage, wind_speed, = get_weather()
+    weather_description , cloud_percentage, wind_speed, moon_phase = get_weather()
     if cloud_percentage > 75:
         return False
     if wind_speed > 20:
@@ -87,5 +92,8 @@ def is_good_weather():
         return False
     if "snow" in weather_description:
         return False
+    if "sleet" in weather_description:
+        return False
+
 
     return True

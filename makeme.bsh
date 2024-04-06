@@ -10,6 +10,8 @@ pip install lark
 pip install pysolar
 pip install soupsieve
 pip install PyAstronomy
+pip install beautiflsoup4
+
 
 
 

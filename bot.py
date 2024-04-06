@@ -43,7 +43,7 @@ def do_command(sentence, m, account):
     }
 
     cmd = sentence.lower()
-    words = cmd.split(" ");
+    words = cmd.split(" ")
     for index, word in enumerate(words):
         action = keywords.get(word, "no_key")
         if action != "no_key":
@@ -80,6 +80,13 @@ the_mastodon = Mastodon(
     api_base_url=config["mastodon"]["api_base_url"]
 )
 
-# the_mastodon.status_post("@Thogan I am awake", visibility="direct")
+
+def post_mastodon_message(message):
+    m = Mastodon(
+        access_token=config["mastodon"]["access_token"],
+        api_base_url=config["mastodon"]["api_base_url"]
+    )
+    m.status_post(message)
+
 user = the_mastodon.stream_user(TheStreamListener(the_mastodon))
-print("end")
+

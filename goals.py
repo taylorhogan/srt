@@ -1,12 +1,11 @@
 import time
 from datetime import datetime
 
+import bot
 import pushover
 import sun as s
 import watchdog
 import weather
-import moon
-
 
 debug_roof_open_switch = False
 debug_roof_closed_switch = True
@@ -89,7 +88,6 @@ def search_for_actions():
         good_weather = weather.is_good_weather()
         many_stars = enough_stars()
         no_clouds = is_clouds_ok()
-        moon_ok = moon.is_moon_ok()
 
         roof_open = is_roof_open()
         roof_closed = is_roof_closed()
@@ -102,10 +100,12 @@ def search_for_actions():
 
         old_is_night = is_night
         start_imaging = roof_closed and good_weather and moon_ok and many_stars and is_night and scope_safe and not roof_open and not currently_imaging
-        stop_imaging = currently_imaging and roof_open and (not good_weather or not many_stars or not is_night or not moon_ok)
+        stop_imaging = currently_imaging and roof_open and (
+                    not good_weather or not many_stars or not is_night or not moon_ok)
         if is_night and not old_is_night and not currently_imaging and not start_imaging:
-            d,c,w = weather.get_weather()
+            d, c, w, m = weather.get_weather()
             pushover.push_message("Not Imaging\n" + d)
+            bot.post_mastodon_message("Not Imaging\n" + d)
 
         if start_imaging:
             start_imaging_time = current_time
@@ -117,8 +117,8 @@ def search_for_actions():
             stop_imaging_time = current_time
             time_elapsed = stop_imaging_time - start_imaging_time
 
-
             pushover.push_message("Stopping Imaging. " + str(time_elapsed))
+            bot.post_mastodon_message("Stopping Imaging. " + str(time_elapsed))
             currently_imaging = False
             timer.start()
             close_roof()
