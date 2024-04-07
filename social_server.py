@@ -78,7 +78,7 @@ class TheStreamListener(StreamListener):
 
 
 
-def post_mastodon_message(message):
+def post_social_message(message):
     m = Mastodon(
         access_token=config["mastodon"]["access_token"],
         api_base_url=config["mastodon"]["api_base_url"]
