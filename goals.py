@@ -1,7 +1,7 @@
 import time
 from datetime import datetime
 
-import bot
+import mastodon_interface
 import pushover
 import sun as s
 import watchdog
@@ -82,6 +82,7 @@ def search_for_actions():
     old_start_imaging = None
     old_stop_imaging = None
     timer = watchdog.Watchdog(15, timer_done)
+
     pushover.push_message("Starting Observatory")
     while not get_manual_stop():
         is_night, angle = s.is_night()

@@ -16,7 +16,7 @@ def capture_cmd(words, index, m, account):
         capture_db = cdb.DB()
         now = datetime.datetime.now()
         capture_db.add(dso, now, now, 0, account, "default", "mastodon", 0, "")
-        the_mastodon.status_post(dso, " Added to list of objects to image")
+        m.status_post(dso, " Added to list of objects to image")
 
 
 def status_cmd(words, index, m, account):
@@ -33,7 +33,7 @@ def status_cmd(words, index, m, account):
         sun = "night "
     reply += "Mode: " + sun + "\n"
     reply += "Sun Angle: " + str(angle) + "\n"
-    the_mastodon.status_post(reply)
+    m.status_post(reply)
 
 
 def do_command(sentence, m, account):
@@ -60,7 +60,7 @@ def do_notification(notification, m):
             cmd = BeautifulSoup(html, 'html.parser').get_text()
             do_command(cmd, m, account)
     except:
-        the_mastodon.status_post("I do not understand the command" + cmd)
+        m.status_post("I do not understand the command" + cmd)
 
 
 class TheStreamListener(StreamListener):
@@ -85,9 +85,12 @@ def post_mastodon_message(message):
     )
     m.status_post(message)
 
-the_mastodon = Mastodon(
+def start_interface():
+
+    m = Mastodon(
     access_token=config["mastodon"]["access_token"],
-    api_base_url=config["mastodon"]["api_base_url"]
-)
-user = the_mastodon.stream_user(TheStreamListener(the_mastodon))
+    api_base_url=config["mastodon"]["api_base_url"])
+    user = m.stream_user(TheStreamListener(m))
+
+
 
