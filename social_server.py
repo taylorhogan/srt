@@ -23,22 +23,26 @@ def capture_cmd(words, index, m, account):
 
 
 def status_cmd(words, index, m, account):
-    print ("status cmd")
-    capture_db = cdb.DB()
-    rows, expo_time, requesters, dso_objects = capture_db.do_stats()
-    reply = "Requests: " + str(rows) + "\n"
-    reply += "Imaged Minutes: " + str(expo_time) + "\n"
-    reply += "Unique Accounts: " + str(len(requesters)) + " \n"
-    reply += "DSO Objects: " + str(len(dso_objects)) + "\n"
+# Observatory State
+    reply = "Observatory Status: " + config["Globals"]["Observatory State"]
+
+
 
     is_night, angle = s.is_night()
     sun = "daytime"
     if is_night:
         sun = "night "
-    reply += "Mode: " + sun + "\n"
+    reply += "\nMode: " + sun + "\n"
     reply += "Sun Angle: " + "{:10.2f}".format(angle) + "\n"
     description, clouds, wind_speed, moon_phase = weather.get_weather()
     reply += description
+
+    capture_db = cdb.DB()
+    rows, expo_time, requesters, dso_objects = capture_db.do_stats()
+    reply += "\nRequests: " + str(rows) + "\n"
+    reply += "Imaged Minutes: " + str(expo_time) + "\n"
+    reply += "Unique Accounts: " + str(len(requesters)) + " \n"
+    reply += "DSO Objects: " + str(len(dso_objects)) + "\n"
     post_social_message(reply)
 
 
@@ -90,9 +94,18 @@ def get_mastodon_instance():
     return mastodon
 
 
-def post_social_message(message):
+def post_social_message(message, image=None):
+
     mastodon = get_mastodon_instance()
-    mastodon.status_post(message)
+    if image is None:
+        mastodon.status_post(message)
+    else:
+#       media_upload_mastodon = mastodon.media_post(image)
+#        mastodon.media_update(media_upload_mastodon, description="text")
+#       post = mastodon.status_post(message, media_ids=media_upload_mastodon)
+
+        media = mastodon.media_post(image, "image/jpeg")
+        mastodon.status_post(message, media_ids=media)
 
 
 def start_interface():

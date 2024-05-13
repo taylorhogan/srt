@@ -12,12 +12,14 @@ import weather
 
 debug_roof_open_switch = False
 debug_roof_closed_switch = True
+
 config = cfg.FlowConfig().config
+config["Globals"]["Observatory State"] = "Booting Up"
 
 
 def general_message_with_image(message, image=None):
     pushover.push_message(message)
-    social_server.post_social_message(message)
+    social_server.post_social_message(message, image)
     print(message)
 
 
@@ -95,7 +97,8 @@ def search_for_actions():
         timer = watchdog.Watchdog(15, timer_done)
 
         version = config["version"]["date"]
-        general_message_with_image("Start Observatory with version " + version)
+        general_message_with_image("Start Observatory with version " + version, image="./db/day.jpeg")
+
 
         while not get_manual_stop():
             is_night, angle = s.is_night()
@@ -120,13 +123,17 @@ def search_for_actions():
             if is_night and not old_is_night and not currently_imaging and not start_imaging:
                 d, c, w, m = weather.get_weather()
                 message = "Not Imaging " + "\n " + d
-                general_message_with_image(message, )
+                config["Globals"]["Observatory State"] = "Sleep Mode, Roof Closed"
+                config["Globals"]["Current Image"] = "./db/day.jpeg"
+                general_message_with_image(message, image=config["Globals"]["Current Image"])
             if start_imaging:
                 start_imaging_time = current_time
-                general_message_with_image("Starting Imaging")
                 currently_imaging = True
                 timer.start()
                 open_roof()
+                config["Globals"]["Observatory State"] = "Imaging, Roof Open"
+                config["Globals"]["Current Image"] = "./db/m31.jpg"
+                general_message_with_image("Starting Imaging", image=config["Globals"]["Current Image"])
             elif stop_imaging:
                 stop_imaging_time = current_time
                 time_elapsed = stop_imaging_time - start_imaging_time
