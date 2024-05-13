@@ -6,6 +6,9 @@ from mastodon import Mastodon, StreamListener
 import baseconfig as cfg
 import db as cdb
 import sun as s
+import weather
+import logging
+
 
 config = cfg.FlowConfig().config
 
@@ -16,10 +19,11 @@ def capture_cmd(words, index, m, account):
         capture_db = cdb.DB()
         now = datetime.datetime.now()
         capture_db.add(dso, now, now, 0, account, "default", "mastodon", 0, "")
-        m.status_post(dso, " Added to list of objects to image")
+        post_social_message("Added to list of objects to image\n")
 
 
 def status_cmd(words, index, m, account):
+    print ("status cmd")
     capture_db = cdb.DB()
     rows, expo_time, requesters, dso_objects = capture_db.do_stats()
     reply = "Requests: " + str(rows) + "\n"
@@ -32,8 +36,10 @@ def status_cmd(words, index, m, account):
     if is_night:
         sun = "night "
     reply += "Mode: " + sun + "\n"
-    reply += "Sun Angle: " + str(angle) + "\n"
-    m.status_post(reply)
+    reply += "Sun Angle: " + "{:10.2f}".format(angle) + "\n"
+    description, clouds, wind_speed, moon_phase = weather.get_weather()
+    reply += description
+    post_social_message(reply)
 
 
 def do_command(sentence, m, account):
@@ -60,7 +66,9 @@ def do_notification(notification, m):
             cmd = BeautifulSoup(html, 'html.parser').get_text()
             do_command(cmd, m, account)
     except:
-        m.status_post("I do not understand the command" + cmd)
+        log = logging.getLogger()
+        log.exception("Message for you, sir!")
+        m.status_post("I do not understand the command " + cmd)
 
 
 class TheStreamListener(StreamListener):
@@ -75,22 +83,21 @@ class TheStreamListener(StreamListener):
         do_notification(notification, self.m)
 
 
-
+def get_mastodon_instance():
+    access_token = config["mastodon"]["access_token"]
+    api_base_url = config["mastodon"]["api_base_url"]
+    mastodon = Mastodon(access_token=access_token, api_base_url=api_base_url)
+    return mastodon
 
 
 def post_social_message(message):
-    m = Mastodon(
-        access_token=config["mastodon"]["access_token"],
-        api_base_url=config["mastodon"]["api_base_url"]
-    )
-    m.status_post(message)
+    mastodon = get_mastodon_instance()
+    mastodon.status_post(message)
+
 
 def start_interface():
-
-    m = Mastodon(
-    access_token=config["mastodon"]["access_token"],
-    api_base_url=config["mastodon"]["api_base_url"])
-    user = m.stream_user(TheStreamListener(m))
-
+    mastodon = get_mastodon_instance()
+    user = mastodon.stream_user(TheStreamListener(mastodon), run_async=True)
+    print("started mastodon")
 
 

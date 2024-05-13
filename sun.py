@@ -1,5 +1,7 @@
 import datetime
+
 from pysolar.solar import *
+
 import baseconfig as cfg
 
 
@@ -13,5 +15,5 @@ def get_sun_angle():
 
 
 def is_night():
-    sun_angle = get_sun_angle ()
+    sun_angle = get_sun_angle()
     return sun_angle < -10, sun_angle

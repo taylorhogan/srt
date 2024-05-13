@@ -1,16 +1,24 @@
+import logging
 import time
 from datetime import datetime
 
+import baseconfig as cfg
 import moon
-import social_server
 import pushover
+import social_server
 import sun as s
 import watchdog
 import weather
-import social_server
 
 debug_roof_open_switch = False
 debug_roof_closed_switch = True
+config = cfg.FlowConfig().config
+
+
+def general_message_with_image(message, image=None):
+    pushover.push_message(message)
+    social_server.post_social_message(message)
+    print(message)
 
 
 def is_weather_good():
@@ -79,60 +87,65 @@ def timer_done():
 
 
 def search_for_actions():
-    old_is_night, angle = s.is_night()
-    currently_imaging = False
-    old_start_imaging = None
-    old_stop_imaging = None
-    timer = watchdog.Watchdog(15, timer_done)
+    try:
+        old_is_night, angle = s.is_night()
+        currently_imaging = False
+        old_start_imaging = None
+        old_stop_imaging = None
+        timer = watchdog.Watchdog(15, timer_done)
 
-    social_server.post_social_message("Starting Observatory")
-    pushover.push_message("Starting Observatory")
+        version = config["version"]["date"]
+        general_message_with_image("Start Observatory with version " + version)
 
-    while not get_manual_stop():
-        is_night, angle = s.is_night()
-        good_weather = weather.is_good_weather()
-        many_stars = enough_stars()
-        no_clouds = is_clouds_ok()
+        while not get_manual_stop():
+            is_night, angle = s.is_night()
+            good_weather = weather.is_good_weather()
+            many_stars = enough_stars()
+            no_clouds = is_clouds_ok()
 
-        roof_open = is_roof_open()
-        roof_closed = is_roof_closed()
-        scope_safe = is_scope_safe()
-        moon_ok = moon.is_moon_ok()
-        if timer.is_timer_going():
-            pass
-        current_time = datetime.now()
+            roof_open = is_roof_open()
+            roof_closed = is_roof_closed()
+            scope_safe = is_scope_safe()
+            moon_ok = moon.is_moon_ok()
+            if timer.is_timer_going():
+                pass
+            current_time = datetime.now()
 
-        # What is going on when it's dark?
+            # What is going on when it's dark?
 
-        old_is_night = is_night
-        start_imaging = roof_closed and good_weather and moon_ok and many_stars and is_night and scope_safe and not roof_open and not currently_imaging
-        stop_imaging = currently_imaging and roof_open and (
+            old_is_night = is_night
+            start_imaging = roof_closed and good_weather and moon_ok and many_stars and is_night and scope_safe and not roof_open and not currently_imaging
+            stop_imaging = currently_imaging and roof_open and (
                     not good_weather or not many_stars or not is_night or not moon_ok)
-        if is_night and not old_is_night and not currently_imaging and not start_imaging:
-            d, c, w, m = weather.get_weather()
-            pushover.push_message("Not Imaging\n" + d)
-            social_server.post_social_message("Not Imaging\n" + d)
+            if is_night and not old_is_night and not currently_imaging and not start_imaging:
+                d, c, w, m = weather.get_weather()
+                message = "Not Imaging " + "\n " + d
+                general_message_with_image(message, )
+            if start_imaging:
+                start_imaging_time = current_time
+                general_message_with_image("Starting Imaging")
+                currently_imaging = True
+                timer.start()
+                open_roof()
+            elif stop_imaging:
+                stop_imaging_time = current_time
+                time_elapsed = stop_imaging_time - start_imaging_time
 
-        if start_imaging:
-            start_imaging_time = current_time
-            pushover.push_message("Starting Imaging")
-            currently_imaging = True
-            timer.start()
-            open_roof()
-        elif stop_imaging:
-            stop_imaging_time = current_time
-            time_elapsed = stop_imaging_time - start_imaging_time
+                message = "Stopping Imaging, Imaging time: " + time.strftime("%Hhours %Mminutes",
+                                                                             time.gmtime(time_elapsed))
+                general_message_with_image(message)
+                currently_imaging = False
+                timer.start()
+                close_roof()
 
-            pushover.push_message("Stopping Imaging. " + str(time_elapsed))
-            social_server.post_social_message("Stopping Imaging. " + str(time_elapsed))
-            currently_imaging = False
-            timer.start()
-            close_roof()
-
-        if not is_night or not good_weather:
-            time.sleep(20 * 60)
-        else:
-            time.sleep(5 * 60)
+            if not is_night or not good_weather:
+                time.sleep(20 * 60)
+            else:
+                time.sleep(5 * 60)
+    except:
+        log = logging.getLogger()
+        log.exception("Message for you, sir!")
 
 
+social_server.start_interface()
 search_for_actions()

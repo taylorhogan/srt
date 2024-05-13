@@ -3,6 +3,9 @@ from collections import OrderedDict
 
 class BaseConfig(object):
     _base_config = OrderedDict({
+        "version":{
+            "date": "2025.5.12.01"
+        },
         "logger": {
             "topic": "flow/log",
             "file": "log.txt",
@@ -23,6 +26,8 @@ class BaseConfig(object):
         "mastodon": {
             "access_token": 'GVgekfjZX73Dc11ZljO8UWILG46YMjAyNEBVzlyNaWc',
             "api_base_url": 'https://mastodon.social/',
+            "client_secret":"9c_OTf7f_Rmy3jPGpawgulxbZNLG3qqr_d5sZzlONqo",
+            "client_key":"bknnjpd3ATuzldY2PGzqGYE9tzynywijhZ90ZsDC1b8",
             "me": '@Thogan'
         },
         "location": {
