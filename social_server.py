@@ -1,14 +1,14 @@
 import datetime
+import logging
 
 from bs4 import BeautifulSoup
 from mastodon import Mastodon, StreamListener
 
 import baseconfig as cfg
 import db as cdb
+import sortdsoobjects
 import sun as s
 import weather
-import logging
-
 
 config = cfg.FlowConfig().config
 
@@ -16,17 +16,33 @@ config = cfg.FlowConfig().config
 def capture_cmd(words, index, m, account):
     if len(words) > index + 1:
         dso = words[index + 1]
-        capture_db = cdb.DB()
-        now = datetime.datetime.now()
-        capture_db.add(dso, now, now, 0, account, "default", "mastodon", 0, "")
-        post_social_message("Added to list of objects to image\n")
+        object = sortdsoobjects.is_a_dso_object(dso)
+        if object is not None:
+            capture_db = cdb.DB()
+            now = datetime.datetime.now()
+            capture_db.add(dso, now, now, 0, account, "default", "mastodon", 0, "")
+            post_social_message(dso + " Added to list of objects to image\n")
+
+        else:
+            post_social_message(dso + " Not a known object\n")
+
+
+def show_cmd(words, index, m, account):
+    if len(words) > index + 1:
+        dso = words[index + 1]
+        obj = sortdsoobjects.is_a_dso_object(dso)
+        if obj is not None:
+            altitude, image, sky = sortdsoobjects.show_plots(obj)
+            post_social_message("altitude tonight\n", altitude)
+            post_social_message("image\n", image)
+            post_social_message("sky\n", sky)
+        else:
+            post_social_message(dso + " Not a known object\n")
 
 
 def status_cmd(words, index, m, account):
-# Observatory State
+    # Observatory State
     reply = "Observatory Status: " + config["Globals"]["Observatory State"]
-
-
 
     is_night, angle = s.is_night()
     sun = "daytime"
@@ -48,6 +64,7 @@ def status_cmd(words, index, m, account):
 
 def do_command(sentence, m, account):
     keywords = {
+        "show": show_cmd,
         "capture": capture_cmd,
         "status": status_cmd
     }
@@ -95,14 +112,13 @@ def get_mastodon_instance():
 
 
 def post_social_message(message, image=None):
-
     mastodon = get_mastodon_instance()
     if image is None:
         mastodon.status_post(message)
     else:
-#       media_upload_mastodon = mastodon.media_post(image)
-#        mastodon.media_update(media_upload_mastodon, description="text")
-#       post = mastodon.status_post(message, media_ids=media_upload_mastodon)
+        #       media_upload_mastodon = mastodon.media_post(image)
+        #        mastodon.media_update(media_upload_mastodon, description="text")
+        #       post = mastodon.status_post(message, media_ids=media_upload_mastodon)
 
         media = mastodon.media_post(image, "image/jpeg")
         mastodon.status_post(message, media_ids=media)
@@ -112,5 +128,3 @@ def start_interface():
     mastodon = get_mastodon_instance()
     user = mastodon.stream_user(TheStreamListener(mastodon), run_async=True)
     print("started mastodon")
-
-

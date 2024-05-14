@@ -13,6 +13,10 @@ pip install PyAstronomy
 pip install beautiflsoup4
 pip install bs4
 pip install astroplan
+pip install matplotlib
+pip install astroquery
+
+
 
 
 

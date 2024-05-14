@@ -32,8 +32,9 @@ class BaseConfig(object):
         },
         "location": {
             "city": "Hartford",
-            "latitude": "41.8096",
-            "longitude": "-72.8305",
+            "latitude": 41.8096,
+            "longitude": -72.8305,
+            "elevation": 100,
             "observatory_name": "tmh"
         },
         "Super Users": {
