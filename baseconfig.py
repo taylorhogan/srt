@@ -33,7 +33,8 @@ class BaseConfig(object):
         "location": {
             "city": "Hartford",
             "latitude": "41.8096",
-            "longitude": "-72.8305"
+            "longitude": "-72.8305",
+            "observatory_name": "tmh"
         },
         "Super Users": {
             "Id": '@Thogan'

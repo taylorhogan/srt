@@ -89,18 +89,17 @@ def timer_done():
 
 
 def search_for_actions():
-    try:
-        old_is_night, angle = s.is_night()
-        currently_imaging = False
-        old_start_imaging = None
-        old_stop_imaging = None
-        timer = watchdog.Watchdog(15, timer_done)
+    old_is_night, angle = s.is_night()
+    currently_imaging = False
+    old_start_imaging = None
+    old_stop_imaging = None
+    timer = watchdog.Watchdog(15, timer_done)
 
-        version = config["version"]["date"]
-        general_message_with_image("Start Observatory with version " + version, image="./db/day.jpeg")
+    version = config["version"]["date"]
+    general_message_with_image("Start Observatory with version " + version, image="./db/day.jpeg")
 
-
-        while not get_manual_stop():
+    while not get_manual_stop():
+        try:
             is_night, angle = s.is_night()
             good_weather = weather.is_good_weather()
             many_stars = enough_stars()
@@ -112,7 +111,7 @@ def search_for_actions():
             moon_ok = moon.is_moon_ok()
             if timer.is_timer_going():
                 pass
-            current_time = datetime.now()
+            current_time = time.time()
 
             # What is going on when it's dark?
 
@@ -138,21 +137,31 @@ def search_for_actions():
                 stop_imaging_time = current_time
                 time_elapsed = stop_imaging_time - start_imaging_time
 
-                message = "Stopping Imaging, Imaging time: " + time.strftime("%Hhours %Mminutes",
-                                                                             time.gmtime(time_elapsed))
-                general_message_with_image(message)
+
                 currently_imaging = False
                 timer.start()
                 close_roof()
+                message = "Stopping Imaging, Imaging time: " + time.strftime("%Hhours %Mminutes",
+                                                                             time.gmtime(time_elapsed))
+                config["Globals"]["Observatory State"] = "Imaging, Roof Open"
+                config["Globals"]["Current Image"] = "./db/m31.jpg"
+                general_message_with_image(message, image=config["Globals"]["Current Image"])
 
-            if not is_night or not good_weather:
-                time.sleep(20 * 60)
-            else:
-                time.sleep(5 * 60)
-    except:
-        log = logging.getLogger()
-        log.exception("Message for you, sir!")
+        except:
+            log = logging.getLogger()
+            log.exception("Message for you, sir!")
+
+        if not is_night or not good_weather:
+            time.sleep(20 * 60)
+        else:
+            time.sleep(5 * 60)
 
 
-social_server.start_interface()
-search_for_actions()
+def main():
+    social_server.start_interface()
+    search_for_actions()
+
+if __name__ == '__main__':
+    main()
+
+
