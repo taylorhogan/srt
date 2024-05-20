@@ -127,4 +127,4 @@ def post_social_message(message, image=None):
 def start_interface():
     mastodon = get_mastodon_instance()
     user = mastodon.stream_user(TheStreamListener(mastodon), run_async=True)
-    print("started mastodon")
+

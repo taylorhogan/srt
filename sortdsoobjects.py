@@ -11,7 +11,7 @@ from astroplan import Observer
 from astroplan.plots import plot_finder_image
 from astropy.coordinates import EarthLocation
 from astropy.time import Time
-
+import os
 import baseconfig as cfg
 
 config = cfg.FlowConfig().config
@@ -43,18 +43,29 @@ def show_plots(dso):
     observe_time = observe_time + np.linspace(-5, 5, 55) * u.hour
     astroplan.plots.plot_altitude(dso, my_observatory, observe_time)
 
-    plt.savefig("altitude.png")
-    plt.show()
+    dir_name = os.path.dirname(__file__)
+    scratch_dir = os.path.join(dir_name + "/scratch")
+    if not os.path.exists(scratch_dir):
+        os.mkdir(scratch_dir)
+
+    altitude_path = os.path.join (scratch_dir,  "altitude.png")
+
+    plt.savefig(altitude_path)
+    plt.clf()
+
 
     ax, hdu = plot_finder_image(dso)
 
-    plt.savefig("image.png")
-    plt.show()
+    image_path = os.path.join(scratch_dir, "image.png")
+    plt.savefig(image_path)
+    plt.clf()
 
     astroplan.plots.plot_sky(dso, my_observatory, observe_time)
     plt.legend(loc='center left', bbox_to_anchor=(1.25, 0.5))
-    plt.savefig("sky.png")
-    plt.show()
+    sky_path = os.path.join(scratch_dir, "sky.png")
+    plt.savefig(sky_path)
 
-    return "altitude.png", "image.png", "sky.png"
+    plt.clf()
+
+    return altitude_path, image_path, sky_path
 
