@@ -11,6 +11,16 @@ class DB:
         conn.commit()
         conn.close()
 
+    def exist(self, name):
+        conn = sqlite3.connect('db/dso.db')
+        c = conn.cursor()
+        for row in c.execute("SELECT key, name FROM dso ORDER BY name"):
+            if row[1] == name:
+                conn.close()
+                return True
+        conn.close()
+        return False
+
     def add(self, name, requested, finished, imaged, user, recipe, notes, expo_time, file):
         conn = sqlite3.connect('db/dso.db')
 
@@ -25,10 +35,25 @@ class DB:
         conn.commit()
         conn.close()
 
-    def printtable(self):
+    def add_expo_time(self, name, seconds):
         conn = sqlite3.connect('db/dso.db')
         c = conn.cursor()
-        for row in c.execute("SELECT key, name, user, requested FROM dso ORDER BY name"):
+        for row in c.execute("SELECT key, name, user, expo_time  FROM dso ORDER BY name"):
+            if row[1] == name:
+                cur_time = row[3]
+                cur_time = cur_time + seconds
+                print(cur_time)
+                conn.close()
+                return
+
+        conn.close()
+
+    # def add_expo_time(self):
+
+    def print_table(self):
+        conn = sqlite3.connect('db/dso.db')
+        c = conn.cursor()
+        for row in c.execute("SELECT key, name, user, expo_time requested FROM dso ORDER BY name"):
             print(row)
         conn.close()
 
@@ -47,12 +72,23 @@ class DB:
             dso_objects.add(row[3])
         return rows, expo_time, requesters, dso_objects
 
+    def make_new_table(self):
+        now = datetime.datetime.now()
+        db = DB()
+        db.create()
+        db.add("m31", now, now, 0, "Thogan", "lrgb", "test", 200, "m31.jpg")
+        db.printtable()
 
-def make_new_table():
-    now = datetime.datetime.now()
-    db = DB()
-    db.create()
-    db.add("m31", now, now, 0, "Thogan", "lrgb", "test", 200, "m31.jpg")
-    db.printtable()
+    def unit_test(self):
+        db = DB()
+        db.print_table()
+        print(db.exist("m31"))
+        print(db.exist("foo"))
+        db.add_expo_time("m31", 60)
+        db.print_table()
+        now = datetime.datetime.now()
+        if not db.exist("m37"):
+            db.add("m37", now, now, 0, "testing", "default", "mastodon", 0, "")
+        db.print_table()
 
-#make_new_table()
+

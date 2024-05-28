@@ -88,7 +88,7 @@ def timer_done():
     timer_going = False
 
 
-def search_for_actions():
+def state_machine():
     old_is_night, angle = s.is_night()
     currently_imaging = False
     old_start_imaging = None
@@ -158,8 +158,7 @@ def search_for_actions():
 
 
 def main():
-    social_server.start_interface()
-    search_for_actions()
+    state_machine()
 
 if __name__ == '__main__':
     main()

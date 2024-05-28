@@ -128,3 +128,10 @@ def start_interface():
     mastodon = get_mastodon_instance()
     user = mastodon.stream_user(TheStreamListener(mastodon), run_async=True)
 
+
+def main():
+    start_interface()
+
+
+if __name__ == '__main__':
+    main()

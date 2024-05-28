@@ -4,7 +4,7 @@ from collections import OrderedDict
 class BaseConfig(object):
     _base_config = OrderedDict({
         "version": {
-            "date": "2025.5.13.02"
+            "date": "2025.5.20.01"
         },
         "logger": {
             "topic": "flow/log",
