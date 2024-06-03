@@ -18,8 +18,11 @@ config = cfg.FlowConfig().config
 
 
 def is_a_dso_object(name):
-    dso = FixedTarget.from_name(name)
-    return dso
+    try:
+        dso = FixedTarget.from_name(name)
+        return dso
+    except NameError:
+        return None
 
 
 def show_plots(dso):

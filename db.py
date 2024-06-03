@@ -1,5 +1,6 @@
 import datetime
 import sqlite3
+import sys, getopt
 
 
 class DB:
@@ -79,16 +80,27 @@ class DB:
         db.add("m31", now, now, 0, "Thogan", "lrgb", "test", 200, "m31.jpg")
         db.printtable()
 
-    def unit_test(self):
-        db = DB()
-        db.print_table()
-        print(db.exist("m31"))
-        print(db.exist("foo"))
-        db.add_expo_time("m31", 60)
-        db.print_table()
-        now = datetime.datetime.now()
-        if not db.exist("m37"):
-            db.add("m37", now, now, 0, "testing", "default", "mastodon", 0, "")
-        db.print_table()
+
+
+
+def main(argv):
+    db = DB()
+    print (argv)
+    db.print_table()
+    print(db.exist("m31"))
+    print(db.exist("foo"))
+    db.add_expo_time("m31", 60)
+    db.print_table()
+    now = datetime.datetime.now()
+    if not db.exist("m37"):
+        db.add("m37", now, now, 0, "testing", "default", "mastodon", 0, "")
+    db.print_table()
+
+
+if __name__ == '__main__':
+    main(sys.argv[1:])
+
+
+
 
 

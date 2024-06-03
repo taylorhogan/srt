@@ -36,7 +36,9 @@ int simStatus = 0;
 unsigned long end_time;
 bool lost = false;  //roof not reporting state
 
-void setup() {
+void setup() 
+{
+  
   end_time = millis() + 60000;  //roof lost reset timer ~60 seconds  change to suit  your rquirments to determine if roof is lost
 
   //Begin Serial Comunication(configured  for 9600baud)
@@ -45,12 +47,6 @@ void setup() {
   //pin relay as OUTPUT
   pinMode(toggle_direction, OUTPUT);
 
-  //SSD1306_SWITCHCAPVCC = generate display voltage from 3.3V internally
-  if (!display.begin(SSD1306_SWITCHCAPVCC, SCREEN_ADDRESS)) {
-    Serial.println(F("SSD1306 allocation failed"));
-    for (;;)
-      ;  // Don't proceed, loop forever
-  }
 
 
 
@@ -62,41 +58,21 @@ void setup() {
 
 
   Serial.write("RRCI#");  //init string
-  display.clearDisplay();
-  display.setTextColor(SSD1306_WHITE);  // Draw white text
-  display.setCursor(0, 0);              // Start at top-left corner
-  display.println(F("TMH Observatory"));
-  display.display();
+ 
 }
 
 void loop() {
 
 
-  display.setTextSize(1);               // Normal 1:1 pixel scale
-  display.setTextColor(SSD1306_WHITE);  // Draw white text
-  display.setCursor(0, 0);              // Start at top-left corner
-  display.println(F("TMH Observatory"));
-  display.setTextColor(SSD1306_WHITE);  // Draw white text
-  display.setCursor(0, 10);             // Start at top-left corner
-  display.println(F("Roof Closed"));
-  display.setCursor(0, 20);
-
-  display.println(F("Snow"));
-  display.display();
 
 
   //Verify connection by serial
 
   while (Serial.available() > 0) {
+    Serial.println("waiting");
     //Read  Serial data and alocate on serialin
     serialin = Serial.readStringUntil('#');
-    display.clearDisplay();
-    display.display();
-    display.setCursor(0, 0);  // Start at top-left corner
-    display.println(serialin);
-    display.setTextColor(SSD1306_WHITE);
-    display.display();
-
+    Serial.println(serialin);
 
     if (serialin == "on") {  // turn scope sensor on
       digitalWrite(sensor, HIGH);

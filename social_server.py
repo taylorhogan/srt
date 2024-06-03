@@ -126,7 +126,8 @@ def post_social_message(message, image=None):
 
 def start_interface():
     mastodon = get_mastodon_instance()
-    user = mastodon.stream_user(TheStreamListener(mastodon), run_async=True)
+    #user = mastodon.stream_user(TheStreamListener(mastodon), run_async=False,reconnect_async=True)
+    user = mastodon.stream_user(TheStreamListener(mastodon))
 
 
 def main():
