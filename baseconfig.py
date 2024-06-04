@@ -40,6 +40,17 @@ class BaseConfig(object):
         "Super Users": {
             "Id": '@Thogan'
         },
+        "camera safety":{
+            "image_path": "./base_images/inside.jpg",
+            "open_template": "./base_images/open_template.jpg",
+            "close_template": "./base_images/close_template.jpg",
+            "parked_template": "./base_images/parked_template.jpg",
+            "open_pos":(1,1),
+            "close_pos":(2,2),
+            "parked_pos":(3,3)
+
+
+            },
         "Globals":
             {
                 "Observatory State": "Unknown",

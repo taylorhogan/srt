@@ -1,9 +1,11 @@
 # https://stackoverflow.com/questions/52509316/opencv-rectangle-filled
 import os
+import sys
 import time
 
 import cv2 as cv
 from matplotlib import pyplot as plt
+import baseconfig as cfg
 
 
 def file_age(filepath):
@@ -15,59 +17,68 @@ def file_age(filepath):
     return "File is " + str(int(minutes)) + " minutes old"
 
 
-def analyse_safety(image_path):
-    img_rgb = cv.imread(image_path)
-    assert img_rgb is not None, "file could not be read, check with os.path.exists()"
-    img = cv.imread(image_path, cv.IMREAD_GRAYSCALE)
-
-    img2 = img.copy()
-    img_rgb_copy = img_rgb.copy()
-
+def find_template (image, template_image):
     template = cv.imread('base_images/marker.jpg', cv.IMREAD_GRAYSCALE)
     assert template is not None, "file could not be read, check with os.path.exists()"
     w, h = template.shape[::-1]
 
-    # All the 6 methods for comparison in a list
-    # methods = ['cv.TM_CCOEFF', 'cv.TM_CCOEFF_NORMED', 'cv.TM_CCORR',
-    #          'cv.TM_CCORR_NORMED', 'cv.TM_SQDIFF', 'cv.TM_SQDIFF_NORMED']
-    methods = ['cv.TM_SQDIFF_NORMED']
-    for meth in methods:
-        img = img2.copy()
-        method = eval(meth)
+    method = 'cv.TM_SQDIFF_NORMED'
 
-        # Apply template Matching
-        res = cv.matchTemplate(img, template, method)
-        min_val, max_val, min_loc, max_loc = cv.minMaxLoc(res)
+    local_img = image.copy()
+    method = eval(method)
 
-        # If the method is TM_SQDIFF or TM_SQDIFF_NORMED, take minimum
-        if method in [cv.TM_SQDIFF, cv.TM_SQDIFF_NORMED]:
-            top_left = min_loc
-        else:
-            top_left = max_loc
-        bottom_right = (top_left[0] + w, top_left[1] + h)
+    # Apply template Matching
+    res = cv.matchTemplate(local_img, template, method)
+    min_val, max_val, min_loc, max_loc = cv.minMaxLoc(res)
 
-        r = int(w / 2)
+    top_left = min_loc
 
-        c = (top_left[0] + r, top_left[1] + r)
+    bottom_right = (top_left[0] + w, top_left[1] + h)
 
-        cv.circle(img, c, r * 5, 255, 2)
+    r = int(w / 2)
 
-        plt.imshow(img, cmap='gray')
-        plt.title('Detected Point' + str(c)), plt.xticks([]), plt.yticks([])
-        plt.savefig('./scratch/position.png')
-        plt.show()
+    c = (top_left[0] + r, top_left[1] + r)
 
-    cv.rectangle(img_rgb_copy, (0, 0, 2000, 400), (0, 0, 0), -1)
+    return c, r
 
+
+
+
+
+def analyse_safety(image_path):
+    config = cfg.FlowConfig().config
+
+    img_rgb = cv.imread(image_path)
+    assert img_rgb is not None, "file could not be read, check with os.path.exists()"
+    img_grayscale = cv.imread(image_path, cv.IMREAD_GRAYSCALE)
+    height, width = img_grayscale.shape[:2]
+
+    print (width, height)
+    img_grayscale_copy = img_grayscale.copy()
+    img_rgb_copy = img_rgb.copy()
+
+    # c_open, r_open = find_template(config['camera safety']['image_path'], config['camera_safety']['open_template'])
+    # c_closed, r_closed = find_template(config['camera safety']['image_path'], config['camera_safety']['closed_template'])
+    # c_parked, r_parked = find_template(config['camera safety']['image_path'], config['camera_safety']['parked_template'])
+    # c_goal = config['camera safety']['image_path']
+    #
+    # cv.circle(img_grayscale_copy, c, r * 5, 255, 2)
+    # plt.imshow(img_grayscale_copy, cmap='gray')
+    # plt.title('Detected Point' + str(c)), plt.xticks([]), plt.yticks([])
+    # plt.savefig('./scratch/position.png')
+    # plt.show()
+
+    cv.rectangle(img_rgb_copy, (0, height-400, width, height), (0, 0, 0), -1)
+    font_height = 100
     age = file_age(image_path)
-    org = (10, 200)
+    org = (10, height-2*font_height)
     cv.putText(img_rgb_copy, age, org, fontFace=cv.FONT_HERSHEY_PLAIN, fontScale=10, color=(255, 255, 255))
 
-    org = (10, 300)
+    org = (10, height -font_height)
     cv.putText(img_rgb_copy, "Roof is closed", org, fontFace=cv.FONT_HERSHEY_PLAIN, fontScale=10,
                color=(255, 255, 255))
 
-    org = (10, 400)
+    org = (10, height)
     cv.putText(img_rgb_copy, "Scope is Parked", org, fontFace=cv.FONT_HERSHEY_PLAIN, fontScale=10,
                color=(255, 255, 255))
 
@@ -75,5 +86,12 @@ def analyse_safety(image_path):
     cv.waitKey(0)
     cv.destroyAllWindows()
 
+def main(path):
+    print (path)
+    open, closed, parked = analyse_safety(path)
 
-analyse_safety('base_images/inside.jpg')
+
+if __name__ == '__main__':
+    print (sys.argv[1])
+    main(sys.argv[1])
+
