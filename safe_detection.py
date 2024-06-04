@@ -4,6 +4,8 @@ import sys
 import time
 
 import cv2 as cv
+
+
 from matplotlib import pyplot as plt
 import baseconfig as cfg
 
@@ -82,9 +84,10 @@ def analyse_safety(image_path):
     cv.putText(img_rgb_copy, "Scope is Parked", org, fontFace=cv.FONT_HERSHEY_PLAIN, fontScale=10,
                color=(255, 255, 255))
 
-    cv.imshow("foo", img_rgb_copy)
-    cv.waitKey(0)
-    cv.destroyAllWindows()
+    # cv.imshow("foo", img_rgb_copy)
+    # cv.waitKey(0)
+    # cv.destroyAllWindows()
+    cv.imwrite("output.jpg", img_rgb_copy)
 
 def main(path):
     print (path)
