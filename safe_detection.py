@@ -47,7 +47,7 @@ def find_template (image, template_image):
 
 
 
-def analyse_safety(image_path):
+def analyse_safety(image_path, out_path):
     config = cfg.FlowConfig().config
 
     img_rgb = cv.imread(image_path)
@@ -87,14 +87,16 @@ def analyse_safety(image_path):
     # cv.imshow("foo", img_rgb_copy)
     # cv.waitKey(0)
     # cv.destroyAllWindows()
-    cv.imwrite("output.jpg", img_rgb_copy)
+    cv.imwrite(out_path, img_rgb_copy)
 
-def main(path):
-    print (path)
-    open, closed, parked = analyse_safety(path)
+    return False, True, True
+
+def main(path_in, path_out):
+    print (path_in)
+    open, closed, parked = analyse_safety(path_in, path_out)
 
 
 if __name__ == '__main__':
-    print (sys.argv[1])
-    main(sys.argv[1])
+    print (sys.argv)
+    main(sys.argv[1], sys.argv[2])
 
