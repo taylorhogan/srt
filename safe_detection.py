@@ -97,9 +97,9 @@ def analyse_safety(image_path, out_path):
 def main(path_in, path_out):
     while True:
         open, closed, parked = analyse_safety(path_in, path_out)
-        print ("Open:" + open)
-        print ("Closed:" + closed)
-        print  ("Park:" + parked)
+        print ("Open:" + str(open))
+        print ("Closed:" + str(closed))
+        print  ("Park:" + str(parked))
         time.sleep(60)
 
 
