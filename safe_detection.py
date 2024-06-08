@@ -48,7 +48,10 @@ def find_template (image, template_image):
 
 
 def analyse_safety(image_path, out_path):
+
+
     config = cfg.FlowConfig().config
+
 
     img_rgb = cv.imread(image_path)
     assert img_rgb is not None, "file could not be read, check with os.path.exists()"
@@ -92,8 +95,12 @@ def analyse_safety(image_path, out_path):
     return False, True, True
 
 def main(path_in, path_out):
-    print (path_in)
-    open, closed, parked = analyse_safety(path_in, path_out)
+    while True:
+        open, closed, parked = analyse_safety(path_in, path_out)
+        print ("Open:" + open)
+        print ("Closed:" + closed)
+        print  ("Park:" + parked)
+        time.sleep(60)
 
 
 if __name__ == '__main__':
