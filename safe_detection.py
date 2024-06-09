@@ -75,9 +75,9 @@ def analyse_safety(image_path, out_path):
 
     cv.rectangle(img_rgb_copy, (0, height-400, width, height), (0, 0, 0), -1)
     font_height = 100
-    age = file_age(image_path)
+    mtime = "last modified: {}".format( time.ctime(os.path.getmtime(sys.argv[1])))
     org = (10, height-2*font_height)
-    cv.putText(img_rgb_copy, age, org, fontFace=cv.FONT_HERSHEY_PLAIN, fontScale=10, color=(255, 255, 255))
+    cv.putText(img_rgb_copy, mtime, org, fontFace=cv.FONT_HERSHEY_PLAIN, fontScale=10, color=(255, 255, 255))
 
     org = (10, height -font_height)
     cv.putText(img_rgb_copy, "Roof is closed", org, fontFace=cv.FONT_HERSHEY_PLAIN, fontScale=10,
@@ -106,4 +106,5 @@ def main(path_in, path_out):
 if __name__ == '__main__':
     print (sys.argv)
     main(sys.argv[1], sys.argv[2])
+
 
