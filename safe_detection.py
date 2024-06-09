@@ -5,8 +5,6 @@ import time
 
 import cv2 as cv
 
-
-from matplotlib import pyplot as plt
 import baseconfig as cfg
 
 
@@ -19,7 +17,7 @@ def file_age(filepath):
     return "File is " + str(int(minutes)) + " minutes old"
 
 
-def find_template (image, template_image):
+def find_template(image, template_image):
     template = cv.imread('base_images/marker.jpg', cv.IMREAD_GRAYSCALE)
     assert template is not None, "file could not be read, check with os.path.exists()"
     w, h = template.shape[::-1]
@@ -44,21 +42,15 @@ def find_template (image, template_image):
     return c, r
 
 
-
-
-
 def analyse_safety(image_path, out_path):
-
-
     config = cfg.FlowConfig().config
-
 
     img_rgb = cv.imread(image_path)
     assert img_rgb is not None, "file could not be read, check with os.path.exists()"
     img_grayscale = cv.imread(image_path, cv.IMREAD_GRAYSCALE)
     height, width = img_grayscale.shape[:2]
 
-    print (width, height)
+    print(width, height)
     img_grayscale_copy = img_grayscale.copy()
     img_rgb_copy = img_rgb.copy()
 
@@ -73,13 +65,13 @@ def analyse_safety(image_path, out_path):
     # plt.savefig('./scratch/position.png')
     # plt.show()
 
-    cv.rectangle(img_rgb_copy, (0, height-400, width, height), (0, 0, 0), -1)
+    cv.rectangle(img_rgb_copy, (0, height - 400, width, height), (0, 0, 0), -1)
     font_height = 100
-    mtime = "last modified: {}".format( time.ctime(os.path.getmtime(sys.argv[1])))
-    org = (10, height-2*font_height)
+    mtime = "last modified: {}".format(time.ctime(os.path.getmtime(sys.argv[1])))
+    org = (10, height - 2 * font_height)
     cv.putText(img_rgb_copy, mtime, org, fontFace=cv.FONT_HERSHEY_PLAIN, fontScale=10, color=(255, 255, 255))
 
-    org = (10, height -font_height)
+    org = (10, height - font_height)
     cv.putText(img_rgb_copy, "Roof is closed", org, fontFace=cv.FONT_HERSHEY_PLAIN, fontScale=10,
                color=(255, 255, 255))
 
@@ -94,17 +86,14 @@ def analyse_safety(image_path, out_path):
 
     return False, True, True
 
+
 def main(path_in, path_out):
-    while True:
-        open, closed, parked = analyse_safety(path_in, path_out)
-        print ("Open:" + str(open))
-        print ("Closed:" + str(closed))
-        print  ("Park:" + str(parked))
-        time.sleep(60)
+    open, closed, parked = analyse_safety(path_in, path_out)
+    print("Open:" + str(open))
+    print("Closed:" + str(closed))
+    print("Park:" + str(parked))
 
 
 if __name__ == '__main__':
-    print (sys.argv)
+    print(sys.argv)
     main(sys.argv[1], sys.argv[2])
-
-
