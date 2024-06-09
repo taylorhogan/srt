@@ -2,7 +2,7 @@ python -m venv ./venv
 source venv/bin/activate
 
 
-python3 safe_detection.py "/var/www/html/cds/latest.jpg" "/var/www/html/cds/latest_annotated.jpg"
+python3 safe_detection.py "/var/www/html/cds/latest.jpg" "/var/www/html/cds/annotated.jpg"
 #python3 safe_detection.py "./base_images/insides.jpg" "./base_images/output.jpg"
 
 
