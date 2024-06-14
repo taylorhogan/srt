@@ -19,7 +19,7 @@ config["Globals"]["Observatory State"] = "Booting Up"
 
 def general_message_with_image(message, image=None):
     pushover.push_message(message)
-    social_server.post_social_message(message, image)
+    #social_server.post_social_message(message, image)
     print(message)
 
 
