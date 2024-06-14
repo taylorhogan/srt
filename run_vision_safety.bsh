@@ -4,7 +4,7 @@ python -m venv /home/taylorhogan/Documents/Development/tmh/venv
 source /home/taylorhogan/Documents/Development/tmh/venv/bin/activate
 
 
-python3 /home/taylorhogan/Documents/Development/tmh/safe_detection.py "/var/www/html/cds/latest.jpg" "/var/www/html/cds/annotated.jpg"
+python3 /home/taylorhogan/Documents/Development/tmh/vision_safety.py "/var/www/html/cds/latest.jpg" "/var/www/html/cds/annotated.jpg"
 #python3 safe_detection.py "./base_images/insides.jpg" "./base_images/output.jpg"
 
 
