@@ -8,13 +8,7 @@ import cv2 as cv
 import baseconfig as cfg
 
 
-def file_age(filepath):
-    dt = time.time() - os.path.getmtime(filepath)
-    seconds = dt
-    minutes = int(seconds) / 60  # 120 minutes
-    hours = minutes / 60  # 2 hours
 
-    return "File is " + str(int(minutes)) + " minutes old"
 
 
 def find_template(image, template_image):

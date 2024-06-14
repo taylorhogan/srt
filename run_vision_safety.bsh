@@ -1,3 +1,5 @@
+#!/bin/bash
+
 python -m venv /home/taylorhogan/Documents/Development/tmh/venv
 source /home/taylorhogan/Documents/Development/tmh/venv/bin/activate
 
