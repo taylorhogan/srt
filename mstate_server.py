@@ -14,7 +14,8 @@ debug_roof_open_switch = False
 debug_roof_closed_switch = True
 
 config = cfg.FlowConfig().config
-config["Globals"]["Observatory State"] = "Booting Up"
+config["Globals"]["Observatory State"] = "Booting Up"''
+
 
 
 def general_message_with_image(message, image=None):
@@ -93,6 +94,7 @@ def state_machine():
     currently_imaging = False
     old_start_imaging = None
     old_stop_imaging = None
+    old_weather = None
     timer = watchdog.Watchdog(15, timer_done)
 
     version = config["version"]["date"]
@@ -101,7 +103,16 @@ def state_machine():
     while not get_manual_stop():
         try:
             is_night, angle = s.is_night()
-            good_weather = weather.is_good_weather()
+            good_weather, weather_description = weather.is_good_weather()
+            if good_weather:
+                weather_description += "Imaging is Good"
+            else:
+                weather_description += "Imaging is Bad"
+
+            if old_weather is not good_weather:
+                general_message_with_image(weather_description, None)
+            old_weather = good_weather
+
             many_stars = enough_stars()
             no_clouds = is_clouds_ok()
 
@@ -133,6 +144,7 @@ def state_machine():
                 config["Globals"]["Observatory State"] = "Imaging, Roof Open"
                 config["Globals"]["Current Image"] = "./db/m31.jpg"
                 general_message_with_image("Starting Imaging", image=config["Globals"]["Current Image"])
+
             elif stop_imaging:
                 stop_imaging_time = current_time
                 time_elapsed = stop_imaging_time - start_imaging_time

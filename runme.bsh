@@ -3,6 +3,6 @@
 python -m venv /home/taylorhogan/Documents/Development/tmh/venv
 source /home/taylorhogan/Documents/Development/tmh/venv/bin/activate
 
-#python3 social_server.py&
-python3   /home/taylorhogan/Documents/Development/tmh/mstate_server.py&
+python3 /home/taylorhogan/Documents/Development/tmh/social_server.py&
+python3 /home/taylorhogan/Documents/Development/tmh/mstate_server.py&
 

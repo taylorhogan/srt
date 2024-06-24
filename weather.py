@@ -83,14 +83,14 @@ def get_weather():
 def is_good_weather():
     weather_description, cloud_percentage, wind_speed, moon_phase = get_weather()
     if cloud_percentage > 40:
-        return False
+        return False, weather_description
     if wind_speed > 20:
-        return False
+        return False, weather_description
     if "rain" in weather_description:
-        return False
+        return False, weather_description
     if "snow" in weather_description:
-        return False
+        return False, weather_description
     if "sleet" in weather_description:
-        return False
+        return False, weather_description
 
-    return True
+    return True, weather_description

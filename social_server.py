@@ -1,5 +1,6 @@
 import datetime
 import logging
+import time
 
 from bs4 import BeautifulSoup
 from mastodon import Mastodon, StreamListener
@@ -33,7 +34,7 @@ def show_cmd(words, index, m, account):
         obj = sortdsoobjects.is_a_dso_object(dso)
         if obj is not None:
             altitude, image, sky = sortdsoobjects.show_plots(obj)
-            post_social_message("altitude tonight\n", altitude)
+            post_social_message("altitude \n", altitude)
             post_social_message("image\n", image)
             post_social_message("sky\n", sky)
         else:
@@ -94,14 +95,12 @@ def do_notification(notification, m):
 
 class TheStreamListener(StreamListener):
 
-    def __init__(self, m):
-        self.m = m
-
     def on_update(self, status):
         print(f"Got update: {status['content']}")
 
     def on_notification(self, notification):
-        do_notification(notification, self.m)
+        mastodon = config["mastodon"]["instance"]
+        do_notification(notification, mastodon)
 
 
 def get_mastodon_instance():
@@ -112,7 +111,7 @@ def get_mastodon_instance():
 
 
 def post_social_message(message, image=None):
-    mastodon = get_mastodon_instance()
+    mastodon = config["mastodon"]["instance"]
     if image is None:
         mastodon.status_post(message)
     else:
@@ -125,15 +124,20 @@ def post_social_message(message, image=None):
 
 
 def start_interface():
-    mastodon = get_mastodon_instance()
-    user = mastodon.stream_user(TheStreamListener(mastodon), run_async=False,reconnect_async=True)
-    #user = mastodon.stream_user(TheStreamListener(mastodon))
+    post_social_message("Starting")
+    mastodon = config["mastodon"]["instance"]
+    user = mastodon.stream_user(TheStreamListener(), run_async=True, reconnect_async=True)
+    while True:
+        time.sleep(100)
 
 
 def main():
     print("start")
+    mastodon = get_mastodon_instance()
+    config["mastodon"]["instance"] = mastodon
     start_interface()
-    print ("stop")
+    print("stop")
+
 
 if __name__ == '__main__':
     main()

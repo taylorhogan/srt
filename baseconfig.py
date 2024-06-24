@@ -27,10 +27,11 @@ class BaseConfig(object):
             "user": "ggd66ig5wrpo8z9y7eyncfihor4b33",
         },
         "mastodon": {
-            "access_token": 'GVgekfjZX73Dc11ZljO8UWILG46YMjAyNEBVzlyNaWc',
+            "access_token": 'M67r7ztzqc8yWiNcokctuz0T5dJsL_P7Bh-o1VTHm9U',
             "api_base_url": 'https://mastodon.social/',
             "client_secret": "9c_OTf7f_Rmy3jPGpawgulxbZNLG3qqr_d5sZzlONqo",
             "client_key": "bknnjpd3ATuzldY2PGzqGYE9tzynywijhZ90ZsDC1b8",
+            "instance": None,
             "me": '@Thogan'
         },
         "location": {
