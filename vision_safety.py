@@ -87,7 +87,13 @@ def main(path_in, path_out):
     print("Closed:" + str(closed))
     print("Park:" + str(parked))
 
+def take_snapshot (path_out):
+    vid = cv.VideoCapture(0)
+    ret, frame = vid.read()
+    img_src = frame
+    cv.imwrite("scope_view.jpg", img_src)
 
 if __name__ == '__main__':
     print(sys.argv)
-    main(sys.argv[1], sys.argv[2])
+    take_snapshot("")
+    #main(sys.argv[1], sys.argv[2])
