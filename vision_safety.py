@@ -90,8 +90,11 @@ def main(path_in, path_out):
 def take_snapshot (path_out):
     vid = cv.VideoCapture(0)
     ret, frame = vid.read()
-    img_src = frame
-    cv.imwrite("scope_view.jpg", img_src)
+    if ret:
+        img_src = frame
+        cv.imwrite("scope_view.jpg", img_src)
+    else:
+        print ("no Image")
 
 if __name__ == '__main__':
     print(sys.argv)
