@@ -10,6 +10,7 @@ import db as cdb
 import sortdsoobjects
 import sun as s
 import weather
+import super_user_commands as su
 
 config = cfg.FlowConfig().config
 
@@ -53,29 +54,38 @@ def status_cmd(words, index, m, account):
     reply += "Sun Angle: " + "{:10.2f}".format(angle) + "\n"
     description, clouds, wind_speed, moon_phase = weather.get_weather()
     reply += description
-
-    capture_db = cdb.DB()
-    rows, expo_time, requesters, dso_objects = capture_db.do_stats()
-    reply += "\nRequests: " + str(rows) + "\n"
-    reply += "Imaged Minutes: " + str(expo_time) + "\n"
-    reply += "Unique Accounts: " + str(len(requesters)) + " \n"
-    reply += "DSO Objects: " + str(len(dso_objects)) + "\n"
     post_social_message(reply)
+
+def help_cmd (words, index, m, account):
+    reply = "Available commands are\n"
+    for word in keywords:
+        reply += word + "\n"
+    post_social_message(reply)
+
+keywords = {
+        "show": show_cmd,
+        "capture": capture_cmd,
+        "status": status_cmd,
+        "?": help_cmd
+    }
+
 
 
 def do_command(sentence, m, account):
-    keywords = {
-        "show": show_cmd,
-        "capture": capture_cmd,
-        "status": status_cmd
-    }
 
     cmd = sentence.lower()
     words = cmd.split(" ")
-    for index, word in enumerate(words):
-        action = keywords.get(word, "no_key")
-        if action != "no_key":
-            action(words, index, m, account)
+    seen_base_command = False
+
+    action = keywords.get(words[1], "no_key")
+    if action != "no_key":
+        action(words, 1, m, account)
+        seen_base_command = True
+
+    if seen_base_command is False:
+        seen_super_user_commands = su.do_super_user_command(words)
+    if seen_base_command is False and seen_super_user_commands is False:
+        post_social_message ("Command not recognized")
 
 
 def do_notification(notification, m):
