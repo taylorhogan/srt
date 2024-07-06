@@ -83,7 +83,7 @@ def do_command(sentence, m, account):
         seen_base_command = True
 
     if seen_base_command is False:
-        seen_super_user_commands = su.do_super_user_command(words)
+        seen_super_user_commands = su.do_super_user_command(words, account)
     if seen_base_command is False and seen_super_user_commands is False:
         post_social_message ("Command not recognized")
 

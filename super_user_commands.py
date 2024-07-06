@@ -1,6 +1,7 @@
 import os
 import time
 from collections import OrderedDict
+import social_server
 
 import requests
 
@@ -13,7 +14,10 @@ _super_user_config = OrderedDict(
             "sonos_id": "24"
         },
         "hubitat_token": "986ed6ff-c4df-43a5-9bc6-ec5727acb888",
-        "hubitat_url": "http://192.168.86.20/"
+        "hubitat_url": "http://192.168.86.20/",
+        "Super Users": {
+            'Thogan'
+        },
     })
 
 
@@ -112,11 +116,17 @@ _super_user_commands ={
     "stop!" : prepare_for_stop_command
 }
 
-def do_super_user_command(words):
+def do_super_user_command(words, account):
+    config = _super_user_config
     action = _super_user_commands.get(words[1], "no_key")
     if action != "no_key":
-        action()
-        return True
+        super_users=config["Super Users"]
+        if account in super_users:
+            action()
+            return True
+        else:
+            social_server.post_social_message(account + " Is not authorized\n")
+        return False
     else:
         return False
 

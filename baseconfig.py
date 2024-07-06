@@ -41,9 +41,7 @@ class BaseConfig(object):
             "elevation": 100,
             "observatory_name": "tmh"
         },
-        "Super Users": {
-            "Id": '@Thogan'
-        },
+
         "camera safety":{
             "image_path": "./base_images/inside.jpg",
             "open_template": "./base_images/open_template.jpg",
