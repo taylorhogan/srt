@@ -4,7 +4,7 @@ from collections import OrderedDict
 class BaseConfig(object):
     _base_config = OrderedDict({
         "version": {
-            "date": "2024.6.24.01"
+            "date": "2024.7.6.01"
         },
         "html":{
             "path":"/var/www/html/cds"
@@ -57,7 +57,7 @@ class BaseConfig(object):
             },
         "Globals":
             {
-                "Observatory State": "Unknown",
+                "Observatory State": "In Development",
                 "Imaging DSO": "Unknown"
             }
 
