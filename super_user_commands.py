@@ -2,8 +2,9 @@ import os
 import time
 from collections import OrderedDict
 import social_server
-
+from kasa import Discover
 import requests
+import asyncio
 
 _super_user_config = OrderedDict(
     {
@@ -132,15 +133,20 @@ def do_super_user_command(words, account):
 
 
 
-
-#
+async def make_discovery_map():
+    devices = await Discover.discover()
+    for dev in devices.values():
+        await dev.update()
+        print(dev.host + " " + dev.alias)
+if __name__ == "__main__":
+    asyncio.run(main())
 #
 # async def all_lights_off_command_await():
 #     dev = await Discover.discover_single("192.168.86.59")
 #     await dev.turn_on()
 #     await dev.update()
 # async def all_lights_on_command_await():
-#     dev = await Discover.discover_single("192.168.86.59")
+#     dev = await Discover.discover_single("19  2.168.86.59")
 #     await dev.turn_on()
 #     await dev.update()
 #
@@ -162,6 +168,4 @@ def do_super_user_command(words, account):
 #         os.system("kasa --host 192.168.86.43 off")
 #
 #         time.sleep(1)
-
-
 

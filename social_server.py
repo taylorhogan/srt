@@ -84,8 +84,8 @@ keywords = {
     "show": show_cmd,
     "capture": capture_cmd,
     "status": status_cmd,
-    "weather": weather_cmd(),
-    "help": help_cmd(),
+    "weather": weather_cmd,
+    "help": help_cmd,
     "?": help_cmd
 }
 
