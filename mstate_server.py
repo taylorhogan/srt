@@ -109,7 +109,7 @@ def state_machine():
             else:
                 weather_description += "Imaging is Bad"
 
-            if old_weather is not good_weather:
+            if old_weather is not good_weather and is_night:
                 general_message_with_image(weather_description, None)
             old_weather = good_weather
 

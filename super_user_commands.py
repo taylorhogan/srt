@@ -16,7 +16,7 @@ _super_user_config = OrderedDict(
         "hubitat_token": "986ed6ff-c4df-43a5-9bc6-ec5727acb888",
         "hubitat_url": "http://192.168.86.20/",
         "Super Users": {
-            'Thogan'
+            'Thogan', 'tmhobservatory'
         },
     })
 
