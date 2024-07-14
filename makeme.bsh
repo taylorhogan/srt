@@ -16,6 +16,8 @@ pip install astroplan
 pip install matplotlib
 pip install astroquery
 pip install opencv-python
+pip install python-kasa
+
 
 
 

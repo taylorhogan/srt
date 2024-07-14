@@ -28,32 +28,30 @@ def get_dso_object_name(words, index):
 
 
 def capture_cmd(words, index, m, account):
-    dso = get_dso_object_name(words, index)
-    if dso is not None:
-        object = sortdsoobjects.is_a_dso_object(dso)
+    dso_name = get_dso_object_name(words, index)
+    if dso_name is not None:
+        object = sortdsoobjects.is_a_dso_object(dso_name)
         if object is not None:
             capture_db = cdb.DB()
             now = datetime.datetime.now()
-            capture_db.add(dso, now, now, 0, account, "default", "mastodon", 0, "")
-            post_social_message(dso + " Added to list of objects to image\n")
+            capture_db.add(dso_name, now, now, 0, account, "default", "mastodon", 0, "")
+            post_social_message(dso_name + " Added to list of objects to image\n")
 
         else:
-            post_social_message(dso + " Not a known object\n")
+            post_social_message(dso_name + " Not a known object\n")
 
 
 def show_cmd(words, index, m, account):
-    dso = get_dso_object_name(words, index)
-    if dso is not None:
-        dso = get_dso_object_name(words, index)
-        if dso is not None:
-            obj = sortdsoobjects.is_a_dso_object(dso)
+    dso_name = get_dso_object_name(words, index)
+    if dso_name is not None:
+        obj = sortdsoobjects.is_a_dso_object(dso_name)
         if obj is not None:
             altitude, image, sky = sortdsoobjects.show_plots(obj)
             post_social_message("altitude \n", altitude)
             post_social_message("image\n", image)
             post_social_message("sky\n", sky)
         else:
-            post_social_message(dso + " Not a known object\n")
+            post_social_message(dso_name + " Not a known object\n")
 
 
 def weather_cmd(words, index, m, account):
