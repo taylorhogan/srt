@@ -14,6 +14,8 @@ import weather
 
 config = cfg.FlowConfig().config
 
+logger = logging.getLogger(__name__)
+config["logger"]["logging"] = logger
 
 def get_dso_object_name(words, index):
     if len(words) > index + 1:
@@ -116,8 +118,8 @@ def do_notification(notification, m):
             cmd = BeautifulSoup(html, 'html.parser').get_text()
             do_command(cmd, m, account)
     except:
-        log = logging.getLogger()
-        log.exception("Message for you, sir!")
+        logger.info('Problem')
+        logger.exception("Exception")
         m.status_post("I do not understand the command " + cmd)
 
 
@@ -160,6 +162,8 @@ def start_interface():
 
 
 def main():
+    logging.basicConfig(filename='iris.log', level=logging.INFO)
+    logger.info('Started')
     print("start")
     mastodon = get_mastodon_instance()
     config["mastodon"]["instance"] = mastodon

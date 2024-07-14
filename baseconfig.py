@@ -4,14 +4,15 @@ from collections import OrderedDict
 class BaseConfig(object):
     _base_config = OrderedDict({
         "version": {
-            "date": "2024.7.14.01"
+            "date": "2024.7.14.02"
         },
         "html":{
             "path":"/var/www/html/cds"
         },
         "logger": {
             "topic": "flow/log",
-            "file": "log.txt",
+            "file": "iris.log",
+            "logging": ""
         },
         "mqtt": {
             "user_name": "indi-allsky",
@@ -39,7 +40,7 @@ class BaseConfig(object):
             "latitude": 41.8096,
             "longitude": -72.8305,
             "elevation": 100,
-            "observatory_name": "tmh"
+            "observatory_name": "Iris"
         },
 
         "camera safety":{

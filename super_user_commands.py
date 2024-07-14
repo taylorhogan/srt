@@ -134,12 +134,15 @@ def do_super_user_command(words, account):
 
 
 async def make_discovery_map():
+    map_from_name_to_ip = dict ()
     devices = await Discover.discover()
     for dev in devices.values():
         await dev.update()
         print(dev.host + " " + dev.alias)
-if __name__ == "__main__":
-    asyncio.run(main())
+        map_from_name_to_ip.update({dev.alias: dev.host})
+        return map_from_name_to_ip
+
+
 #
 # async def all_lights_off_command_await():
 #     dev = await Discover.discover_single("192.168.86.59")
