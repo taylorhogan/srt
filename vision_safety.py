@@ -1,20 +1,20 @@
 # https://stackoverflow.com/questions/52509316/opencv-rectangle-filled
 import os
-import sys
 import time
-
+import math
 import cv2 as cv
-
 import baseconfig as cfg
+import matplotlib.pyplot as plt
 
 
 
-
-
-def find_template(image, template_image):
-    template = cv.imread('base_images/marker.jpg', cv.IMREAD_GRAYSCALE)
+def find_template(image_path, template_image_path):
+    template = cv.imread(template_image_path)
     assert template is not None, "file could not be read, check with os.path.exists()"
-    w, h = template.shape[::-1]
+    d, w, h = template.shape[::-1]
+
+    image = cv.imread(image_path)
+    assert image is not None, "file could not be read, check with os.path.exists()"
 
     method = 'cv.TM_SQDIFF_NORMED'
 
@@ -29,56 +29,45 @@ def find_template(image, template_image):
 
     bottom_right = (top_left[0] + w, top_left[1] + h)
 
-    r = int(w / 2)
+    r = int(max(w, h) / 2)
 
-    c = (top_left[0] + r, top_left[1] + r)
+    c = (int(top_left[0] + w/2), int(top_left[1]+h/2))
 
     return c, r
 
 
-def analyse_safety(image_path, out_path):
+
+def analyse_safety():
     config = cfg.FlowConfig().config
+
+    image_path = config['camera safety']['image path']
 
     img_rgb = cv.imread(image_path)
     assert img_rgb is not None, "file could not be read, check with os.path.exists()"
-    img_grayscale = cv.imread(image_path, cv.IMREAD_GRAYSCALE)
+    img_grayscale = cv.imread(image_path)
     height, width = img_grayscale.shape[:2]
 
     print(width, height)
     img_grayscale_copy = img_grayscale.copy()
     img_rgb_copy = img_rgb.copy()
+    c_roof, r_roof = find_template(config['camera safety']['image path'], config['camera safety']['roof template'])
+    c_scope, r_scope = find_template(config['camera safety']['image path'], config['camera safety']['parked template'])
+    roof_closed_error = math.dist (c_roof, config["camera safety"]["closed pos"])
+    parked_error = math.dist (c_scope, config["camera safety"]["parked pos"])
+    is_closed = abs(roof_closed_error) < 2
+    is_parked = abs (parked_error) < 2
+    is_open = not is_closed
 
-    # c_open, r_open = find_template(config['camera safety']['image_path'], config['camera_safety']['open_template'])
-    # c_closed, r_closed = find_template(config['camera safety']['image_path'], config['camera_safety']['closed_template'])
-    # c_parked, r_parked = find_template(config['camera safety']['image_path'], config['camera_safety']['parked_template'])
-    # c_goal = config['camera safety']['image_path']
-    #
-    # cv.circle(img_grayscale_copy, c, r * 5, 255, 2)
-    # plt.imshow(img_grayscale_copy, cmap='gray')
-    # plt.title('Detected Point' + str(c)), plt.xticks([]), plt.yticks([])
-    # plt.savefig('./scratch/position.png')
-    # plt.show()
 
-    cv.rectangle(img_rgb_copy, (0, height - 400, width, height), (0, 0, 0), -1)
-    font_height = 100
-    mtime = "last modified: {}".format(time.ctime(os.path.getmtime(sys.argv[1])))
-    org = (10, height - 2 * font_height)
-    cv.putText(img_rgb_copy, mtime, org, fontFace=cv.FONT_HERSHEY_PLAIN, fontScale=10, color=(255, 255, 255))
+    cv.circle(img_grayscale_copy, c_roof, r_roof, (255, 0, 0), 2)
+    cv.circle(img_grayscale_copy, c_scope, r_scope, (0, 0, 255), 2)
+    plt.imshow(img_grayscale_copy)
+    plt.title('roof (x,y) parked (x,y)' + str(c_roof) + " " + str(c_scope)), plt.xticks([]), plt.yticks([])
 
-    org = (10, height - font_height)
-    cv.putText(img_rgb_copy, "Roof is closed", org, fontFace=cv.FONT_HERSHEY_PLAIN, fontScale=10,
-               color=(255, 255, 255))
+    plt.savefig('./scratch/position.png')
 
-    org = (10, height)
-    cv.putText(img_rgb_copy, "Scope is Parked", org, fontFace=cv.FONT_HERSHEY_PLAIN, fontScale=10,
-               color=(255, 255, 255))
+    return is_closed, is_open, is_parked
 
-    # cv.imshow("foo", img_rgb_copy)
-    # cv.waitKey(0)
-    # cv.destroyAllWindows()
-    cv.imwrite(out_path, img_rgb_copy)
-
-    return False, True, True
 
 
 def main(path_in, path_out):
@@ -87,16 +76,19 @@ def main(path_in, path_out):
     print("Closed:" + str(closed))
     print("Park:" + str(parked))
 
-def take_snapshot (path_out):
+
+def take_snapshot(path_out):
     vid = cv.VideoCapture(0)
     ret, frame = vid.read()
     if ret:
         img_src = frame
         cv.imwrite("scope_view.jpg", img_src)
     else:
-        print ("no Image")
+        print("no Image")
+
 
 if __name__ == '__main__':
-    print(sys.argv)
-    take_snapshot("")
-    #main(sys.argv[1], sys.argv[2])
+
+    # take_snapshot("")
+    # main(sys.argv[1], sys.argv[2])
+    analyse_safety()

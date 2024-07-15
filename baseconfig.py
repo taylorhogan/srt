@@ -44,13 +44,12 @@ class BaseConfig(object):
         },
 
         "camera safety":{
-            "image_path": "./base_images/inside.jpg",
-            "open_template": "./base_images/open_template.jpg",
-            "close_template": "./base_images/close_template.jpg",
-            "parked_template": "./base_images/parked_template.jpg",
-            "open_pos":(1,1),
-            "close_pos":(2,2),
-            "parked_pos":(3,3)
+            "image path": "./base_images/scope_view.jpg",
+            "roof template": "./base_images/roof_marker.jpg",
+            "parked template": "./base_images/parked_marker.jpg",
+            "open pos":(1,1),
+            "closed pos":(576, 138),
+            "parked pos":(334, 260)
 
 
             },

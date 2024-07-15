@@ -130,6 +130,7 @@ def do_super_user_command(words, account):
         return False
     else:
         return False
+def snap_shot ():
 
 
 
@@ -143,32 +144,4 @@ async def make_discovery_map():
         return map_from_name_to_ip
 
 
-#
-# async def all_lights_off_command_await():
-#     dev = await Discover.discover_single("192.168.86.59")
-#     await dev.turn_on()
-#     await dev.update()
-# async def all_lights_on_command_await():
-#     dev = await Discover.discover_single("19  2.168.86.59")
-#     await dev.turn_on()
-#     await dev.update()
-#
-#
-# def all_lights_on_command():
-#     asyncio.run(all_lights_on_command_await())
-#
-#
-# def all_lights_off_command():
-#     asyncio.run(all_lights_off_command_await())
-# if __name__ == "__main__":
-#     for idx in range(10):
-#         os.system("kasa --host 192.168.86.59 on")
-#         os.system("kasa --host 192.168.86.43 on")
-#         # all_lights_on_command()
-#         time.sleep(1)
-#         # all_lights_off_command_await()
-#         os.system("kasa --host 192.168.86.59 off")
-#         os.system("kasa --host 192.168.86.43 off")
-#
-#         time.sleep(1)
 
