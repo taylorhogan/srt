@@ -44,7 +44,7 @@ class BaseConfig(object):
         },
 
         "camera safety":{
-            "image path": "./base_images/scope_view.jpg",
+            "image path": "./base_images/bad.jpg",
             "roof template": "./base_images/roof_marker.jpg",
             "parked template": "./base_images/parked_marker.jpg",
             "open pos":(1,1),

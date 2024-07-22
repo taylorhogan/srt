@@ -130,7 +130,8 @@ def do_super_user_command(words, account):
         return False
     else:
         return False
-def snap_shot ():
+
+
 
 
 
@@ -141,7 +142,18 @@ async def make_discovery_map():
         await dev.update()
         print(dev.host + " " + dev.alias)
         map_from_name_to_ip.update({dev.alias: dev.host})
-        return map_from_name_to_ip
+    _super_user_config["name_map"] = map_from_name_to_ip
 
+
+
+
+
+def turn_inside_light (onoff):
+    if not _super_user_config.get("name_map"):
+        asyncio.run (make_discovery_map())
+    host = _super_user_config["name_map"]["Iris inside light"]
+    if host != None:
+        string = "kasa --host " + host + " " + onoff
+        os.system(string)
 
 

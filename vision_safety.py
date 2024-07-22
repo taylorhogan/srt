@@ -82,7 +82,7 @@ def take_snapshot(path_out):
     ret, frame = vid.read()
     if ret:
         img_src = frame
-        cv.imwrite("scope_view.jpg", img_src)
+        cv.imwrite("bad.jpg", img_src)
     else:
         print("no Image")
 
