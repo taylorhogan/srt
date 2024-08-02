@@ -112,9 +112,11 @@ def prepare_for_stop_command():
     all_lights_blink_command()
     all_lights_off_command()
 
+
 _super_user_commands ={
     "start!":  prepare_for_start_command,
-    "stop!" : prepare_for_stop_command
+    "stop!" : prepare_for_stop_command,
+
 }
 
 def do_super_user_command(words, account):

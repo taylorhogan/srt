@@ -1,0 +1,6 @@
+#!/bin/bash
+# for mac
+
+python -m venv /Users/taylorhogan/Documents/Development/Flow/venv
+source /Users/taylorhogan/Documents/Development/Flow/venv/bin/activate
+python /Users/taylorhogan/Documents/Development/Flow/inside_camera_server.py&

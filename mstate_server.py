@@ -1,11 +1,9 @@
 import logging
 import time
-from datetime import datetime
 
 import baseconfig as cfg
 import moon
 import pushover
-import social_server
 import sun as s
 import watchdog
 import weather
@@ -17,10 +15,9 @@ config = cfg.FlowConfig().config
 config["Globals"]["Observatory State"] = "Booting Up"''
 
 
-
 def general_message_with_image(message, image=None):
     pushover.push_message(message)
-    #social_server.post_social_message(message, image)
+    # social_server.post_social_message(message, image)
     print(message)
 
 
@@ -149,7 +146,6 @@ def state_machine():
                 stop_imaging_time = current_time
                 time_elapsed = stop_imaging_time - start_imaging_time
 
-
                 currently_imaging = False
                 timer.start()
                 close_roof()
@@ -172,7 +168,6 @@ def state_machine():
 def main():
     state_machine()
 
+
 if __name__ == '__main__':
     main()
-
-

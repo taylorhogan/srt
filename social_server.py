@@ -7,10 +7,12 @@ from mastodon import Mastodon, StreamListener
 
 import baseconfig as cfg
 import db as cdb
+import request_observatory_state
 import sortdsoobjects
 import sun as s
 import super_user_commands as su
 import weather
+import vision_safety
 
 config = cfg.FlowConfig().config
 
@@ -66,11 +68,30 @@ def weather_cmd(words, index, m, account):
     post_social_message(reply)
 
 
+def wait_for_picture_received():
+    while True:
+        time.sleep(2)
+        if config["camera safety"]["valid_data"] == True:
+            break
+
 def status_cmd(words, index, m, account):
     # Observatory State
+    print ("status")
     reply = "Version: " + config["version"]["date"] + "\n"
     reply += "Observatory Status: " + config["Globals"]["Observatory State"]
     post_social_message(reply)
+    print ("A")
+    request_observatory_state.ask_for_state()
+    print ("B")
+    print ("asking for state")
+    wait_for_picture_received()
+    print ("received")
+    is_closed, is_open, is_parked = vision_safety.analyse_safety(config["camera safety"]["out_picture"])
+    reply = "Roof Closed: " + str(is_closed) + "\n"
+    reply += "Roof Open: " + str(is_open) + "\n"
+    reply += "Scope Parked:" + str(is_parked) + "\n"
+    post_social_message(reply, config["camera safety"]["out_picture"])
+
 
 
 def help_cmd(words, index, m, account):
@@ -152,7 +173,7 @@ def post_social_message(message, image=None):
 
 
 def start_interface():
-    post_social_message("Starting")
+    post_social_message("Starting Version " + config["version"]["date"])
     mastodon = config["mastodon"]["instance"]
     user = mastodon.stream_user(TheStreamListener(), run_async=True, reconnect_async=True)
     while True:

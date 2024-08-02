@@ -4,7 +4,7 @@ from collections import OrderedDict
 class BaseConfig(object):
     _base_config = OrderedDict({
         "version": {
-            "date": "2024.7.14.03"
+            "date": "2024.8.2.02"
         },
         "html":{
             "path":"/var/www/html/cds"
@@ -18,7 +18,13 @@ class BaseConfig(object):
             "user_name": "indi-allsky",
             "password": "Foo14me!",
             "broker_url": "raspberrypi.local",
-            "port": 1883
+            "port": 1883,
+            "ota_picture":"iris/inside_jpg",
+            "roof_state":"iris/roof_state",
+            "ota_state": "iris/ota_state",
+            "picture_date": "iris/picture_date",
+            "observatory_state?": "iris/state"
+
         },
         "weather": {
             "api_key": "ed8baa5b5b9c64b42fafc6836e75a3a3",
@@ -44,12 +50,15 @@ class BaseConfig(object):
         },
 
         "camera safety":{
-            "image path": "./base_images/bad.jpg",
             "roof template": "./base_images/roof_marker.jpg",
             "parked template": "./base_images/parked_marker.jpg",
             "open pos":(1,1),
             "closed pos":(576, 138),
-            "parked pos":(334, 260)
+            "parked pos":(334, 260),
+            "in_picture": "./base_images/scope_view.jpg",
+            "out_picture": "./base_images/receive_view.jpg",
+            "valid_data": False,
+            "received_count": 0
 
 
             },
@@ -57,6 +66,7 @@ class BaseConfig(object):
             {
                 "Observatory State": "In Development",
                 "Imaging DSO": "Unknown"
+                ""
             }
 
     })
