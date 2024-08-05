@@ -75,6 +75,6 @@ def analyse_safety(image_path):
     plt.title('roof (x,y) parked (x,y)' + str(c_roof) + " " + str(c_scope)), plt.xticks([]), plt.yticks([])
 
     plt.savefig('./scratch/position.png')
-
-    return is_closed, is_open, is_parked
+    mod_date = time.ctime(os.path.getmtime(image_path))
+    return is_closed, is_open, is_parked, mod_date
 

@@ -2,7 +2,7 @@ import sys
 import time
 import paho.mqtt.client as paho
 import baseconfig as config
-import vision_safety
+
 
 
 def connect_to_broker(cfg):
@@ -15,8 +15,6 @@ def connect_to_broker(cfg):
 def do_something_with_returned_value (client, userdata, msg):
     cfg = config.FlowConfig().config
     picture_topic = cfg["mqtt"]["ota_picture"]
-    roof_topic = cfg["mqtt"]["roof_state"]
-    ota_topic = cfg["mqtt"]["ota_state"]
     date_topic = cfg["mqtt"]["picture_date"]
 
     if (msg.topic == picture_topic):
@@ -53,6 +51,7 @@ def ask_for_state():
     cfg = config.FlowConfig().config
     cfg["camera safety"]["received_count"] = 0
     cfg["camera safety"]["valid_data"] = False
+
 
     client = connect_to_broker(cfg)
     subscribe_to_get_state(client, cfg)

@@ -5,6 +5,7 @@ import cv2 as cv
 import paho.mqtt.client as paho
 import time
 import baseconfig as config
+import shutil
 
 
 def connect_to_broker(cfg):
@@ -17,6 +18,12 @@ def connect_to_broker(cfg):
 
 def take_snapshot(image_path):
     print("taking picture")
+    cfg = config.FlowConfig().config
+    no_image = cfg["camera safety"]["no_image"]
+    to_path = cfg["camera safety"]["in_picture"]
+    shutil.copyfile(no_image, to_path)
+    to_path = cfg["camera safety"]["out_picture"]
+    shutil.copyfile(no_image, to_path)
     vid = cv.VideoCapture(0)
     ret, frame = vid.read()
     if ret:

@@ -4,7 +4,7 @@ from collections import OrderedDict
 class BaseConfig(object):
     _base_config = OrderedDict({
         "version": {
-            "date": "2024.8.2.02"
+            "date": "2024.8.5.02"
         },
         "html":{
             "path":"/var/www/html/cds"
@@ -57,6 +57,7 @@ class BaseConfig(object):
             "parked pos":(334, 260),
             "in_picture": "./base_images/scope_view.jpg",
             "out_picture": "./base_images/receive_view.jpg",
+            "no_image":"./base_images/no_image.jpg",
             "valid_data": False,
             "received_count": 0
 

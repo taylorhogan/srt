@@ -86,10 +86,13 @@ def status_cmd(words, index, m, account):
     print ("asking for state")
     wait_for_picture_received()
     print ("received")
-    is_closed, is_open, is_parked = vision_safety.analyse_safety(config["camera safety"]["out_picture"])
+    is_closed, is_open, is_parked, mod_date = vision_safety.analyse_safety(config["camera safety"]["out_picture"])
     reply = "Roof Closed: " + str(is_closed) + "\n"
     reply += "Roof Open: " + str(is_open) + "\n"
     reply += "Scope Parked:" + str(is_parked) + "\n"
+    o_date = cfg["camera safety"]["date_state"]
+    reply += "Original Date:" + o_date + "\n"
+    reply += "Copied Date:" + mod_date + "\n"
     post_social_message(reply, config["camera safety"]["out_picture"])
 
 
