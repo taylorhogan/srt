@@ -1,18 +1,11 @@
 
 import http.client
+import requests
 
+url = 'http://localhost:32000/Server/Start'
+response = requests.put(url)
+print (response)
 
-conn = http.client.HTTPSConnection('http://localhost:32000')
-conn.request('PUT', '/')
-
-resp = conn.getresponse()
-content = resp.read()
-
-conn.close()
-
-text = content.decode('utf-8')
-
-print(text)
 
 
 # curl -v -XPUT localhost:32000/Server/Start
