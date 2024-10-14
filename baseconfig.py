@@ -4,7 +4,7 @@ from collections import OrderedDict
 class BaseConfig(object):
     _base_config = OrderedDict({
         "version": {
-            "date": "2024.8.5.02"
+            "date": "2024.10.14.01"
         },
         "html":{
             "path":"/var/www/html/cds"
