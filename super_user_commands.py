@@ -21,17 +21,22 @@ async def make_discovery_map():
     for dev in devices.values():
         await dev.update()
         print(dev.host + " " + dev.alias)
-        map_from_name_to_ip.update({dev.alias: dev.host})
+        map_from_name_to_ip.update({dev.alias: dev})
     _super_user_config["name_map"] = map_from_name_to_ip
+
 
 
 def kasa_switch_command(device_name, on_off):
     if not _super_user_config.get("name_map"):
         asyncio.run(make_discovery_map())
-    host = _super_user_config["name_map"][device_name]
-    if host is not None:
-        string = "kasa --host " + host + " " + on_off
-        os.system(string)
+    dev = _super_user_config["name_map"][device_name]
+    if dev is not None:
+        string = "kasa --host " + dev.host + " " + on_off
+        #os.system(string)
+        if on_off == "on":
+            dev.turn_on()
+        else:
+            dev.turn_off()
 
 
 def kasa_lights_on():
@@ -103,3 +108,12 @@ def turn_inside_light(onoff):
     if host != None:
         string = "kasa --host " + host + " " + onoff
         os.system(string)
+
+async def test():
+    dev = await Discover.discover_single("192.168.86.20")
+    await dev.turn_on()
+    await dev.update()
+
+
+if __name__ == "__main__":
+    asyncio.run(test())
