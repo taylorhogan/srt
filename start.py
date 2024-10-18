@@ -52,7 +52,7 @@ async def make_discovery_map():
 
 if __name__ == "__main__":
     print ("Start of start")
-    social_server.post_social_message("Starting imaging run of" + sys.argv[1])
+    # social_server.post_social_message("Starting imaging run of" + sys.argv[1])
     asyncio.run(make_discovery_map())
     asyncio.run(doit())
     print ("End of start")
