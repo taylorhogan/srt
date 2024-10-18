@@ -1,7 +1,8 @@
 import asyncio
 import time
+import sys
+import social_server
 from collections import OrderedDict
-
 from kasa import Discover
 
 _super_user_config = OrderedDict(
@@ -51,7 +52,7 @@ async def make_discovery_map():
 
 if __name__ == "__main__":
     print ("Start of start")
+    social_server.post_social_message("Starting imaging run of" + sys.argv[1])
     asyncio.run(make_discovery_map())
     asyncio.run(doit())
-    time.sleep (30)
     print ("End of start")
