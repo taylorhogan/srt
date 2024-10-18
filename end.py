@@ -1,4 +1,5 @@
 import asyncio
+import time
 from collections import OrderedDict
 
 from kasa import Discover
@@ -41,3 +42,4 @@ async def make_discovery_map():
 if __name__ == "__main__":
     asyncio.run(make_discovery_map())
     asyncio.run(doit())
+    time.sleep(30)
