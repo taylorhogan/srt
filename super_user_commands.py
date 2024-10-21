@@ -91,7 +91,7 @@ _super_user_commands = {
 def do_super_user_command(words, account):
     config = _super_user_config
     action = _super_user_commands.get(words[1], "no_key")
-    print ("Potential Super User Command " + words + " from " + account)
+    print (str(words))
     if action != "no_key":
         super_users = config["Super Users"]
         if account in super_users:
