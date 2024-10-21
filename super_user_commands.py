@@ -7,7 +7,6 @@ from collections import OrderedDict
 import requests
 from kasa import Discover
 
-import social_server
 
 _super_user_config = OrderedDict(
     {
