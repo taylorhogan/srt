@@ -76,7 +76,9 @@ def shutdown_command():
 
 
 def start_nina():
-    subprocess.Popen[("C:/home/taylorhogan/nina.bat")]
+    print ("Starting Nina")
+    subprocess.Popen[("C:/home/taylorhogan/Documents/tmh/nina.bat")]
+    print ("Done with Nina")
 
 
 _super_user_commands = {
@@ -100,7 +102,7 @@ def do_super_user_command(words, account):
             return True
         else:
             social_server.post_social_message(account + " Is not authorized\n")
-        return False
+            return False
     else:
         return False
 
