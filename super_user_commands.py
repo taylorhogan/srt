@@ -5,7 +5,6 @@ import time
 from collections import OrderedDict
 
 import requests
-import social_server
 from kasa import Discover
 
 
@@ -16,8 +15,7 @@ _super_user_config = OrderedDict(
         },
     })
 
-
-async def make_discovery_map():
+def make_discovery_map():
     print ("make map")
     map_from_name_to_ip = dict()
     devices = await Discover.discover()
@@ -101,7 +99,8 @@ def do_super_user_command(words, account):
             action()
             return True
         else:
-            social_server.post_social_message(account + " Is not authorized\n")
+            #social_server.post_social_message(account + " Is not authorized\n")
+            print ("no auth")
             return False
     else:
         return False
