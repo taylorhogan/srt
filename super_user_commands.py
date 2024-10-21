@@ -1,5 +1,6 @@
 import asyncio
 import os
+import subprocess
 import time
 from collections import OrderedDict
 
@@ -15,6 +16,7 @@ _super_user_config = OrderedDict(
         },
     })
 
+
 async def make_discovery_map():
     map_from_name_to_ip = dict()
     devices = await Discover.discover()
@@ -25,14 +27,13 @@ async def make_discovery_map():
     _super_user_config["name_map"] = map_from_name_to_ip
 
 
-
 def kasa_switch_command(device_name, on_off):
     if not _super_user_config.get("name_map"):
         asyncio.run(make_discovery_map())
     dev = _super_user_config["name_map"][device_name]
     if dev is not None:
         string = "kasa --host " + dev.host + " " + on_off
-        #os.system(string)
+        # os.system(string)
         if on_off == "on":
             dev.turn_on()
         else:
@@ -67,20 +68,23 @@ def toggle_roof_command():
     time.sleep(3)
     r = requests.get('http://192.168.86.41/relay/0?turn=off')
 
+
 def shutdown_command():
     kasa_lights_blink_command()
     kasa_mount_switch("off")
+
+
+def start_nina():
+    subprocess.Popen[("C:/home/taylorhogan/nina.bat")]
+
 
 _super_user_commands = {
 
     "roof!": toggle_roof_command,
     "lights_on!": kasa_lights_on(),
     "lights_off!": kasa_lights_off(),
-    "shutdown!":shutdown_command
+    "nina!": start_nina()
 }
-
-
-
 
 
 def do_super_user_command(words, account):
@@ -98,9 +102,6 @@ def do_super_user_command(words, account):
         return False
 
 
-
-
-
 def turn_inside_light(onoff):
     if not _super_user_config.get("name_map"):
         asyncio.run(make_discovery_map())
@@ -108,12 +109,3 @@ def turn_inside_light(onoff):
     if host != None:
         string = "kasa --host " + host + " " + onoff
         os.system(string)
-
-async def test():
-    dev = await Discover.discover_single("192.168.86.20")
-    await dev.turn_on()
-    await dev.update()
-
-
-if __name__ == "__main__":
-    asyncio.run(test())
