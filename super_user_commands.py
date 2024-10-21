@@ -5,6 +5,7 @@ import time
 from collections import OrderedDict
 
 import requests
+import social_server
 from kasa import Discover
 
 
@@ -17,6 +18,7 @@ _super_user_config = OrderedDict(
 
 
 async def make_discovery_map():
+    print ("make map")
     map_from_name_to_ip = dict()
     devices = await Discover.discover()
     for dev in devices.values():
@@ -89,9 +91,11 @@ _super_user_commands = {
 def do_super_user_command(words, account):
     config = _super_user_config
     action = _super_user_commands.get(words[1], "no_key")
+    print ("Potential Super User Command " + words + " from " + account)
     if action != "no_key":
         super_users = config["Super Users"]
         if account in super_users:
+            print ("Whoot")
             action()
             return True
         else:
