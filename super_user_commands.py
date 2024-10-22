@@ -78,7 +78,7 @@ def shutdown_command():
 
 
 def start_nina():
-    print("Starting Nina")
+    print("Starting Nina1")
     subprocess.run(["C:/home/taylorhogan/Documents/tmh/runnina.bat"])
     print("Done with Nina")
 
