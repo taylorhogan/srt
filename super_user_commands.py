@@ -56,6 +56,7 @@ def kasa_mount_switch(on_off):
 
 
 def kasa_lights_blink_command():
+    print ("kasa lights blick command")
     for idx in range(3):
         kasa_lights_on()
         time.sleep(1)
@@ -64,6 +65,7 @@ def kasa_lights_blink_command():
 
 
 def toggle_roof_command():
+    print ("toggle roof command")
     kasa_lights_blink_command()
     r = requests.get('http://192.168.86.41/relay/0?turn=on')
     time.sleep(3)
@@ -93,7 +95,7 @@ def get_super_user_commands():
 def do_super_user_command(words, account):
     config = _super_user_config
     action = get_super_user_commands().get(words[1], "no_key")
-    print(str(words))
+    print("action is " + str (action) + " word " + str(words[1]))
     if action != "no_key":
         super_users = config["Super Users"]
         if account in super_users:
