@@ -79,7 +79,7 @@ def shutdown_command():
 
 def start_nina():
     print("Starting Nina")
-    subprocess.Popen[("C:/home/taylorhogan/Documents/tmh/nina.bat")]
+    subprocess.Popen[("C:/home/taylorhogan/Documents/tmh/runnina.bat")]
     print("Done with Nina")
 
 
