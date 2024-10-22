@@ -86,14 +86,16 @@ def start_nina():
 def get_super_user_commands():
     return {
         "roof!": toggle_roof_command,
-        "lights_on!": kasa_lights_on(),
-        "lights_off!": kasa_lights_off(),
-        "nina!": start_nina()
+        "lights_on!": kasa_lights_on,
+        "lights_off!": kasa_lights_off,
+        "nina!": start_nina
     }
 
 
 def do_super_user_command(words, account):
     config = _super_user_config
+    su_commands = get_super_user_commands()
+    print (str(su_commands))
     action = get_super_user_commands().get(words[1], "no_key")
     print("action is " + str (action) + " word " + str(words[1]))
     if action != "no_key":
