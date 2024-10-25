@@ -7,6 +7,7 @@ from mastodon import Mastodon, StreamListener
 
 import baseconfig as cfg
 import db as cdb
+import inside_camera_server
 import request_observatory_state
 import sortdsoobjects
 import sun as s
@@ -81,19 +82,24 @@ def status_cmd(words, index, m, account):
     reply += "Observatory Status: " + config["Globals"]["Observatory State"]
     post_social_message(reply)
     print ("A")
-    request_observatory_state.ask_for_state()
-    print ("B")
-    print ("asking for state")
-    wait_for_picture_received()
-    print ("received")
-    is_closed, is_open, is_parked, mod_date = vision_safety.analyse_safety(config["camera safety"]["out_picture"])
-    reply = "Roof Closed: " + str(is_closed) + "\n"
-    reply += "Roof Open: " + str(is_open) + "\n"
-    reply += "Scope Parked:" + str(is_parked) + "\n"
-    o_date = cfg["camera safety"]["date_state"]
-    reply += "Original Date:" + o_date + "\n"
-    reply += "Copied Date:" + mod_date + "\n"
-    post_social_message(reply, config["camera safety"]["out_picture"])
+    image_path = cfg["camera safety"]["in_picture"]
+    if inside_camera_server.take_snapshot():
+
+        print ("B")
+        print ("asking for state")
+
+        print ("received")
+        is_closed, is_open, is_parked, mod_date = vision_safety.analyse_safety(config["camera safety"]["out_picture"])
+        reply = "Roof Closed: " + str(is_closed) + "\n"
+        reply += "Roof Open: " + str(is_open) + "\n"
+        reply += "Scope Parked:" + str(is_parked) + "\n"
+        o_date = cfg["camera safety"]["date_state"]
+        reply += "Original Date:" + o_date + "\n"
+        reply += "Copied Date:" + mod_date + "\n"
+        post_social_message(reply, config["camera safety"]["out_picture"])
+    else:
+        post_social_message("Problem taking picture")
+
 
 
 

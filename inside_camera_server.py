@@ -16,21 +16,21 @@ def connect_to_broker(cfg):
     return client
 
 
-def take_snapshot(image_path):
+def take_snapshot():
     print("taking picture")
     cfg = config.FlowConfig().config
     no_image = cfg["camera safety"]["no_image"]
-    to_path = cfg["camera safety"]["in_picture"]
-    shutil.copyfile(no_image, to_path)
     to_path = cfg["camera safety"]["out_picture"]
     shutil.copyfile(no_image, to_path)
     vid = cv.VideoCapture(0)
     ret, frame = vid.read()
     if ret:
         img_src = frame
-        cv.imwrite(image_path, img_src)
+        cv.imwrite(to_path, img_src)
+        return True
     else:
         print("no Image")
+        return False
 
 
 def send_picture_and_status_to_broker(client, userdata, msg):
