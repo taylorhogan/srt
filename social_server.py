@@ -69,11 +69,6 @@ def weather_cmd(words, index, m, account):
     post_social_message(reply)
 
 
-def wait_for_picture_received():
-    while True:
-        time.sleep(2)
-        if config["camera safety"]["valid_data"] == True:
-            break
 
 def status_cmd(words, index, m, account):
     # Observatory State
@@ -88,12 +83,12 @@ def status_cmd(words, index, m, account):
         print ("asking for state")
 
         print ("received")
-        is_closed, is_open, is_parked, mod_date = vision_safety.analyse_safety(config["camera safety"]["out_picture"])
+        is_closed, is_open, is_parked, mod_date = vision_safety.analyse_safety(config["camera safety"]["scope_view"])
         reply = "Roof Closed: " + str(is_closed) + "\n"
         reply += "Roof Open: " + str(is_open) + "\n"
         reply += "Scope Parked:" + str(is_parked) + "\n"
         reply += "Copied Date:" + mod_date + "\n"
-        post_social_message(reply, config["camera safety"]["out_picture"])
+        post_social_message(reply, config["camera safety"]["scope_view"])
     else:
         post_social_message("Problem taking picture")
 

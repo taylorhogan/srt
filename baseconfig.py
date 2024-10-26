@@ -55,8 +55,8 @@ class BaseConfig(object):
             "open pos":(1,1),
             "closed pos":(576, 138),
             "parked pos":(334, 260),
-            "in_picture": "./base_images/scope_view.jpg",
-            "out_picture": "./base_images/receive_view.jpg",
+            "scope_view": "./base_images/scope_view.jpg",
+            "processed_view": "./base_images/processed.jpg",
             "no_image":"./base_images/no_image.jpg",
             "valid_data": False,
             "received_count": 0

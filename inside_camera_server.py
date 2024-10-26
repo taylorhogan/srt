@@ -20,7 +20,7 @@ def take_snapshot():
     print("taking picture")
     cfg = config.FlowConfig().config
     no_image = cfg["camera safety"]["no_image"]
-    to_path = cfg["camera safety"]["out_picture"]
+    to_path = cfg["camera safety"]["scope_view"]
     shutil.copyfile(no_image, to_path)
     vid = cv.VideoCapture(0)
     ret, frame = vid.read()

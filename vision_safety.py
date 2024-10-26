@@ -4,18 +4,9 @@ import time
 import math
 import cv2 as cv
 import baseconfig as config
+import inside_camera_server
 import matplotlib.pyplot as plt
 
-
-def take_snapshot():
-    print ("taking picture")
-    vid = cv.VideoCapture(0)
-    ret, frame = vid.read()
-    if ret:
-        img_src = frame
-        cv.imwrite("base_images/scope_view.jpg", img_src)
-    else:
-        print("no Image")
 
 
 def find_template(image, template_image_path):
@@ -79,8 +70,23 @@ def analyse_safety(image_path):
     plt.imshow(img_grayscale_copy)
     plt.title('roof (x,y) parked (x,y)' + str(c_roof) + " " + str(c_scope)), plt.xticks([]), plt.yticks([])
 
-    os.remove ('./base_images/position.png')
-    plt.savefig('./base_images/position.png')
+    plot_path = './base_images/position.png'
+    if os.path.exists(plot_path):
+        os.remove (plot_path)
+    plt.savefig(plot_path)
+
     mod_date = time.ctime(os.path.getmtime(image_path))
     return is_closed, is_open, is_parked, mod_date
+
+
+if __name__ == '__main__':
+    if inside_camera_server.take_snapshot():
+        cfg = config.FlowConfig().config
+        is_closed, is_open, is_parked, mod_date = analyse_safety(cfg["camera safety"]["scope_view"])
+        reply = "Roof Closed: " + str(is_closed) + "\n"
+        reply += "Roof Open: " + str(is_open) + "\n"
+        reply += "Scope Parked:" + str(is_parked) + "\n"
+        reply += "Copied Date:" + mod_date + "\n"
+        print (reply)
+
 
