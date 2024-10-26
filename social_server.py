@@ -82,7 +82,6 @@ def status_cmd(words, index, m, account):
     reply += "Observatory Status: " + config["Globals"]["Observatory State"]
     post_social_message(reply)
     print ("A")
-    image_path = cfg["camera safety"]["in_picture"]
     if inside_camera_server.take_snapshot():
 
         print ("B")
@@ -93,8 +92,6 @@ def status_cmd(words, index, m, account):
         reply = "Roof Closed: " + str(is_closed) + "\n"
         reply += "Roof Open: " + str(is_open) + "\n"
         reply += "Scope Parked:" + str(is_parked) + "\n"
-        o_date = cfg["camera safety"]["date_state"]
-        reply += "Original Date:" + o_date + "\n"
         reply += "Copied Date:" + mod_date + "\n"
         post_social_message(reply, config["camera safety"]["out_picture"])
     else:

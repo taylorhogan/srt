@@ -64,9 +64,14 @@ def analyse_safety(image_path):
     c_scope, r_scope = find_template(img_rgb, cfg['camera safety']['parked template'])
     roof_closed_error = math.dist (c_roof, cfg["camera safety"]["closed pos"])
     parked_error = math.dist (c_scope, cfg["camera safety"]["parked pos"])
+    print ("roof " + str(c_roof))
+    print ("scope" + str(c_scope))
+    print (str (roof_closed_error))
+    print (str(parked_error))
+
     is_closed = abs(roof_closed_error) < 2
     is_parked = abs (parked_error) < 2
-    is_open = not is_closed
+    is_open = False
 
 
     cv.circle(img_grayscale_copy, c_roof, r_roof, (255, 0, 0), 2)
@@ -74,7 +79,8 @@ def analyse_safety(image_path):
     plt.imshow(img_grayscale_copy)
     plt.title('roof (x,y) parked (x,y)' + str(c_roof) + " " + str(c_scope)), plt.xticks([]), plt.yticks([])
 
-    plt.savefig('./scratch/position.png')
+    os.remove ('./base_images/position.png')
+    plt.savefig('./base_images/position.png')
     mod_date = time.ctime(os.path.getmtime(image_path))
     return is_closed, is_open, is_parked, mod_date
 
