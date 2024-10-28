@@ -28,7 +28,10 @@ def take_snapshot(test_path=None):
     no_image = cfg["camera safety"]["no_image"]
     to_path = cfg["camera safety"]["scope_view"]
     shutil.copyfile(no_image, to_path)
+
     vid = cv.VideoCapture(0)
+    vid.set(cv.CAP_PROP_FRAME_WIDTH, 1920)
+    vid.set(cv.CAP_PROP_FRAME_HEIGHT, 1080)
     ret, frame = vid.read()
     if ret:
         img_src = frame
