@@ -14,7 +14,7 @@ def find_template(image, template_image_path):
     template = cv.imread(template_image_path)
     assert template is not None, "file could not be read, check with os.path.exists()"
     d, w, h = template.shape[::-1]
-
+    print (template_image_path + " is " + str(w)  + " wide and " + str(h) + " high " + str(d) + " depth ")
 
     method = 'cv.TM_SQDIFF_NORMED'
 
