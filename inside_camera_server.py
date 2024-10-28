@@ -16,9 +16,15 @@ def connect_to_broker(cfg):
     return client
 
 
-def take_snapshot():
-    print("taking picture")
+def take_snapshot(test_path=None):
     cfg = config.FlowConfig().config
+    if test_path is not None:
+        to_path = cfg["camera safety"]["scope_view"]
+        shutil.copyfile(test_path, to_path)
+        return True
+
+    print("taking picture")
+
     no_image = cfg["camera safety"]["no_image"]
     to_path = cfg["camera safety"]["scope_view"]
     shutil.copyfile(no_image, to_path)
@@ -44,7 +50,6 @@ def send_picture_and_status_to_broker(client, userdata, msg):
         filecontent = file.read()
     print("3")
     byteArr = bytearray(filecontent)
-
 
     picture_topic = cfg["mqtt"]["ota_picture"]
     result = client.publish(picture_topic, byteArr, 0)

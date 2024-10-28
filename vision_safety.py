@@ -54,15 +54,18 @@ def analyse_safety(image_path):
     c_roof, r_roof = find_template(img_rgb, cfg['camera safety']['roof template'])
     c_scope, r_scope = find_template(img_rgb, cfg['camera safety']['parked template'])
     roof_closed_error = math.dist (c_roof, cfg["camera safety"]["closed pos"])
+    roof_open_error = math.dist (c_roof, cfg["camera safety"]["open pos"])
     parked_error = math.dist (c_scope, cfg["camera safety"]["parked pos"])
     print ("roof " + str(c_roof))
-    print ("scope" + str(c_scope))
-    print (str (roof_closed_error))
-    print (str(parked_error))
+    print ("scope " + str(c_scope))
+    print ("closed error " + str (roof_closed_error))
+    print ("open error " + str (roof_open_error))
+    print ("parked error " + str(parked_error))
 
-    is_closed = abs(roof_closed_error) < 2
-    is_parked = abs (parked_error) < 2
-    is_open = False
+    delta = min(width, height) * 0.1
+    is_closed = abs(roof_closed_error) < delta
+    is_parked = abs (parked_error) < delta
+    is_open =  abs (roof_open_error) < delta
 
 
     cv.circle(img_grayscale_copy, c_roof, r_roof, (255, 0, 0), 2)
@@ -73,6 +76,7 @@ def analyse_safety(image_path):
     plot_path = './base_images/position.png'
     if os.path.exists(plot_path):
         os.remove (plot_path)
+
     plt.savefig(plot_path)
 
     mod_date = time.ctime(os.path.getmtime(image_path))
@@ -80,7 +84,7 @@ def analyse_safety(image_path):
 
 
 if __name__ == '__main__':
-    if inside_camera_server.take_snapshot():
+    if inside_camera_server.take_snapshot("./base_images/inside.jpg"):
         cfg = config.FlowConfig().config
         is_closed, is_open, is_parked, mod_date = analyse_safety(cfg["camera safety"]["scope_view"])
         reply = "Roof Closed: " + str(is_closed) + "\n"
