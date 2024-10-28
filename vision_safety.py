@@ -2,6 +2,7 @@
 import os
 import time
 import math
+import sys
 import cv2 as cv
 import baseconfig as config
 import inside_camera_server
@@ -84,7 +85,12 @@ def analyse_safety(image_path):
 
 
 if __name__ == '__main__':
-    if inside_camera_server.take_snapshot("./base_images/inside.jpg"):
+    if len(sys.argv) == 1:
+        status = inside_camera_server.take_snapshot()
+    else:
+        status = inside_camera_server.take_snapshot("./base_images/inside.jpg")
+
+    if status:
         cfg = config.FlowConfig().config
         is_closed, is_open, is_parked, mod_date = analyse_safety(cfg["camera safety"]["scope_view"])
         reply = "Roof Closed: " + str(is_closed) + "\n"

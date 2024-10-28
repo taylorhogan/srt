@@ -54,7 +54,7 @@ class BaseConfig(object):
             "parked template": "./base_images/parked_marker.jpg",
             "open pos":(1,1),
             "closed pos":(576, 138),
-            "parked pos":(334, 260),
+            "parked pos":(929, 454),
             "scope_view": "./base_images/scope_view.jpg",
             "processed_view": "./base_images/processed.jpg",
             "no_image":"./base_images/no_image.jpg",
