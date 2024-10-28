@@ -18,6 +18,10 @@ def find_template(image, template_image_path):
 
     method = 'cv.TM_SQDIFF_NORMED'
 
+    methods = ['TM_CCOEFF', 'TM_CCOEFF_NORMED', 'TM_CCORR',
+               'TM_CCORR_NORMED', 'TM_SQDIFF', 'TM_SQDIFF_NORMED']
+
+
     local_img = image.copy()
     method = eval(method)
 
@@ -46,11 +50,11 @@ def analyse_safety(image_path):
     print("read snapshot")
 
     assert img_rgb is not None, "file could not be read, check with os.path.exists()"
-    img_grayscale = cv.imread(image_path)
-    height, width = img_grayscale.shape[:2]
+
+    height, width = img_rgb.shape[:2]
 
     print(width, height)
-    img_grayscale_copy = img_grayscale.copy()
+
     img_rgb_copy = img_rgb.copy()
     c_roof, r_roof = find_template(img_rgb, cfg['camera safety']['roof template'])
     c_scope, r_scope = find_template(img_rgb, cfg['camera safety']['parked template'])
@@ -69,9 +73,9 @@ def analyse_safety(image_path):
     is_open =  abs (roof_open_error) < delta
 
 
-    cv.circle(img_grayscale_copy, c_roof, r_roof, (255, 0, 0), 2)
-    cv.circle(img_grayscale_copy, c_scope, r_scope, (0, 0, 255), 2)
-    plt.imshow(img_grayscale_copy)
+    cv.circle(img_rgb_copy, c_roof, r_roof, (255, 0, 0), 2)
+    cv.circle(img_rgb_copy, c_scope, r_scope, (0, 0, 255), 2)
+    plt.imshow(img_rgb_copy)
     plt.title('roof (x,y) parked (x,y)' + str(c_roof) + " " + str(c_scope)), plt.xticks([]), plt.yticks([])
 
     plot_path = './base_images/position.png'
