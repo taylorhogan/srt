@@ -51,7 +51,7 @@ class BaseConfig(object):
 
         "camera safety":{
             "roof template": "./base_images/roof_marker.jpg",
-            "parked template": "./base_images/parked_marker.jpg",
+            "parked template": "./base_images/parked_marker.png",
             "open pos":(1,1),
             "closed pos":(576, 138),
             "parked pos":(929, 454),
