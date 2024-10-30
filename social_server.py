@@ -83,7 +83,7 @@ def status_cmd(words, index, m, account):
         print ("asking for state")
 
         print ("received")
-        is_closed, is_open, is_parked, mod_date = vision_safety.analyse_safety(config["camera safety"]["scope_view"])
+        is_closed, is_parked, is_open, mod_date = vision_safety.analyse_safety(config["camera safety"]["scope_view"])
         reply = "Roof Closed: " + str(is_closed) + "\n"
         reply += "Roof Open: " + str(is_open) + "\n"
         reply += "Scope Parked:" + str(is_parked) + "\n"
