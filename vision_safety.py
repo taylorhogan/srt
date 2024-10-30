@@ -11,10 +11,10 @@ import matplotlib.pyplot as plt
 cfg = config.FlowConfig().config
 
 def find_template(image, template_image_path):
-    template = cv.imread(template_image_path)
+    template = cv.imread(template_image_path,  cv.IMREAD_GRAYSCALE)
     assert template is not None, "file could not be read, check with os.path.exists()"
-    d, w, h = template.shape[::-1]
-
+    #d, w, h = template.shape[::-1]
+    w, h = template.shape[::-1]
 
     method = 'cv.TM_SQDIFF_NORMED'
 
@@ -68,7 +68,7 @@ def analyse_safety(image_path):
 
     print("b")
 
-    img_rgb = cv.imread(image_path)
+    img_rgb = cv.imread(image_path, cv.IMREAD_GRAYSCALE)
     print("read snapshot")
 
     assert img_rgb is not None, "file could not be read, check with os.path.exists()"
@@ -130,7 +130,8 @@ def analyse_safety(image_path):
 
 if __name__ == '__main__':
     if len(sys.argv) == 1:
-        status = inside_camera_server.take_snapshot()
+        #status = inside_camera_server.take_snapshot()
+        status = inside_camera_server.take_snapshot("./base_images/inside.jpg")
     else:
         status = inside_camera_server.take_snapshot("./base_images/inside.jpg")
 
