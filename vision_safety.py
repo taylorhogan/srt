@@ -130,8 +130,8 @@ def analyse_safety(image_path):
 
 if __name__ == '__main__':
     if len(sys.argv) == 1:
-        #status = inside_camera_server.take_snapshot()
-        status = inside_camera_server.take_snapshot("./base_images/inside.jpg")
+        status = inside_camera_server.take_snapshot()
+        #status = inside_camera_server.take_snapshot("./base_images/inside.jpg")
     else:
         status = inside_camera_server.take_snapshot("./base_images/inside.jpg")
 
