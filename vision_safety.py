@@ -16,7 +16,7 @@ def find_template(image, template_image_path):
     d, w, h = template.shape[::-1]
     print (template_image_path + " is " + str(w)  + " wide and " + str(h) + " high " + str(d) + " depth ")
 
-    method = 'cv.TM_SQDIFF_NORMED'
+    method = 'cv.TM_CCOEFF_NORMED'
 
     methods = ['TM_CCOEFF', 'TM_CCOEFF_NORMED', 'TM_CCORR',
                'TM_CCORR_NORMED', 'TM_SQDIFF', 'TM_SQDIFF_NORMED']
@@ -33,7 +33,7 @@ def find_template(image, template_image_path):
 
     bottom_right = (top_left[0] + w, top_left[1] + h)
 
-    r = int(max(w, h) / 2)
+    r = int(min(w, h) / 2)
 
     c = (int(top_left[0] + w/2), int(top_left[1]+h/2))
 
@@ -48,6 +48,20 @@ def analyse_safety(image_path):
 
     img_rgb = cv.imread(image_path)
     print("read snapshot")
+
+    alpha = 1.5  # Contrast control
+    beta = 1 # Brightness control
+
+    # call convertScaleAbs function
+    adjusted = cv.convertScaleAbs(img_rgb, alpha=alpha, beta=beta)
+    cv.imshow('Original', img_rgb)
+    cv.imshow('Increased Contrast', adjusted)
+
+    cv.waitKey(0)
+    cv.destroyAllWindows()
+
+
+
 
     assert img_rgb is not None, "file could not be read, check with os.path.exists()"
 
