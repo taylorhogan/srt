@@ -114,7 +114,7 @@ def analyse_safety(image_path):
     print("solution found at " + str(alpha))
     cv.circle(img_rgb_copy, c_roof, r_roof, (255, 0, 0), 2)
     cv.circle(img_rgb_copy, c_scope, r_scope, (0, 0, 255), 2)
-    plt.imshow(img_rgb_copy)
+    plt.imshow(img_rgb_copy,cmap = 'gray')
 
     plt.title('roof (x,y) parked (x,y)' + str(c_roof) + " " + str(c_scope)), plt.xticks([]), plt.yticks([])
 
