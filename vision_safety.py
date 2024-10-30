@@ -8,6 +8,7 @@ import baseconfig as config
 import inside_camera_server
 import matplotlib.pyplot as plt
 
+cfg = config.FlowConfig().config
 
 def find_template(image, template_image_path):
     template = cv.imread(template_image_path)
@@ -39,6 +40,7 @@ def find_template(image, template_image_path):
 
 
 def fitness(image, delta):
+
     c_roof, r_roof = find_template(image, cfg['camera safety']['roof template'])
     c_scope, r_scope = find_template(image, cfg['camera safety']['parked template'])
 
@@ -63,7 +65,7 @@ def fitness(image, delta):
 
 def analyse_safety(image_path):
     print("a")
-    cfg = config.FlowConfig().config
+
     print("b")
 
     img_rgb = cv.imread(image_path)
@@ -133,7 +135,7 @@ if __name__ == '__main__':
         status = inside_camera_server.take_snapshot("./base_images/inside.jpg")
 
     if status:
-        cfg = config.FlowConfig().config
+
         is_closed, is_parked, is_open, mod_date = analyse_safety(cfg["camera safety"]["scope_view"])
         reply = "Roof Closed: " + str(is_closed) + "\n"
         reply += "Roof Open: " + str(is_open) + "\n"
