@@ -162,6 +162,9 @@ def get_mastodon_instance():
 
 def post_social_message(message, image=None):
     mastodon = config["mastodon"]["instance"]
+    if mastodon is None:
+        mastodon = get_mastodon_instance()
+
     if image is None:
         mastodon.status_post(message)
     else:
