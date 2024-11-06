@@ -4,6 +4,7 @@ import sys
 import social_server
 from collections import OrderedDict
 from kasa import Discover
+import baseconfig as cfg
 
 _super_user_config = OrderedDict(
     {
@@ -51,8 +52,11 @@ async def make_discovery_map():
 
 
 if __name__ == "__main__":
-    print ("Start of start")
-    # social_server.post_social_message("Starting imaging run of" + sys.argv[1])
+    print("Start of start")
+    config = cfg.FlowConfig().config
+    mastodon = config["mastodon"]["instance"]
+    if mastodon is not None:
+        social_server.post_social_message("Starting imaging run of" + sys.argv[1])
     asyncio.run(make_discovery_map())
     asyncio.run(doit())
-    print ("End of start")
+    print("End of start")
