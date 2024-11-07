@@ -5,6 +5,8 @@ import inside_camera_server
 import vision_safety
 import social_server
 import baseconfig as cfg
+import sys
+import os
 
 
 from kasa import Discover
@@ -45,6 +47,8 @@ async def make_discovery_map():
 
 
 if __name__ == "__main__":
+    print("dir is " + str(sys.argv[1]))
+    os.chdir(sys.argv[1])
     config = cfg.FlowConfig().config
     print ("Start of end")
     inside_camera_server.take_snapshot()
