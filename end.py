@@ -8,7 +8,6 @@ import baseconfig as cfg
 import sys
 import os
 
-
 from kasa import Discover
 
 _super_user_config = OrderedDict(
@@ -46,11 +45,8 @@ async def make_discovery_map():
     _super_user_config["name_map"] = map_from_name_to_ip
 
 
-if __name__ == "__main__":
-    print("dir is " + str(sys.argv[1]))
-    os.chdir(sys.argv[1])
+def determine_roof_state():
     config = cfg.FlowConfig().config
-    print ("Start of end")
     inside_camera_server.take_snapshot()
     is_closed, is_parked, is_open, mod_date = vision_safety.analyse_safety(config["camera safety"]["scope_view"])
     reply = "Roof Closed: " + str(is_closed) + "\n"
@@ -59,6 +55,11 @@ if __name__ == "__main__":
     reply += "Copied Date:" + mod_date + "\n"
     social_server.post_social_message(reply, config["camera safety"]["scope_view"])
 
+
+if __name__ == "__main__":
+    print("dir is " + str(sys.argv[1]))
+    os.chdir(sys.argv[1])
     asyncio.run(make_discovery_map())
     asyncio.run(doit())
+    determine_roof_state()
     print("End of end")
