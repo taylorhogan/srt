@@ -7,6 +7,8 @@ import social_server
 import baseconfig as cfg
 import sys
 import os
+import logging
+
 
 from kasa import Discover
 
@@ -71,12 +73,20 @@ def determine_roof_state():
 
 if __name__ == "__main__":
 
-    print("dir is " + str(sys.argv[1]))
-    os.chdir(sys.argv[1])
+    logger = logging.getLogger(__name__)
+    logging.basicConfig(filename='iris.log', level=logging.INFO)
+    logger.info('Started')
+    try:
 
-    asyncio.run(make_discovery_map())
-    asyncio.run(lights_on_mount_off())
-    determine_roof_state()
-    asyncio.run(lights_off())
+        print("dir is " + str(sys.argv[1]))
+        os.chdir(sys.argv[1])
+
+        asyncio.run(make_discovery_map())
+        asyncio.run(lights_on_mount_off())
+        determine_roof_state()
+        asyncio.run(lights_off())
+    except:
+        logger.info('Problem')
+        logger.exception("Exception")
 
     print("End of end")
