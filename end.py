@@ -18,7 +18,7 @@ _super_user_config = OrderedDict(
     })
 
 
-async def doit():
+async def lights_on_mount_off():
     ip = _super_user_config["name_map"]["Telescope mount"]
     dev = await Discover.discover_single(ip)
     await dev.turn_off()
@@ -32,6 +32,19 @@ async def doit():
     ip = _super_user_config["name_map"]["Iris inside light"]
     dev = await Discover.discover_single(ip)
     await dev.turn_on()
+    await dev.update()
+
+
+async def lights_off():
+
+    ip = _super_user_config["name_map"]["Iris back lights"]
+    dev = await Discover.discover_single(ip)
+    await dev.turn_off()
+    await dev.update()
+
+    ip = _super_user_config["name_map"]["Iris inside light"]
+    dev = await Discover.discover_single(ip)
+    await dev.turn_off()
     await dev.update()
 
 
@@ -57,9 +70,13 @@ def determine_roof_state():
 
 
 if __name__ == "__main__":
+
     print("dir is " + str(sys.argv[1]))
     os.chdir(sys.argv[1])
+
     asyncio.run(make_discovery_map())
-    asyncio.run(doit())
+    asyncio.run(lights_on_mount_off())
     determine_roof_state()
+    asyncio.run(lights_off())
+
     print("End of end")
