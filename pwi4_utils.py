@@ -1,17 +1,47 @@
 from pwi4_client import PWI4
+import baseconfig as cfg
+import logging
 
 
-print("Connecting to PWI4...")
+def get_is_parked ():
+    logger = logging.getLogger(__name__)
+    logging.basicConfig(filename='iris.log', level=logging.INFO)
+    try:
+        config = cfg.FlowConfig().config
 
-pwi4 = PWI4()
+        pwi4 = PWI4()
 
-s = pwi4.status()
-print("Mount connected:", s.mount.is_connected)
-print (s)
-if not s.mount.is_connected:
-    print("Connecting to mount...")
-    s = pwi4.mount_connect()
-    print("Mount connected:", s.mount.is_connected)
+        s = pwi4.status()
+        print("Mount connected:", s.mount.is_connected)
+        print (s)
+        if not s.mount.is_connected:
+            print("Connecting to mount...")
+            s = pwi4.mount_connect()
+            print("Mount connected:", s.mount.is_connected)
+            if not s.mount.is_connected:
+                return False
 
-print("  RA/Dec: %.4f, %.4f" % (s.mount.ra_j2000_hours, s.mount.dec_j2000_degs))
+            az = s.mount.altitude_deg
+            alt = s.mount.azimuth_deg
+            moving = s.mount.is_slewing or s.mount.is_tracking
+            if moving:
+                return False
+            park_altitude = config["camera safety"]["parked altitude deg"]
+            parked_azimuth=config["camera safety"]["parked azimuth deg"]
+            delta_altitude = abs(park_altitude-alt)
+            delta_azimuth = abs(parked_azimuth-az)
+            print ("Delta al", delta_altitude)
+            print ("Delta az", delta_azimuth)
+            if  delta_altitude < 1 and delta_azimuth < 1:
+                return True
+            else:
+                return False
+
+
+    except:
+        logger.info('Problem')
+        logger.exception("Exception")
+        return False
+
+
 

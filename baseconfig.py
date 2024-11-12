@@ -50,6 +50,8 @@ class BaseConfig(object):
         },
 
         "camera safety":{
+            "parked azimuth deg": 56,
+            "parked altitude deg": 5,
             "roof template": "./base_images/roof_marker.jpg",
             "parked template": "./base_images/parked_marker.png",
             "open pos":(1,1),
@@ -60,6 +62,7 @@ class BaseConfig(object):
             "no_image":"./base_images/no_image.jpg",
             "valid_data": False,
             "received_count": 0
+
 
 
             },

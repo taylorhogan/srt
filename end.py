@@ -8,6 +8,7 @@ import baseconfig as cfg
 import sys
 import os
 import logging
+import pwi4_utils
 
 
 from kasa import Discover
@@ -64,11 +65,19 @@ def determine_roof_state():
     config = cfg.FlowConfig().config
     inside_camera_server.take_snapshot()
     is_closed, is_parked, is_open, mod_date = vision_safety.analyse_safety(config["camera safety"]["scope_view"])
-    reply = "Roof Closed: " + str(is_closed) + "\n"
-    reply += "Roof Open: " + str(is_open) + "\n"
-    reply += "Scope Parked:" + str(is_parked) + "\n"
+    reply = "Roof Closed Visual: " + str(is_closed) + "\n"
+    reply += "Roof Open Visual: " + str(is_open) + "\n"
+    reply += "Scope Parked Visual:" + str(is_parked) + "\n"
     reply += "Copied Date:" + mod_date + "\n"
     social_server.post_social_message(reply, config["camera safety"]["scope_view"])
+
+    parked = pwi4_utils.get_is_parked()
+    if parked:
+        social_server.post_social_message("Iris is parked PWI4")
+    else:
+        social_server.post_social_message("Iris is not parked PWI4")
+
+
 
 
 if __name__ == "__main__":
