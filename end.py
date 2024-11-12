@@ -10,7 +10,6 @@ import os
 import logging
 import pwi4_utils
 
-
 from kasa import Discover
 
 _super_user_config = OrderedDict(
@@ -21,12 +20,14 @@ _super_user_config = OrderedDict(
     })
 
 
-async def lights_on_mount_off():
+async def mount_off():
     ip = _super_user_config["name_map"]["Telescope mount"]
     dev = await Discover.discover_single(ip)
     await dev.turn_off()
     await dev.update()
 
+
+async def lights_on():
     ip = _super_user_config["name_map"]["Iris back lights"]
     dev = await Discover.discover_single(ip)
     await dev.turn_on()
@@ -39,7 +40,6 @@ async def lights_on_mount_off():
 
 
 async def lights_off():
-
     ip = _super_user_config["name_map"]["Iris back lights"]
     dev = await Discover.discover_single(ip)
     await dev.turn_off()
@@ -61,6 +61,8 @@ async def make_discovery_map():
     _super_user_config["name_map"] = map_from_name_to_ip
 
 
+
+
 def determine_roof_state():
     config = cfg.FlowConfig().config
     inside_camera_server.take_snapshot()
@@ -70,12 +72,6 @@ def determine_roof_state():
     reply += "Scope Parked Visual:" + str(is_parked) + "\n"
     reply += "Copied Date:" + mod_date + "\n"
     social_server.post_social_message(reply, config["camera safety"]["scope_view"])
-
-    parked = pwi4_utils.get_is_parked()
-    if parked:
-        social_server.post_social_message("Iris is parked PWI4")
-    else:
-        social_server.post_social_message("Iris is not parked PWI4")
 
 
 
@@ -91,9 +87,16 @@ if __name__ == "__main__":
         os.chdir(sys.argv[1])
 
         asyncio.run(make_discovery_map())
-        asyncio.run(lights_on_mount_off())
+        asyncio.run(lights_on())
         determine_roof_state()
         asyncio.run(lights_off())
+        parked = pwi4_utils.get_is_parked()
+        asyncio.run(mount_off())
+
+        if parked:
+            social_server.post_social_message("Iris is parked PWI4")
+        else:
+            social_server.post_social_message("Iris is not parked PWI4")
     except:
         logger.info('Problem')
         logger.exception("Exception")
