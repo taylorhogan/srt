@@ -20,23 +20,23 @@ def get_is_parked ():
             print("Mount connected:", s.mount.is_connected)
             if not s.mount.is_connected:
                 return False
+
+        print ("Mount is connected")
+        az = s.mount.altitude_deg
+        alt = s.mount.azimuth_deg
+        moving = s.mount.is_slewing or s.mount.is_tracking
+        if moving:
+            return False
+        park_altitude = config["camera safety"]["parked altitude deg"]
+        parked_azimuth=config["camera safety"]["parked azimuth deg"]
+        delta_altitude = abs(park_altitude-alt)
+        delta_azimuth = abs(parked_azimuth-az)
+        print ("Delta al", delta_altitude)
+        print ("Delta az", delta_azimuth)
+        if  delta_altitude < 1 and delta_azimuth < 1:
+            return True
         else:
-            print ("Mount is connected")
-            az = s.mount.altitude_deg
-            alt = s.mount.azimuth_deg
-            moving = s.mount.is_slewing or s.mount.is_tracking
-            if moving:
-                return False
-            park_altitude = config["camera safety"]["parked altitude deg"]
-            parked_azimuth=config["camera safety"]["parked azimuth deg"]
-            delta_altitude = abs(park_altitude-alt)
-            delta_azimuth = abs(parked_azimuth-az)
-            print ("Delta al", delta_altitude)
-            print ("Delta az", delta_azimuth)
-            if  delta_altitude < 1 and delta_azimuth < 1:
-                return True
-            else:
-                return False
+            return False
 
 
     except:
