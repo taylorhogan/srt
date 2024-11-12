@@ -19,10 +19,6 @@ _super_user_config = OrderedDict(
 
 
 
-
-
-
-
 def kasa_lights_on ():
     asyncio.run(end.make_discovery_map())
     asyncio.run(end.lights_on())
@@ -51,12 +47,16 @@ def start_nina():
     print("Done with Nina")
 
 
+def shutdown():
+    pass
+
 def get_super_user_commands():
     return {
         "roof!": toggle_roof_command,
         "lights_on!": kasa_lights_on,
         "lights_off!": kasa_lights_off,
-        "nina!": start_nina
+        "nina!": start_nina,
+        "shutdown!": shutdown
     }
 
 
