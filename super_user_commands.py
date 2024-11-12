@@ -17,38 +17,19 @@ _super_user_config = OrderedDict(
     })
 
 
-async def make_discovery_map():
-    traceback.print_stack()
-    print("make map")
-    map_from_name_to_ip = dict()
-    devices = await Discover.discover()
-    for dev in devices.values():
-        # await dev.update()
-        print(dev.host + " " + dev.alias)
-        map_from_name_to_ip.update({dev.alias: dev})
-    _super_user_config["name_map"] = map_from_name_to_ip
 
 
-def kasa_switch_command(device_name, on_off):
-    if not _super_user_config.get("name_map"):
-        asyncio.run(make_discovery_map())
-    dev = _super_user_config["name_map"][device_name]
-    if dev is not None:
-        string = "kasa --host " + dev.host + " " + on_off
-        # os.system(string)
-        if on_off == "on":
-            dev.turn_on()
-        else:
-            dev.turn_off()
+
+
 
 
 def kasa_lights_on ():
-    asyncio.run(make_discovery_map())
+    asyncio.run(end.make_discovery_map())
     asyncio.run(end.lights_on())
 
 
 def kasa_lights_off ():
-    asyncio.run(make_discovery_map())
+    asyncio.run(end.make_discovery_map())
     asyncio.run(end.lights_off())
 
 
