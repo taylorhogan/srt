@@ -7,6 +7,7 @@ from collections import OrderedDict
 
 import requests
 from kasa import Discover
+import end
 
 _super_user_config = OrderedDict(
     {
@@ -41,40 +42,22 @@ def kasa_switch_command(device_name, on_off):
             dev.turn_off()
 
 
-def kasa_lights_on():
-    kasa_switch_command("Iris door light", "on")
-    kasa_switch_command("Iris back lights", "on")
+def kasa_lights_on ():
+    asyncio.run(make_discovery_map())
+    asyncio.run(end.lights_on())
 
 
-def kasa_lights_off():
-    kasa_switch_command("Iris door light", "off")
-    kasa_switch_command("Iris back lights", "off")
-
-
-def kasa_mount_switch(on_off):
-    kasa_switch_command("Telescope mount", on_off)
-
-
-def kasa_lights_blink_command():
-    print ("kasa lights blick command")
-    for idx in range(3):
-        kasa_lights_on()
-        time.sleep(1)
-        kasa_lights_off()
-        time.sleep(1)
+def kasa_lights_off ():
+    asyncio.run(make_discovery_map())
+    asyncio.run(end.lights_off())
 
 
 def toggle_roof_command():
     print ("toggle roof command")
-    kasa_lights_blink_command()
     r = requests.get('http://192.168.86.41/relay/0?turn=on')
     time.sleep(3)
     r = requests.get('http://192.168.86.41/relay/0?turn=off')
 
-
-def shutdown_command():
-    kasa_lights_blink_command()
-    kasa_mount_switch("off")
 
 
 def start_nina():
