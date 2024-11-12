@@ -22,8 +22,8 @@ def get_is_parked ():
                 return False
 
         print ("Mount is connected")
-        az = s.mount.altitude_deg
-        alt = s.mount.azimuth_deg
+        alt = s.mount.altitude_degs
+        az = s.mount.azimuth_degs
         print (az)
         print (alt)
 
