@@ -35,9 +35,13 @@ def kasa_lights_off ():
 
 def toggle_roof_command():
     print ("toggle roof command")
+    asyncio.run(end.make_discovery_map())
+    asyncio.run(end.roof_motor_on())
+
     r = requests.get('http://192.168.86.41/relay/0?turn=on')
     time.sleep(3)
     r = requests.get('http://192.168.86.41/relay/0?turn=off')
+    asyncio.run(end.roof_motor_off())
 
 
 
@@ -61,7 +65,7 @@ def do_super_user_command(words, account):
     su_commands = get_super_user_commands()
     print (str(su_commands))
     action = su_commands.get(words[1], "no_key")
-    print("action is " + str (action) + " word " + str(words[1]))
+    print("action is " + str (action) + " word " + str(words[1]) + ".")
     if action != "no_key":
         super_users = config["Super Users"]
         if account in super_users:
