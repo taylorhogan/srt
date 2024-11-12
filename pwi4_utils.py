@@ -20,7 +20,8 @@ def get_is_parked ():
             print("Mount connected:", s.mount.is_connected)
             if not s.mount.is_connected:
                 return False
-
+        else:
+            print ("Mount is connected")
             az = s.mount.altitude_deg
             alt = s.mount.azimuth_deg
             moving = s.mount.is_slewing or s.mount.is_tracking
