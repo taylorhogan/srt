@@ -24,11 +24,17 @@ def get_is_parked ():
         print ("Mount is connected")
         az = s.mount.altitude_deg
         alt = s.mount.azimuth_deg
+        print (az)
+        print (alt)
+
         moving = s.mount.is_slewing or s.mount.is_tracking
+        print (moving)
+
         if moving:
             return False
         park_altitude = config["camera safety"]["parked altitude deg"]
         parked_azimuth=config["camera safety"]["parked azimuth deg"]
+
         delta_altitude = abs(park_altitude-alt)
         delta_azimuth = abs(parked_azimuth-az)
         print ("Delta al", delta_altitude)
@@ -46,3 +52,5 @@ def get_is_parked ():
 
 
 
+if __name__ == "__main__":
+    parked = get_is_parked()
