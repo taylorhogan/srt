@@ -48,7 +48,9 @@ class BaseConfig(object):
             "elevation": 100,
             "observatory_name": "Iris"
         },
-
+        "nina": {
+            "image_dir": "C:/Users/Primalucelab/Documents/N.I.N.A"
+        },
         "camera safety":{
             "parked azimuth deg": 56,
             "parked altitude deg": 5,

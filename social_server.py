@@ -7,6 +7,7 @@ from mastodon import Mastodon, StreamListener
 
 import baseconfig as cfg
 import db as cdb
+import fitstojpg
 import inside_camera_server
 import request_observatory_state
 import sortdsoobjects
@@ -14,6 +15,7 @@ import sun as s
 import super_user_commands as su
 import weather
 import vision_safety
+import fitstojpg
 
 config = cfg.FlowConfig().config
 
@@ -101,12 +103,17 @@ def help_cmd(words, index, m, account):
         reply += word + "\n"
     post_social_message(reply)
 
-
+def latest_cmd(words, index, m, account):
+    image_dir = config["nina"]["image_dir"]
+    latest_fits = fitstojpg.get_latest_file(image_dir)
+    latest_jpg = fitstojpg.convert_to_jpg(latest_fits)
+    post_social_message("Latest", latest_jpg)
 keywords = {
     "show": show_cmd,
     "capture": capture_cmd,
     "status": status_cmd,
     "weather": weather_cmd,
+    "latest": latest_cmd,
     "help": help_cmd,
     "?": help_cmd
 }
