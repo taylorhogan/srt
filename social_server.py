@@ -106,7 +106,7 @@ def help_cmd(words, index, m, account):
 def latest_cmd(words, index, m, account):
     image_dir = config["nina"]["image_dir"]
     latest_fits = fitstojpg.get_latest_file(image_dir, "fits")
-    latest_jpg = fitstojpg.convert_to_jpg(latest_fits)
+    latest_jpg = fitstojpg.convert_to_jpg(str(latest_fits))
     post_social_message("Latest", latest_jpg)
 keywords = {
     "show": show_cmd,

@@ -49,7 +49,8 @@ class BaseConfig(object):
             "observatory_name": "Iris"
         },
         "nina": {
-            "image_dir": "C:/Users/Primalucelab/Documents/N.I.N.A"
+            "image_dir2": "C:/Users/Primalucelab/Documents/N.I.N.A",
+            "image_dir": "/Users/taylorhogan/Desktop"
         },
         "camera safety":{
             "parked azimuth deg": 56,

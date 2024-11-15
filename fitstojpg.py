@@ -8,31 +8,34 @@ from pathlib import Path
 import fnmatch
 
 
-def convert_to_jpg (in_file):
-
-    out_file=in_file.replace('.fits', '.jpg')
-    data = fits.getdata(in_file) # https://fits.gsfc.nasa.gov/samples/UITfuv2582gc.fits
+def convert_to_jpg(in_file):
+    print(in_file)
+    out_file = in_file.replace('.fits', '.jpg')
+    data = fits.getdata(in_file)
     zscale = ZScaleInterval()
 
-
-
     plt.imshow(zscale(data), cmap="gray")
-    head, tail = os.path.split (out_file)
-    plt.title(tail)
+    path_list = in_file.split(os.sep)
+    l = len(path_list)
+    dso = path_list[l-4]
+    filename = path_list[l-1]
+
+     #head, tail = os.path.split(out_file)
+
+    title = dso + "\n" + filename
+    plt.title(title)
     plt.savefig(out_file)
     return out_file
 
-def convert_dir (dir_name):
+
+def convert_dir(dir_name):
     for cur, _dirs, files in os.walk(dir_name):
-       for candidate in fnmatch.filter(files, '*.fits'):
-           in_file = os.path.join(cur, candidate)
-           new_file = in_file.replace('.fits', '.jpg')
-           if not os.path.exists(new_file):
+        for candidate in fnmatch.filter(files, '*.fits'):
+            in_file = os.path.join(cur, candidate)
+            new_file = in_file.replace('.fits', '.jpg')
+            if not os.path.exists(new_file):
                 print(in_file)
                 convert_to_jpg(in_file)
-
-
-
 
 
 def get_latest_file(directory, extension):
@@ -49,20 +52,9 @@ def get_latest_file(directory, extension):
 
     return latest_file
 
+# convert_to_jpg("base_images/2024-09-11_20-21-36_Ha_-19.90_300.00s_1x1_0030.fits")
+#f = get_latest_file("/Users/taylorhogan/Desktop/NGC 6888/2024-09-11", "fits")
+#convert_to_jpg(str(f))
 
-
-
-#
-# convert_dir ("/Users/taylorhogan/Desktop/NGC 6888/2024-09-11")
-# f = get_latest_file ("/Users/taylorhogan/Desktop/NGC 6888/2024-09-11", "fits")
-# print (f)
-
-
-
-
-
-
-
-
-#convert_to_jpg("base_images/2024-09-11_20-21-36_Ha_-19.90_300.00s_1x1_0030.fits")
-#convert_to_jpg("base_images/2024-11-14_00-51-54_R_1767_300.00s_1x1_0086.fits")
+# convert_to_jpg("base_images/2024-09-11_20-21-36_Ha_-19.90_300.00s_1x1_0030.fits")
+# convert_to_jpg("base_images/2024-11-14_00-51-54_R_1767_300.00s_1x1_0086.fits")
