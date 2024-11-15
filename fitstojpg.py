@@ -20,8 +20,6 @@ def convert_to_jpg(in_file):
     dso = path_list[l-4]
     filename = path_list[l-1]
 
-     #head, tail = os.path.split(out_file)
-
     title = dso + "\n" + filename
     plt.title(title)
     plt.savefig(out_file)
