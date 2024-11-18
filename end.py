@@ -1,10 +1,9 @@
 import asyncio
-import time
 from collections import OrderedDict
 import inside_camera_server
 import vision_safety
 import social_server
-import baseconfig as cfg
+from config import baseconfig as cfg
 import sys
 import os
 import logging

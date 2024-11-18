@@ -1,5 +1,5 @@
 from pwi4_client import PWI4
-import baseconfig as cfg
+from config import baseconfig as cfg
 import logging
 
 

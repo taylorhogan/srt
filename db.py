@@ -8,14 +8,14 @@ class DB:
         conn = sqlite3.connect('db/dso.db')
         c = conn.cursor()
         c.execute(
-            "CREATE TABLE if not exists dso(key integer primary key autoincrement, name TEXT, requested, finished, imaged, user, recipe, notes, expo_time, file)")
+            "CREATE TABLE if not exists dso(job integer primary key autoincrement, dso_name TEXT, requested_by, finished, imaged, user, recipe, notes, expo_time, file)")
         conn.commit()
         conn.close()
 
     def exist(self, name):
         conn = sqlite3.connect('db/dso.db')
         c = conn.cursor()
-        for row in c.execute("SELECT key, name FROM dso ORDER BY name"):
+        for row in c.execute("SELECT job, name FROM dso ORDER BY name"):
             if row[1] == name:
                 conn.close()
                 return True
@@ -39,7 +39,7 @@ class DB:
     def add_expo_time(self, name, seconds):
         conn = sqlite3.connect('db/dso.db')
         c = conn.cursor()
-        for row in c.execute("SELECT key, name, user, expo_time  FROM dso ORDER BY name"):
+        for row in c.execute("SELECT job, name, user, expo_time  FROM dso ORDER BY name"):
             if row[1] == name:
                 cur_time = row[3]
                 cur_time = cur_time + seconds
@@ -54,7 +54,7 @@ class DB:
     def print_table(self):
         conn = sqlite3.connect('db/dso.db')
         c = conn.cursor()
-        for row in c.execute("SELECT key, name, user, expo_time requested FROM dso ORDER BY name"):
+        for row in c.execute("SELECT job, name, user, expo_time requested FROM dso ORDER BY name"):
             print(row)
         conn.close()
 
@@ -78,7 +78,7 @@ class DB:
         db = DB()
         db.create()
         db.add("m31", now, now, 0, "Thogan", "lrgb", "test", 200, "m31.jpg")
-        db.printtable()
+        db.print_table()
 
 
 
@@ -98,7 +98,16 @@ def main(argv):
 
 
 if __name__ == '__main__':
-    main(sys.argv[1:])
+    db = DB()
+
+    print (sys.argv[1])
+
+    if sys.argv[1] == "reset":
+        db.make_new_table()
+    if sys.argv[1] == "print":
+        db.print_table()
+
+
 
 
 

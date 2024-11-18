@@ -12,7 +12,7 @@ from astroplan.plots import plot_finder_image
 from astropy.coordinates import EarthLocation
 from astropy.time import Time
 import os
-import baseconfig as cfg
+from config import baseconfig as cfg
 
 config = cfg.FlowConfig().config
 

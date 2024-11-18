@@ -4,7 +4,7 @@ import time
 import math
 import sys
 import cv2 as cv
-import baseconfig as config
+from config import baseconfig as config
 import inside_camera_server
 import matplotlib.pyplot as plt
 

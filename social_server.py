@@ -5,11 +5,9 @@ import time
 from bs4 import BeautifulSoup
 from mastodon import Mastodon, StreamListener
 
-import baseconfig as cfg
+from config import baseconfig as cfg
 import db as cdb
-import fitstojpg
 import inside_camera_server
-import request_observatory_state
 import sortdsoobjects
 import sun as s
 import super_user_commands as su

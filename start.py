@@ -1,10 +1,8 @@
 import asyncio
-import time
 import sys
 import social_server
 from collections import OrderedDict
 from kasa import Discover
-import baseconfig as cfg
 
 _super_user_config = OrderedDict(
     {

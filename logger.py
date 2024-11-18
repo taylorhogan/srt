@@ -2,10 +2,9 @@
 # Input flow/log
 # Output none
 # side effects prints to log file
-import baseconfig as cfg
 
 import random
-import baseconfig as cfg
+import config.baseconfig as cfg
 from paho.mqtt import client as mqtt_client
 
 config = cfg.FlowConfig().config

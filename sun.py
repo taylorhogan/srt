@@ -2,7 +2,7 @@ import datetime
 
 from pysolar.solar import *
 
-import baseconfig as cfg
+from config import baseconfig as cfg
 
 
 def get_sun_angle():
