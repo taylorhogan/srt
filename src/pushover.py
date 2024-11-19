@@ -4,7 +4,7 @@ import urllib
 
 from paho.mqtt import client as mqtt_client
 
-from config import baseconfig as cfg
+from src import public as cfg
 
 config = cfg.FlowConfig().config
 

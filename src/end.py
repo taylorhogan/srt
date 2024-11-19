@@ -3,7 +3,7 @@ from collections import OrderedDict
 import inside_camera_server
 import vision_safety
 import social_server
-from config import baseconfig as cfg
+from src import public as cfg
 import sys
 import os
 import logging
@@ -97,7 +97,7 @@ def determine_roof_state():
 if __name__ == "__main__":
 
     logger = logging.getLogger(__name__)
-    logging.basicConfig(filename='iris.log', level=logging.INFO)
+    logging.basicConfig(filename='../iris.log', level=logging.INFO)
     logger.info('Started')
     try:
 

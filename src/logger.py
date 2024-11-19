@@ -4,7 +4,7 @@
 # side effects prints to log file
 
 import random
-import config.baseconfig as cfg
+import src.public as cfg
 from paho.mqtt import client as mqtt_client
 
 config = cfg.FlowConfig().config

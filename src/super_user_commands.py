@@ -1,20 +1,12 @@
 import asyncio
-import os
 import subprocess
 import time
-import traceback
 from collections import OrderedDict
 
 import requests
-from kasa import Discover
-import end
+from src import end
 
-_super_user_config = OrderedDict(
-    {
-        "Super Users": {
-            'Thogan', 'tmhobservatory'
-        },
-    })
+
 
 
 

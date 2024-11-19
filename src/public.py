@@ -1,14 +1,14 @@
 from collections import OrderedDict
 
 
-class BaseConfig(object):
-    _base_config = OrderedDict({
+class PublicConfig():
+    _config = OrderedDict({
+        "install_location": '/Users/taylorhogan/Documents/tmh',
+
         "version": {
-            "date": "2024.10.25.25"
+            "date": "2024.11.18.25"
         },
-        "html":{
-            "path":"/var/www/html/cds"
-        },
+
         "logger": {
             "topic": "flow/log",
             "file": "iris.log",
@@ -79,36 +79,9 @@ class BaseConfig(object):
     })
 
     @property
-    def base_config(self):
-        return self._base_config
-
-    @base_config.setter
-    def base_config(self, new_base_config):
-        pass  # read only
-
-
-class FlowConfig(BaseConfig):
-
-    def __init__(self):
-        self._config = self.base_config.copy()  # populate initial values
-
-    @property
     def config(self):
         return self._config
 
-    @config.setter
-    def config(self, new_config):
-        pass  # read only
-
-
-class Test(object):
-    def __init__(self):
-        self._config_obj = FlowConfig()
-
-    def main(self):
-        pass
-
-
 if __name__ == "__main__":
-    mt = Test()
-    print(mt._config_obj.config["mqtt"])
+    mt = PublicConfig()
+    print(mt.config["mqtt"])

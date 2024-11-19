@@ -4,8 +4,7 @@ import time
 import math
 import sys
 import cv2 as cv
-from config import baseconfig as config
-import inside_camera_server
+from src import inside_camera_server, public as config
 import matplotlib.pyplot as plt
 
 cfg = config.FlowConfig().config
@@ -118,7 +117,7 @@ def analyse_safety(image_path):
 
     plt.title('roof (x,y) parked (x,y)' + str(c_roof) + " " + str(c_scope)), plt.xticks([]), plt.yticks([])
 
-    plot_path = './base_images/position.png'
+    plot_path = '../base_images/position.png'
     if os.path.exists(plot_path):
         os.remove(plot_path)
 
@@ -133,7 +132,7 @@ if __name__ == '__main__':
         status = inside_camera_server.take_snapshot()
         #status = inside_camera_server.take_snapshot("./base_images/inside.jpg")
     else:
-        status = inside_camera_server.take_snapshot("./base_images/inside.jpg")
+        status = inside_camera_server.take_snapshot("../base_images/inside.jpg")
 
     if status:
 

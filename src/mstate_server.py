@@ -1,7 +1,7 @@
 import logging
 import time
 
-from config import baseconfig as cfg
+from src import public as cfg
 import moon
 import pushover
 import sun as s

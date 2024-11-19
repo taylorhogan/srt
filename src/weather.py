@@ -1,7 +1,6 @@
 import requests
 
-from config import baseconfig as cfg
-import moon
+from src import moon, public as cfg
 
 config = cfg.FlowConfig().config
 

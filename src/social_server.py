@@ -5,15 +5,12 @@ import time
 from bs4 import BeautifulSoup
 from mastodon import Mastodon, StreamListener
 
-from config import baseconfig as cfg
-import db as cdb
-import inside_camera_server
+from src import inside_camera_server, db as cdb, fitstojpg, public as cfg
 import sortdsoobjects
 import sun as s
 import super_user_commands as su
 import weather
 import vision_safety
-import fitstojpg
 
 config = cfg.FlowConfig().config
 
@@ -190,7 +187,7 @@ def start_interface():
 
 
 def main():
-    logging.basicConfig(filename='iris.log', level=logging.INFO)
+    logging.basicConfig(filename='../iris.log', level=logging.INFO)
     logger.info('Started')
     print("start")
     mastodon = get_mastodon_instance()

@@ -4,7 +4,7 @@ import sys
 import cv2 as cv
 import paho.mqtt.client as paho
 import time
-from config import baseconfig as config
+from src import public as config
 import shutil
 
 

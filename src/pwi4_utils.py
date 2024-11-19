@@ -1,11 +1,11 @@
 from pwi4_client import PWI4
-from config import baseconfig as cfg
+from src import public as cfg
 import logging
 
 
 def get_is_parked ():
     logger = logging.getLogger(__name__)
-    logging.basicConfig(filename='iris.log', level=logging.INFO)
+    logging.basicConfig(filename='../iris.log', level=logging.INFO)
     try:
         config = cfg.FlowConfig().config
 

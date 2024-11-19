@@ -1,6 +1,6 @@
 import sys
 import paho.mqtt.client as paho
-from config import baseconfig as config
+from src import public as config
 
 
 def connect_to_broker(cfg):
