@@ -5,17 +5,20 @@ import time
 from bs4 import BeautifulSoup
 from mastodon import Mastodon, StreamListener
 
-from src import inside_camera_server, db as cdb, fitstojpg, public as cfg
+import fitstojpg
+import db as cdb
+import inside_camera_server
+import config
 import sortdsoobjects
 import sun as s
 import super_user_commands as su
 import weather
 import vision_safety
 
-config = cfg.FlowConfig().config
+cfg = config.data()
 
 logger = logging.getLogger(__name__)
-config["logger"]["logging"] = logger
+cfg["logger"]["logging"] = logger
 
 def get_dso_object_name(words, index):
     if len(words) > index + 1:
@@ -70,8 +73,8 @@ def weather_cmd(words, index, m, account):
 def status_cmd(words, index, m, account):
     # Observatory State
     print ("status")
-    reply = "Version: " + config["version"]["date"] + "\n"
-    reply += "Observatory Status: " + config["Globals"]["Observatory State"]
+    reply = "Version: " + cfg["version"]["date"] + "\n"
+    reply += "Observatory Status: " + cfg["Globals"]["Observatory State"]
     post_social_message(reply)
     print ("A")
     if inside_camera_server.take_snapshot():
@@ -80,12 +83,12 @@ def status_cmd(words, index, m, account):
         print ("asking for state")
 
         print ("received")
-        is_closed, is_parked, is_open, mod_date = vision_safety.analyse_safety(config["camera safety"]["scope_view"])
+        is_closed, is_parked, is_open, mod_date = vision_safety.analyse_safety(cfg["camera safety"]["scope_view"])
         reply = "Roof Closed: " + str(is_closed) + "\n"
         reply += "Roof Open: " + str(is_open) + "\n"
         reply += "Scope Parked:" + str(is_parked) + "\n"
         reply += "Copied Date:" + mod_date + "\n"
-        post_social_message(reply, config["camera safety"]["scope_view"])
+        post_social_message(reply, cfg["camera safety"]["scope_view"])
     else:
         post_social_message("Problem taking picture")
 
@@ -99,7 +102,7 @@ def help_cmd(words, index, m, account):
     post_social_message(reply)
 
 def latest_cmd(words, index, m, account):
-    image_dir = config["nina"]["image_dir"]
+    image_dir = cfg["nina"]["image_dir"]
     latest_fits = fitstojpg.get_latest_file(image_dir, "fits")
     latest_jpg = fitstojpg.convert_to_jpg(str(latest_fits))
     post_social_message("Latest", latest_jpg)
@@ -151,19 +154,19 @@ class TheStreamListener(StreamListener):
         print(f"Got update: {status['content']}")
 
     def on_notification(self, notification):
-        mastodon = config["mastodon"]["instance"]
+        mastodon = cfg["mastodon"]["instance"]
         do_notification(notification, mastodon)
 
 
 def get_mastodon_instance():
-    access_token = config["mastodon"]["access_token"]
-    api_base_url = config["mastodon"]["api_base_url"]
+    access_token = cfg["mastodon"]["access_token"]
+    api_base_url = cfg["mastodon"]["api_base_url"]
     mastodon = Mastodon(access_token=access_token, api_base_url=api_base_url)
     return mastodon
 
 
 def post_social_message(message, image=None):
-    mastodon = config["mastodon"]["instance"]
+    mastodon = cfg["mastodon"]["instance"]
     if mastodon is None:
         mastodon = get_mastodon_instance()
 
@@ -179,19 +182,19 @@ def post_social_message(message, image=None):
 
 
 def start_interface():
-    post_social_message("Starting Version " + config["version"]["date"])
-    mastodon = config["mastodon"]["instance"]
+    post_social_message("Starting Version " + cfg["version"]["date"])
+    mastodon = cfg["mastodon"]["instance"]
     user = mastodon.stream_user(TheStreamListener(), run_async=True, reconnect_async=True)
     while True:
         time.sleep(100)
 
 
 def main():
-    logging.basicConfig(filename='../iris.log', level=logging.INFO)
+    logging.basicConfig(filename='iris.log', level=logging.INFO)
     logger.info('Started')
     print("start")
     mastodon = get_mastodon_instance()
-    config["mastodon"]["instance"] = mastodon
+    cfg["mastodon"]["instance"] = mastodon
     start_interface()
     print("stop")
 

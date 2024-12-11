@@ -3,7 +3,7 @@ from collections import OrderedDict
 import inside_camera_server
 import vision_safety
 import social_server
-from src import public as cfg
+import config
 import sys
 import os
 import logging
@@ -82,14 +82,14 @@ async def make_discovery_map():
 
 
 def determine_roof_state():
-    config = cfg.FlowConfig().config
+    cfg = config.data()
     inside_camera_server.take_snapshot()
-    is_closed, is_parked, is_open, mod_date = vision_safety.analyse_safety(config["camera safety"]["scope_view"])
+    is_closed, is_parked, is_open, mod_date = vision_safety.analyse_safety(cfg["camera safety"]["scope_view"])
     reply = "Roof Closed Visual: " + str(is_closed) + "\n"
     reply += "Roof Open Visual: " + str(is_open) + "\n"
     reply += "Scope Parked Visual:" + str(is_parked) + "\n"
     reply += "Copied Date:" + mod_date + "\n"
-    social_server.post_social_message(reply, config["camera safety"]["scope_view"])
+    social_server.post_social_message(reply, cfg["camera safety"]["scope_view"])
 
 
 
@@ -97,7 +97,7 @@ def determine_roof_state():
 if __name__ == "__main__":
 
     logger = logging.getLogger(__name__)
-    logging.basicConfig(filename='../iris.log', level=logging.INFO)
+    logging.basicConfig(filename='iris.log', level=logging.INFO)
     logger.info('Started')
     try:
 
@@ -108,15 +108,15 @@ if __name__ == "__main__":
         asyncio.run(lights_on())
         determine_roof_state()
         asyncio.run(lights_off())
-        parked = pwi4_utils.get_is_parked()
         asyncio.run(mount_off())
-
-        if parked:
-            social_server.post_social_message("Iris is parked PWI4")
-        else:
-            social_server.post_social_message("Iris is not parked PWI4")
     except:
         logger.info('Problem')
         logger.exception("Exception")
+
+    parked = pwi4_utils.get_is_parked()
+    if parked:
+        social_server.post_social_message("Iris is parked PWI4")
+    else:
+        social_server.post_social_message("Iris is not parked PWI4")
 
     print("End of end")

@@ -1,8 +1,9 @@
 import requests
 
-from src import moon, public as cfg
+import config_public as cfg
+import moon
 
-config = cfg.FlowConfig().config
+config = cfg.PublicConfig().data
 
 
 def get_weather_string(json):

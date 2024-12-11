@@ -75,8 +75,8 @@ def get_latest_file(directory, extension):
     return latest_file
 
 # convert_to_jpg("base_images/2024-09-11_20-21-36_Ha_-19.90_300.00s_1x1_0030.fits")
-f = get_latest_file("/Users/taylorhogan/Desktop/NGC 6888/2024-09-11", "fits")
-convert_to_jpg(str(f))
+#f = get_latest_file("/Users/taylorhogan/Desktop/NGC 6888/2024-09-11", "fits")
+#convert_to_jpg(str(f))
 
 # convert_to_jpg("base_images/2024-09-11_20-21-36_Ha_-19.90_300.00s_1x1_0030.fits")
 # convert_to_jpg("base_images/2024-11-14_00-51-54_R_1767_300.00s_1x1_0086.fits")

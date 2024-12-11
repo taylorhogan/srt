@@ -4,19 +4,20 @@
 # side effects prints to log file
 
 import random
-import src.public as cfg
+import config
 from paho.mqtt import client as mqtt_client
 
-config = cfg.FlowConfig().config
+cfg = config.data()
 
-broker = config["mqtt"]["broker_url"]
-port = config["mqtt"]["port"]
+
+broker = cfg["mqtt"]["broker_url"]
+port = cfg["mqtt"]["port"]
 topic = "flow/log"
 
 # Generate a Client ID with the subscribe prefix.
 client_id = f'subscribe-{random.randint(0, 100)}'
-username = config["mqtt"]["user_name"]
-password = config["mqtt"]["password"]
+username = cfg["mqtt"]["user_name"]
+password = cfg["mqtt"]["password"]
 
 
 def connect_mqtt() -> mqtt_client:

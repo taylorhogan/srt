@@ -12,9 +12,9 @@ from astroplan.plots import plot_finder_image
 from astropy.coordinates import EarthLocation
 from astropy.time import Time
 import os
-from src import public as cfg
+import config
 
-config = cfg.FlowConfig().config
+cfg = config.data()
 
 
 def is_a_dso_object(name):
@@ -26,10 +26,10 @@ def is_a_dso_object(name):
 
 
 def show_plots(dso):
-    longitude = config["location"]["longitude"]
-    latitude = config["location"]["latitude"]
-    elevation = config["location"]["elevation"]
-    observatory_name = config["location"]["observatory_name"]
+    longitude = cfg["location"]["longitude"]
+    latitude = cfg["location"]["latitude"]
+    elevation = cfg["location"]["elevation"]
+    observatory_name = cfg["location"]["observatory_name"]
 
     location = EarthLocation.from_geodetic(longitude * u.deg, latitude * u.deg, elevation * u.m)
     my_observatory = Observer(location=location, name=observatory_name, timezone="US/Eastern")

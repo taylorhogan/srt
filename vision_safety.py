@@ -4,10 +4,11 @@ import time
 import math
 import sys
 import cv2 as cv
-from src import inside_camera_server, public as config
+import inside_camera_server
+import config
 import matplotlib.pyplot as plt
 
-cfg = config.FlowConfig().config
+cfg = config.data()
 
 def find_template(image, template_image_path):
     template = cv.imread(template_image_path,  cv.IMREAD_GRAYSCALE)
@@ -117,7 +118,7 @@ def analyse_safety(image_path):
 
     plt.title('roof (x,y) parked (x,y)' + str(c_roof) + " " + str(c_scope)), plt.xticks([]), plt.yticks([])
 
-    plot_path = '../base_images/position.png'
+    plot_path = 'base_images/position.png'
     if os.path.exists(plot_path):
         os.remove(plot_path)
 

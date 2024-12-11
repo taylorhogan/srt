@@ -2,11 +2,11 @@ import datetime
 
 from pysolar.solar import *
 
-from src import public as cfg
+import config_public as cfg
 
 
 def get_sun_angle():
-    config = cfg.FlowConfig().config
+    config = cfg.PublicConfig().data
 
     latitude = config["location"]["latitude"]
     longitude = config["location"]["longitude"]

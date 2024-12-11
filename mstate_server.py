@@ -1,7 +1,7 @@
 import logging
 import time
 
-from src import public as cfg
+import config_public as cfg
 import moon
 import pushover
 import sun as s
@@ -11,8 +11,11 @@ import weather
 debug_roof_open_switch = False
 debug_roof_closed_switch = True
 
-config = cfg.FlowConfig().config
-config["Globals"]["Observatory State"] = "Booting Up"''
+import config
+
+cfg = config.data()
+
+cfg["Globals"]["Observatory State"] = "Booting Up"''
 
 
 def general_message_with_image(message, image=None):
@@ -94,7 +97,7 @@ def state_machine():
     old_weather = None
     timer = watchdog.Watchdog(15, timer_done)
 
-    version = config["version"]["date"]
+    version = cfg["version"]["date"]
     general_message_with_image("Start Observatory with version " + version, image="./db/day.jpeg")
 
     while not get_manual_stop():
@@ -130,17 +133,17 @@ def state_machine():
             if is_night and not old_is_night and not currently_imaging and not start_imaging:
                 d, c, w, m = weather.get_weather()
                 message = "Not Imaging " + "\n " + d
-                config["Globals"]["Observatory State"] = "Sleep Mode, Roof Closed"
-                config["Globals"]["Current Image"] = "./db/day.jpeg"
-                general_message_with_image(message, image=config["Globals"]["Current Image"])
+                cfg["Globals"]["Observatory State"] = "Sleep Mode, Roof Closed"
+                cfg["Globals"]["Current Image"] = "./db/day.jpeg"
+                general_message_with_image(message, image=cfg["Globals"]["Current Image"])
             if start_imaging:
                 start_imaging_time = current_time
                 currently_imaging = True
                 timer.start()
                 open_roof()
-                config["Globals"]["Observatory State"] = "Imaging, Roof Open"
-                config["Globals"]["Current Image"] = "./db/m31.jpg"
-                general_message_with_image("Starting Imaging", image=config["Globals"]["Current Image"])
+                cfg["Globals"]["Observatory State"] = "Imaging, Roof Open"
+                cfg["Globals"]["Current Image"] = "./db/m31.jpg"
+                general_message_with_image("Starting Imaging", image=cfg["Globals"]["Current Image"])
 
             elif stop_imaging:
                 stop_imaging_time = current_time
@@ -151,8 +154,8 @@ def state_machine():
                 close_roof()
                 message = "Stopping Imaging, Imaging time: " + time.strftime("%Hhours %Mminutes",
                                                                              time.gmtime(time_elapsed))
-                config["Globals"]["Observatory State"] = "Imaging, Roof Open"
-                config["Globals"]["Current Image"] = "./db/m31.jpg"
+                cfg["Globals"]["Observatory State"] = "Imaging, Roof Open"
+                cfg["Globals"]["Current Image"] = "./db/m31.jpg"
                 general_message_with_image(message, image=config["Globals"]["Current Image"])
 
         except:

@@ -3,18 +3,20 @@ import sqlite3
 import sys
 import os
 import shutil
-import public
+import config
+
+
 
 
 def db_full_path():
-    cfg = public.PublicConfig().config
+    cfg = config.data()
     install = cfg['install_location']
     full = os.path.join(cfg['install_location'], 'db/dso.db')
     print (full)
     return full
 
 def db_path():
-    cfg = public.PublicConfig().config
+    cfg = config.data()
     install = cfg['install_location']
     full = os.path.join(cfg['install_location'], 'db')
     print (full)
@@ -143,8 +145,8 @@ if __name__ == '__main__':
     print(sys.argv[1])
 
     if sys.argv[1] == 'backup':
-        CFG = public.PublicConfig()
-        cfg = CFG.config
+
+        cfg = config.data()
         back = get_next_back_name()
         shutil.copyfile('./db/dso.db', back)
         print("Created " + back)

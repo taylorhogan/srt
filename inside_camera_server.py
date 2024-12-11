@@ -4,7 +4,7 @@ import sys
 import cv2 as cv
 import paho.mqtt.client as paho
 import time
-from src import public as config
+import config
 import shutil
 
 
@@ -17,7 +17,7 @@ def connect_to_broker(cfg):
 
 
 def take_snapshot(test_path=None):
-    cfg = config.FlowConfig().config
+    cfg = config.data()
     if test_path is not None:
         to_path = cfg["camera safety"]["scope_view"]
         shutil.copyfile(test_path, to_path)
@@ -43,7 +43,7 @@ def take_snapshot(test_path=None):
 
 
 def send_picture_and_status_to_broker(client, userdata, msg):
-    cfg = config.FlowConfig().config
+    cfg = config.data()
     image_path = cfg["camera safety"]["in_picture"]
     print("1")
     take_snapshot(image_path)
@@ -79,7 +79,7 @@ def subscribe_to_get_state(client, cfg):
 
 
 if __name__ == '__main__':
-    cfg = config.FlowConfig().config
+    cfg = config.data()
     client = connect_to_broker(cfg)
     subscribe_to_get_state(client, cfg)
     try:

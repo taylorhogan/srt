@@ -1,14 +1,9 @@
 import asyncio
 import subprocess
 import time
-from collections import OrderedDict
 
 import requests
-from src import end
-
-
-
-
+import end
 
 
 def kasa_lights_on ():

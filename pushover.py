@@ -4,20 +4,20 @@ import urllib
 
 from paho.mqtt import client as mqtt_client
 
-from src import public as cfg
+import config
 
-config = cfg.FlowConfig().config
+cfg = config.data()
 
-broker = config["mqtt"]["broker_url"]
-port = config["mqtt"]["port"]
+broker = cfg["mqtt"]["broker_url"]
+port = cfg["mqtt"]["port"]
 topic = "flow/pushover"
 
 client_id = f'subscribe-{random.randint(0, 100)}'
-username = config["mqtt"]["user_name"]
-password = config["mqtt"]["password"]
+username = cfg["mqtt"]["user_name"]
+password = cfg["mqtt"]["password"]
 
-token = config['pushover']['token']
-user = config['pushover']['user']
+token = cfg['pushover']['token']
+user = cfg['pushover']['user']
 
 
 def connect_mqtt() -> mqtt_client:

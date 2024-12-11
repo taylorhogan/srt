@@ -1,12 +1,16 @@
 from collections import OrderedDict
+from re import fullmatch
+
+import config_private
+from config_private import PrivateConfig
 
 
 class PublicConfig():
-    _config = OrderedDict({
+    _config = dict({
         "install_location": '/Users/taylorhogan/Documents/tmh',
 
         "version": {
-            "date": "2024.11.18.25"
+            "date": "2024.12.11.01"
         },
 
         "logger": {
@@ -14,25 +18,11 @@ class PublicConfig():
             "file": "iris.log",
             "logging": ""
         },
-        "mqtt": {
-            "user_name": "indi-allsky",
-            "password": "Foo14me!",
-            "broker_url": "raspberrypi.local",
-            "port": 1883,
-            "ota_picture":"iris/inside_jpg",
-            "roof_state":"iris/roof_state",
-            "ota_state": "iris/ota_state",
-            "picture_date": "iris/picture_date",
-            "observatory_state?": "iris/state"
 
-        },
         "weather": {
             "api_key": "ed8baa5b5b9c64b42fafc6836e75a3a3",
         },
-        "pushover": {
-            "token": "a7fycu94si1ctfnubk3sfqhbsioct2",
-            "user": "ggd66ig5wrpo8z9y7eyncfihor4b33",
-        },
+
         "mastodon": {
             "access_token": 'M67r7ztzqc8yWiNcokctuz0T5dJsL_P7Bh-o1VTHm9U',
             "api_base_url": 'https://mastodon.social/',
@@ -52,36 +42,34 @@ class PublicConfig():
             "image_dir1": "C:/Users/Primalucelab/Documents/N.I.N.A",
             "image_dir": "/Users/taylorhogan/Desktop"
         },
-        "camera safety":{
+        "camera safety": {
             "parked azimuth deg": 56,
             "parked altitude deg": 5,
             "roof template": "./base_images/roof_marker.jpg",
             "parked template": "./base_images/parked_marker.png",
-            "open pos":(1,1),
-            "closed pos":(490, 422),
-            "parked pos":(929, 454),
+            "open pos": (1, 1),
+            "closed pos": (490, 422),
+            "parked pos": (929, 454),
             "scope_view": "./base_images/scope_view.jpg",
             "processed_view": "./base_images/processed.jpg",
-            "no_image":"./base_images/no_image.jpg",
+            "no_image": "./base_images/no_image.jpg",
             "valid_data": False,
             "received_count": 0
 
-
-
-            },
+        },
         "Globals":
             {
                 "Observatory State": "In Development",
                 "Imaging DSO": "Unknown"
-                ""
+                               ""
             }
 
     })
 
-    @property
-    def config(self):
-        return self._config
+    def data(self):
+      return self._config
+
 
 if __name__ == "__main__":
     mt = PublicConfig()
-    print(mt.config["mqtt"])
+    print(mt.data["mqtt"])
