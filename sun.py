@@ -2,14 +2,14 @@ import datetime
 
 from pysolar.solar import *
 
-import config_public as cfg
+import config
 
 
 def get_sun_angle():
-    config = cfg.PublicConfig().data
+    cfg = config.data()
 
-    latitude = config["location"]["latitude"]
-    longitude = config["location"]["longitude"]
+    latitude = cfg["location"]["latitude"]
+    longitude = cfg["location"]["longitude"]
     date = datetime.datetime.now(datetime.timezone.utc)
     return get_altitude(float(latitude), float(longitude), date)
 
