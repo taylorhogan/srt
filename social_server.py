@@ -18,6 +18,7 @@ import vision_safety
 cfg = config.data()
 
 logger = logging.getLogger(__name__)
+
 cfg["logger"]["logging"] = logger
 
 def get_dso_object_name(words, index):
@@ -191,6 +192,8 @@ def start_interface():
 
 def main():
     logging.basicConfig(filename='iris.log', level=logging.INFO)
+    logging.basicConfig(format='%(asctime)s %(message)s', datefmt='%m/%d/%Y %I:%M:%S %p')
+
     logger.info('Started')
     print("start")
     mastodon = get_mastodon_instance()
