@@ -1,9 +1,10 @@
 import requests
 
-import config_public as cfg
+import config
+
 import moon
 
-config = cfg.PublicConfig().data
+cfg = config.data()
 
 
 def get_weather_string(json):
@@ -27,8 +28,8 @@ def get_weather_string(json):
 
 
 def get_weather():
-    api_key = config["weather"]["api_key"]
-    city_name = config["location"]["city"]
+    api_key = cfg["weather"]["api_key"]
+    city_name = cfg["location"]["city"]
     # base_url variable to store url
     base_url = "http://api.openweathermap.org/data/2.5/weather?"
 
