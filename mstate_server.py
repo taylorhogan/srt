@@ -2,7 +2,7 @@ import logging
 import time
 
 import config_public as cfg
-import moon
+
 import pushover
 import sun as s
 import watchdog
@@ -119,7 +119,7 @@ def state_machine():
             roof_open = is_roof_open()
             roof_closed = is_roof_closed()
             scope_safe = is_scope_safe()
-            moon_ok = moon.is_moon_ok()
+
             if timer.is_timer_going():
                 pass
             current_time = time.time()
@@ -127,9 +127,9 @@ def state_machine():
             # What is going on when it's dark?
 
             old_is_night = is_night
-            start_imaging = roof_closed and good_weather and moon_ok and many_stars and is_night and scope_safe and not roof_open and not currently_imaging
+            start_imaging = roof_closed and good_weather  and many_stars and is_night and scope_safe and not roof_open and not currently_imaging
             stop_imaging = currently_imaging and roof_open and (
-                    not good_weather or not many_stars or not is_night or not moon_ok)
+                    not good_weather or not many_stars or not is_night )
             if is_night and not old_is_night and not currently_imaging and not start_imaging:
                 d, c, w, m = weather.get_weather()
                 message = "Not Imaging " + "\n " + d
