@@ -65,7 +65,7 @@ def weather_cmd(words, index, m, account):
         sun = "night "
     reply = "\nMode: " + sun + "\n"
     reply += "Sun Angle: " + "{:10.2f}".format(angle) + "\n"
-    description, clouds, wind_speed, moon_phase = weather.get_weather()
+    description, clouds, wind_speed=  weather.get_weather()
     reply += description
     post_social_message(reply)
 

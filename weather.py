@@ -2,7 +2,6 @@ import requests
 
 import config
 
-import moon
 
 cfg = config.data()
 
@@ -15,16 +14,16 @@ def get_weather_string(json):
     wind_speed = json["wind"]["speed"]
     current_temperature = y["temp"]
     current_humidity = y["humidity"]
-    moon_phase = moon.get_moon_phase()
+
 
     description = "Temp (F): " + str(int((current_temperature - 273.15) * 9 / 5 + 32)) + "\n"
     description += "Humidity: " + str(current_humidity) + "\n"
     description += "Description: " + str(weather_description) + "\n"
     description += "Cloud%: " + str(cloud_percentage) + "\n"
     description += "Wind Speed: " + str(wind_speed) + "\n"
-    description += "Moon Phase: " + "{:10.2f}".format(moon_phase) + "\n"
 
-    return description, cloud_percentage, wind_speed, moon_phase
+
+    return description, cloud_percentage, wind_speed
 
 
 def get_weather():
@@ -53,7 +52,7 @@ def get_weather():
     # "404", means city is found otherwise,
     # city is not found
     if x["cod"] != "404":
-        description, clouds, wind_speed, moon_phase = get_weather_string(x)
+        description, clouds, wind_speed = get_weather_string(x)
         message_list = list()
         message_list.append({
             'topic': 'flow/weather',
@@ -74,7 +73,7 @@ def get_weather():
         #
         # )
         print(description)
-        return description, clouds, wind_speed, moon_phase
+        return description, clouds, wind_speed
 
     else:
         print(" City Not Found ")
