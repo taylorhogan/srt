@@ -33,10 +33,11 @@ async def doit():
     await dev.turn_off()
     await dev.update()
 
-    ip = _super_user_config["name_map"]["Driveway lights"]
-    dev = await Discover.discover_single(ip)
-    await dev.turn_off()
-    await dev.update()
+    ip = _super_user_config.get(["name_map"]["Driveway lights"], None)
+    if ip is not None:
+        dev = await Discover.discover_single(ip)
+        await dev.turn_off()
+        await dev.update()
 
 
 async def make_discovery_map():
