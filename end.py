@@ -26,11 +26,7 @@ async def mount_off():
     await dev.update()
 
 
-async def mount_on():
-    ip = _super_user_config["name_map"]["Telescope mount"]
-    dev = await Discover.discover_single(ip)
-    await dev.turn_on()
-    await dev.update()
+
 
 async def roof_motor_on():
     ip = _super_user_config["name_map"]["Roof motor"]
@@ -38,11 +34,7 @@ async def roof_motor_on():
     await dev.turn_on()
     await dev.update()
 
-async def roof_motor_off():
-    ip = _super_user_config["name_map"]["Roof motor"]
-    dev = await Discover.discover_single(ip)
-    await dev.turn_off()
-    await dev.update()
+
 
 
 async def lights_on():
