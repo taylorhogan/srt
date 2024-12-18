@@ -193,11 +193,9 @@ def start_interface():
 
 
 def main():
-    logging.basicConfig(filename='iris.log', level=logging.INFO)
-    logging.basicConfig(format='%(asctime)s %(message)s', datefmt='%m/%d/%Y %I:%M:%S %p')
-
+    logging.basicConfig(filename='iris.log', level=logging.INFO,format='%(asctime)s %(message)s', datefmt='%m/%d/%Y %I:%M:%S %p')
     logger.info('Started')
-    print("start")
+
     mastodon = get_mastodon_instance()
     cfg["mastodon"]["instance"] = mastodon
     start_interface()

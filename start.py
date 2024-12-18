@@ -1,7 +1,11 @@
 import asyncio
 import sys
 import social_server
+import logging
+import config
+
 from collections import OrderedDict
+
 from kasa import Discover
 
 _super_user_config = OrderedDict(
@@ -54,8 +58,12 @@ async def make_discovery_map():
 
 
 if __name__ == "__main__":
-    print("Start of start")
-    print ("Telling Mastodon something")
+    logging.basicConfig(filename='iris.log', level=logging.INFO, format='%(asctime)s %(message)s',
+                        datefmt='%m/%d/%Y %I:%M:%S %p')
+    cfg = config.data()
+    logger = logging.getLogger(__name__)
+    cfg["logger"]["logging"] = logger
+    logger.info ("Starting start.py")
     if len(sys.argv) < 2:
         social_server.post_social_message("Starting imaging run of debug")
     else:

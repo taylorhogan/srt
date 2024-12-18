@@ -1,1 +1,1 @@
-start "" "C:\Program Files\N.I.N.A. - Nighttime Imaging 'N' Astronomy\NINA.exe" -s  "C:\Users\Primalucelab\Documents\N.I.N.A\Templates\demo.json" -r -x
+start "" "C:\Program Files\N.I.N.A. - Nighttime Imaging 'N' Astronomy\NINA.exe" -s  " C:\Users\iriso\Documents\N.I.N.A\Sequences\cdk_test_roof_closed.json" -r -x
