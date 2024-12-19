@@ -3,9 +3,8 @@ import config
 import logging
 
 
-def get_is_parked ():
-    logger = logging.getLogger(__name__)
-    logging.basicConfig(filename='iris.log', level=logging.INFO)
+def get_is_parked (logger):
+
     try:
         cfg = config.data()
 

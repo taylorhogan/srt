@@ -8,6 +8,8 @@ import sys
 import os
 import logging
 import pwi4_utils
+import kasa_utils as ku
+
 
 from kasa import Discover
 
@@ -61,17 +63,6 @@ async def lights_off():
     await dev.update()
 
 
-async def make_discovery_map():
-    map_from_name_to_ip = dict()
-    devices = await Discover.discover()
-    for dev in devices.values():
-        await dev.update()
-        print(dev.host + " " + dev.alias)
-        map_from_name_to_ip.update({dev.alias: dev.host})
-    _super_user_config["name_map"] = map_from_name_to_ip
-
-
-
 
 def determine_roof_state():
     cfg = config.data()
@@ -88,27 +79,41 @@ def determine_roof_state():
 
 if __name__ == "__main__":
 
+    logging.basicConfig(filename='iris.log', level=logging.INFO, format='%(asctime)s %(message)s',
+                        datefmt='%m/%d/%Y %I:%M:%S %p')
+    cfg = config.data()
     logger = logging.getLogger(__name__)
-    logging.basicConfig(filename='iris.log', level=logging.INFO)
-    logger.info('Started')
+    cfg["logger"]["logging"] = logger
+
+    logger.info('End Sequence')
+
     try:
 
-        print("dir is " + str(sys.argv[1]))
-        os.chdir(sys.argv[1])
+        parked = pwi4_utils.get_is_parked(logger)
+        if parked:
+            social_server.post_social_message("Mount says Iris is parked")
+        else:
+            social_server.post_social_message("Mount says Iris is not parked")
 
-        asyncio.run(make_discovery_map())
-        asyncio.run(lights_on())
-        determine_roof_state()
-        asyncio.run(lights_off())
-        asyncio.run(mount_off())
+
+
+        if parked:
+            dev_map = asyncio.run(ku.make_discovery_map())
+            instructions = (dict
+                (
+                {
+                    "Telescope mount": 'off',
+                    "Roof motor": 'on'
+                }
+            ))
+
+            asyncio.run(ku.kasa_do(dev_map, instructions))
+
+
     except:
         logger.info('Problem')
         logger.exception("Exception")
 
-    parked = pwi4_utils.get_is_parked()
-    if parked:
-        social_server.post_social_message("Iris is parked PWI4")
-    else:
-        social_server.post_social_message("Iris is not parked PWI4")
+
 
     print("End of end")
