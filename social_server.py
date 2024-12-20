@@ -65,7 +65,7 @@ def weather_cmd(words, index, m, account):
         sun = "night "
     reply = "\nMode: " + sun + "\n"
     reply += "Sun Angle: " + "{:10.2f}".format(angle) + "\n"
-    description, clouds, wind_speed=  weather.get_weather()
+    description =  weather.get_current_weather()
     reply += description
     post_social_message(reply)
 
@@ -194,7 +194,7 @@ def start_interface():
 
 def main():
     logging.basicConfig(filename='iris.log', level=logging.INFO,format='%(asctime)s %(message)s', datefmt='%m/%d/%Y %I:%M:%S %p')
-    logger.info('Started')
+    logger.info('Started Social Server')
 
     mastodon = get_mastodon_instance()
     cfg["mastodon"]["instance"] = mastodon
