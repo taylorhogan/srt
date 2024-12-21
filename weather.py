@@ -12,7 +12,7 @@ import os
 cfg = config.data()
 
 
-async def get_weather() -> str:
+async def get_weather() -> [str,bool]:
     # declare the client. the measuring unit used defaults to the metric system (celcius, km/h, etc.)
     async with python_weather.Client(unit=python_weather.IMPERIAL) as client:
         # fetch a weather forecast from a city
@@ -35,27 +35,43 @@ async def get_weather() -> str:
         sunrise = today.sunrise
         description += "Sunset: " + str(sunset) + "\n"
         description += "Sunrise " + str(sunrise) + "\n"
+        sunset_hour = sunset.hour
+        sunrise_hour = sunrise.hour
+
+        weather_ok = True
+        for hourly in today:
+            if hourly.time.hour >= sunset_hour:
+                this_hourly="GOOD "
+                if hourly.chances_of_remaining_dry < 80 or hourly.cloud_cover > 50:
+                    weather_ok = False
+                    this_hourly = "BAD "
+                description +=  this_hourly +  str(hourly.time) + " " + str(hourly.chances_of_remaining_dry) + " " + str(hourly.cloud_cover) + " " + hourly.description + "\n"
+
+        for hourly in tomorrow:
+            if hourly.time.hour <= sunrise_hour:
+                this_hourly = "GOOD "
+                if hourly.chances_of_remaining_dry < 80 or hourly.cloud_cover > 50:
+                    weather_ok = False
+                    this_hourly = "BAD "
+                description += this_hourly + str(hourly.time) + " " + str(hourly.chances_of_remaining_dry) + " " + str(
+                    hourly.cloud_cover) + " " + hourly.description + "\n"
+        if weather_ok:
+            description += "Will image tonight"
+        else:
+            description += "Will NOT image tonight"
+    return description, weather_ok
 
 
-        # get the weather forecast for a few days
-        for daily in forecast:
-            print(daily)
-
-            # hourly forecasts
-            for hourly in daily:
-                print(f' --> {hourly!r}')
-
-        return description
-
-
-def get_current_weather():
+def get_current_weather()-> [str,bool]:
     # see https://stackoverflow.com/questions/45600579/asyncio-event-loop-is-closed-when-getting-loop
     # for more details
     if os.name == 'nt':
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
-    description = asyncio.run(get_weather())
-    return description
-if __name__ == '__main__':
+    description, weather_ok = asyncio.run(get_weather())
+    return description, weather_ok
 
-    print(get_current_weather())
+if __name__ == '__main__':
+    description, weather_ok = get_current_weather()
+    print(description)
+

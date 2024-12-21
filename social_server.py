@@ -65,7 +65,7 @@ def weather_cmd(words, index, m, account):
         sun = "night "
     reply = "\nMode: " + sun + "\n"
     reply += "Sun Angle: " + "{:10.2f}".format(angle) + "\n"
-    description =  weather.get_current_weather()
+    description, weather_ok =  weather.get_current_weather()
     reply += description
     post_social_message(reply)
 
@@ -78,17 +78,6 @@ def status_cmd(words, index, m, account):
     reply += "Observatory Status: " + cfg["Globals"]["Observatory State"]
     post_social_message(reply)
 
-    if inside_camera_server.take_snapshot():
-
-
-        is_closed, is_parked, is_open, mod_date = vision_safety.analyse_safety(cfg["camera safety"]["scope_view"])
-        reply = "Roof Closed: " + str(is_closed) + "\n"
-        reply += "Roof Open: " + str(is_open) + "\n"
-        reply += "Scope Parked:" + str(is_parked) + "\n"
-        reply += "Copied Date:" + mod_date + "\n"
-        post_social_message(reply, cfg["camera safety"]["scope_view"])
-    else:
-        post_social_message("Problem taking picture")
 
 
 
