@@ -5,7 +5,6 @@ import logging
 import config
 import kasa_utils as ku
 
-from collections import OrderedDict
 
 if __name__ == "__main__":
     logging.basicConfig(filename='iris.log', level=logging.INFO, format='%(asctime)s %(message)s',

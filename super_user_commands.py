@@ -1,37 +1,20 @@
 import asyncio
 import subprocess
 import time
-
+import config
 import requests
 import end
+import os
 
-
-def kasa_lights_on ():
-    asyncio.run(end.make_discovery_map())
-    asyncio.run(end.lights_on())
-
-
-def kasa_lights_off ():
-    asyncio.run(end.make_discovery_map())
-    asyncio.run(end.lights_off())
-
-
-def toggle_roof_command():
-    print ("toggle roof command")
-    asyncio.run(end.make_discovery_map())
-    asyncio.run(end.roof_motor_on())
-
-    r = requests.get('http://192.168.86.41/relay/0?turn=on')
-    time.sleep(3)
-    r = requests.get('http://192.168.86.41/relay/0?turn=off')
-    time.sleep(20)
-    asyncio.run(end.roof_motor_off())
-
-
+def close_roof_command ():
+    return
 
 def start_nina():
-    print("Starting Nina1")
-    subprocess.run(["C:/home/taylorhogan/Documents/tmh/runnina.bat"])
+    print("Starting Nina")
+    cfg = config.data()
+    fullpath = os.path.join (cfg["Install"], "runninia.bat")
+    print (fullpath)
+    subprocess.run([fullpath])
     print("Done with Nina")
 
 
@@ -40,22 +23,20 @@ def shutdown():
 
 def get_super_user_commands():
     return {
-        "roof!": toggle_roof_command,
-        "lights_on!": kasa_lights_on,
-        "lights_off!": kasa_lights_off,
-        "nina!": start_nina,
+        "close!'": close_roof_command,
+         "nina!": start_nina,
         "shutdown!": shutdown
     }
 
 
 def do_super_user_command(words, account):
-    config = _super_user_config
+    cfg = config.data()
     su_commands = get_super_user_commands()
     print (str(su_commands))
     action = su_commands.get(words[1], "no_key")
     print("action is " + str (action) + " word " + str(words[1]) + ".")
     if action != "no_key":
-        super_users = config["Super Users"]
+        super_users = cfg["Super Users"]
         if account in super_users:
             print("Whoot")
             action()

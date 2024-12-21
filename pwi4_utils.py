@@ -32,8 +32,8 @@ def get_is_parked (logger):
 
         if moving:
             return False
-        park_altitude = config["camera safety"]["parked altitude deg"]
-        parked_azimuth=config["camera safety"]["parked azimuth deg"]
+        park_altitude = cfg["camera safety"]["parked altitude deg"]
+        parked_azimuth=cfg["camera safety"]["parked azimuth deg"]
 
         delta_altitude = abs(park_altitude-alt)
         delta_azimuth = abs(parked_azimuth-az)

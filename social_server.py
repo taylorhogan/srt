@@ -77,13 +77,10 @@ def status_cmd(words, index, m, account):
     reply = "Version: " + cfg["version"]["date"] + "\n"
     reply += "Observatory Status: " + cfg["Globals"]["Observatory State"]
     post_social_message(reply)
-    print ("A")
+
     if inside_camera_server.take_snapshot():
 
-        print ("B")
-        print ("asking for state")
 
-        print ("received")
         is_closed, is_parked, is_open, mod_date = vision_safety.analyse_safety(cfg["camera safety"]["scope_view"])
         reply = "Roof Closed: " + str(is_closed) + "\n"
         reply += "Roof Open: " + str(is_open) + "\n"

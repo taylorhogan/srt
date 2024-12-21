@@ -1,4 +1,5 @@
 @ECHO off
 CLS
-python C:\home\taylorhogan\Documents\tmh\src\social_server.py >>iris.log
+del C:\Users\iriso\Documents\development\iris\iris.log
+C:\Users\iriso\Documents\development\iris\venv\Scripts\python C:\Users\iriso\Documents\development\iris\social_server.py
 EXIT /b 0

@@ -30,6 +30,13 @@ async def get_weather() -> str:
         description += "Moon Rise: " + str(today.moonrise) + "\n"
         description += "Moon Set: " + str(today.moonset) + "\n"
         description += "Night Hours: " + str (24 - today.sunlight) +"\n"
+
+        sunset = today.sunset
+        sunrise = today.sunrise
+        description += "Sunset: " + str(sunset) + "\n"
+        description += "Sunrise " + str(sunrise) + "\n"
+
+
         # get the weather forecast for a few days
         for daily in forecast:
             print(daily)

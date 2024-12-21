@@ -39,10 +39,8 @@ class PrivateConfig(object):
             "elevation": 100,
             "observatory_name": "Iris"
         },
-        "nina": {
-            "image_dir1": "C:/Users/Primalucelab/Documents/N.I.N.A",
-            "image_dir": "/Users/taylorhogan/Desktop"
-        },
+
+        "Install":"C:/Users/iriso\Documents\development\iris",
 
         "Super Users": {
             'Thogan', 'tmhobservatory'
