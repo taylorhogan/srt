@@ -1,10 +1,13 @@
 import asyncio
+import os.path
+
 import inside_camera_server
 import vision_safety
 import social_server
 import config
 import logging
 import pwi4_utils
+import os
 import kasa_utils as ku
 
 
@@ -21,9 +24,10 @@ def determine_roof_state():
 
 if __name__ == "__main__":
 
+    cfg = config.data()
+    path = os.path.join(cfg["Install"], 'iris.log')
     logging.basicConfig(filename='iris.log', level=logging.INFO, format='%(asctime)s %(message)s',
                         datefmt='%m/%d/%Y %I:%M:%S %p')
-    cfg = config.data()
     logger = logging.getLogger(__name__)
     cfg["logger"]["logging"] = logger
 
