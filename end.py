@@ -31,7 +31,7 @@ if __name__ == "__main__":
     logger = logging.getLogger(__name__)
     cfg["logger"]["logging"] = logger
 
-    logger.info('End Sequence')
+    logger.info('Begin End Sequence')
 
     try:
 
@@ -55,4 +55,4 @@ if __name__ == "__main__":
         logger.info('Problem')
         logger.exception("Exception")
 
-    print("End of end")
+    logger.info('End End Sequence')

@@ -15,7 +15,7 @@ if __name__ == "__main__":
                         datefmt='%m/%d/%Y %I:%M:%S %p')
     logger = logging.getLogger(__name__)
     cfg["logger"]["logging"] = logger
-    logger.info('Start Sequence')
+    logger.info('Start Start Sequence')
 
     if len(sys.argv) < 2:
         social_server.post_social_message("Starting imaging run of debug")
@@ -34,4 +34,4 @@ if __name__ == "__main__":
     ))
 
     asyncio.run(ku.kasa_do(dev_map, instructions))
-    print("End of start")
+    logger.info('End Start Sequence')
