@@ -13,13 +13,10 @@ import sortdsoobjects
 import sun as s
 import super_user_commands as su
 import weather
-import vision_safety
+import os
 
-cfg = config.data()
 
-logger = logging.getLogger(__name__)
 
-cfg["logger"]["logging"] = logger
 
 def get_dso_object_name(words, index):
     if len(words) > index + 1:
@@ -68,11 +65,15 @@ def weather_cmd(words, index, m, account):
     description, weather_ok =  weather.get_current_weather()
     reply += description
     post_social_message(reply)
+    link = '<a href=https://www.cleardarksky.com/c/CntnCTkey.html> <img src="https://www.cleardarksky.com/c/CntnCTcs0.gif?1"></a>'
+    post_social_message(link)
 
 
 
 def status_cmd(words, index, m, account):
     # Observatory State
+    cfg = config.data()
+
     print ("status")
     reply = "Version: " + cfg["version"]["date"] + "\n"
     reply += "Observatory Status: " + cfg["Globals"]["Observatory State"]
@@ -89,6 +90,9 @@ def help_cmd(words, index, m, account):
     post_social_message(reply)
 
 def latest_cmd(words, index, m, account):
+    cfg = config.data()
+
+    logger = logging.getLogger(__name__)
     image_dir = cfg["nina"]["image_dir"]
     latest_fits = fitstojpg.get_latest_file(image_dir, "fits")
     latest_jpg = fitstojpg.convert_to_jpg(str(latest_fits))
@@ -130,6 +134,7 @@ def do_notification(notification, m):
             cmd = BeautifulSoup(html, 'html.parser').get_text()
             do_command(cmd, m, account)
     except:
+        logger = logging.getLogger(__name__)
         logger.info('Problem')
         logger.exception("Exception")
         m.status_post("Oops I had a problem " + cmd)
@@ -141,11 +146,15 @@ class TheStreamListener(StreamListener):
         print(f"Got update: {status['content']}")
 
     def on_notification(self, notification):
+        cfg = config.data()
+        logger = logging.getLogger(__name__)
         mastodon = cfg["mastodon"]["instance"]
         do_notification(notification, mastodon)
 
 
 def get_mastodon_instance():
+    cfg = config.data()
+    logger = logging.getLogger(__name__)
     access_token = cfg["mastodon"]["access_token"]
     api_base_url = cfg["mastodon"]["api_base_url"]
     mastodon = Mastodon(access_token=access_token, api_base_url=api_base_url)
@@ -153,6 +162,8 @@ def get_mastodon_instance():
 
 
 def post_social_message(message, image=None):
+    cfg = config.data()
+    logger = logging.getLogger(__name__)
     mastodon = cfg["mastodon"]["instance"]
     print (mastodon)
     if mastodon is None:
@@ -171,6 +182,7 @@ def post_social_message(message, image=None):
 
 
 def start_interface():
+    cfg = config.data()
     post_social_message("Starting Version " + cfg["version"]["date"])
     mastodon = cfg["mastodon"]["instance"]
     user = mastodon.stream_user(TheStreamListener(), run_async=True, reconnect_async=True)
@@ -179,12 +191,26 @@ def start_interface():
 
 
 def main():
+    cfg = config.data()
+
+    logger = logging.getLogger(__name__)
+
+    cfg["logger"]["logging"] = logger
+    path = cfg["Install"]
+    if  os.path.exists(path):
+        os.chdir(cfg["Install"])
     logging.basicConfig(filename='iris.log', level=logging.INFO,format='%(asctime)s %(message)s', datefmt='%m/%d/%Y %I:%M:%S %p')
     logger.info('Started Social Server')
 
     mastodon = get_mastodon_instance()
     cfg["mastodon"]["instance"] = mastodon
-    start_interface()
+    try:
+        start_interface()
+    except:
+        logger.info('Problem')
+        logger.exception("Exception")
+        get_mastodon_instance().status_post("Oops I had a problem with server")
+
     print("stop")
 
 
