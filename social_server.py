@@ -65,7 +65,7 @@ def weather_cmd(words, index, m, account):
     description, weather_ok =  weather.get_current_weather()
     reply += description
     post_social_message(reply)
-    link = '<a href=https://www.cleardarksky.com/c/CntnCTkey.html> <img src="https://www.cleardarksky.com/c/CntnCTcs0.gif?1"></a>'
+    link = '<a href="https://www.cleardarksky.com/c/CntnCTkey.html"> Cloud Cover</a>'
     post_social_message(link)
 
 
