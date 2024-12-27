@@ -200,7 +200,7 @@ def start_interface():
     listener = CallbackStreamListener(notification_handler=handle_mention)
     mastodon.stream_user(listener, run_async=True, reconnect_async=True)
     while True:
-        time.sleep(10)
+        time.sleep(1)
 
 
 
