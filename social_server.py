@@ -4,6 +4,7 @@ import time
 
 from bs4 import BeautifulSoup
 from mastodon import Mastodon, StreamListener
+from mastodon.streaming import CallbackStreamListener
 
 import fitstojpg
 import db as cdb
@@ -182,27 +183,25 @@ def post_social_message(message, image=None):
 
 
 
-def handle_mention(status):
+def handle_mention(notification):
     cfg = config.data()
-    if '@tmhobservatory' in status.content:
-        logger = logging.getLogger(__name__)
+    if notification.type == "mention":
+        print(notification.status.content)
         mastodon = cfg["mastodon"]["instance"]
-        html = status.content.lower()
-        cmd = BeautifulSoup(html, 'html.parser').get_text()
+        do_notification(notification, mastodon)
 
 
 
 def start_interface():
     cfg = config.data()
     post_social_message("Starting Version " + cfg["version"]["date"])
-    mastodon = cfg["mastodon"]["instance"]
-    mastodon = get_mastodon_instance()
-    #user = mastodon.stream_user(TheStreamListener(), run_async=True, reconnect_async=True)
 
-    # Start streaming for mentions
-    mastodon.stream_user(handle_mention)
+    mastodon = get_mastodon_instance()
+    listener = CallbackStreamListener(notification_handler=handle_mention)
+    mastodon.stream_user(listener, run_async=True, reconnect_async=True)
     while True:
-        time.sleep(100)
+        time.sleep(10)
+
 
 
 def main():
