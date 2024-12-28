@@ -12,6 +12,24 @@ import os
 cfg = config.data()
 
 
+async def get_sunrise_sunset() -> [bool]:
+    async with python_weather.Client(unit=python_weather.IMPERIAL) as client:
+        # fetch a weather forecast from a city
+        forecast = await client.get('West Hartford')
+
+
+
+        today = forecast.daily_forecasts[0]
+        tomorrow = forecast.daily_forecasts[1]
+
+
+        sunset = today.sunset
+        sunrise = today.sunrise
+
+        sunset_hour = sunset.hour
+        sunrise_hour = sunrise.hour
+
+        re
 async def get_weather() -> [str,bool]:
     # declare the client. the measuring unit used defaults to the metric system (celcius, km/h, etc.)
     async with python_weather.Client(unit=python_weather.IMPERIAL) as client:
@@ -39,6 +57,11 @@ async def get_weather() -> [str,bool]:
         sunrise_hour = sunrise.hour
 
         weather_ok = True
+        description += ("\nState / Hour / % Dry/ % Cloud "
+                        ""
+                        ""
+                        ""
+                        "/Description\n")
         for hourly in today:
             if hourly.time.hour >= sunset_hour:
                 this_hourly="GOOD "

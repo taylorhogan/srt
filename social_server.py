@@ -198,7 +198,7 @@ def start_interface():
 
     mastodon = get_mastodon_instance()
     listener = CallbackStreamListener(notification_handler=handle_mention)
-    mastodon.stream_user(listener, run_async=True, reconnect_async=True)
+    mastodon.stream_user(listener, run_async=True, reconnect_async=True,timeout=600)
     while True:
         time.sleep(1)
 
@@ -224,6 +224,7 @@ def main():
         logger.info('Problem')
         logger.exception("Exception")
         get_mastodon_instance().status_post("Oops I had a problem with server")
+        start_interface()
 
     print("stop")
 
