@@ -197,6 +197,8 @@ def start_interface():
     post_social_message("Starting Version " + cfg["version"]["date"])
 
     mastodon = get_mastodon_instance()
+
+
     listener = CallbackStreamListener(notification_handler=handle_mention)
     mastodon.stream_user(listener, run_async=True, reconnect_async=True,timeout=600)
     while True:

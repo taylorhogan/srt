@@ -8,11 +8,12 @@ import python_weather
 
 import asyncio
 import os
+import datetime
 
 cfg = config.data()
 
 
-async def get_sunrise_sunset() -> [bool]:
+async def get_sunrise_sunset_internal() -> [datetime, datetime]:
     async with python_weather.Client(unit=python_weather.IMPERIAL) as client:
         # fetch a weather forecast from a city
         forecast = await client.get('West Hartford')
@@ -26,10 +27,13 @@ async def get_sunrise_sunset() -> [bool]:
         sunset = today.sunset
         sunrise = today.sunrise
 
-        sunset_hour = sunset.hour
-        sunrise_hour = sunrise.hour
+        return sunrise, sunset
 
-        re
+def get_sunrise_sunset()-> [datetime, datetime]:
+    return asyncio.run(get_sunrise_sunset_internal())
+
+
+
 async def get_weather() -> [str,bool]:
     # declare the client. the measuring unit used defaults to the metric system (celcius, km/h, etc.)
     async with python_weather.Client(unit=python_weather.IMPERIAL) as client:

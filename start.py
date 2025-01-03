@@ -13,7 +13,8 @@ if __name__ == "__main__":
 
     cfg = config.data()
     path = os.path.join(cfg["Install"], 'iris.log')
-    logging.basicConfig(filename='iris.log', level=logging.INFO, format='%(asctime)s %(message)s',
+    print (path)
+    logging.basicConfig(filename=path, level=logging.INFO, format='%(asctime)s %(message)s',
                         datefmt='%m/%d/%Y %I:%M:%S %p')
     logger = logging.getLogger(__name__)
     cfg["logger"]["logging"] = logger
