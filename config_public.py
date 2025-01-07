@@ -10,27 +10,10 @@ class PublicConfig():
         "install_location": '/Users/taylorhogan/Documents/tmh',
 
         "version": {
-            "date": "2024.12.27.01"
+            "date": "2025.1.3.01"
         },
 
-        "logger": {
-            "topic": "flow/log",
-            "file": "iris.log",
-            "logging": ""
-        },
 
-        "weather": {
-            "api_key": "ed8baa5b5b9c64b42fafc6836e75a3a3",
-        },
-
-        "mastodon": {
-            "access_token": 'M67r7ztzqc8yWiNcokctuz0T5dJsL_P7Bh-o1VTHm9U',
-            "api_base_url": 'https://mastodon.social/',
-            "client_secret": "9c_OTf7f_Rmy3jPGpawgulxbZNLG3qqr_d5sZzlONqo",
-            "client_key": "bknnjpd3ATuzldY2PGzqGYE9tzynywijhZ90ZsDC1b8",
-            "instance": None,
-            "me": '@Thogan'
-        },
         "location": {
             "city": "Hartford",
             "latitude": 41.8096,
@@ -38,10 +21,12 @@ class PublicConfig():
             "elevation": 100,
             "observatory_name": "Iris"
         },
+
         "nina": {
             "image_dir1": "C:/Users/Primalucelab/Documents/N.I.N.A",
             "image_dir": "/Users/taylorhogan/Desktop"
         },
+
         "camera safety": {
             "parked azimuth deg": 56,
             "parked altitude deg": 5,
