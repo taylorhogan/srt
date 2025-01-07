@@ -1,0 +1,84 @@
+{
+  "modules": {
+    "iris": {
+      "input": [
+        "100VAC",
+        "Internet"
+      ],
+      "output": [
+        "Pictures"
+      ],
+      "context": [
+        "Main"
+      ],
+      "soft": " ",
+      "children": {
+        "DCConverter": "powerwerk (100VAC, 12VDC)",
+        "COMPUTER": "beelink (12VDC, internet)"
+      }
+    },
+    "DCConverter": {
+      "input": [
+        "100VAC"
+      ],
+      "output": [
+        "12VDC"
+      ],
+      "context": [
+        "Main"
+      ],
+      "soft": " "
+    },
+    "COMPUTER": {
+      "input": [
+        "12VDC",
+        "internet"
+      ],
+      "output": [
+        "USB1",
+        "USB2"
+      ],
+      "context": [
+        "Main"
+      ],
+      "soft": " "
+    },
+    "CAMERA": {
+      "input": [
+        "12VDC",
+        "USBIN"
+      ],
+      "output": [
+        "USBOUT"
+      ],
+      "context": [
+        "CDK"
+      ],
+      "soft": " "
+    },
+    "PowerBOX": {
+      "input": [
+        "12VDC",
+        "USBIN"
+      ],
+      "output": [
+        "12VDC1",
+        "12VDC2",
+        "12VDC3",
+        "12VDC4",
+        "USB1",
+        "USB2",
+        "USB3",
+        "USB4",
+        "USB5",
+        "USB6",
+        "USB7",
+        "USB8"
+      ],
+      "context": [
+        "CDK"
+      ],
+      "soft": " "
+    }
+  }
+}
