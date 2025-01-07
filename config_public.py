@@ -13,7 +13,9 @@ class PublicConfig():
             "date": "2025.1.7.01"
         },
 
-
+        "logger": {
+            "logging": ""
+        },
         "location": {
             "city": "Hartford",
             "latitude": 41.8096,
