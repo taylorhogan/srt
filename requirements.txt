@@ -61,3 +61,4 @@ typing_extensions==4.12.2
 urllib3==2.2.3
 webencodings==0.5.1
 yarl==1.18.3
+graphviz~=0.20.3
