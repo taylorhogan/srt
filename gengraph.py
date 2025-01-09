@@ -1,8 +1,6 @@
 import graphviz
 import json
 
-dot = graphviz.Digraph('hardware block diagram', comment='')
-
 
 
 def build_hierarchy (root, library):
@@ -11,10 +9,16 @@ def build_hierarchy (root, library):
         children = root['children']
         for child in children:
             dot.edge(root['name'], child)
-            child_template = library[child]
-            build_hierarchy(child_template, library)
+            if child in library:
+                child_template = library[child]
+                build_hierarchy(child_template, library)
+            else:
+                print ("Could not find "+ child)
 
 
+dot = graphviz.Digraph('hardware block diagram', comment='')
+dot.attr('node', shape='box')
+dot.attr(size='6,6')
 
 with open('hardware.json', 'r') as f:
     # Load the JSON data into a Python dictionary
@@ -33,6 +37,7 @@ for module in modules:
 
 
 
-
+u = dot.unflatten(stagger=3)
+#u.view()
 dot.render(directory='doctest-output', view=True)
 'doctest-output/round-table.gv.pdf'

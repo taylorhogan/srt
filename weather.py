@@ -61,27 +61,25 @@ async def get_weather() -> [str,bool]:
         sunrise_hour = sunrise.hour
 
         weather_ok = True
-        description += ("\nState / Hour / % Dry/ % Cloud "
-                        ""
-                        ""
-                        ""
-                        "/Description\n")
+        description += ("\nState  Hour  %Dry %Cloud Gust Description\n")
+        hours = []
+
         for hourly in today:
             if hourly.time.hour >= sunset_hour:
-                this_hourly="GOOD "
-                if hourly.chances_of_remaining_dry < 80 or hourly.cloud_cover > 50:
-                    weather_ok = False
-                    this_hourly = "BAD "
-                description +=  this_hourly +  str(hourly.time) + " " + str(hourly.chances_of_remaining_dry) + " " + str(hourly.cloud_cover) + " " + hourly.description + "\n"
-
+                hours.append(hourly)
         for hourly in tomorrow:
             if hourly.time.hour <= sunrise_hour:
-                this_hourly = "GOOD "
-                if hourly.chances_of_remaining_dry < 80 or hourly.cloud_cover > 50:
-                    weather_ok = False
-                    this_hourly = "BAD "
-                description += this_hourly + str(hourly.time) + " " + str(hourly.chances_of_remaining_dry) + " " + str(
-                    hourly.cloud_cover) + " " + hourly.description + "\n"
+                hours.append(hourly)
+
+
+        for hourly in hours:
+            this_hourly="GOOD "
+            if hourly.chances_of_remaining_dry < 80 or hourly.cloud_cover > 50 or hourly.wind_gust > 20:
+                weather_ok = False
+                this_hourly = "BAD  "
+            description +=  this_hourly +  str(hourly.time) + "  " + str(hourly.chances_of_remaining_dry) + "    " + str(hourly.cloud_cover) + "     " +  str(hourly.wind_gust) + "     " + hourly.description + "\n"
+
+
         if weather_ok:
             description += "Will image tonight"
         else:

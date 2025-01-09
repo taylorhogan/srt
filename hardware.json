@@ -91,6 +91,32 @@
       "soft": " ",
       "children": {}
     },
+        "ZWOCAMERA": {
+      "name": "ZWOCAMERA",
+      "input": [
+      ],
+      "output": [
+        "Pictures"
+      ],
+      "context": [
+        "Main"
+      ],
+      "soft": " ",
+      "children": {}
+    },
+    "ZWOFOCUSER": {
+      "name": "ZWOFOCUSER",
+      "input": [
+      ],
+      "output": [
+        "Pictures"
+      ],
+      "context": [
+        "Main"
+      ],
+      "soft": " ",
+      "children": {}
+    },
     "ROTATOR": {
       "name": "ROTATOR",
       "input": [
@@ -128,7 +154,10 @@
         "Main"
       ],
       "soft": " ",
-      "children": []
+      "children": {
+        "ZWOCAMERA": "zwocamera()",
+        "ZWOFOCUSER": "zwofocuser()"
+      }
     },
     "IMAGING SYSTEM": {
       "name": "IMAGING SYSTEM",
