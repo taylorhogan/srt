@@ -16,17 +16,16 @@ def generate_custom_calendar(year, month, day_colors_text):
 
     # Weekday labels
     weekdays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
-    #for i, weekday in enumerate(weekdays):
-       # ax.text(i + 0.5, 6.5, weekday, ha='center', fontsize=12, weight='bold')
+    for i, weekday in enumerate(weekdays):
+        ax.text(i + 0.5, 6.5, weekday, ha='center', fontsize=12, weight='bold')
 
     # Generate the calendar grid
-    row = 6
+    row = 5
     col = 7
     for (day, weekday) in days:
         if day == 0:
             continue  # Skip days not in the month
-
-        week_row = row - (day + weekday - 1) // 7
+        week_row = row
         col_pos = weekday
 
         # Get color and text for the day
@@ -39,12 +38,18 @@ def generate_custom_calendar(year, month, day_colors_text):
         # Add text
         ax.text(col_pos + 0.5, week_row + 0.5, text, ha='center', va='center', fontsize=12)
 
+        if weekday == 6:
+            row = row - 1
+
+
     # Set limits and aspect
-    ax.set_xlim(0, col)
-    ax.set_ylim(0, row)
+    ax.set_xlim(0, 8)
+    ax.set_ylim(0, 7)
     ax.set_aspect('equal')
 
     plt.show()
+    fig.savefig ('cal.png')
+
 
 # Example usage
 year = 2025

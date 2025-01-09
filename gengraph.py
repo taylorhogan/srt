@@ -21,7 +21,6 @@ dot.attr('node', shape='box')
 dot.attr(size='6,6')
 
 with open('hardware.json', 'r') as f:
-    # Load the JSON data into a Python dictionary
     data = json.load(f)
 
 # Now you can work with the data
