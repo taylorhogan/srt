@@ -64,11 +64,12 @@ def weather_cmd(words, index, m, account):
         sun = "night "
     reply = "\nMode: " + sun + "\n"
     reply += "Sun Angle: " + "{:10.2f}".format(angle) + "\n"
-    description, weather_ok =  weather.get_current_weather()
+    description, weather_ok =  weather.get_current_weather(True)
     reply += description
     post_social_message(reply)
-    link = '<html> <a href="https://www.cleardarksky.com/c/CntnCTkey.html"> Cloud Cover</a> </html>'
-    post_social_message(link)
+    description, weather_ok = weather.get_current_weather(False)
+    post_social_message(description)
+
 
 
 

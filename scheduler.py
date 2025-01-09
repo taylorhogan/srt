@@ -43,7 +43,7 @@ def wait_for_sunrise ():
 
 def determine_will_image():
     print(inspect.stack()[0][3])
-    description, weather_ok = weather.get_current_weather()
+    description, weather_ok = weather.get_current_weather(False)
     if weather_ok:
         print ("weather ok")
     else:
