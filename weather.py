@@ -60,6 +60,7 @@ async def get_weather() -> [str,bool]:
         sunset_hour = sunset.hour
         sunrise_hour = sunrise.hour
 
+        description = ""
         weather_ok = True
         description += ("\nState  Hour  %Dry %Cloud Gust Description\n")
         hours = []
