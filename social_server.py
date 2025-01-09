@@ -8,13 +8,14 @@ from mastodon.streaming import CallbackStreamListener
 
 import fitstojpg
 import db as cdb
-import inside_camera_server
+import obs_calendar
 import config
 import sortdsoobjects
 import sun as s
 import super_user_commands as su
 import weather
 import os
+
 
 
 
@@ -80,7 +81,11 @@ def status_cmd(words, index, m, account):
     reply += "Observatory Status: " + cfg["Globals"]["Observatory State"]
     post_social_message(reply)
 
-
+def calendar_cmd(words, index, m, account):
+    # Observatory State
+    cfg = config.data()
+    obs_calendar.print_month(2025, 1, cfg)
+    post_social_message("", "cal.png")
 
 
 
@@ -104,6 +109,7 @@ keywords = {
     "status": status_cmd,
     "weather": weather_cmd,
     "latest": latest_cmd,
+    "calendar": calendar_cmd,
     "help": help_cmd,
     "?": help_cmd
 }

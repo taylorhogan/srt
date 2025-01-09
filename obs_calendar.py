@@ -1,8 +1,11 @@
 import calendar
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
+import json
+import config
+import os
 
-def generate_custom_calendar(year, month, day_colors_text):
+def generate_custom_calendar(year, month, cal_data, cfg):
     # Generate the calendar for the given month
     cal = calendar.Calendar()
     days = cal.itermonthdays2(year, month)
@@ -29,8 +32,16 @@ def generate_custom_calendar(year, month, day_colors_text):
         col_pos = weekday
 
         # Get color and text for the day
-        color, text = day_colors_text.get(day, ("white", str(day)))
-
+        s = get_day_stats(cal_data, str(year), str(month), str(day))
+        if s is None:
+            color, text = 'white', str(day)
+        else:
+            state = s.get("state")
+            color = cfg["Calendar"][state]
+            if state == 'image':
+                text = s.get("dso")
+            else:
+                text = str(day)
         # Draw day cell
         rect = mpatches.Rectangle((col_pos, week_row), 1, 1, edgecolor="black", facecolor=color)
         ax.add_patch(rect)
@@ -51,15 +62,35 @@ def generate_custom_calendar(year, month, day_colors_text):
     fig.savefig ('cal.png')
 
 
-# Example usage
-year = 2025
-month = 1
-day_colors_text = {
-    1: ("lightblue", "Holiday"),
-    7: ("lightgreen", "Meeting"),
-    15: ("yellow", "Payday"),
-    25: ("orange", "Event"),
-    31: ("pink", "Deadline")
-}
+def read_cal ():
+    with open('calendar.json', 'r') as f:
+        cal = json.load(f)
 
-generate_custom_calendar(year, month, day_colors_text)
+    return cal
+
+def get_day_stats (cal, y, m, d):
+    years = cal['years']
+    year = years.get(y)
+    if year is None:
+        return None
+    months = year['months']
+    month = months.get(m)
+    if month is None:
+        return None
+    days = month['days']
+    day = days.get(d)
+    if day is None:
+        return None
+    return day
+
+
+def print_month (y, m, cfg):
+    generate_custom_calendar(y, m, read_cal(), cfg)
+
+
+
+if __name__ == "__main__":
+
+    cfg = config.data()
+    path = os.path.join(cfg["Install"], 'iris.log')
+    print_month(2025, 1, cfg)

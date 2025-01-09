@@ -44,6 +44,12 @@ class PublicConfig():
             "received_count": 0
 
         },
+        "Calendar":
+            {
+                "image": "lightblue",
+                "weather": "grey",
+                "service": "orange"
+            },
         "Globals":
             {
                 "Observatory State": "In Development",
