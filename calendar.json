@@ -6,11 +6,11 @@
           "days": {
             "1": {
               "state": "image",
-              "dso": "NGC145"
+              "dso": "NGC2683"
             },
             "2": {
-              "state": "image",
-              "dso": "NGC145"
+             "state": "image",
+              "dso": "NGC2683"
             },
             "3": {
               "state": "weather",
@@ -29,8 +29,8 @@
               "dso": ""
             },
             "9": {
-              "state": "service",
-              "dso": ""
+              "state": "image",
+              "dso": "NGC2683"
             }
           }
         }
