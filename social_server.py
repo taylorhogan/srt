@@ -208,23 +208,28 @@ def start_interface():
 
 
 def main():
+    print ("Starting")
     cfg = config.data()
 
     logger = logging.getLogger(__name__)
-
+    print ("1")
     cfg["logger"]["logging"] = logger
+    print("2")
     if os.name == 'posix':
         path = cfg["InstallL"]
     else:
         path = cfg["Install"]
+    print("3")
     if os.path.exists(path):
-        os.chdir(cfg["Install"])
+        os.chdir(path)
+    print("5")
     logging.basicConfig(filename='iris.log', level=logging.INFO, format='%(asctime)s %(message)s',
                         datefmt='%m/%d/%Y %I:%M:%S %p')
     logger.info('Started Social Server')
-
+    print("6")
     mastodon = get_mastodon_instance()
     cfg["mastodon"]["instance"] = mastodon
+    print(mastodon)
     try:
         start_interface()
     except:
