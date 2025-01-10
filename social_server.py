@@ -17,9 +17,6 @@ import weather
 import os
 
 
-
-
-
 def get_dso_object_name(words, index):
     if len(words) > index + 1:
         dso = words[index + 1]
@@ -64,23 +61,22 @@ def weather_cmd(words, index, m, account):
         sun = "night "
     reply = "\nMode: " + sun + "\n"
     reply += "Sun Angle: " + "{:10.2f}".format(angle) + "\n"
-    description, weather_ok =  weather.get_current_weather(True)
+    description, weather_ok = weather.get_current_weather(True)
     reply += description
     post_social_message(reply)
     description, weather_ok = weather.get_current_weather(False)
     post_social_message(description)
 
 
-
-
 def status_cmd(words, index, m, account):
     # Observatory State
     cfg = config.data()
 
-    print ("status")
+    print("status")
     reply = "Version: " + cfg["version"]["date"] + "\n"
     reply += "Observatory Status: " + cfg["Globals"]["Observatory State"]
     post_social_message(reply)
+
 
 def calendar_cmd(words, index, m, account):
     # Observatory State
@@ -89,12 +85,12 @@ def calendar_cmd(words, index, m, account):
     post_social_message("", "cal.png")
 
 
-
 def help_cmd(words, index, m, account):
     reply = "Available commands are\n"
     for word in keywords:
         reply += word + "\n"
     post_social_message(reply)
+
 
 def latest_cmd(words, index, m, account):
     cfg = config.data()
@@ -104,6 +100,8 @@ def latest_cmd(words, index, m, account):
     latest_fits = fitstojpg.get_latest_file(image_dir, "fits")
     latest_jpg = fitstojpg.convert_to_jpg(str(latest_fits))
     post_social_message("Latest", latest_jpg)
+
+
 keywords = {
     "show": show_cmd,
     "capture": capture_cmd,
@@ -176,7 +174,7 @@ def post_social_message(message, image=None):
 
     if mastodon is None:
         mastodon = get_mastodon_instance()
-        print (mastodon)
+        print(mastodon)
 
     if image is None:
         mastodon.status_post(message)
@@ -189,7 +187,6 @@ def post_social_message(message, image=None):
         mastodon.status_post(message, media_ids=media)
 
 
-
 def handle_mention(notification):
     cfg = config.data()
     if notification.type == "mention":
@@ -198,19 +195,16 @@ def handle_mention(notification):
         do_notification(notification, mastodon)
 
 
-
 def start_interface():
     cfg = config.data()
     post_social_message("Starting Version " + cfg["version"]["date"])
 
     mastodon = get_mastodon_instance()
 
-
     listener = CallbackStreamListener(notification_handler=handle_mention)
-    mastodon.stream_user(listener, run_async=True, reconnect_async=True,timeout=600)
+    mastodon.stream_user(listener, run_async=True, reconnect_async=True, timeout=600)
     while True:
         time.sleep(1)
-
 
 
 def main():
@@ -219,10 +213,14 @@ def main():
     logger = logging.getLogger(__name__)
 
     cfg["logger"]["logging"] = logger
-    path = cfg["Install"]
-    if  os.path.exists(path):
+    if os.name == 'posix':
+        path = cfg["InstallL"]
+    else:
+        path = cfg["Install"]
+    if os.path.exists(path):
         os.chdir(cfg["Install"])
-    logging.basicConfig(filename='iris.log', level=logging.INFO,format='%(asctime)s %(message)s', datefmt='%m/%d/%Y %I:%M:%S %p')
+    logging.basicConfig(filename='iris.log', level=logging.INFO, format='%(asctime)s %(message)s',
+                        datefmt='%m/%d/%Y %I:%M:%S %p')
     logger.info('Started Social Server')
 
     mastodon = get_mastodon_instance()
@@ -236,7 +234,6 @@ def main():
         start_interface()
 
     print("stop")
-
 
 
 if __name__ == '__main__':
