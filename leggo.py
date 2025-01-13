@@ -2,45 +2,47 @@ import inspect
 import graphviz
 
 
-class ASTNode (object):
-    def __init__(self, name='root', carrier = False):
+class AST_Data (object):
+    def __init__(self, name, library_name, carrier = False):
         self.name = name
+        self.library_name = library_name
         self.carrier = carrier
-        self.node_map = {}
 
-class AST(object):
 
-    def __init__(self, name='root'):
-        self.name = name
+
+class AST_Node(object):
+
+    def __init__(self, data):
+        self.data = data
         self.children = []
 
 
-    def __repr__(self):
-        return self.name
+    def print_me (self):
+        print (self.data.name)
+        for child in self.children:
+            child.print_me()
 
-    def add_child(self, node):
-        assert isinstance(node, AST)
-        self.children.append(node)
-        self.node_map.update({node.name: node})
+    def add_child(self, child_data):
+        child_node = AST_Node(child_data)
+        self.children.append(child_node)
+        return child_node
 
 
 
-    def find_node (self, name):
-        return self.node_map.get(name)
 
 
 
 class Leggo():
     def __init__(self):
-        dot = graphviz.Digraph('block diagram', comment='')
-        dot.attr('node', shape='box')
-        dot.attr(size='100,100')
-
-        self.stack = []
-        self.stack.append(dot)
-
         self.cluster_num = 0
-        self.top = dot
+        self.node_map = {}
+        self.ast = None
+        self.dot = graphviz.Graph('block diagram', engine='neato')
+        self.dot.attr(overlap='false')
+        self.dot.attr(fontsize='16')
+
+
+
 
     def next_cluster_name(self):
         self.cluster_num += 1
@@ -54,29 +56,26 @@ class Leggo():
                 this_parent_name, parent_instance_name, hname = self.caller_name()
                 my_parent_path = hname
                 my_path = hname + "/" + this_module_instance_name
-                print(hname + "/" + this_module_instance_name)
 
-                current_dot = self.stack[-1]
 
-                current_dot.node(my_parent_path, shape='box')
-                if carrier is True:
-                    next_cluster_name = self.next_cluster_name()
-                    with current_dot.subgraph(name=next_cluster_name) as next_dot:
-                        self.stack.append (next_dot)
 
-                        current_dot = self.stack[-1]
+                parent_tree = self.node_map.get(my_parent_path, None)
+                if parent_tree is None:
+                    parent_data = AST_Data(my_parent_path, this_module_instance_name, True)
+                    parent_tree = AST_Node(parent_data)
+                    self.ast = parent_tree
+                    self.node_map[my_parent_path] = parent_tree
 
-                        #current_dot.attr(style='filled', color = 'lightgrey')
-                        #current_dot.node_attr.update(style='filled', color='white')
-                        current_dot.node(my_path, color='red')
-                        current_dot.edge(my_parent_path, my_path)
-                        print(carrier)
-                        func(*args, **kwargs)
-                        self.stack.pop()
-                else:
-                    current_dot.node(my_path, color='red')
-                    current_dot.edge(my_parent_path, my_path)
-                    func(*args, **kwargs)
+                child_data= AST_Data(my_path, this_module_library_name, carrier)
+
+                child_tree = parent_tree.add_child(child_data)
+                self.node_map[my_path] = child_tree
+
+
+
+
+
+                func(*args, **kwargs)
 
 
             return wrapper
@@ -100,8 +99,24 @@ class Leggo():
         return caller_name, caller_instance_name, hname
 
 
-    def render(self):
-        self.top.render('graph', format='png')
+    def print_me (self):
+        ast = self.ast
+        ast.print_me()
+
+    def render_tree (self, parent, child):
+        self.dot.node(child.data.name,shape='box', label=child.data.name+"\n"+child.data.library_name)
+        if (parent != None):
+            self.dot.edge(parent.data.name, child.data.name)
+        for g_child in child.children:
+            self.render_tree (child,g_child)
+
+    def render(self, name='graph'):
+        ast = self.ast
+        self.render_tree (None, ast)
+        self.dot.render(name, format='png')
+        self.dot.view()
+
+
 
 if __name__ == '__main__':
     dot = graphviz.Digraph('block diagram', comment='')

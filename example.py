@@ -16,8 +16,8 @@ def chip (name, i1)->{}:
 
 @l.module(True)
 def package (name, i1, i2)->{}:
-    #chip ("c1", i1)
-    #chip ("c2", i2)
+    chip ("c1", i1)
+    chip ("c2", i2)
     return None
 
 @l.module(True)
@@ -29,7 +29,8 @@ def pcb (name, i1, i2) -> {}:
 
 
 pcb ("my_pcb", 1,2)
-l.render()
+l.print_me()
+l.render('eda')
 
 
 
