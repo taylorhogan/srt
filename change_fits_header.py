@@ -24,4 +24,4 @@ for subdir, dirs, files in os.walk(rootdir):
      for file in files:
          if file.endswith (".fits"):
              path = os.path.join(subdir,file)
-             change_fits_header(path, "filter", "L", "l", path)
+             change_fits_header(path, "filter", "l", "L", path)

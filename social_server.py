@@ -34,9 +34,8 @@ def capture_cmd(words, index, m, account):
         if object is not None:
             capture_db = cdb.DB()
             now = datetime.datetime.now()
-            capture_db.add(dso_name, now, now, 0, account, "default", "mastodon", 0, "")
+            capture_db.add_request(dso_name, account, "default")
             post_social_message(dso_name + " Added to list of objects to image\n")
-
         else:
             post_social_message(dso_name + " Not a known object\n")
 
@@ -119,7 +118,7 @@ def do_command(sentence, m, account):
     words = cmd.split(" ")
     seen_base_command = False
 
-    action = keywords.get(words[1], "no_key")
+    action = keywords.get(words[1].strip(), "no_key")
     if action != "no_key":
         action(words, 1, m, account)
         seen_base_command = True
