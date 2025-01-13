@@ -30,7 +30,19 @@
             },
             "9": {
               "state": "image",
-              "dso": "NGC2683"
+              "dso": "m66"
+            },
+             "10": {
+              "state": "image",
+              "dso": "m66"
+            },
+             "11": {
+              "state": "weather",
+              "dso": ""
+            },
+             "12": {
+              "state": "weather",
+              "dso": ""
             }
           }
         }
