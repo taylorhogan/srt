@@ -36,10 +36,14 @@ class Leggo():
     def __init__(self):
         self.cluster_num = 0
         self.node_map = {}
+        self.parent_stack = []
         self.ast = None
-        self.dot = graphviz.Graph('block diagram', engine='neato')
+        #self.dot = graphviz.Graph('block diagram', engine='neato')
+        self.dot= graphviz.Digraph()
         self.dot.attr(overlap='false')
         self.dot.attr(fontsize='16')
+        self.dot.attr(size='6,6')
+        self.dot.attr(rankdir='LR')
 
 
 
@@ -104,9 +108,20 @@ class Leggo():
         ast.print_me()
 
     def render_tree (self, parent, child):
+
+
+        if child.data.carrier:
+            self.dot.attr('node',color='lightblue')
+            self.dot.attr('node', style='filled')
+        else:
+            self.dot.attr('node',color='red')
+            self.dot.attr('node', style='')
+
         self.dot.node(child.data.name,shape='box', label=child.data.name+"\n"+child.data.library_name)
+
         if (parent != None):
             self.dot.edge(parent.data.name, child.data.name)
+
         for g_child in child.children:
             self.render_tree (child,g_child)
 

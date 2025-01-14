@@ -18,6 +18,9 @@ If the image has not been taken it will be added to the queue. Each night the te
 ## Architecture
 The system is a collection of distributed services. Currently, MQTT is the communication methodology between services.
 It is up to the user to map services to hardware. 
+
+## My Hardware Block Diagram
+![block diagram](iris.png)
 ## Appreciation for others
 This work rest heavily on others
 - Allsky

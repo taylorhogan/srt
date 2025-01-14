@@ -51,7 +51,7 @@ def rpi4(name, input)->{}:
 def oag(name, input)->{}:
     return True
 
-@l.module(False)
+@l.module(True)
 def cdk17(name, input)->{}:
     powerBox("power box", input)
     qhy6000m("camera", input)
@@ -62,14 +62,14 @@ def cdk17(name, input)->{}:
 
     return (True)
 
-@l.module(False)
+@l.module(True)
 def rasa8(name, input)->{}:
     zwoFocuser("focuser", input)
     zwo6200mm("camera", input)
     return (True)
 
 
-@l.module(False)
+@l.module(True)
 def l500(name, input)->{}:
     cdk17("cdk17", input)
     rasa8("rasa8", input)
