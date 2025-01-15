@@ -6,13 +6,16 @@ import requests
 import end
 import os
 
+import utils
+
+
 def close_roof_command ():
     return
 
 def start_nina():
     print("Starting Nina")
-    cfg = config.data()
-    fullpath = os.path.join (cfg["Install"], "runninia.bat")
+    path = utils.set_install_dir()
+    fullpath = os.path.join (path, "runninia.bat")
     print (fullpath)
     subprocess.run([fullpath])
     print("Done with Nina")

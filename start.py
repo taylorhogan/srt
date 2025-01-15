@@ -20,10 +20,6 @@ if __name__ == "__main__":
     cfg["logger"]["logging"] = logger
     logger.info('Start Start Sequence')
 
-    if len(sys.argv) < 2:
-        social_server.post_social_message("Starting imaging run of debug")
-    else:
-        social_server.post_social_message("Starting imaging run of " + sys.argv[1])
     dev_map = asyncio.run(ku.make_discovery_map())
     instructions = (dict
         (
