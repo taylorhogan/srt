@@ -15,9 +15,9 @@ def close_roof_command ():
 def start_nina():
     print("Starting Nina")
     path = utils.set_install_dir()
-    #fullpath = os.path.join (path, "runninia.bat")
-    print ("runninia.bat")
-    subprocess.run(["runninia.bat"])
+    #fullpath = os.path.join (path, "runnina.bat")
+    print (path)
+    subprocess.run(["runnina.bat"])
     print("Done with Nina")
 
 
