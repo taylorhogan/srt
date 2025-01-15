@@ -9,7 +9,7 @@
               "dso": "NGC2683"
             },
             "2": {
-             "state": "image",
+              "state": "image",
               "dso": "NGC2683"
             },
             "3": {
@@ -32,17 +32,25 @@
               "state": "image",
               "dso": "m66"
             },
-             "10": {
+            "10": {
               "state": "image",
               "dso": "m66"
             },
-             "11": {
+            "11": {
               "state": "weather",
               "dso": ""
             },
-             "12": {
+            "12": {
               "state": "weather",
               "dso": ""
+            },
+            "13": {
+              "state": "image",
+              "dso": "m66"
+            },
+             "14": {
+              "state": "image",
+              "dso": "m66"
             }
           }
         }
@@ -50,3 +58,4 @@
     }
   }
 }
+
