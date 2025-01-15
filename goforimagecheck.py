@@ -8,7 +8,7 @@ import utils
 
 if __name__ == "__main__":
 
-    #utils.set_install_dir()
+    utils.set_install_dir()
 
     logging.basicConfig(filename='iris.log', level=logging.INFO, format='%(asctime)s %(message)s',
                         datefmt='%m/%d/%Y %I:%M:%S %p')
