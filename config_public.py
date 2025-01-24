@@ -10,7 +10,7 @@ class PublicConfig():
         "install_location": '/Users/taylorhogan/Documents/tmh',
 
         "version": {
-            "date": "2025.1.24.05"
+            "date": "2025.1.24.06"
         },
 
         "logger": {
