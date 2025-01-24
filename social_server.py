@@ -227,6 +227,7 @@ def main():
     logger.info('Started Social Server')
     print("6")
     mastodon = get_mastodon_instance()
+    print ("7")
     cfg["mastodon"]["instance"] = mastodon
     print(mastodon)
     try:
