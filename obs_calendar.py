@@ -1,4 +1,6 @@
 import calendar
+from datetime import date
+
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 import json
@@ -87,10 +89,48 @@ def get_day_stats (cal, y, m, d):
 def print_month (y, m, cfg):
     generate_custom_calendar(y, m, read_cal(), cfg)
 
+def set_today_stat (state, dso):
+    cal = read_cal()
+    today = date.today()
+    this_year = str(2025)
+    this_month = str(today.month)
+    this_day = str(today.day)
+
+    years = cal['years']
+    year = years.get(this_year)
+    if year is None:
+        years[this_year]={}
+        year = years.get(this_year)
+    months = year.get('months')
+    month = months.get(this_month)
+    if month is None:
+        months[this_month]={'days':{}}
+        month = months.get(this_month)
+    days = month.get('days')
+    day = days.get(this_day)
+    if day is None:
+        days[this_day]={}
+        day = days.get(this_day)
+    day['state'] = state
+    day['dso'] = dso
+    with open("calendar.json", "w") as outfile:
+        json.dump(cal, outfile, indent=4)
+
+    return cal
+
+
+
+
+
+
+
+
+
 
 
 if __name__ == "__main__":
 
     cfg = config.data()
     path = os.path.join(cfg["Install"], 'iris.log')
-    print_month(2025, 1, cfg)
+    set_today_stat("weather","m21")
+    print_month(2025, 2, cfg)

@@ -1,5 +1,7 @@
 import enum
 from datetime import datetime, timedelta
+
+import social_server
 import weather
 import time
 import inspect
@@ -66,6 +68,13 @@ def waiting_for_sunset ():
 
 def do_state (state)->ObsState:
     return ObsState.WaitingForSunrise
+
+def announce_plans_before_sunset ():
+    description, weather_ok = weather.get_current_weather(False)
+    if weather_ok:
+        social_server.post_social_message("Will image tonight")
+    else:
+        social_server.post_social_message ("Will NOT image tonight")
 
 if __name__ == '__main__':
     current_state = determine_state()

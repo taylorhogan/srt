@@ -4,16 +4,24 @@
       "dso": "m66",
       "recipe": "",
       "requestor": "@Thogan",
-      "requesttime": "",
-      "status": "waiting",
+      "request_time": "",
+      "status": "in process",
       "priority": 0
     },
     "2": {
-      "dso": "m101",
+      "dso": "ngc4921",
       "recipe": "",
       "requestor": "@Thogan",
-      "requesttime": "",
-      "status": "complete",
+      "request_time": "",
+      "status": "waiting",
+      "priority": 1
+    },
+    "3": {
+      "dso": "m81",
+      "recipe": "",
+      "requestor": "@Thogan",
+      "request_time": "",
+      "status": "waiting",
       "priority": 1
     }
   }

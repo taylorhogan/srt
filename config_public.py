@@ -47,7 +47,7 @@ class PublicConfig():
         "Calendar":
             {
                 "image": "lightblue",
-                "weather": "grey",
+                "weather": "pink",
                 "service": "orange"
             },
         "Globals":

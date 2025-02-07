@@ -80,7 +80,7 @@ def status_cmd(words, index, m, account):
 def calendar_cmd(words, index, m, account):
     # Observatory State
     cfg = config.data()
-    obs_calendar.print_month(2025, 1, cfg)
+    obs_calendar.print_month(2025, 2, cfg)
     post_social_message("", "cal.png")
 
 

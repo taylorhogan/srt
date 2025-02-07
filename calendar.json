@@ -1,61 +1,68 @@
 {
-  "years": {
-    "2025": {
-      "months": {
-        "1": {
-          "days": {
-            "1": {
-              "state": "image",
-              "dso": "NGC2683"
-            },
-            "2": {
-              "state": "image",
-              "dso": "NGC2683"
-            },
-            "3": {
-              "state": "weather",
-              "dso": ""
-            },
-            "6": {
-              "state": "weather",
-              "dso": ""
-            },
-            "7": {
-              "state": "weather",
-              "dso": ""
-            },
-            "8": {
-              "state": "service",
-              "dso": ""
-            },
-            "9": {
-              "state": "image",
-              "dso": "m66"
-            },
-            "10": {
-              "state": "image",
-              "dso": "m66"
-            },
-            "11": {
-              "state": "weather",
-              "dso": ""
-            },
-            "12": {
-              "state": "weather",
-              "dso": ""
-            },
-            "13": {
-              "state": "image",
-              "dso": "m66"
-            },
-             "14": {
-              "state": "image",
-              "dso": "m66"
+    "years": {
+        "2025": {
+            "months": {
+                "1": {
+                    "days": {
+                        "1": {
+                            "state": "image",
+                            "dso": "NGC2683"
+                        },
+                        "2": {
+                            "state": "image",
+                            "dso": "NGC2683"
+                        },
+                        "3": {
+                            "state": "weather",
+                            "dso": ""
+                        },
+                        "6": {
+                            "state": "weather",
+                            "dso": ""
+                        },
+                        "7": {
+                            "state": "weather",
+                            "dso": ""
+                        },
+                        "8": {
+                            "state": "service",
+                            "dso": ""
+                        },
+                        "9": {
+                            "state": "image",
+                            "dso": "m66"
+                        },
+                        "10": {
+                            "state": "image",
+                            "dso": "m66"
+                        },
+                        "11": {
+                            "state": "weather",
+                            "dso": ""
+                        },
+                        "12": {
+                            "state": "weather",
+                            "dso": ""
+                        },
+                        "13": {
+                            "state": "image",
+                            "dso": "m66"
+                        },
+                        "14": {
+                            "state": "image",
+                            "dso": "m66"
+                        }
+                    }
+                },
+                "2": {
+                    "days": {
+                        "7": {
+                            "state": "weather",
+                            "dso": "m21"
+                        }
+                    }
+                }
             }
-          }
         }
-      }
     }
-  }
 }
-
