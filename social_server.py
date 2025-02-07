@@ -9,6 +9,7 @@ from mastodon.streaming import CallbackStreamListener
 import fitstojpg
 import db as cdb
 import obs_calendar
+from datetime import date
 import config
 import sortdsoobjects
 import sun as s
@@ -80,7 +81,9 @@ def status_cmd(words, index, m, account):
 def calendar_cmd(words, index, m, account):
     # Observatory State
     cfg = config.data()
-    obs_calendar.print_month(2025, 2, cfg)
+    today =date.today()
+
+    obs_calendar.print_month (today.year, today.month, cfg)
     post_social_message("", "cal.png")
 
 

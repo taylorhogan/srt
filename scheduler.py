@@ -5,6 +5,7 @@ import social_server
 import weather
 import time
 import inspect
+import obs_calendar
 
 class ObsState(enum.Enum):
     WaitingForNoon = 0
@@ -17,6 +18,19 @@ class ObsState(enum.Enum):
     RunningActiveSequence=7
     RunningTestSequence=8
 
+
+def simple_machine ():
+    sunrise, sunset = weather.get_sunrise_sunset()
+    now = datetime.now().time()
+    print(sunrise)
+    print(sunset)
+    print(now)
+
+    while now.hour < 12:
+        now = datetime.now().time()
+        time.sleep(10)
+    print("noon")
+    announce_plans_before_sunset()
 
 
 def determine_state ()->ObsState:
@@ -73,13 +87,12 @@ def announce_plans_before_sunset ():
     description, weather_ok = weather.get_current_weather(False)
     if weather_ok:
         social_server.post_social_message("Will image tonight")
+        obs_calendar.set_today_stat('image', 'research')
     else:
         social_server.post_social_message ("Will NOT image tonight")
+        obs_calendar.set_today_stat('weather', '')
+
 
 if __name__ == '__main__':
-    current_state = determine_state()
-    print (current_state.name)
-    if current_state == ObsState.WaitingForSunset:
-        waiting_for_sunset()
-
+  simple_machine()
 
