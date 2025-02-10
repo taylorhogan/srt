@@ -111,6 +111,9 @@ def set_today_stat (state, dso):
     if day is None:
         days[this_day]={}
         day = days.get(this_day)
+    print (day)
+    print (state)
+    print (dso)
     day['state'] = state
     day['dso'] = dso
     with open("calendar.json", "w") as outfile:
@@ -132,5 +135,4 @@ if __name__ == "__main__":
 
     cfg = config.data()
     path = os.path.join(cfg["Install"], 'iris.log')
-    set_today_stat("weather","m21")
     print_month(2025, 2, cfg)

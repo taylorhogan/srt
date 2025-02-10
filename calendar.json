@@ -57,8 +57,8 @@
                 "2": {
                     "days": {
                         "7": {
-                            "state": "weather",
-                            "dso": "m21"
+                            "state": "image",
+                            "dso": "research"
                         }
                     }
                 }
