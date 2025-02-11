@@ -1,28 +1,40 @@
-{
-  "requests": {
-    "1": {
+[
+
+   {
       "dso": "m66",
+      "uuid": "1",
       "recipe": "",
       "requestor": "@Thogan",
       "request_time": "",
       "status": "in process",
       "priority": 0
     },
-    "2": {
+    {
       "dso": "ngc4921",
+      "uuid": "1",
       "recipe": "",
       "requestor": "@Thogan",
       "request_time": "",
       "status": "waiting",
-      "priority": 1
+      "priority": 0
     },
-    "3": {
+   {
       "dso": "m81",
+      "uuid": "1",
       "recipe": "",
       "requestor": "@Thogan",
       "request_time": "",
       "status": "waiting",
+      "priority": 0
+    },
+    {
+      "dso": "ngc2903",
+      "uuid": "1",
+      "recipe": "",
+      "requestor": "@Thogan",
+      "request_time": "",
+      "status": "in process",
       "priority": 1
     }
-  }
-}
+
+]

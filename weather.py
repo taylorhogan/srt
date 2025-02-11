@@ -1,14 +1,10 @@
-from io import StringIO
-
-import requests
-
-import config
+import asyncio
+import datetime
+import os
 
 import python_weather
 
-import asyncio
-import os
-import datetime
+import config
 
 cfg = config.data()
 

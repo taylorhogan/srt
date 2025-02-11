@@ -1,25 +1,27 @@
 import enum
-from datetime import datetime, timedelta
+import inspect
+import time
+from datetime import datetime
 
+import instructions
+import obs_calendar
 import social_server
 import weather
-import time
-import inspect
-import obs_calendar
+
 
 class ObsState(enum.Enum):
     WaitingForNoon = 0
     Noon = 1
-    WaitingForSunset= 2
+    WaitingForSunset = 2
     Sunset = 3
-    WaitingForSunrise= 4
-    Sunrise =5
+    WaitingForSunrise = 4
+    Sunrise = 5
     DetermineWillImage = 6
-    RunningActiveSequence=7
-    RunningTestSequence=8
+    RunningActiveSequence = 7
+    RunningTestSequence = 8
 
 
-def simple_machine ():
+def simple_machine():
     sunrise, sunset = weather.get_sunrise_sunset()
     now = datetime.now().time()
     print(sunrise)
@@ -33,7 +35,7 @@ def simple_machine ():
     announce_plans_before_sunset()
 
 
-def determine_state ()->ObsState:
+def determine_state() -> ObsState:
     now = datetime.now()
     if now.hour < 12:
         return ObsState.WaitingForNoon
@@ -43,7 +45,7 @@ def determine_state ()->ObsState:
     return ObsState.WaitingForSunset
 
 
-def wait_for_sunrise ():
+def wait_for_sunrise():
     print(inspect.stack()[0][3])
     sunrise, sunset = weather.get_sunrise_sunset()
     now = datetime.now().time()
@@ -57,42 +59,50 @@ def wait_for_sunrise ():
     print("sunrise")
     determine_will_image()
 
+
 def determine_will_image():
     print(inspect.stack()[0][3])
     description, weather_ok = weather.get_current_weather(False)
     if weather_ok:
-        print ("weather ok")
+        print("weather ok")
     else:
-        print ("weather not ok")
-        wait_for_sunrise ()
+        print("weather not ok")
+        wait_for_sunrise()
 
-def waiting_for_sunset ():
+
+def waiting_for_sunset():
     print(inspect.stack()[0][3])
     sunrise, sunset = weather.get_sunrise_sunset()
     now = datetime.now().time()
-    print (sunrise)
-    print (sunset)
+    print(sunrise)
+    print(sunset)
     print(now)
 
     while now < sunset:
         now = datetime.now().time()
         time.sleep(1)
-    print ("sunset")
+    print("sunset")
     determine_will_image()
 
-def do_state (state)->ObsState:
+
+def do_state(state) -> ObsState:
     return ObsState.WaitingForSunrise
 
-def announce_plans_before_sunset ():
+
+def announce_plans_before_sunset():
     description, weather_ok = weather.get_current_weather(False)
+    best_instruction = instructions.get_dso_object_tonight()
+    dso = best_instruction["dso"]
+    requestor = best_instruction["requestor"]
+
     if weather_ok:
-        social_server.post_social_message("Will image tonight")
-        obs_calendar.set_today_stat('image', 'research')
+        social_server.post_social_message("Will image " + dso + " requested by " + requestor + " tonight")
+        obs_calendar.set_today_stat('image', dso)
     else:
-        social_server.post_social_message ("Will NOT image tonight")
-        obs_calendar.set_today_stat('weather', '')
+        social_server.post_social_message(
+            "Will NOT image " + dso + " requested by " + requestor + " tonight because of weather")
+        obs_calendar.set_today_stat('weather', dso)
 
 
 if __name__ == '__main__':
-  simple_machine()
-
+    simple_machine()
