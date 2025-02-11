@@ -1,6 +1,6 @@
 import json
 import functools
-
+from datetime import datetime
 
 status_dict = {"in process": 3, "waiting":2, "completed":1}
 
@@ -39,6 +39,23 @@ def compare (r1, r2):
 
 
 
+def add_dso_object_instruction (dso_name, recipe, requestor, priority=0):
+    now = datetime.now()
+    with open('instructions.json', 'r') as f:
+        instructions = json.load(f)
+    new_instruction = {
+      "dso": dso_name,
+      "uuid": "1",
+      "recipe": recipe,
+      "requestor": requestor,
+      "request_time": str(now),
+      "status": "waiting",
+      "priority": priority
+    }
+    instructions.append(new_instruction)
+    with open('instructions.json', 'w') as f:
+        f.writelines(json.dumps(instructions, indent=4))
+
 
 def get_dso_object_tonight():
     with open('instructions.json', 'r') as f:
@@ -52,6 +69,8 @@ def get_dso_object_tonight():
 
 
 if __name__ == "__main__":
-    best = get_dso_object_tonight()
-    print(best)
+
+    add_dso_object_instruction("foo", "mayo", "teh", 0)
+
+
 

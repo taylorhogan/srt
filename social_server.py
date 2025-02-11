@@ -7,7 +7,8 @@ from mastodon import Mastodon, StreamListener
 from mastodon.streaming import CallbackStreamListener
 
 import fitstojpg
-import db as cdb
+
+import instructions
 import obs_calendar
 from datetime import date
 import config
@@ -28,14 +29,14 @@ def get_dso_object_name(words, index):
     return dso
 
 
-def capture_cmd(words, index, m, account):
+def image_cmd(words, index, m, account):
     dso_name = get_dso_object_name(words, index)
     if dso_name is not None:
         object = sortdsoobjects.is_a_dso_object(dso_name)
         if object is not None:
-            capture_db = cdb.DB()
+
             now = datetime.datetime.now()
-            capture_db.add_request(dso_name, account, "default")
+            instructions.add_dso_object_instruction(dso_name,"",account)
             post_social_message(dso_name + " Added to list of objects to image\n")
         else:
             post_social_message(dso_name + " Not a known object\n")
@@ -106,7 +107,7 @@ def latest_cmd(words, index, m, account):
 
 keywords = {
     "show": show_cmd,
-    "capture": capture_cmd,
+    "image": image_cmd,
     "status": status_cmd,
     "weather": weather_cmd,
     "latest": latest_cmd,
