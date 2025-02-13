@@ -17,7 +17,7 @@ pip install matplotlib
 pip install astroquery
 pip install opencv-python
 pip install python-kasa
-pip intall python-weather
+pip install python-weather
 
 
 
