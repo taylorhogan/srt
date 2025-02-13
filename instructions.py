@@ -96,7 +96,7 @@ def create_instructions_table ():
     ax.set_aspect('equal')
 
     plt.show()
-    fig.savefig ('instructinos.png')
+    fig.savefig ('instructions.png')
 
 def add_dso_object_instruction (dso_name, recipe, requestor, priority=0):
     now = datetime.now()
