@@ -44,16 +44,16 @@ def create_instructions_table ():
     sorted_l = get_sorted_instructions()
     row_idx = len(sorted_l) + 1
 
-    fig, ax = plt.subplots(figsize=(10, 8))
+    fig, ax = plt.subplots(figsize=(10,8))
     ax.axis('off')
 
     # Set the title
-    ax.set_title("Image Requests", fontsize=20, pad=20)
+    #ax.set_title("Image Requests", fontsize=20, pad=20)
 
     # Weekday labels
     headers = ['DSO', 'Requestor', 'State', 'Date']
     for i, header in enumerate(headers):
-        ax.text(i + 0.5, row_idx+ 1, header, ha='center', fontsize=12, weight='bold')
+        ax.text(i + 2.5, row_idx+ 1, header, ha='center', fontsize=12, weight='bold')
 
     # Generate the  grid
 
@@ -81,10 +81,10 @@ def create_instructions_table ():
                 text = instruction["request_time"]
 
 
-            rect = mpatches.Rectangle((col_idx, row_idx), 1, 1, edgecolor="black", facecolor=color)
+            rect = mpatches.Rectangle((col_idx+2, row_idx), 1, 1, edgecolor="black", facecolor=color)
             ax.add_patch(rect)
             # Add text
-            ax.text(col_idx + 0.5, row_idx + 0.5, text, ha='center', va='center', fontsize=12)
+            ax.text(col_idx + 2.5, row_idx + 0.5, text, ha='center', va='center', fontsize=12)
 
         row_idx = row_idx -1
 

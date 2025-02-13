@@ -2,19 +2,27 @@
     "years": {
         "2025": {
             "months": {
-                "1": {
+                "2": {
                     "days": {
                         "1": {
                             "state": "image",
-                            "dso": "NGC2683"
+                            "dso": "ngc2683"
                         },
                         "2": {
                             "state": "image",
-                            "dso": "NGC2683"
+                            "dso": "ngc683"
                         },
                         "3": {
                             "state": "weather",
                             "dso": ""
+                        },
+                         "4": {
+                            "state": "image",
+                            "dso": "ngc2903"
+                        },
+                         "5": {
+                            "state": "image",
+                            "dso": "ngc2903"
                         },
                         "6": {
                             "state": "weather",
@@ -43,25 +51,12 @@
                         "12": {
                             "state": "weather",
                             "dso": ""
-                        },
-                        "13": {
-                            "state": "image",
-                            "dso": "m66"
-                        },
-                        "14": {
-                            "state": "image",
-                            "dso": "m66"
                         }
-                    }
-                },
-                "2": {
-                    "days": {
-                        "7": {
-                            "state": "image",
-                            "dso": "research"
-                        }
+
+
                     }
                 }
+
             }
         }
     }

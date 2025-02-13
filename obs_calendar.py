@@ -40,10 +40,13 @@ def generate_custom_calendar(year, month, cal_data, cfg):
         else:
             state = s.get("state")
             color = cfg["Calendar"][state]
+            text = str(day)
             if state == 'image':
-                text = s.get("dso")
-            else:
-                text = str(day)
+                text = text + "\n" + s.get("dso")
+            elif state == 'weather':
+                text = text + "\nweather"
+            elif state == 'service':
+                text = text + "\nservice"
         # Draw day cell
         rect = mpatches.Rectangle((col_pos, week_row), 1, 1, edgecolor="black", facecolor=color)
         ax.add_patch(rect)
