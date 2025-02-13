@@ -100,7 +100,7 @@ def create_instructions_table ():
 
 def add_dso_object_instruction (dso_name, recipe, requestor, priority=0):
     now = datetime.now()
-    with open('instructions.json', 'r') as f:
+    with open('my_instructions.json', 'r') as f:
         instructions = json.load(f)
     new_instruction = {
       "dso": dso_name,
@@ -112,12 +112,12 @@ def add_dso_object_instruction (dso_name, recipe, requestor, priority=0):
       "priority": priority
     }
     instructions.append(new_instruction)
-    with open('instructions.json', 'w') as f:
+    with open('my_instructions.json', 'w') as f:
         f.writelines(json.dumps(instructions, indent=4))
 
 
 def get_sorted_instructions():
-    with open('instructions.json', 'r') as f:
+    with open('my_instructions.json', 'r') as f:
         instructions = json.load(f)
 
     sorted_l = sorted(instructions, key=functools.cmp_to_key(compare))
