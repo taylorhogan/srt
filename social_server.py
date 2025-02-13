@@ -79,6 +79,10 @@ def status_cmd(words, index, m, account):
     post_social_message(reply)
 
 
+def instructions_cmd(words, index, m, account):
+    instructions.create_instructions_table()
+    post_social_message("", "instructions.png")
+
 def calendar_cmd(words, index, m, account):
     # Observatory State
     cfg = config.data()
@@ -108,6 +112,7 @@ def latest_cmd(words, index, m, account):
 keywords = {
     "show": show_cmd,
     "image": image_cmd,
+    "requests": instructions_cmd,
     "status": status_cmd,
     "weather": weather_cmd,
     "latest": latest_cmd,
