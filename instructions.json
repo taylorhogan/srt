@@ -1,49 +1,57 @@
 [
-
-   {
-      "dso": "m66",
-      "uuid": "1",
-      "recipe": "",
-      "requestor": "@Thogan",
-      "request_time": "",
-      "status": "in process",
-      "priority": 0
+    {
+        "dso": "m66",
+        "uuid": "1",
+        "recipe": "",
+        "requestor": "@Thogan",
+        "request_time": "",
+        "status": "in process",
+        "priority": 0
     },
     {
-      "dso": "ngc4921",
-      "uuid": "1",
-      "recipe": "",
-      "requestor": "@Thogan",
-      "request_time": "",
-      "status": "waiting",
-      "priority": 0
-    },
-   {
-      "dso": "m81",
-      "uuid": "1",
-      "recipe": "",
-      "requestor": "@Thogan",
-      "request_time": "",
-      "status": "waiting",
-      "priority": 0
+        "dso": "ngc4921",
+        "uuid": "1",
+        "recipe": "",
+        "requestor": "@Thogan",
+        "request_time": "",
+        "status": "waiting",
+        "priority": 0
     },
     {
-      "dso": "ngc2903",
-      "uuid": "1",
-      "recipe": "",
-      "requestor": "@Thogan",
-      "request_time": "",
-      "status": "in process",
-      "priority": 1
+        "dso": "m81",
+        "uuid": "1",
+        "recipe": "",
+        "requestor": "@Thogan",
+        "request_time": "",
+        "status": "waiting",
+        "priority": 0
     },
-  {
-      "dso": "m101",
-      "uuid": "1",
-      "recipe": "",
-      "requestor": "@Thogan",
-      "request_time": "",
-      "status": "completed",
-      "priority": 1
+    {
+        "dso": "ngc2903",
+        "uuid": "1",
+        "recipe": "",
+        "requestor": "@Thogan",
+        "request_time": "",
+        "status": "in process",
+        "priority": 1
+    },
+    {
+        "dso": "m101",
+        "uuid": "1",
+        "recipe": "",
+        "requestor": "@Thogan",
+        "request_time": "",
+        "status": "completed",
+        "priority": 1
+    },
+    {
+        "dso": "ngc6505",
+        "uuid": "1",
+        "recipe": "mayo",
+        "requestor": "teh",
+        "request_time": "2025-02-14",
+        "status": "waiting",
+        "priority": 0
     }
 
 ]

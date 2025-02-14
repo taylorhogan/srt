@@ -42,9 +42,9 @@ def compare (r1, r2):
 
 def create_instructions_table ():
     sorted_l = get_sorted_instructions()
-    row_idx = len(sorted_l) + 1
+    row_idx =  len(sorted_l) + 1
 
-    fig, ax = plt.subplots(figsize=(10,8))
+    fig, ax = plt.subplots(figsize=(10,row_idx + 4))
     ax.axis('off')
 
     # Set the title
@@ -53,7 +53,7 @@ def create_instructions_table ():
     # Weekday labels
     headers = ['DSO', 'Requestor', 'State', 'Date']
     for i, header in enumerate(headers):
-        ax.text(i + 2.5, row_idx+ 1, header, ha='center', fontsize=12, weight='bold')
+        ax.text(i + 2.5, len(sorted_l) + 1, header, ha='center', fontsize=12, weight='bold')
 
     # Generate the  grid
 
@@ -78,28 +78,34 @@ def create_instructions_table ():
             elif col_idx == 2:
                 text = instruction["status"]
             elif col_idx == 3:
-                text = instruction["request_time"]
+                string = instruction["request_time"]
+                if string != "":
+                    datetime_object = datetime.strptime(string, '%Y-%m-%d')
+                    formatted_date = datetime_object.strftime("%m\n%d\n%Y")
+                    text = formatted_date
+                else:
+                    text = ""
 
-
-            rect = mpatches.Rectangle((col_idx+2, row_idx), 1, 1, edgecolor="black", facecolor=color)
+            rect = mpatches.Rectangle((col_idx+2, row_idx-1), 1, 1, edgecolor="black", facecolor=color)
             ax.add_patch(rect)
             # Add text
-            ax.text(col_idx + 2.5, row_idx + 0.5, text, ha='center', va='center', fontsize=12)
+            ax.text(col_idx + 2.5, row_idx - 0.5, text, ha='center', va='center', fontsize=12)
 
         row_idx = row_idx -1
-
+        #break
 
 
     # Set limits and aspect
     ax.set_xlim(0, 8)
-    ax.set_ylim(0, 7)
-    ax.set_aspect('equal')
+    ax.set_ylim(0, 10)
+    #ax.set_aspect('equal')
 
     plt.show()
     fig.savefig ('instructions.png')
 
 def add_dso_object_instruction (dso_name, recipe, requestor, priority=0):
     now = datetime.now()
+    formatted_date = now.strftime("%Y-%m-%d")
     with open('my_instructions.json', 'r') as f:
         instructions = json.load(f)
     new_instruction = {
@@ -107,7 +113,7 @@ def add_dso_object_instruction (dso_name, recipe, requestor, priority=0):
       "uuid": "1",
       "recipe": recipe,
       "requestor": requestor,
-      "request_time": str(now),
+      "request_time": formatted_date,
       "status": "waiting",
       "priority": priority
     }
@@ -135,8 +141,10 @@ def get_dso_object_tonight():
 
 
 if __name__ == "__main__":
+    #add_dso_object_instruction("coo", "mayo", "teh", 0)
     create_instructions_table()
-    #add_dso_object_instruction("foo", "mayo", "teh", 0)
+
+
 
 
 
