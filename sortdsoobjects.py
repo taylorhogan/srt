@@ -36,8 +36,8 @@ def get_horizon_from_azimuth (this_az, az, al):
     return al[-1]
 
 
-def plot_my_dso_and_horizon (dso, my_observatory, observe_time):
-    altitude = (91 * u.deg - my_observatory.altaz(observe_time, dso).alt) * (1 / u.deg)
+def find_alt_az_horizon_times (dso, my_observatory, observe_time):
+
     altitude = (my_observatory.altaz(observe_time, dso).alt) * (1 / u.deg)
 
     # Azimuth MUST be given to plot() in radians.
@@ -48,15 +48,44 @@ def plot_my_dso_and_horizon (dso, my_observatory, observe_time):
 
     horizon = []
     az, al = map_az_to_horizon()
+    state=1
+    start_time = None
+    finish_time = None
+
     for idx in range(len(local_datetime)):
-        h = get_horizon_from_azimuth (azimuth[idx], az, al)
+        h = get_horizon_from_azimuth(azimuth[idx], az, al)
         horizon.append(h)
-        print(local_datetime[idx], altitude[idx], azimuth[idx], h)
+        if state == 1:
+            if  altitude[idx] >= h:
+                start_time = local_datetime[idx]
+                state = 2
+                continue
+        if state == 2:
+            if altitude[idx] < h:
+                finish_time = local_datetime[idx]
+                state =3
+                continue
 
 
+
+
+    if state == 2:
+        finish_time = local_datetime[-1]
+    elapsed_time = 0
+    if start_time is not None:
+        elapsed_time = finish_time - start_time
+
+    print (start_time, finish_time, elapsed_time)
+    return altitude, azimuth, horizon,start_time,finish_time,elapsed_time
+
+
+def plot_my_dso_and_horizon (dso, my_observatory, observe_time):
+
+
+    altitude, azimuth, horizon, start_time, finish_time, elapsed_time = find_alt_az_horizon_times(dso, my_observatory,observe_time)
 
     masked_altitude = np.ma.array(altitude, mask=altitude < 0)
-
+    local_datetime = my_observatory.astropy_time_to_datetime(observe_time)
 
     ax = plt.gca()
     style_kwargs = None
@@ -75,7 +104,7 @@ def plot_my_dso_and_horizon (dso, my_observatory, observe_time):
 
     start = local_datetime[0]
 
-
+    print(my_observatory.twilight_morning_astronomical(Time(start), which='next').datetime)
     twilights = [
         (my_observatory.sun_set_time(Time(start), which='next').datetime, 0.0),
         (my_observatory.twilight_evening_civil(Time(start), which='next').datetime, 0.1),
@@ -101,7 +130,8 @@ def plot_my_dso_and_horizon (dso, my_observatory, observe_time):
     # Set labels.
     ax.set_ylabel("Altitude")
     ax.set_xlabel("Time")
-    plt.title(dso.name)
+    title = dso.name + "\n" + "Start: " + start_time.strftime("%H:%M") + " Finish: " + finish_time.strftime("%H:%M") + " Elapsed Time: " + str(elapsed_time)
+    plt.title(title)
 
 
 
