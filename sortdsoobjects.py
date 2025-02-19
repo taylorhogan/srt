@@ -141,11 +141,11 @@ def show_plots(dso):
 
 
 
-    ax, hdu = plot_finder_image(dso, fov_radius=42*u.arcmin, reticle=True)
+    #ax, hdu = plot_finder_image(dso, fov_radius=42*u.arcmin, reticle=True)
 
     image_path = os.path.join(scratch_dir, "image.png")
-    plt.savefig(image_path)
-    plt.clf()
+   # plt.savefig(image_path)
+   # plt.clf()
 
     #astroplan.plots.plot_sky(dso, my_observatory, observe_time)
     #plt.legend(loc='center left', bbox_to_anchor=(1.25, 0.5))
