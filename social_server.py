@@ -43,13 +43,15 @@ def image_cmd(words, index, m, account):
 
 
 def show_cmd(words, index, m, account):
+    logger = logging.getLogger(__name__)
     dso_name = get_dso_object_name(words, index)
     if dso_name is not None:
         obj = sortdsoobjects.is_a_dso_object(dso_name)
         if obj is not None:
-            altitude, image, sky = sortdsoobjects.show_plots(obj)
-            post_social_message("altitude \n", altitude)
-            post_social_message("image\n", image)
+            horizon, image, sky = sortdsoobjects.show_plots(obj)
+            logger.info(horizon)
+            post_social_message("altitude \n", horizon)
+            #post_social_message("image\n", image)
            #post_social_message("sky\n", sky)
         else:
             post_social_message(dso_name + " Not a known object\n")
@@ -191,7 +193,7 @@ def post_social_message(message, image=None):
         #        mastodon.media_update(media_upload_mastodon, description="text")
         #       post = mastodon.status_post(message, media_ids=media_upload_mastodon)
 
-        media = mastodon.media_post(image, "image/jpeg")
+        media = mastodon.media_post(image, "image/png")
         mastodon.status_post(message, media_ids=media)
 
 
