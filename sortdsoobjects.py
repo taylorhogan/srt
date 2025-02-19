@@ -29,6 +29,12 @@ def is_a_dso_object(name):
     except NameError:
         return None
 
+def get_horizon_from_azimuth (this_az, az, al):
+    for idx in range (len(az) - 1):
+        if this_az >= az[idx] and this_az <= az[idx + 1]:
+            return al[idx]
+    return al[-1]
+
 
 def plot_my_dso_and_horizon (dso, my_observatory, observe_time):
     altitude = (91 * u.deg - my_observatory.altaz(observe_time, dso).alt) * (1 / u.deg)
@@ -40,9 +46,14 @@ def plot_my_dso_and_horizon (dso, my_observatory, observe_time):
 
     local_datetime = my_observatory.astropy_time_to_datetime(observe_time)
 
-
+    horizon = []
+    az, al = map_az_to_horizon()
     for idx in range(len(local_datetime)):
-        print(local_datetime[idx], altitude[idx], azimuth[idx])
+        h = get_horizon_from_azimuth (azimuth[idx], az, al)
+        horizon.append(h)
+        print(local_datetime[idx], altitude[idx], azimuth[idx], h)
+
+
 
     masked_altitude = np.ma.array(altitude, mask=altitude < 0)
 
@@ -53,7 +64,7 @@ def plot_my_dso_and_horizon (dso, my_observatory, observe_time):
 
     local_tz = pytz.timezone('America/New_York')
     ax.plot(local_datetime, masked_altitude)
-
+    ax.plot(local_datetime, horizon)
 
     ax.set_xlim([local_datetime[0], local_datetime[-1]])
     date_formatter = dates.DateFormatter('%H',tz=local_tz)
@@ -90,6 +101,7 @@ def plot_my_dso_and_horizon (dso, my_observatory, observe_time):
     # Set labels.
     ax.set_ylabel("Altitude")
     ax.set_xlabel("Time")
+    plt.title(dso.name)
 
 
 
@@ -119,17 +131,14 @@ def show_plots(dso):
     print(object_is_up)
     observe_time = sunset_tonight
     observe_time = observe_time + np.linspace(-1, 14, 55) * u.hour
-    astroplan.plots.plot_altitude(dso, my_observatory, observe_time,brightness_shading=True)
+
 
     dir_name = os.path.dirname(__file__)
     scratch_dir = os.path.join(dir_name + "/scratch")
     if not os.path.exists(scratch_dir):
         os.mkdir(scratch_dir)
 
-    altitude_path = os.path.join (scratch_dir,  "altitude.png")
 
-    plt.savefig(altitude_path)
-    plt.clf()
 
 
     ax, hdu = plot_finder_image(dso, fov_radius=42*u.arcmin, reticle=True)
@@ -185,6 +194,6 @@ def map_az_to_horizon ():
     return az, al
 
 if __name__ == '__main__':
-    map_az_to_horizon()
-    obj = is_a_dso_object("m 66")
+
+    obj = is_a_dso_object("ngc2903")
     show_plots (obj)
