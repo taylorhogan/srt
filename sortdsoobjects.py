@@ -189,7 +189,7 @@ def map_az_to_horizon ():
 
     plt.plot (az, al)
     ir_name = os.path.dirname(__file__)
-    scratch_dir = os.path.join("/Users/taylorhogan/Documents/tmh/" + "/scratch")
+    scratch_dir = os.path.join(dir_name + "/scratch")
     sky_path = os.path.join(scratch_dir, "h.png")
     plt.savefig(sky_path)
     plt.clf()

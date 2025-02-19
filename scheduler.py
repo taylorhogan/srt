@@ -104,5 +104,6 @@ def announce_plans_before_sunset():
         obs_calendar.set_today_stat('weather', dso)
 
 
+
 if __name__ == '__main__':
     simple_machine()
