@@ -147,11 +147,11 @@ def show_plots(dso):
     plt.savefig(image_path)
     plt.clf()
 
-    astroplan.plots.plot_sky(dso, my_observatory, observe_time)
-    plt.legend(loc='center left', bbox_to_anchor=(1.25, 0.5))
+    #astroplan.plots.plot_sky(dso, my_observatory, observe_time)
+    #plt.legend(loc='center left', bbox_to_anchor=(1.25, 0.5))
     sky_path = os.path.join(scratch_dir, "sky.png")
-    plt.savefig(sky_path)
-    plt.clf()
+    #plt.savefig(sky_path)
+   #plt.clf()
 
     plot_my_dso_and_horizon(dso, my_observatory, observe_time)
     altitude_path = os.path.join(scratch_dir, "horizon.png")

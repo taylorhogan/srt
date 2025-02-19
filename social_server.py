@@ -50,7 +50,7 @@ def show_cmd(words, index, m, account):
             altitude, image, sky = sortdsoobjects.show_plots(obj)
             post_social_message("altitude \n", altitude)
             post_social_message("image\n", image)
-            post_social_message("sky\n", sky)
+           #post_social_message("sky\n", sky)
         else:
             post_social_message(dso_name + " Not a known object\n")
 
