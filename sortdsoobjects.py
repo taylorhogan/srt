@@ -173,7 +173,9 @@ def map_az_to_horizon ():
     data = []
     az =[]
     al =[]
-    with open("/Users/taylorhogan/Documents/tmh/tmh.hrz", 'r') as file:
+    dir_name = os.path.dirname(__file__)
+    file_path = os.path.join(dir_name + "/my.hrz")
+    with open(file_path, 'r') as file:
         for line in file:
             # Strip whitespace and split the line into two columns
             columns = line.strip().split()
