@@ -246,7 +246,7 @@ if __name__ == '__main__':
 
     obj = is_a_dso_object("ngc2903")
     show_plots(obj)
-    with open('instructions.json', 'r') as f:
+    with open('my_instructions.json', 'r') as f:
         instructions = json.load(f)
     for instruction in instructions:
         dso = instruction['dso']
