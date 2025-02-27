@@ -63,7 +63,6 @@ def find_alt_az_horizon_times(dso, my_observatory, observe_time):
     start_of_dark_utc = utc_timezone.localize(start_of_dark_naive)
     start_of_dark_local = start_of_dark_utc.astimezone(local_tz)
 
-
     for idx in range(len(local_datetime)):
         h = get_horizon_from_azimuth(azimuth[idx], az, al)
         horizon.append(h)
@@ -81,10 +80,9 @@ def find_alt_az_horizon_times(dso, my_observatory, observe_time):
                     if finish_time is None:
                         finish_time = local_datetime[idx]
 
-    elapsed_time = 0
+    elapsed_time = None
     if start_time is not None:
         elapsed_time = finish_time - start_time
-
 
     return altitude, azimuth, horizon, start_time, finish_time, elapsed_time
 
@@ -111,7 +109,6 @@ def plot_my_dso_and_horizon(dso, my_observatory, observe_time):
     # Shade background during night time
 
     start = local_datetime[0]
-
 
     twilights = [
         (my_observatory.sun_set_time(Time(start), which='next').datetime, 0.0),
@@ -161,7 +158,6 @@ def show_plots(dso):
     sunset_tonight = my_observatory.sun_set_time(time, which='nearest')
     sunrise_tonight = my_observatory.sun_rise_time(time, which='nearest')
 
-
     object_is_up = my_observatory.target_is_up(time, dso)
 
     observe_time = sunset_tonight
@@ -193,7 +189,7 @@ def show_plots(dso):
     return altitude_path, image_path, sky_path
 
 
-def get_above_horizon_time(dso):
+def get_above_horizon_time(dso, time):
     longitude = cfg["location"]["longitude"]
     latitude = cfg["location"]["latitude"]
     elevation = cfg["location"]["elevation"]
@@ -201,12 +197,9 @@ def get_above_horizon_time(dso):
 
     location = EarthLocation.from_geodetic(longitude * u.deg, latitude * u.deg, elevation * u.m)
     my_observatory = Observer(location=location, name=observatory_name, timezone="US/Eastern")
-    time = Time.now()
+
     sunset_tonight = my_observatory.sun_set_time(time, which='nearest')
     sunrise_tonight = my_observatory.sun_rise_time(time, which='nearest')
-
-
-    object_is_up = my_observatory.target_is_up(time, dso)
 
     observe_time = sunset_tonight
     observe_time = observe_time + np.linspace(-1, 14, 55) * u.hour
@@ -242,9 +235,49 @@ def map_az_to_horizon():
     return az, al
 
 
+def enumerate_days_of_year(year):
+    first_day = datetime.date(year, 1, 1)
+    last_day = datetime.date(year, 12, 31)
+
+    for day_number in range(1, (last_day - first_day).days + 2):
+        current_day = first_day + datetime.timedelta(days=day_number - 1)
+        yield day_number, current_day
+
+
+def best_day_for_dso(dso):
+    # Example usage for the year 2025
+    year_to_enumerate = 2025
+    best_time = None
+    best_date = None
+    for day_number, day in enumerate_days_of_year(year_to_enumerate):
+        print(day.year, day.month, day.day)
+        this_day = datetime.datetime(day.year, day.month, day.day, 14, 0, 0)
+        this_time = Time(this_day)
+        above_time = get_above_horizon_time(dso, this_time)
+        if best_date is None:
+            best_date = this_day
+            best_time = above_time
+        else:
+            if above_time is not None:
+                if above_time > best_time:
+                    best_date = this_day
+                    best_time = above_time
+
+    if best_date is None:
+        return None, None
+    else:
+        return best_date, best_time
+
+
 if __name__ == '__main__':
 
     obj = is_a_dso_object("ngc2903")
+    best_date, best_time = best_day_for_dso(obj)
+    if best_date is None:
+        print(obj.name, " Never")
+    else:
+        print(obj.name, best_date, best_time)
+
     show_plots(obj)
     with open('my_instructions.json', 'r') as f:
         instructions = json.load(f)
@@ -252,5 +285,8 @@ if __name__ == '__main__':
         dso = instruction['dso']
         obj = is_a_dso_object(dso)
         if obj is not None:
-            elapsed_time = get_above_horizon_time(obj)
-            print (dso, str(elapsed_time))
+            elapsed_time = get_above_horizon_time(obj, Time.now())
+            if elapsed_time is not None:
+                print(dso, str(elapsed_time))
+            else:
+                print(dso + " is never above horizon")

@@ -41,6 +41,18 @@ def image_cmd(words, index, m, account):
         else:
             post_social_message(dso_name + " Not a known object\n")
 
+def best_cmd(words, index, m, account):
+    dso_name = get_dso_object_name(words, index)
+    if dso_name is not None:
+        object = sortdsoobjects.is_a_dso_object(dso_name)
+        if object is not None:
+            best_date, best_time = sortdsoobjects.best_day_for_dso(object)
+            if best_date is not None:
+                post_social_message(dso_name + " is above horizon for " + best_date + " on "+ best_date)
+            else:
+                post_social_message(dso_name + " is never above horizon")
+        else:
+            post_social_message(dso_name + " Not a known object\n")
 
 def show_cmd(words, index, m, account):
     logger = logging.getLogger(__name__)
@@ -113,6 +125,7 @@ def latest_cmd(words, index, m, account):
 
 keywords = {
     "show": show_cmd,
+    "best": best_cmd,
     "image": image_cmd,
     "requests": instructions_cmd,
     "status": status_cmd,
