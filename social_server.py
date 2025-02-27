@@ -48,7 +48,8 @@ def best_cmd(words, index, m, account):
         if object is not None:
             best_date, best_time = sortdsoobjects.best_day_for_dso(object)
             if best_date is not None:
-                post_social_message(dso_name + " is above horizon for " + str(best_time) + " on "+ str(best_date))
+                formatted_date = best_date.strftime("%Y-%m-%d")
+                post_social_message(dso_name + " is above horizon for " + str(best_time) + " on "+ formatted_date)
             else:
                 post_social_message(dso_name + " is never above horizon")
         else:
