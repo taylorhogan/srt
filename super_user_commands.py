@@ -12,6 +12,10 @@ import utils
 def close_roof_command ():
     return
 
+
+def open_roof_command():
+    return
+
 def start_nina():
     print("Starting Nina")
     path = utils.set_install_dir()
@@ -22,13 +26,14 @@ def start_nina():
 
 
 def shutdown():
-    pass
+    return
 
 def get_super_user_commands():
     return {
         "close!'": close_roof_command,
+        "open!'": close_roof_command,
          "nina!": start_nina,
-        "shutdown!": shutdown
+        "reboot!": shutdown
     }
 
 

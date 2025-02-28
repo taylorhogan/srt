@@ -1,12 +1,12 @@
-# Observatory as a Service
+# OAAS - Observatory As A Service
 # Or
 # Autonomous Social Robotic Observatory
 
-
-The hope for this projects is to allow control of a telescope through high level interaction through a social network. 
+Imagine you are an avid reader, and have a list of books you would like to read. If only your local libraries could read your list, and let you know which one are available right now.
+This project is similar, but for Astronomy. You provide a list of objects that you would like to image, along with a recipe on how to do the imaging, and the Observatory tries to optimize each night
+with what Deep Sky Objects are visible, and requested. Once complete, the system returns the image. 
+All this interaction is done though social media (currently Mastodon). 
 All the details of imaging have nice defaults but the user can override
-At the highest level a user can request an image of a Deep Sky Object. If the imagine has been previously created, that will be returned with a link to a full resolution image available for download.
-If the image has not been taken it will be added to the queue. Each night the telescope will decide if it is safe to image an optimize the aquisition of the queue given the position of deep sky objects. After each session, intermediate images will be calibrated, and processed. Once a desired level of Signal to Noise ration has been achieved, the DSO will be removed from the queue and be available for download.
 
 #### A Journey through telescope Automation
 - No imaging equipment, just sitting out under the stars, letting your eyes adjust to the wonder.
