@@ -135,7 +135,7 @@ def plot_my_dso_and_horizon(dso, my_observatory, observe_time):
         title = dso.name + "\n" + "Start: " + start_time.strftime("%H:%M") + " Finish: " + finish_time.strftime(
             "%H:%M") + " Elapsed Time: " + str(elapsed_time)
     else:
-        title = dso.name + "Not Visible"
+        title = dso.name + " Not Visible"
     plt.title(title)
 
     # Redraw figure for interactive sessions.
@@ -269,8 +269,7 @@ def best_day_for_dso(dso):
         return best_date, best_time
 
 
-if __name__ == '__main__':
-
+def test_me():
     obj = is_a_dso_object("ngc2903")
     best_date, best_time = best_day_for_dso(obj)
     if best_date is None:
@@ -290,3 +289,7 @@ if __name__ == '__main__':
                 print(dso, str(elapsed_time))
             else:
                 print(dso + " is never above horizon")
+
+
+if __name__ == '__main__':
+    test_me()

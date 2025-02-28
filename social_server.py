@@ -12,7 +12,7 @@ import instructions
 import obs_calendar
 from datetime import date
 import config
-import sortdsoobjects
+import dso_visibility
 import sun as s
 import super_user_commands as su
 import weather
