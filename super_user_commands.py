@@ -1,26 +1,84 @@
-import asyncio
 import subprocess
-import time
+
 import config
-import requests
-import end
-import os
-
+import social_server
 import utils
+import logging
+import pwi4_utils
+import os
+import kasa_utils as ku
+import asyncio
+import shelly
+import requests
 
 
-def close_roof_command ():
+
+
+
+def park_and_close_cmd(logger):
+    if not pwi4_utils.park_scope(logger):
+        return False
+
+    parked = pwi4_utils.get_is_parked(logger)
+    if parked:
+        social_server.post_social_message("Mount says Iris is parked")
+        dev_map = asyncio.run(ku.make_discovery_map())
+        instructions = (dict
+            (
+            {
+                "Telescope mount": 'off',
+                "Roof motor": 'on'
+            }
+        ))
+
+        asyncio.run(ku.kasa_do(dev_map, instructions))
+        r = requests.get('http://192.168.87.41/relay/0?turn=on')
+
+
+    else:
+        social_server.post_social_message("Mount says Iris is NOT parked")
+        return False
+
+
+
+
+def open_if_mount_off_cmd():
+    dev_map = asyncio.run(ku.make_discovery_map())
+    instructions = (dict
+        (
+        {
+            "Telescope mount": 'isoff',
+        }
+    ))
+
+    check_ok = asyncio.run(ku.kasa_check(dev_map, instructions))
+    if check_ok:
+        social_server.post_social_message("Mount is Off")
+
+        instructions = (dict
+            (
+            {
+                "Roof motor": 'on'
+            }
+        ))
+
+        asyncio.run(ku.kasa_do(dev_map, instructions))
+        r = requests.get('http://192.168.87.41/relay/0?turn=on')
+
+
+
+    else:
+        social_server.post_social_message("Mount is not Off")
+
+
     return
 
-
-def open_roof_command():
-    return
 
 def start_nina():
     print("Starting Nina")
     path = utils.set_install_dir()
-    #fullpath = os.path.join (path, "runnina.bat")
-    print (path)
+    # fullpath = os.path.join (path, "runnina.bat")
+    print(path)
     subprocess.run(["runnina.bat"])
     print("Done with Nina")
 
@@ -28,32 +86,53 @@ def start_nina():
 def shutdown():
     return
 
+
+def print_help(account):
+    if not is_super_user(account):
+        return
+    reply = "Available SU commands are\n"
+    keywords = get_super_user_commands()
+    for word in keywords:
+        reply += word + "\n"
+    social_server.post_social_message(reply)
+
+
 def get_super_user_commands():
     return {
-        "close!'": close_roof_command,
-        "open!'": close_roof_command,
-         "nina!": start_nina,
+        "park_and_close!'": park_and_close_cmd,
+        "open_if_mount_off!'": open_if_mount_off_cmd,
+        "nina!": start_nina,
         "reboot!": shutdown
     }
 
 
-def do_super_user_command(words, account):
+def is_super_user(account):
     cfg = config.data()
-    su_commands = get_super_user_commands()
-    print (str(su_commands))
-    action = su_commands.get(words[1], "no_key")
-    print("action is " + str (action) + " word " + str(words[1]) + ".")
-    if action != "no_key":
-        super_users = cfg["Super Users"]
-        if account in super_users:
-            print("Whoot")
-            action()
-            return True
-        else:
-            # social_server.post_social_message(account + " Is not authorized\n")
-            print("no auth")
-            return False
+
+    super_users = cfg["Super Users"]
+    if account in super_users:
+        return True
     else:
         return False
 
 
+def do_super_user_command(words, account):
+    if not is_super_user(account):
+        print("no auth")
+        return False
+
+    su_commands = get_super_user_commands()
+    action = su_commands.get(words[1], "no_key")
+    print("action is " + str(action) + " word " + str(words[1]) + ".")
+    if action != "no_key":
+        action()
+        return True
+    else:
+        return False
+if __name__ == '__main__':
+    utils.set_install_dir()
+
+    logging.basicConfig(filename='iris.log', level=logging.INFO, format='%(asctime)s %(message)s',
+                        datefmt='%m/%d/%Y %I:%M:%S %p')
+    logger = logging.getLogger(__name__)
+    park_and_close_cmd(logger)

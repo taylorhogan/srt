@@ -25,17 +25,17 @@ def determine_roof_state():
 if __name__ == "__main__":
 
     cfg = config.data()
-    path = os.path.join(cfg["Install"], 'iris.log')
-    logging.basicConfig(filename=path, level=logging.INFO, format='%(asctime)s %(message)s',
-                        datefmt='%m/%d/%Y %I:%M:%S %p')
-    logger = logging.getLogger(__name__)
-    cfg["logger"]["logging"] = logger
-
-    logger.info('Begin End Sequence')
+    # path = os.path.join(cfg["Install"], 'iris.log')
+    # logging.basicConfig(filename=path, level=logging.INFO, format='%(asctime)s %(message)s',
+    #                     datefmt='%m/%d/%Y %I:%M:%S %p')
+    # logger = logging.getLogger(__name__)
+    # cfg["logger"]["logging"] = logger
+    #
+    # logger.info('Begin End Sequence')
 
     try:
 
-        parked = pwi4_utils.get_is_parked(logger)
+        parked = pwi4_utils.get_is_parked()
         if parked:
             social_server.post_social_message("Mount says Iris is parked")
             dev_map = asyncio.run(ku.make_discovery_map())

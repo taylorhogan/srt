@@ -32,7 +32,7 @@ def get_dso_object_name(words, index):
 def image_cmd(words, index, m, account):
     dso_name = get_dso_object_name(words, index)
     if dso_name is not None:
-        object = sortdsoobjects.is_a_dso_object(dso_name)
+        object = dso_visibility.is_a_dso_object(dso_name)
         if object is not None:
 
             now = datetime.datetime.now()
@@ -44,9 +44,9 @@ def image_cmd(words, index, m, account):
 def best_cmd(words, index, m, account):
     dso_name = get_dso_object_name(words, index)
     if dso_name is not None:
-        object = sortdsoobjects.is_a_dso_object(dso_name)
+        object = dso_visibility.is_a_dso_object(dso_name)
         if object is not None:
-            best_date, best_time = sortdsoobjects.best_day_for_dso(object)
+            best_date, best_time = dso_visibility.best_day_for_dso(object)
             if best_date is not None:
                 formatted_date = best_date.strftime("%Y-%m-%d")
                 post_social_message(dso_name + " is above horizon for " + str(best_time) + " on "+ formatted_date)
@@ -59,9 +59,9 @@ def show_cmd(words, index, m, account):
     logger = logging.getLogger(__name__)
     dso_name = get_dso_object_name(words, index)
     if dso_name is not None:
-        obj = sortdsoobjects.is_a_dso_object(dso_name)
+        obj = dso_visibility.is_a_dso_object(dso_name)
         if obj is not None:
-            horizon, image, sky = sortdsoobjects.show_plots(obj)
+            horizon, image, sky = dso_visibility.show_plots(obj)
             logger.info(horizon)
             post_social_message("altitude \n", horizon)
             #post_social_message("image\n", image)
@@ -112,6 +112,8 @@ def help_cmd(words, index, m, account):
     for word in keywords:
         reply += word + "\n"
     post_social_message(reply)
+    su.print_help(account)
+
 
 
 def latest_cmd(words, index, m, account):

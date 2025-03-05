@@ -1,9 +1,28 @@
 from pwi4_client import PWI4
 import config
 import logging
+import utils
+
+def park_scope ():
+
+    pwi4 = PWI4()
+
+    s = pwi4.status()
+    print("Mount connected:", s.mount.is_connected)
+    print(s)
+    if not s.mount.is_connected:
+        print("Connecting to mount...")
+        s = pwi4.mount_connect()
+        print("Mount connected:", s.mount.is_connected)
+        if not s.mount.is_connected:
+            return False
+    print("Mount is connected")
+    pwi4.mount_park()
+    return True
 
 
-def get_is_parked (logger):
+
+def get_is_parked ():
 
     try:
         cfg = config.data()
@@ -46,11 +65,15 @@ def get_is_parked (logger):
 
 
     except:
-        logger.info('Problem')
-        logger.exception("Exception")
         return False
 
 
 
 if __name__ == "__main__":
+    utils.set_install_dir()
+
+    logging.basicConfig(filename='iris.log', level=logging.INFO, format='%(asctime)s %(message)s',
+                        datefmt='%m/%d/%Y %I:%M:%S %p')
+    logger = logging.getLogger(__name__)
     parked = get_is_parked()
+    print (parked)
