@@ -25,13 +25,13 @@ def determine_roof_state():
 if __name__ == "__main__":
 
     cfg = config.data()
-    # path = os.path.join(cfg["Install"], 'iris.log')
-    # logging.basicConfig(filename=path, level=logging.INFO, format='%(asctime)s %(message)s',
-    #                     datefmt='%m/%d/%Y %I:%M:%S %p')
-    # logger = logging.getLogger(__name__)
-    # cfg["logger"]["logging"] = logger
-    #
-    # logger.info('Begin End Sequence')
+    path = os.path.join(cfg["Install"], 'iris.log')
+    logging.basicConfig(filename=path, level=logging.INFO, format='%(asctime)s %(message)s',
+                        datefmt='%m/%d/%Y %I:%M:%S %p')
+    logger = logging.getLogger(__name__)
+    cfg["logger"]["logging"] = logger
+
+    logger.info('Begin End Sequence')
 
     try:
 
@@ -43,7 +43,8 @@ if __name__ == "__main__":
                 (
                 {
                     "Telescope mount": 'off',
-                    "Roof motor": 'on'
+                    "Roof motor": 'on',
+                    "Iris inside light": 'on'
                 }
             ))
 

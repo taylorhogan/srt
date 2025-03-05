@@ -15,11 +15,11 @@ import requests
 
 
 
-def park_and_close_cmd(logger):
-    if not pwi4_utils.park_scope(logger):
+def park_and_close_cmd():
+    if not pwi4_utils.park_scope():
         return False
 
-    parked = pwi4_utils.get_is_parked(logger)
+    parked = pwi4_utils.get_is_parked()
     if parked:
         social_server.post_social_message("Mount says Iris is parked")
         dev_map = asyncio.run(ku.make_discovery_map())
@@ -27,7 +27,8 @@ def park_and_close_cmd(logger):
             (
             {
                 "Telescope mount": 'off',
-                "Roof motor": 'on'
+                "Roof motor": 'on',
+                "Iris inside light": 'on'
             }
         ))
 
@@ -58,7 +59,8 @@ def open_if_mount_off_cmd():
         instructions = (dict
             (
             {
-                "Roof motor": 'on'
+                "Roof motor": 'on',
+                "Iris inside light": 'off'
             }
         ))
 
@@ -129,10 +131,4 @@ def do_super_user_command(words, account):
         return True
     else:
         return False
-if __name__ == '__main__':
-    utils.set_install_dir()
 
-    logging.basicConfig(filename='iris.log', level=logging.INFO, format='%(asctime)s %(message)s',
-                        datefmt='%m/%d/%Y %I:%M:%S %p')
-    logger = logging.getLogger(__name__)
-    park_and_close_cmd(logger)
