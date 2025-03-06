@@ -101,8 +101,8 @@ def print_help(account):
 
 def get_super_user_commands():
     return {
-        "park_and_close!'": park_and_close_cmd,
-        "open_if_mount_off!'": open_if_mount_off_cmd,
+        "park_and_close!": park_and_close_cmd,
+        "open_if_mount_off!": open_if_mount_off_cmd,
         "nina!": start_nina,
         "reboot!": shutdown
     }
