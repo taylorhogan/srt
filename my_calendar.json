@@ -1,0 +1,152 @@
+{
+    "years": {
+        "2025": {
+            "months": {
+                "2": {
+                    "days": {
+                        "1": {
+                            "state": "image",
+                            "dso": "ngc2683"
+                        },
+                        "2": {
+                            "state": "image",
+                            "dso": "ngc683"
+                        },
+                        "3": {
+                            "state": "weather",
+                            "dso": ""
+                        },
+                        "4": {
+                            "state": "image",
+                            "dso": "ngc2903"
+                        },
+                        "5": {
+                            "state": "image",
+                            "dso": "ngc2903"
+                        },
+                        "6": {
+                            "state": "weather",
+                            "dso": ""
+                        },
+                        "7": {
+                            "state": "weather",
+                            "dso": ""
+                        },
+                        "8": {
+                            "state": "service",
+                            "dso": ""
+                        },
+                        "9": {
+                            "state": "image",
+                            "dso": "m66"
+                        },
+                        "10": {
+                            "state": "image",
+                            "dso": "m66"
+                        },
+                        "11": {
+                            "state": "weather",
+                            "dso": ""
+                        },
+                        "12": {
+                            "state": "weather",
+                            "dso": ""
+                        },
+                        "13": {
+                            "state": "weather",
+                            "dso": "ngc2903"
+                        },
+                        "14": {
+                            "state": "weather",
+                            "dso": "ngc2903"
+                        },
+                        "15": {
+                            "state": "weather",
+                            "dso": "ngc2903"
+                        },
+                        "16": {
+                            "state": "weather",
+                            "dso": "ngc2903"
+                        },
+                        "17": {
+                            "state": "weather",
+                            "dso": "ngc2903"
+                        },
+                        "18": {
+                            "state": "image",
+                            "dso": "ngc2903"
+                        },
+                        "19": {
+                            "state": "image",
+                            "dso": "ngc2903"
+                        },
+                        "20": {
+                            "state": "weather",
+                            "dso": "ngc2903"
+                        },
+                        "21": {
+                            "state": "image",
+                            "dso": "ngc2903"
+                        },
+                        "22": {
+                            "state": "weather",
+                            "dso": "ngc2903"
+                        },
+                        "23": {
+                            "state": "weather",
+                            "dso": "ngc2903"
+                        },
+                        "24": {
+                            "state": "weather",
+                            "dso": "ngc2903"
+                        },
+                        "25": {
+                            "state": "weather",
+                            "dso": "ngc2903"
+                        },
+                        "26": {
+                            "state": "weather",
+                            "dso": "ngc2903"
+                        },
+                        "27": {
+                            "state": "weather",
+                            "dso": "ngc2903"
+                        },
+                        "28": {
+                            "state": "weather",
+                            "dso": "ngc2903"
+                        }
+                    }
+                },
+                "3": {
+                    "days": {
+                        "1": {
+                            "state": "weather",
+                            "dso": "ngc2903"
+                        },
+                        "2": {
+                            "state": "image",
+                            "dso": "ngc2903"
+                        },
+                        "3": {
+                            "state": "image",
+                            "dso": "ngc2903"
+                        },
+                        "4": {
+                            "state": "weather",
+                            "dso": "ngc2903"
+                        },
+                        "5": {
+                            "state": "weather",
+                            "dso": "ngc2903"
+                        },
+                        "6": {
+                            "state": "weather",
+                            "dso": "ngc2903"
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
