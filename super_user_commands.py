@@ -85,6 +85,7 @@ def open_if_mount_off_cmd():
             (
             {
                 "Roof motor": 'off',
+                "Telescope mount": 'on',
             }
         ))
 
