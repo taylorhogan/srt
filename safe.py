@@ -1,46 +1,38 @@
-# python3.6
+import paho.mqtt.client as mqtt
 
-import random
+def message_handling(client, userdata, msg):
+    print(f"{msg.topic}: {msg.payload.decode()}")
 
-from paho.mqtt import client as mqtt_client
+def on_connect(client, userdata, flags, rc):
+    if rc == 0:
+        print("Connected to MQTT Broker!")
+    else:
+        print(f"Failed to connect, return code {rc}")
 
-
-broker = 'raspberrypi.local'
+broker = "raspberrypi.local"
 port = 1883
-topic = "flow/log"
-# Generate a Client ID with the subscribe prefix.
-client_id = f'subscribe-{random.randint(0, 100)}'
-username = 'indi-allsky'
-password = 'Foo14me!'
+username = "indi-allsky"
+password = "1415"
+client_id = ""
 
 
-def connect_mqtt() -> mqtt_client:
-    def on_connect(client, userdata, flags, rc):
-        if rc == 0:
-            print("Connected to MQTT Broker!")
-        else:
-            print("Failed to connect, return code %d\n", rc)
-
-    client = mqtt_client.Client(client_id)
-    client.username_pw_set(username, password)
-    client.on_connect = on_connect
-    client.connect(broker, port)
-    return client
+client = mqtt.Client()
+#client = mqtt.Client()
+client.username_pw_set(username, password)
+client.on_message = message_handling
+client.on_connect = on_connect
 
 
-def subscribe(client: mqtt_client):
-    def on_message(client, userdata, msg):
-        print(f"Received `{msg.payload.decode()}` from `{msg.topic}` topic")
+client.connect(broker, port)
+status = client.subscribe('indi-allsky/temp')
+print (status)
 
-    client.subscribe(topic)
-    client.on_message = on_message
-
-
-def run():
-    client = connect_mqtt()
-    subscribe(client)
+try:
+    print("Press CTRL+C to exit...")
     client.loop_forever()
+except Exception:
+    print("Caught an Exception, something went wrong...")
+finally:
+    print("Disconnecting from the MQTT broker")
+    client.disconnect()
 
-
-if __name__ == '__main__':
-    run()
