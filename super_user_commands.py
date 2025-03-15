@@ -10,6 +10,7 @@ import kasa_utils as ku
 import asyncio
 import shelly
 import requests
+import time
 
 
 
@@ -18,7 +19,7 @@ import requests
 def park_and_close_cmd():
     if not pwi4_utils.park_scope():
         return False
-
+    print ("true from park")
     parked = pwi4_utils.get_is_parked()
     if parked:
         social_server.post_social_message("Mount says Iris is parked")
@@ -66,6 +67,16 @@ def open_if_mount_off_cmd():
 
         asyncio.run(ku.kasa_do(dev_map, instructions))
         r = requests.get('http://192.168.87.41/relay/0?turn=on')
+        time.sleep(30)
+        instructions = (dict
+            (
+            {
+                "Roof motor": 'off',
+            }
+        ))
+
+        asyncio.run(ku.kasa_do(dev_map, instructions))
+
 
 
 
@@ -101,8 +112,8 @@ def print_help(account):
 
 def get_super_user_commands():
     return {
-        "park_and_close!": park_and_close_cmd,
-        "open_if_mount_off!": open_if_mount_off_cmd,
+        "pandc!": park_and_close_cmd,
+        "oim0!": open_if_mount_off_cmd,
         "nina!": start_nina,
         "reboot!": shutdown
     }

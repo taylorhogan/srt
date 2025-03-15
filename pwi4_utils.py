@@ -9,7 +9,10 @@ def park_scope ():
 
     s = pwi4.status()
     print("Mount connected:", s.mount.is_connected)
+    print("trying to park")
     print(s)
+    print ("foo")
+
     if not s.mount.is_connected:
         print("Connecting to mount...")
         s = pwi4.mount_connect()
@@ -17,7 +20,9 @@ def park_scope ():
         if not s.mount.is_connected:
             return False
     print("Mount is connected")
+    print ("start park")
     pwi4.mount_park()
+    print ("end park")
     return True
 
 
