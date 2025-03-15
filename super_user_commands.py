@@ -35,6 +35,19 @@ def park_and_close_cmd():
 
         asyncio.run(ku.kasa_do(dev_map, instructions))
         r = requests.get('http://192.168.87.41/relay/0?turn=on')
+        time.sleep(30)
+        instructions = (dict
+            (
+            {
+
+                "Roof motor": 'off',
+
+            }
+        ))
+
+        asyncio.run(ku.kasa_do(dev_map, instructions))
+
+
 
 
     else:
@@ -112,8 +125,8 @@ def print_help(account):
 
 def get_super_user_commands():
     return {
-        "pandc!": park_and_close_cmd,
-        "oim0!": open_if_mount_off_cmd,
+        "stop!": park_and_close_cmd,
+        "start!": open_if_mount_off_cmd,
         "nina!": start_nina,
         "reboot!": shutdown
     }
