@@ -2,6 +2,7 @@ from pwi4_client import PWI4
 import config
 import logging
 import utils
+import time
 
 def park_scope ():
 
@@ -10,8 +11,7 @@ def park_scope ():
     s = pwi4.status()
     print("Mount connected:", s.mount.is_connected)
     print("trying to park")
-    print(s)
-    print ("foo")
+
 
     if not s.mount.is_connected:
         print("Connecting to mount...")
@@ -22,7 +22,10 @@ def park_scope ():
     print("Mount is connected")
     print ("start park")
     pwi4.mount_park()
+    print ("waiting for 30")
+    time.sleep(30)
     print ("end park")
+
     return True
 
 
