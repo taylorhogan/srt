@@ -146,6 +146,8 @@ def do_command(sentence, m, account):
     cmd = sentence.lower()
     words = cmd.split(" ")
     seen_base_command = False
+    post_social_message("Got Command: " + sentence)
+
 
     action = keywords.get(words[1].strip(), "no_key")
     if action != "no_key":
