@@ -25,7 +25,7 @@ class PublicConfig():
         },
 
         "nina": {
-            "image_dir": " C:\Users\iriso\Documents\N.I.N.A\Targets"
+            "image_dir": "C:/Users/iriso/Documents/N.I.N.A/Targets"
         },
 
         "camera safety": {
