@@ -101,14 +101,19 @@ def open_if_mount_off_cmd():
     return
 
 
-def start_nina():
+def on_nina():
     print("Starting Nina")
     path = utils.set_install_dir()
-    # fullpath = os.path.join (path, "runnina.bat")
     print(path)
-    subprocess.run(["runnina.bat"])
+    subprocess.run(["on_nina.bat"])
     print("Done with Nina")
 
+def image_nina():
+    print("Starting Nina")
+    path = utils.set_install_dir()
+    print(path)
+    subprocess.run(["image_nina.bat"])
+    print("Done with Nina")
 
 def shutdown():
     return
@@ -128,7 +133,8 @@ def get_super_user_commands():
     return {
         "stop!": park_and_close_cmd,
         "start!": open_if_mount_off_cmd,
-        "nina!": start_nina,
+        "on!": on_nina,
+        "image!": image_nina,
         "reboot!": shutdown
     }
 
