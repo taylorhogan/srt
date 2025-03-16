@@ -7,6 +7,10 @@ import instructions
 import obs_calendar
 import social_server
 import weather
+import config
+import os
+import logging
+import social_server
 
 
 class ObsState(enum.Enum):
@@ -22,16 +26,15 @@ class ObsState(enum.Enum):
 
 
 def simple_machine():
+
     sunrise, sunset = weather.get_sunrise_sunset()
     now = datetime.now().time()
-    print(sunrise)
-    print(sunset)
-    print(now)
+
 
     while now.hour < 12:
         now = datetime.now().time()
         time.sleep(10)
-    print("noon")
+
     announce_plans_before_sunset()
 
 
@@ -106,4 +109,19 @@ def announce_plans_before_sunset():
 
 
 if __name__ == '__main__':
-    simple_machine()
+    cfg = config.data()
+    path = os.path.join(cfg["Install"], 'iris.log')
+
+    logging.basicConfig(filename=path, level=logging.INFO, format='%(asctime)s %(message)s',
+                        datefmt='%m/%d/%Y %I:%M:%S %p')
+    logger = logging.getLogger(__name__)
+    cfg["logger"]["logging"] = logger
+    logger.info('Start Scheduler')
+    try:
+        simple_machine()
+    except:
+        logger.info('Problem')
+        logger.exception("Exception")
+        social_server.get_mastodon_instance().status_post("Oops I had a problem with server")
+
+
