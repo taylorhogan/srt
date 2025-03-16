@@ -11,6 +11,7 @@ import config
 import os
 import logging
 import social_server
+import utils
 
 
 class ObsState(enum.Enum):
@@ -117,6 +118,7 @@ if __name__ == '__main__':
     logger = logging.getLogger(__name__)
     cfg["logger"]["logging"] = logger
     logger.info('Start Scheduler')
+    utils.set_install_dir()
     try:
         simple_machine()
     except:
