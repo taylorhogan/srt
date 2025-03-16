@@ -258,7 +258,7 @@ def best_day_for_dso(dso):
             best_date = this_day
             best_time = above_time
         else:
-            if above_time is not None:
+            if above_time is not None and best_time is not None:
                 if above_time > best_time:
                     best_date = this_day
                     best_time = above_time

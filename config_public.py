@@ -25,8 +25,7 @@ class PublicConfig():
         },
 
         "nina": {
-            "image_dir1": "C:/Users/Primalucelab/Documents/N.I.N.A",
-            "image_dir": "/Users/taylorhogan/Desktop"
+            "image_dir": " C:\Users\iriso\Documents\N.I.N.A\Targets"
         },
 
         "camera safety": {
