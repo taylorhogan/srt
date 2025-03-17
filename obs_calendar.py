@@ -63,7 +63,7 @@ def generate_custom_calendar(year, month, cal_data, cfg):
     ax.set_ylim(0, 7)
     ax.set_aspect('equal')
 
-    plt.show()
+    #plt.show()
     fig.savefig ('cal.png')
 
 
