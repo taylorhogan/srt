@@ -15,6 +15,7 @@ import config
 import dso_visibility
 import sun as s
 import super_user_commands as su
+import utils
 import weather
 import os
 
@@ -146,7 +147,9 @@ def do_command(sentence, m, account):
     cmd = sentence.lower()
     words = cmd.split(" ")
     seen_base_command = False
-    post_social_message("Got Command: " + sentence)
+
+    logger = logging.getLogger(__name__)
+    logger.info("Got Command: " + sentence)
 
 
     action = keywords.get(words[1].strip(), "no_key")
@@ -238,6 +241,7 @@ def start_interface():
 
 
 def main():
+    utils.set_install_dir()
     print ("Starting")
     cfg = config.data()
 
