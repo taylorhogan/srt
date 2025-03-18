@@ -4,6 +4,8 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 from datetime import datetime
 
+import utils
+
 status_dict = {"in process": 3, "waiting":2, "completed":1}
 
 def compare (r1, r2):
@@ -99,8 +101,6 @@ def create_instructions_table ():
     ax.set_xlim(0, 8)
     ax.set_ylim(0, 10)
     #ax.set_aspect('equal')
-
-    plt.show()
     fig.savefig ('instructions.png')
 
 def add_dso_object_instruction (dso_name, recipe, requestor, priority=0):
@@ -117,12 +117,15 @@ def add_dso_object_instruction (dso_name, recipe, requestor, priority=0):
       "status": "waiting",
       "priority": priority
     }
+    utils.set_install_dir()
     instructions.append(new_instruction)
     with open('my_instructions.json', 'w') as f:
         f.writelines(json.dumps(instructions, indent=4))
 
 
 def get_sorted_instructions():
+    utils.set_install_dir()
+
     with open('my_instructions.json', 'r') as f:
         instructions = json.load(f)
 

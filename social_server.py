@@ -95,7 +95,7 @@ def status_cmd(words, index, m, account):
     post_social_message(reply)
 
 
-def instructions_cmd(words, index, m, account):
+def db_cmd(words, index, m, account):
     instructions.create_instructions_table()
     post_social_message("", "instructions.png")
 
@@ -133,7 +133,7 @@ keywords = {
     "show": show_cmd,
     "best": best_cmd,
     "image": image_cmd,
-    "requests": instructions_cmd,
+    "db": db_cmd,
     "status": status_cmd,
     "weather": weather_cmd,
     "latest": latest_cmd,
