@@ -115,6 +115,14 @@ def image_nina():
     subprocess.run(["image_nina.bat"])
     print("Done with Nina")
 
+def image_nina_a():
+    print("Starting Nina")
+    path = utils.set_install_dir()
+    print(path)
+    subprocess.run(["image_ninaA.bat"])
+    print("Done with Nina")
+
+
 def shutdown():
     return
 
@@ -133,8 +141,9 @@ def get_super_user_commands():
     return {
         "stop!": park_and_close_cmd,
         "start!": open_if_mount_off_cmd,
-        "on!": on_nina,
-        "image!": image_nina,
+        "nina1!": on_nina,
+        "nina2!!": image_nina,
+        "nina2A!": image_nina_a,
         "reboot!": shutdown
     }
 
