@@ -126,10 +126,11 @@ def analyse_safety(image_path):
 
 
 if __name__ == '__main__':
-
-
+    cfg = config.data()
+    inside_camera_server.take_snapshot()
+    is_closed, is_parked, is_open, mod_date = analyse_safety(cfg["camera safety"]["scope_view"])
     #is_closed, is_parked, is_open, mod_date = analyse_safety(cfg["camera safety"]["scope_view"])
-    is_closed, is_parked, is_open, mod_date = analyse_safety("./base_images/inside.jpg")
+    #is_closed, is_parked, is_open, mod_date = analyse_safety("./base_images/inside.jpg")
     reply = "Roof Closed: " + str(is_closed) + "\n"
     reply += "Roof Open: " + str(is_open) + "\n"
     reply += "Scope Parked:" + str(is_parked) + "\n"
