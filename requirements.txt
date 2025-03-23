@@ -1,9 +1,12 @@
+python-kasa
+python-weather
+Mastodon.py
 astroplan==0.10.1
 astropy==7.0.0
 beautifulsoup4==4.12.3
 bs4==0.0.2
 matplotlib==3.9.3
-numpy==1.26.4
+numpy
 opencv-python==4.10.0.84
 paho-mqtt==2.1.0
 pillow==11.0.0
