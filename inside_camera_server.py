@@ -8,13 +8,6 @@ import config
 import shutil
 
 
-def connect_to_broker(cfg):
-    client = paho.Client()
-    if client.connect("localhost", 1883, 60) != 0:
-        print("Couldn't connect to the mqtt broker")
-        sys.exit(1)
-    return client
-
 
 def take_snapshot(test_path=None):
     cfg = config.data()

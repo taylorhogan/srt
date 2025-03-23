@@ -1,12 +1,34 @@
 import json
 import functools
+from venv import create
+
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 from datetime import datetime
+from astropy.time import Time
+
+
+import dso_visibility
 
 import utils
 
 status_dict = {"in process": 3, "waiting":2, "completed":1}
+
+def calc_and_store_hours_above_horizon ():
+    utils.set_install_dir()
+    with open('my_instructions.json', 'r') as f:
+        instructions = json.load(f)
+    for instruction in instructions:
+        dso = text = instruction["dso"]
+        obj = dso_visibility.is_a_dso_object(dso)
+        if obj is not None:
+            above = dso_visibility.get_above_horizon_time(obj, Time.now())
+            instruction["above_horizon"] = str(above)
+        else:
+            instruction["above_horizon"] = '0'
+    with open('my_instructions.json', 'w') as f:
+        f.writelines(json.dumps(instructions, indent=4))
+
 
 def compare (r1, r2):
     s1 = r1["status"]
@@ -27,6 +49,9 @@ def compare (r1, r2):
     if p1 > p2:
         return -1
 
+    oh1 = r1["above_horizon"]
+    oh2 = r2["above_horizon"]
+
     n1 = r1["dso"]
     n2 = r2["dso"]
 
@@ -43,6 +68,7 @@ def compare (r1, r2):
 
 
 def create_instructions_table ():
+    calc_and_store_hours_above_horizon()
     sorted_l = get_sorted_instructions()
     row_idx =  len(sorted_l) + 1
 
@@ -53,25 +79,23 @@ def create_instructions_table ():
     #ax.set_title("Image Requests", fontsize=20, pad=20)
 
     # Weekday labels
-    headers = ['DSO', 'Requestor', 'State', 'Date']
+    headers = ['DSO', 'Requestor', 'State', 'Date', 'Tonight']
     for i, header in enumerate(headers):
         ax.text(i + 2.5, len(sorted_l) + 1, header, ha='center', fontsize=12, weight='bold')
 
     # Generate the  grid
 
     for instruction in sorted_l:
-
-
-
-        # Get color and text for the day
+       # Get color and text for the day
         color='gray'
+        text = 'development'
         if instruction["status"] == 'in process':
             color = 'lightgreen'
         if instruction["status"] == 'waiting':
             color = 'lightblue'
         if instruction["status"] == 'completed':
             color = 'pink'
-        for col_idx in range (4):
+        for col_idx in range (5):
             text = ''
             if col_idx == 0:
                 text = instruction["dso"]
@@ -87,6 +111,9 @@ def create_instructions_table ():
                     text = formatted_date
                 else:
                     text = ""
+            elif col_idx == 4:
+                text = instruction["above_horizon"]
+
 
             rect = mpatches.Rectangle((col_idx+2, row_idx-1), 1, 1, edgecolor="black", facecolor=color)
             ax.add_patch(rect)
@@ -102,6 +129,7 @@ def create_instructions_table ():
     ax.set_ylim(0, 10)
     #ax.set_aspect('equal')
     fig.savefig ('instructions.png')
+
 
 def add_dso_object_instruction (dso_name, recipe, requestor, priority=0):
     now = datetime.now()
@@ -144,8 +172,9 @@ def get_dso_object_tonight():
 
 
 if __name__ == "__main__":
-    #add_dso_object_instruction("coo", "mayo", "teh", 0)
+
     create_instructions_table()
+
 
 
 

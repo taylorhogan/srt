@@ -26,7 +26,7 @@ def is_a_dso_object(name):
     try:
         dso = FixedTarget.from_name(name)
         return dso
-    except NameError:
+    except :
         return None
 
 

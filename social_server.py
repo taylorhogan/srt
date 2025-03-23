@@ -123,9 +123,9 @@ def latest_cmd(words, index, m, account):
     logger = logging.getLogger(__name__)
     image_dir = cfg["nina"]["image_dir"]
     latest_fits = fitstojpg.get_latest_file(image_dir, "fits")
-    post_social_message(str(latest_fits))
+
     latest_jpg = fitstojpg.convert_to_jpg(str(latest_fits))
-    post_social_message(str(latest_jpg))
+
     post_social_message("Latest", latest_jpg)
 
 

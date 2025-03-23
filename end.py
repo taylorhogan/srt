@@ -1,5 +1,4 @@
 import asyncio
-import os.path
 
 import inside_camera_server
 import vision_safety
@@ -34,11 +33,11 @@ if __name__ == "__main__":
     logger.info('Begin End Sequence')
 
     try:
+        dev_map = asyncio.run(ku.make_discovery_map())
 
         parked = pwi4_utils.get_is_parked()
         if parked:
             social_server.post_social_message("Mount says Iris is parked")
-            dev_map = asyncio.run(ku.make_discovery_map())
             instructions = (dict
                 (
                 {
@@ -51,6 +50,17 @@ if __name__ == "__main__":
             asyncio.run(ku.kasa_do(dev_map, instructions))
         else:
             social_server.post_social_message("Mount says Iris is NOT parked")
+            instructions = (dict
+                (
+                {
+                    "Telescope mount": 'off',
+                    "Roof motor": 'off',
+                    "Iris inside light": 'on'
+                }
+            ))
+
+            asyncio.run(ku.kasa_do(dev_map, instructions))
+            determine_roof_state()
 
     except:
         logger.info('Problem')
