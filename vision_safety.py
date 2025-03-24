@@ -7,6 +7,8 @@ import cv2 as cv
 import inside_camera_server
 import config
 import matplotlib.pyplot as plt
+import numpy as np
+
 
 cfg = config.data()
 
@@ -27,6 +29,9 @@ def find_template(image, template_image_path):
     # Apply template Matching
     res = cv.matchTemplate(local_img, template, method)
     min_val, max_val, min_loc, max_loc = cv.minMaxLoc(res)
+    print ("fitness: " + str(max_val))
+
+
 
     top_left = min_loc
 
@@ -36,24 +41,18 @@ def find_template(image, template_image_path):
 
     c = (int(top_left[0] + w / 2), int(top_left[1] + h / 2))
 
-    return c, r
+    return c, r, max_val
 
 
 def fitness(image, delta):
 
-    c_roof, r_roof = find_template(image, cfg['camera safety']['roof template'])
-    c_scope, r_scope = find_template(image, cfg['camera safety']['parked template'])
+    c_roof, r_roof, accuracy = find_template(image, cfg['camera safety']['roof template'])
+    c_scope, r_scope, accuracy = find_template(image, cfg['camera safety']['parked template'])
 
     roof_closed_error = math.dist(c_roof, cfg["camera safety"]["closed pos"])
     roof_open_error = math.dist(c_roof, cfg["camera safety"]["open pos"])
     parked_error = math.dist(c_scope, cfg["camera safety"]["parked pos"])
 
-
-    # print("roof " + str(c_roof))
-    # print("scope " + str(c_scope))
-    # print("closed error " + str(roof_closed_error))
-    # print("open error " + str(roof_open_error))
-    # print("parked error " + str(parked_error))
 
 
     closed = abs(roof_closed_error) < delta
@@ -129,7 +128,6 @@ if __name__ == '__main__':
     cfg = config.data()
     inside_camera_server.take_snapshot()
     is_closed, is_parked, is_open, mod_date = analyse_safety(cfg["camera safety"]["scope_view"])
-    #is_closed, is_parked, is_open, mod_date = analyse_safety(cfg["camera safety"]["scope_view"])
     #is_closed, is_parked, is_open, mod_date = analyse_safety("./base_images/inside.jpg")
     reply = "Roof Closed: " + str(is_closed) + "\n"
     reply += "Roof Open: " + str(is_open) + "\n"
