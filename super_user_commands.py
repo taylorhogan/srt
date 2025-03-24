@@ -104,8 +104,10 @@ def open_if_mount_off_cmd():
 def on_nina():
     print("Starting Nina")
     path = utils.set_install_dir()
+    os.chdir(path)
+    os.startfile("on_nina.bat")
     print(path)
-    subprocess.run(["on_nina.bat"])
+    #subprocess.run(["on_nina.bat"])
     print("Done with Nina")
 
 def image_nina():
