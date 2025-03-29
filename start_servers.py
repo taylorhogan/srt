@@ -16,8 +16,7 @@ def start_social_server():
 
 def start_sched_server():
     print ("start calendar server")
-    while True:
-        pass
+    scheduler_server.main()
 
 if __name__ == '__main__':
     call_servers()
