@@ -109,7 +109,7 @@ def announce_plans_before_sunset():
 
 
 
-if __name__ == '__main__':
+def main ():
     cfg = config.data()
     path = os.path.join(cfg["Install"], 'iris.log')
 
@@ -126,4 +126,7 @@ if __name__ == '__main__':
         logger.exception("Exception")
         social_server.get_mastodon_instance().status_post("Oops I had a problem with server")
 
+
+if __name__ == '__main__':
+   main()
 
