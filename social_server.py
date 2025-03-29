@@ -246,23 +246,18 @@ def main():
     cfg = config.data()
 
     logger = logging.getLogger(__name__)
-    print ("1")
+
     cfg["logger"]["logging"] = logger
-    print("2")
-    if os.name == 'posix':
-        path = cfg["InstallL"]
-    else:
-        path = cfg["Install"]
-    print("3")
-    if os.path.exists(path):
-        os.chdir(path)
-    print("5")
-    logging.basicConfig(filename='iris.log', level=logging.INFO, format='%(asctime)s %(message)s',
+
+    path = utils.set_install_dir()
+    path = os.path.join(path, 'iris.log')
+
+    logging.basicConfig(filename=path, level=logging.INFO, format='%(asctime)s %(message)s',
                         datefmt='%m/%d/%Y %I:%M:%S %p')
     logger.info('Started Social Server')
-    print("6")
+
     mastodon = get_mastodon_instance()
-    print ("7")
+
     cfg["mastodon"]["instance"] = mastodon
     print(mastodon)
     try:

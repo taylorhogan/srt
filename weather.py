@@ -12,7 +12,8 @@ cfg = config.data()
 async def get_sunrise_sunset_internal() -> [datetime, datetime]:
     async with python_weather.Client(unit=python_weather.IMPERIAL) as client:
         # fetch a weather forecast from a city
-        forecast = await client.get('West Hartford')
+        print ("foo")
+        forecast = await client.get('Hartford')
 
         today = forecast.daily_forecasts[0]
         tomorrow = forecast.daily_forecasts[1]

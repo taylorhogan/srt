@@ -143,6 +143,10 @@
                         "6": {
                             "state": "weather",
                             "dso": "ngc2903"
+                        },
+                        "29": {
+                            "state": "weather",
+                            "dso": "ngc4921"
                         }
                     }
                 }

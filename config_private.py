@@ -41,7 +41,7 @@ class PrivateConfig(object):
         },
 
         "Install": "C:/Users/iriso/Documents/development/iris",
-        "InstallL":"/home/taylorhogan/Documents/Development/tmh/",
+        "InstallL":"/home/taylorhogan/Documents/tmh/",
         "Super Users": {
             'Thogan', 'tmhobservatory'
 

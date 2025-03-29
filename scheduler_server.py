@@ -12,6 +12,7 @@ import os
 import logging
 import social_server
 import utils
+import threading
 
 
 class ObsState(enum.Enum):
@@ -27,10 +28,10 @@ class ObsState(enum.Enum):
 
 
 def simple_machine():
-
+    print ("Simple")
     sunrise, sunset = weather.get_sunrise_sunset()
     now = datetime.now().time()
-
+    print ("simple")
 
     while now.hour < 12:
         now = datetime.now().time()
@@ -111,7 +112,8 @@ def announce_plans_before_sunset():
 
 def main ():
     cfg = config.data()
-    path = os.path.join(cfg["Install"], 'iris.log')
+    path = utils.set_install_dir()
+    path = os.path.join(path, 'iris.log')
 
     logging.basicConfig(filename=path, level=logging.INFO, format='%(asctime)s %(message)s',
                         datefmt='%m/%d/%Y %I:%M:%S %p')
@@ -121,6 +123,8 @@ def main ():
     utils.set_install_dir()
     try:
         simple_machine()
+        while True:
+            pass
     except:
         logger.info('Problem')
         logger.exception("Exception")
@@ -128,5 +132,6 @@ def main ():
 
 
 if __name__ == '__main__':
-   main()
+    main()
+
 

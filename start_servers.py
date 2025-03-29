@@ -18,5 +18,6 @@ def start_sched_server():
     print ("start calendar server")
     scheduler_server.main()
 
+
 if __name__ == '__main__':
     call_servers()
