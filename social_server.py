@@ -6,6 +6,7 @@ from bs4 import BeautifulSoup
 from mastodon import Mastodon, StreamListener
 from mastodon.streaming import CallbackStreamListener
 
+import end
 import fitstojpg
 
 import instructions
@@ -85,14 +86,21 @@ def weather_cmd(words, index, m, account):
     post_social_message(description)
 
 
-def status_cmd(words, index, m, account):
+def version_cmd(words, index, m, account):
     # Observatory State
     cfg = config.data()
 
-    print("status")
     reply = "Version: " + cfg["version"]["date"] + "\n"
     reply += "Observatory Status: " + cfg["Globals"]["Observatory State"]
     post_social_message(reply)
+
+def status_cmd(words, index, m, account):
+    # Observatory State
+    cfg = config.data()
+    reply = "Observatory Status: " + cfg["Globals"]["Observatory State"]
+
+    post_social_message(reply)
+    end.determine_roof_state()
 
 
 def db_cmd(words, index, m, account):
@@ -134,6 +142,7 @@ keywords = {
     "best": best_cmd,
     "image": image_cmd,
     "db": db_cmd,
+    "version": version_cmd,
     "status": status_cmd,
     "weather": weather_cmd,
     "latest": latest_cmd,
