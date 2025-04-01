@@ -49,8 +49,8 @@ def compare (r1, r2):
     if p1 > p2:
         return -1
 
-    oh1 = r1["above_horizon"]
-    oh2 = r2["above_horizon"]
+    #oh1 = r1["above_horizon"]
+   #oh2 = r2["above_horizon"]
 
     n1 = r1["dso"]
     n2 = r2["dso"]
@@ -159,6 +159,8 @@ def get_sorted_instructions():
 
     sorted_l = sorted(instructions, key=functools.cmp_to_key(compare))
     return sorted_l
+
+
 
 
 
