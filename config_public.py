@@ -52,8 +52,7 @@ class PublicConfig():
         "Globals":
             {
                 "Observatory State": "In Development",
-                "Imaging DSO": "Unknown"
-                               ""
+                "Imaging Tonight": "Unknown"
             }
 
     })
