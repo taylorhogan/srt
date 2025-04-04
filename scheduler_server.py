@@ -27,21 +27,19 @@ def waiting_for_boot ():
         time.sleep(60)
 
 def waiting_for_noon ():
-    try:
-        set_state ("Waiting For Noon")
-        instructions.calc_and_store_hours_above_horizon()
+    set_state("Waiting For Noon")
+    instructions.calc_and_store_hours_above_horizon()
 
+    now = datetime.now().time()
+
+    while now.hour < 12:
         now = datetime.now().time()
+        time.sleep(60)
 
-        while now.hour < 12:
-            now = datetime.now().time()
-            time.sleep(60)
+    announce_plans_before_sunset()
+    waiting_for_sunset()
 
-        announce_plans_before_sunset()
-        waiting_for_sunset()
 
-    except:
-        waiting_for_boot()
 
 
 def imaging ():
@@ -58,7 +56,7 @@ def waiting_for_imaging ():
         waiting_for_sunrise()
 
 def waiting_for_sunset():
-    try:
+
         set_state ("Waiting For Sunset")
         sunrise, sunset = weather.get_sunrise_sunset()
         now = datetime.now().time()
@@ -68,8 +66,6 @@ def waiting_for_sunset():
             time.sleep(1)
 
         waiting_for_imaging ()
-    except:
-        waiting_for_boot()
 
 
 def waiting_for_sunrise():
@@ -116,10 +112,11 @@ def main ():
     try:
        waiting_for_sunrise()
     except:
+
         logger.info('Problem')
         logger.exception("Exception")
         social_server.get_mastodon_instance().status_post("Oops I had a problem with server")
-
+        waiting_for_boot()
 
 if __name__ == '__main__':
     main()
