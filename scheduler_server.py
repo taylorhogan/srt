@@ -16,7 +16,9 @@ def set_state (state, dso = "Unknown"):
     cfg = config.data()
     cfg["Globals"]["Observatory State"] = state
     cfg["Globals"]["Imaging Tonight"] = dso
+
     print ("State: " + state)
+    social_server.post_social_message("Scheduler State: " + state)
 
 
 def waiting_for_boot ():
