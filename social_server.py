@@ -274,7 +274,7 @@ def main():
     except:
         logger.info('Problem')
         logger.exception("Exception")
-        get_mastodon_instance().status_post("Oops I had a problem with server")
+        get_mastodon_instance().status_post("Oops I had a problem with Social server")
         start_interface()
 
     print("stop")

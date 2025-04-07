@@ -18,7 +18,7 @@ def set_state (state, dso = "Unknown"):
     cfg["Globals"]["Imaging Tonight"] = dso
 
     print ("State: " + state)
-    social_server.post_social_message("Scheduler State: " + state)
+    #social_server.post_social_message("Scheduler State: " + state)
 
 
 def waiting_for_boot ():
@@ -44,8 +44,16 @@ def waiting_for_noon ():
 
 def imaging ():
     set_state ("Imaging")
-    time.sleep (5 * 60 * 60)
+    time.sleep(60 * 60 * 5)
     waiting_for_sunrise()
+
+def wait_for_tomorrow ():
+    now = datetime.now().time()
+
+    while now.hour > 0:
+        now = datetime.now().time()
+        time.sleep(60)
+
 
 def waiting_for_imaging ():
     set_state ("Waiting For Imaging")
@@ -63,19 +71,21 @@ def waiting_for_sunset():
 
         while now < sunset:
             now = datetime.now().time()
-            time.sleep(1)
+            time.sleep(60)
 
         waiting_for_imaging ()
 
 
 def waiting_for_sunrise():
+    wait_for_tomorrow()
     set_state("Waiting For Sunrise")
     sunrise, sunset = weather.get_sunrise_sunset()
     now = datetime.now().time()
 
     while now < sunrise:
         now = datetime.now().time()
-        time.sleep(1)
+        time.sleep(60)
+
     waiting_for_noon()
 
 def start_state_machine():
@@ -110,12 +120,12 @@ def main ():
     logger.info('Start Scheduler')
     utils.set_install_dir()
     try:
-       waiting_for_sunrise()
+       waiting_for_noon()
     except:
 
         logger.info('Problem')
         logger.exception("Exception")
-        social_server.get_mastodon_instance().status_post("Oops I had a problem with server")
+        social_server.get_mastodon_instance().status_post("Oops I had a problem with Scheduler server")
         waiting_for_boot()
 
 if __name__ == '__main__':
