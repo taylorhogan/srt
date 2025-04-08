@@ -30,6 +30,22 @@ def calc_and_store_hours_above_horizon ():
         f.writelines(json.dumps(instructions, indent=4))
 
 
+def time_to_seconds(time_str):
+    """Converts a time string (HH:MM:SS or MM:SS or SS) to seconds."""
+    if time_str is None:
+        return 0
+    if time_str == "None":
+        return 0
+
+    parts = time_str.split(":")
+    parts.reverse()
+    seconds = 0
+    multiplier = 1
+    for part in parts:
+        seconds += int(part) * multiplier
+        multiplier *= 60
+    return seconds
+
 def compare (r1, r2):
     s1 = r1["status"]
     s2 = r2["status"]
@@ -49,8 +65,15 @@ def compare (r1, r2):
     if p1 > p2:
         return -1
 
-    oh1 = r1["above_horizon"]
-    oh2 = r2["above_horizon"]
+    oh1 =time_to_seconds( r1["above_horizon"])
+    oh2 = time_to_seconds(r2["above_horizon"])
+
+    if oh1 < oh2:
+        return 1
+    if oh1 > oh2:
+        return -1
+
+
 
     n1 = r1["dso"]
     n2 = r2["dso"]

@@ -36,6 +36,7 @@ def waiting_for_noon ():
         now = datetime.now().time()
         time.sleep(60)
 
+    instructions.calc_and_store_hours_above_horizon()
     announce_plans_before_sunset()
     waiting_for_sunset()
 
