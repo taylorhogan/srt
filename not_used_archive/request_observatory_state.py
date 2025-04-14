@@ -1,6 +1,6 @@
 import sys
 import paho.mqtt.client as paho
-import config
+import configuration
 
 
 def connect_to_broker(cfg):
@@ -11,7 +11,7 @@ def connect_to_broker(cfg):
     return client
 
 def do_something_with_returned_value (client, userdata, msg):
-    cfg = config.data()
+    cfg = configuration.data()
     picture_topic = cfg["mqtt"]["ota_picture"]
     date_topic = cfg["mqtt"]["picture_date"]
 
@@ -45,7 +45,7 @@ def subscribe_to_get_state (client, cfg):
     client.subscribe(date_state)
 
 def ask_for_state():
-    cfg = config.data()
+    cfg = configuration.data()
     cfg["camera safety"]["received_count"] = 0
     cfg["camera safety"]["valid_data"] = False
 

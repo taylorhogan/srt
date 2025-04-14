@@ -4,10 +4,10 @@
 # side effects prints to log file
 
 import random
-import config
+import configuration
 from paho.mqtt import client as mqtt_client
 
-cfg = config.data()
+cfg = configuration.data()
 
 
 broker = cfg["mqtt"]["broker_url"]

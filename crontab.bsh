@@ -1,7 +1,0 @@
-
-cd /home/taylorhogan/Documents/Development/tmh
-git pull >>/home/taylorhogan/Documents/Development/tmh/logger.log
-/home/taylorhogan/Documents/Development/tmh/venv/bin/python /home/taylorhogan/Documents/Development/tmh/social_server.py&
-/home/taylorhogan/Documents/Development/tmh/venv/bin/python /home/taylorhogan/Documents/Development/tmh/scheduler.py&
-
-

@@ -1,14 +1,12 @@
 import subprocess
 
-import config
-import social_server
-import utils
-import logging
-import pwi4_utils
-import os
+import configuration
+from servers import social_server
 import kasa_utils as ku
+import pwi4_utils
+import utils
+import os
 import asyncio
-import shelly
 import requests
 import time
 
@@ -151,7 +149,7 @@ def get_super_user_commands():
 
 
 def is_super_user(account):
-    cfg = config.data()
+    cfg = configuration.data()
 
     super_users = cfg["Super Users"]
     if account in super_users:

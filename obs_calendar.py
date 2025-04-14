@@ -1,11 +1,12 @@
 import calendar
+import json
+import os
 from datetime import date
 
-import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
-import json
+import matplotlib.pyplot as plt
 import config
-import os
+
 
 def generate_custom_calendar(year, month, cal_data, cfg):
     # Generate the calendar for the given month
@@ -57,23 +58,23 @@ def generate_custom_calendar(year, month, cal_data, cfg):
         if weekday == 6:
             row = row - 1
 
-
     # Set limits and aspect
     ax.set_xlim(0, 8)
     ax.set_ylim(0, 7)
     ax.set_aspect('equal')
 
-    #plt.show()
-    fig.savefig ('cal.png')
+    # plt.show()
+    fig.savefig('cal.png')
 
 
-def read_cal ():
+def read_cal():
     with open('my_calendar.json', 'r') as f:
         cal = json.load(f)
 
     return cal
 
-def get_day_stats (cal, y, m, d):
+
+def get_day_stats(cal, y, m, d):
     years = cal['years']
     year = years.get(y)
     if year is None:
@@ -89,10 +90,11 @@ def get_day_stats (cal, y, m, d):
     return day
 
 
-def print_month (y, m, cfg):
+def print_month(y, m, cfg):
     generate_custom_calendar(y, m, read_cal(), cfg)
 
-def set_today_stat (state, dso):
+
+def set_today_stat(state, dso):
     cal = read_cal()
     today = date.today()
     this_year = str(2025)
@@ -102,21 +104,21 @@ def set_today_stat (state, dso):
     years = cal['years']
     year = years.get(this_year)
     if year is None:
-        years[this_year]={}
+        years[this_year] = {}
         year = years.get(this_year)
     months = year.get('months')
     month = months.get(this_month)
     if month is None:
-        months[this_month]={'days':{}}
+        months[this_month] = {'days': {}}
         month = months.get(this_month)
     days = month.get('days')
     day = days.get(this_day)
     if day is None:
-        days[this_day]={}
+        days[this_day] = {}
         day = days.get(this_day)
-    print (day)
-    print (state)
-    print (dso)
+    print(day)
+    print(state)
+    print(dso)
     day['state'] = state
     day['dso'] = dso
     with open("my_calendar.json", "w") as outfile:
@@ -125,17 +127,7 @@ def set_today_stat (state, dso):
     return cal
 
 
-
-
-
-
-
-
-
-
-
 if __name__ == "__main__":
-
     cfg = config.data()
     path = os.path.join(cfg["Install"], 'iris.log')
     print_month(2025, 2, cfg)

@@ -1,5 +1,4 @@
 from astropy.io import fits
-from numpy.core.defchararray import equal
 import os
 
 

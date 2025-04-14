@@ -2,13 +2,13 @@
 
 import cv2 as cv
 
-import config
+import configuration
 import shutil
 
 
 
 def take_snapshot(test_path=None):
-    cfg = config.data()
+    cfg = configuration.data()
     if test_path is not None:
         to_path = cfg["camera safety"]["scope_view"]
         shutil.copyfile(test_path, to_path)
@@ -35,5 +35,5 @@ def take_snapshot(test_path=None):
 
 
 if __name__ == '__main__':
-    cfg = config.data()
+    cfg = configuration.data()
 

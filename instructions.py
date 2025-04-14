@@ -1,12 +1,10 @@
 import json
 import functools
-from venv import create
 
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 from datetime import datetime
 from astropy.time import Time
-
 
 import dso_visibility
 

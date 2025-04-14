@@ -6,8 +6,6 @@ import shutil
 import config
 
 
-
-
 def db_full_path():
     cfg = config.data()
     install = cfg['install_location']

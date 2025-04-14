@@ -80,7 +80,7 @@ def get_is_parked ():
 if __name__ == "__main__":
     utils.set_install_dir()
 
-    logging.basicConfig(filename='iris.log', level=logging.INFO, format='%(asctime)s %(message)s',
+    logging.basicConfig(filename='../iris.log', level=logging.INFO, format='%(asctime)s %(message)s',
                         datefmt='%m/%d/%Y %I:%M:%S %p')
     logger = logging.getLogger(__name__)
     parked = get_is_parked()

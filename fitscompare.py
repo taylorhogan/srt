@@ -1,9 +1,7 @@
 
-
 from astropy.io import fits
 import numpy as np
 import matplotlib.pyplot as plt
-from mpl_toolkits.mplot3d import Axes3D
 from scipy.interpolate import make_interp_spline, BSpline
 
 
@@ -153,9 +151,9 @@ def create_graphs ():
     stretched_image = linear_stretch(data)
 
     # Plot the original and stretched images for comparison
-    plot_fits_image(data, stretched_image, "final_stretch.png")
+    plot_fits_image(data, stretched_image, "../final_stretch.png")
 
-    fit_to_3d_plot_data(stretched_image, "final_stretched_3d.png", "Final Streched Data")
+    fit_to_3d_plot_data(stretched_image, "../final_stretched_3d.png", "Final Streched Data")
 
     for f in files:
         fcompare = f
@@ -184,10 +182,10 @@ def create_graphs ():
 
     diff, mse, max_diff = compare_fits_files(control,files[4])
     stretched_data_of_diff = linear_stretch(diff)
-    plot_fits_image(diff,stretched_data_of_diff, "final_stretched_difference.png")
+    plot_fits_image(diff, stretched_data_of_diff, "../final_stretched_difference.png")
 
-    fit_to_3d_plot_data(diff, "final_stretched_difference_3d.png", "Difference Between Final and Before Final")
-    fit_to_3d_plot_data(stretched_data_of_diff, "final_stretched_difference_3d.png", "Difference Between Final and Before Final")
+    fit_to_3d_plot_data(diff, "../final_stretched_difference_3d.png", "Difference Between Final and Before Final")
+    fit_to_3d_plot_data(stretched_data_of_diff, "../final_stretched_difference_3d.png", "Difference Between Final and Before Final")
 
 if __name__ == '__main__':
     create_graphs()

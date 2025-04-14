@@ -7,17 +7,17 @@ from mastodon import Mastodon, StreamListener
 from mastodon.streaming import CallbackStreamListener
 
 import end
-import fitstojpg
 
+from datetime import date
+import configuration
+import sun as s
+import fitstojpg
+import weather
+import dso_visibility
 import instructions
 import obs_calendar
-from datetime import date
-import config
-import dso_visibility
-import sun as s
-import super_user_commands as su
 import utils
-import weather
+import super_user_commands as su
 import os
 
 
@@ -38,7 +38,7 @@ def image_cmd(words, index, m, account):
         if object is not None:
 
             now = datetime.datetime.now()
-            instructions.add_dso_object_instruction(dso_name,"",account)
+            instructions.add_dso_object_instruction(dso_name, "", account)
             post_social_message(dso_name + " Added to list of objects to image\n")
         else:
             post_social_message(dso_name + " Not a known object\n")
@@ -88,7 +88,7 @@ def weather_cmd(words, index, m, account):
 
 def version_cmd(words, index, m, account):
     # Observatory State
-    cfg = config.data()
+    cfg = configuration.data()
 
     reply = "Version: " + cfg["version"]["date"] + "\n"
     reply += "Observatory Status: " + cfg["Globals"]["Observatory State"]
@@ -96,7 +96,7 @@ def version_cmd(words, index, m, account):
 
 def status_cmd(words, index, m, account):
     # Observatory State
-    cfg = config.data()
+    cfg = configuration.data()
     reply = "Observatory Status: " + cfg["Globals"]["Observatory State"]
 
     post_social_message(reply)
@@ -109,7 +109,7 @@ def db_cmd(words, index, m, account):
 
 def calendar_cmd(words, index, m, account):
     # Observatory State
-    cfg = config.data()
+    cfg = configuration.data()
     today =date.today()
 
     obs_calendar.print_month (today.year, today.month, cfg)
@@ -126,7 +126,7 @@ def help_cmd(words, index, m, account):
 
 
 def latest_cmd(words, index, m, account):
-    cfg = config.data()
+    cfg = configuration.data()
 
     logger = logging.getLogger(__name__)
     image_dir = cfg["nina"]["image_dir"]
@@ -194,14 +194,14 @@ class TheStreamListener(StreamListener):
         print(f"Got update: {status['content']}")
 
     def on_notification(self, notification):
-        cfg = config.data()
+        cfg = configuration.data()
         logger = logging.getLogger(__name__)
         mastodon = cfg["mastodon"]["instance"]
         do_notification(notification, mastodon)
 
 
 def get_mastodon_instance():
-    cfg = config.data()
+    cfg = configuration.data()
     logger = logging.getLogger(__name__)
     access_token = cfg["mastodon"]["access_token"]
     api_base_url = cfg["mastodon"]["api_base_url"]
@@ -210,7 +210,7 @@ def get_mastodon_instance():
 
 
 def post_social_message(message, image=None):
-    cfg = config.data()
+    cfg = configuration.data()
     logger = logging.getLogger(__name__)
     mastodon = cfg["mastodon"]["instance"]
 
@@ -230,7 +230,7 @@ def post_social_message(message, image=None):
 
 
 def handle_mention(notification):
-    cfg = config.data()
+    cfg = configuration.data()
     if notification.type == "mention":
         print(notification.status.content)
         mastodon = cfg["mastodon"]["instance"]
@@ -238,7 +238,7 @@ def handle_mention(notification):
 
 
 def start_interface():
-    cfg = config.data()
+    cfg = configuration.data()
     post_social_message("Starting Version " + cfg["version"]["date"])
 
     mastodon = get_mastodon_instance()
@@ -252,7 +252,7 @@ def start_interface():
 def main():
     utils.set_install_dir()
     print ("Starting")
-    cfg = config.data()
+    cfg = configuration.data()
 
     logger = logging.getLogger(__name__)
 

@@ -1,6 +1,6 @@
 import threading
-import social_server
-import scheduler_server
+from servers import social_server, scheduler_server
+
 
 def call_servers():
     print ("start")

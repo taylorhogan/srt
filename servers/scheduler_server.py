@@ -1,15 +1,14 @@
 
 import time
 from datetime import datetime
-import instructions
-import obs_calendar
 import weather
+import instructions
 import config
 import os
 import logging
-import social_server
+from servers import social_server
+import obs_calendar
 import utils
-
 
 
 def set_state (state, dso = "Unknown"):
