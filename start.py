@@ -1,14 +1,14 @@
 import asyncio
 import logging
 import kasa_utils as ku
-import configuration
+import config
 import os
 
 
 
 if __name__ == "__main__":
 
-    cfg = configuration.data()
+    cfg = config.data()
     path = os.path.join(cfg["Install"], 'iris.log')
     print (path)
     logging.basicConfig(filename=path, level=logging.INFO, format='%(asctime)s %(message)s',

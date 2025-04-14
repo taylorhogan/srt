@@ -4,9 +4,9 @@ import os
 
 import python_weather
 
-import configuration
+import config
 
-cfg = configuration.data()
+cfg = config.data()
 
 
 async def get_sunrise_sunset_internal() -> [datetime, datetime]:

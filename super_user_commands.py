@@ -1,6 +1,6 @@
 import subprocess
 
-import configuration
+import config
 import social_server
 import kasa_utils as ku
 import pwi4_utils
@@ -149,7 +149,7 @@ def get_super_user_commands():
 
 
 def is_super_user(account):
-    cfg = configuration.data()
+    cfg = config.data()
 
     super_users = cfg["Super Users"]
     if account in super_users:
