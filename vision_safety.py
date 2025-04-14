@@ -4,10 +4,10 @@ import time
 import math
 import cv2 as cv
 import inside_camera_server
-import configuration
+import config
 import matplotlib.pyplot as plt
 
-cfg = configuration.data()
+cfg = config.data()
 
 def find_template(image, template_image_path):
     template = cv.imread(template_image_path,  cv.IMREAD_GRAYSCALE)
@@ -122,7 +122,7 @@ def analyse_safety(image_path):
 
 
 if __name__ == '__main__':
-    cfg = configuration.data()
+    cfg = config.data()
     inside_camera_server.take_snapshot()
     is_closed, is_parked, is_open, mod_date = analyse_safety(cfg["camera safety"]["scope_view"])
     #is_closed, is_parked, is_open, mod_date = analyse_safety("./base_images/inside.jpg")
