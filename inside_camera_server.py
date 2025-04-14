@@ -1,15 +1,12 @@
 
-
 import cv2 as cv
-from numpy.ma.setup import configuration
-
 import config
 import shutil
 
 
 
 def take_snapshot(test_path=None):
-    cfg = configuration.data()
+    cfg = config.data()
     if test_path is not None:
         to_path = cfg["camera safety"]["scope_view"]
         shutil.copyfile(test_path, to_path)
