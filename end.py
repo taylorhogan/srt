@@ -1,6 +1,7 @@
 import asyncio
 
-from servers import inside_camera_server, social_server
+from servers import inside_camera_server
+import social_server
 import config
 import logging
 import vision_safety

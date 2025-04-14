@@ -1,6 +1,6 @@
 import asyncio
 
-from servers import social_server
+import social_server
 import logging
 
 import kasa_utils as ku

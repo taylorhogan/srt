@@ -1,5 +1,5 @@
 import sys
-from servers import social_server
+import social_server
 
 if __name__ == "__main__":
 

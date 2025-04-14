@@ -1,7 +1,7 @@
 import subprocess
 
 import configuration
-from servers import social_server
+import social_server
 import kasa_utils as ku
 import pwi4_utils
 import utils

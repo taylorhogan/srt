@@ -6,7 +6,7 @@ import instructions
 import config
 import os
 import logging
-from servers import social_server
+import social_server
 import obs_calendar
 import utils
 
