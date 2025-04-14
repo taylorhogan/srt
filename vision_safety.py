@@ -3,7 +3,7 @@ import os
 import time
 import math
 import cv2 as cv
-from servers import inside_camera_server
+import inside_camera_server
 import configuration
 import matplotlib.pyplot as plt
 
