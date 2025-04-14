@@ -9,7 +9,7 @@ from mastodon.streaming import CallbackStreamListener
 import end
 
 from datetime import date
-import configuration
+import config
 import sun as s
 import fitstojpg
 import weather
@@ -88,7 +88,7 @@ def weather_cmd(words, index, m, account):
 
 def version_cmd(words, index, m, account):
     # Observatory State
-    cfg = configuration.data()
+    cfg = config.data()
 
     reply = "Version: " + cfg["version"]["date"] + "\n"
     reply += "Observatory Status: " + cfg["Globals"]["Observatory State"]
@@ -96,7 +96,7 @@ def version_cmd(words, index, m, account):
 
 def status_cmd(words, index, m, account):
     # Observatory State
-    cfg = configuration.data()
+    cfg = config.data()
     reply = "Observatory Status: " + cfg["Globals"]["Observatory State"]
 
     post_social_message(reply)
@@ -109,7 +109,7 @@ def db_cmd(words, index, m, account):
 
 def calendar_cmd(words, index, m, account):
     # Observatory State
-    cfg = configuration.data()
+    cfg = config.data()
     today =date.today()
 
     obs_calendar.print_month (today.year, today.month, cfg)
@@ -126,7 +126,7 @@ def help_cmd(words, index, m, account):
 
 
 def latest_cmd(words, index, m, account):
-    cfg = configuration.data()
+    cfg = config.data()
 
     logger = logging.getLogger(__name__)
     image_dir = cfg["nina"]["image_dir"]
@@ -194,14 +194,14 @@ class TheStreamListener(StreamListener):
         print(f"Got update: {status['content']}")
 
     def on_notification(self, notification):
-        cfg = configuration.data()
+        cfg = config.data()
         logger = logging.getLogger(__name__)
         mastodon = cfg["mastodon"]["instance"]
         do_notification(notification, mastodon)
 
 
 def get_mastodon_instance():
-    cfg = configuration.data()
+    cfg = config.data()
     logger = logging.getLogger(__name__)
     access_token = cfg["mastodon"]["access_token"]
     api_base_url = cfg["mastodon"]["api_base_url"]
@@ -210,7 +210,7 @@ def get_mastodon_instance():
 
 
 def post_social_message(message, image=None):
-    cfg = configuration.data()
+    cfg = config.data()
     logger = logging.getLogger(__name__)
     mastodon = cfg["mastodon"]["instance"]
 
@@ -230,7 +230,7 @@ def post_social_message(message, image=None):
 
 
 def handle_mention(notification):
-    cfg = configuration.data()
+    cfg = config.data()
     if notification.type == "mention":
         print(notification.status.content)
         mastodon = cfg["mastodon"]["instance"]
@@ -238,7 +238,7 @@ def handle_mention(notification):
 
 
 def start_interface():
-    cfg = configuration.data()
+    cfg = config.data()
     post_social_message("Starting Version " + cfg["version"]["date"])
 
     mastodon = get_mastodon_instance()
@@ -252,7 +252,7 @@ def start_interface():
 def main():
     utils.set_install_dir()
     print ("Starting")
-    cfg = configuration.data()
+    cfg = config.data()
 
     logger = logging.getLogger(__name__)
 

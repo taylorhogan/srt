@@ -1,8 +1,9 @@
 
 
 import cv2 as cv
+from numpy.ma.setup import configuration
 
-import configuration
+import config
 import shutil
 
 
@@ -35,5 +36,5 @@ def take_snapshot(test_path=None):
 
 
 if __name__ == '__main__':
-    cfg = configuration.data()
+    cfg = config.data()
 
