@@ -13,7 +13,7 @@ import config
 import sun as s
 import fitstojpg
 import weather
-import dso_visibility
+import astro_dso_visibility
 import instructions
 import obs_calendar
 import utils
@@ -34,7 +34,7 @@ def get_dso_object_name(words, index):
 def image_cmd(words, index, m, account):
     dso_name = get_dso_object_name(words, index)
     if dso_name is not None:
-        object = dso_visibility.is_a_dso_object(dso_name)
+        object = astro_dso_visibility.is_a_dso_object(dso_name)
         if object is not None:
 
             now = datetime.datetime.now()
@@ -46,9 +46,9 @@ def image_cmd(words, index, m, account):
 def best_cmd(words, index, m, account):
     dso_name = get_dso_object_name(words, index)
     if dso_name is not None:
-        object = dso_visibility.is_a_dso_object(dso_name)
+        object = astro_dso_visibility.is_a_dso_object(dso_name)
         if object is not None:
-            best_date, best_time = dso_visibility.best_day_for_dso(object)
+            best_date, best_time = astro_dso_visibility.best_day_for_dso(object)
             if best_date is not None:
                 formatted_date = best_date.strftime("%Y-%m-%d")
                 post_social_message(dso_name + " is above horizon for " + str(best_time) + " on "+ formatted_date)
@@ -61,9 +61,9 @@ def show_cmd(words, index, m, account):
     logger = logging.getLogger(__name__)
     dso_name = get_dso_object_name(words, index)
     if dso_name is not None:
-        obj = dso_visibility.is_a_dso_object(dso_name)
+        obj = astro_dso_visibility.is_a_dso_object(dso_name)
         if obj is not None:
-            horizon, image, sky = dso_visibility.show_plots(obj)
+            horizon, image, sky = astro_dso_visibility.show_plots(obj)
             logger.info(horizon)
             post_social_message("altitude \n", horizon)
             #post_social_message("image\n", image)
@@ -104,6 +104,14 @@ def status_cmd(words, index, m, account):
 
 
 def db_cmd(words, index, m, account):
+    if len(words) > index + 1:
+        operand = words[index + 1]
+    if operand == "rehash":
+        instructions.rehash_db()
+    if operand == "delete":
+        instructions.delete_instruction_db(words[index + 2])
+    if operand == "completed":
+        instructions.set_completed_instruction_db(words[index + 2])
     instructions.create_instructions_table()
     post_social_message("", "instructions.png")
 

@@ -13,6 +13,32 @@ import time
 
 
 
+def close_roof_cmd ():
+    dev_map = asyncio.run(ku.make_discovery_map())
+    instructions = (dict
+        (
+        {
+            "Roof motor": 'on',
+            "Iris inside light": 'off'
+        }
+    ))
+
+    asyncio.run(ku.kasa_do(dev_map, instructions))
+    r = requests.get('http://192.168.87.41/relay/0?turn=on')
+
+
+def open_roof_cmd ():
+    dev_map = asyncio.run(ku.make_discovery_map())
+    instructions = (dict
+        (
+        {
+            "Roof motor": 'on',
+            "Iris inside light": 'off'
+        }
+    ))
+
+    asyncio.run(ku.kasa_do(dev_map, instructions))
+    r = requests.get('http://192.168.87.41/relay/0?turn=on')
 
 def park_and_close_cmd():
     if not pwi4_utils.park_scope():
@@ -144,7 +170,9 @@ def get_super_user_commands():
         "nina1!": on_nina,
         "nina2!!": image_nina,
         "nina2A!": image_nina_a,
-        "reboot!": shutdown
+        "reboot!": shutdown,
+        "close!!": close_roof_cmd,
+        "open!!": open_roof_cmd
     }
 
 

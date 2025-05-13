@@ -6,11 +6,63 @@ import matplotlib.patches as mpatches
 from datetime import datetime
 from astropy.time import Time
 
-import dso_visibility
+import astro_dso_visibility
 
 import utils
 
 status_dict = {"in process": 3, "waiting":2, "completed":1}
+
+
+
+def delete_instruction_db (hash_value):
+    utils.set_install_dir()
+    with open('my_instructions.json', 'r') as f:
+        instructions = json.load(f)
+    for instruction in instructions:
+        if instruction["hash"] == hash_value:
+            instructions.remove(instruction)
+    with open('my_instructions.json', 'w') as f:
+        f.writelines(json.dumps(instructions, indent=4))
+
+
+
+def set_completed_instruction_db (hash_value):
+    utils.set_install_dir()
+    with open('my_instructions.json', 'r') as f:
+        instructions = json.load(f)
+    for instruction in instructions:
+        if instruction["hash"] == hash_value:
+            instruction["status"] = "completed"
+    with open('my_instructions.json', 'w') as f:
+        f.writelines(json.dumps(instructions, indent=4))
+
+
+def rehash_db ():
+    next_hash = 0
+    hash_set = {-1}
+    utils.set_install_dir()
+    with open('my_instructions.json', 'r') as f:
+        instructions = json.load(f)
+    for instruction in instructions:
+        if 'hash' in instruction.keys():
+            value = instruction["hash"]
+            while value in hash_set:
+                value = value + 1
+            instruction["hash"] = value
+            hash_set.add(value)
+
+        else:
+            instruction["hash"] = next_hash
+            hash_set.add(next_hash)
+            next_hash = next_hash + 1
+
+    with open('my_instructions.json', 'w') as f:
+        f.writelines(json.dumps(instructions, indent=4))
+
+
+
+
+
 
 def calc_and_store_hours_above_horizon ():
     utils.set_install_dir()
@@ -18,9 +70,9 @@ def calc_and_store_hours_above_horizon ():
         instructions = json.load(f)
     for instruction in instructions:
         dso = text = instruction["dso"]
-        obj = dso_visibility.is_a_dso_object(dso)
+        obj = astro_dso_visibility.is_a_dso_object(dso)
         if obj is not None:
-            above = dso_visibility.get_above_horizon_time(obj, Time.now())
+            above = astro_dso_visibility.get_above_horizon_time(obj, Time.now())
             instruction["above_horizon"] = str(above)
         else:
             instruction["above_horizon"] = '0'
@@ -89,6 +141,7 @@ def compare (r1, r2):
 
 
 def create_instructions_table ():
+    rehash_db()
     calc_and_store_hours_above_horizon()
     sorted_l = get_sorted_instructions()
     row_idx =  len(sorted_l) + 1
@@ -195,8 +248,7 @@ def get_dso_object_tonight():
 
 
 if __name__ == "__main__":
-
-    create_instructions_table()
+   rehash_db()
 
 
 

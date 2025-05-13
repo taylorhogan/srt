@@ -1,5 +1,5 @@
 import threading
-import scheduler_server
+import svr_scehduler
 import social_server
 
 
