@@ -1,24 +1,23 @@
 import datetime
 import logging
+import os
 import time
+from datetime import date
 
 from bs4 import BeautifulSoup
 from mastodon import Mastodon, StreamListener
 from mastodon.streaming import CallbackStreamListener
 
-import end
-
-from datetime import date
-import config
-import sun as s
-import fitstojpg
-import weather
 import astro_dso_visibility
+import config
+import end
+import fitstojpg
 import instructions
 import obs_calendar
-import utils
+import sun as s
 import super_user_commands as su
-import os
+import utils
+import weather
 
 
 def get_dso_object_name(words, index):
@@ -43,6 +42,7 @@ def image_cmd(words, index, m, account):
         else:
             post_social_message(dso_name + " Not a known object\n")
 
+
 def best_cmd(words, index, m, account):
     dso_name = get_dso_object_name(words, index)
     if dso_name is not None:
@@ -51,11 +51,12 @@ def best_cmd(words, index, m, account):
             best_date, best_time = astro_dso_visibility.best_day_for_dso(object)
             if best_date is not None:
                 formatted_date = best_date.strftime("%Y-%m-%d")
-                post_social_message(dso_name + " is above horizon for " + str(best_time) + " on "+ formatted_date)
+                post_social_message(dso_name + " is above horizon for " + str(best_time) + " on " + formatted_date)
             else:
                 post_social_message(dso_name + " is never above horizon")
         else:
             post_social_message(dso_name + " Not a known object\n")
+
 
 def show_cmd(words, index, m, account):
     logger = logging.getLogger(__name__)
@@ -66,8 +67,8 @@ def show_cmd(words, index, m, account):
             horizon, image, sky = astro_dso_visibility.show_plots(obj)
             logger.info(horizon)
             post_social_message("altitude \n", horizon)
-            #post_social_message("image\n", image)
-           #post_social_message("sky\n", sky)
+            # post_social_message("image\n", image)
+        # post_social_message("sky\n", sky)
         else:
             post_social_message(dso_name + " Not a known object\n")
 
@@ -94,6 +95,7 @@ def version_cmd(words, index, m, account):
     reply += "Observatory Status: " + cfg["Globals"]["Observatory State"]
     post_social_message(reply)
 
+
 def status_cmd(words, index, m, account):
     # Observatory State
     cfg = config.data()
@@ -104,23 +106,39 @@ def status_cmd(words, index, m, account):
 
 
 def db_cmd(words, index, m, account):
-    if len(words) > index + 1:
-        operand = words[index + 1]
-    if operand == "rehash":
-        instructions.rehash_db()
-    if operand == "delete":
-        instructions.delete_instruction_db(words[index + 2])
-    if operand == "completed":
-        instructions.set_completed_instruction_db(words[index + 2])
+
     instructions.create_instructions_table()
     post_social_message("", "instructions.png")
+
+
+def dbr_cmd(words, index, m, account):
+    instructions.rehash_db()
+    instructions.create_instructions_table()
+    post_social_message("", "instructions.png")
+
+
+def dbd_cmd(words, index, m, account):
+
+    instructions.delete_instruction_db(words[index + 1])
+
+    instructions.create_instructions_table()
+    post_social_message("", "instructions.png")
+
+
+def dbc_cmd(words, index, m, account):
+
+
+    instructions.set_completed_instruction_db(words[index + 1])
+    instructions.create_instructions_table()
+    post_social_message("", "instructions.png")
+
 
 def calendar_cmd(words, index, m, account):
     # Observatory State
     cfg = config.data()
-    today =date.today()
+    today = date.today()
 
-    obs_calendar.print_month (today.year, today.month, cfg)
+    obs_calendar.print_month(today.year, today.month, cfg)
     post_social_message("", "cal.png")
 
 
@@ -130,7 +148,6 @@ def help_cmd(words, index, m, account):
         reply += word + "\n"
     post_social_message(reply)
     su.print_help(account)
-
 
 
 def latest_cmd(words, index, m, account):
@@ -149,7 +166,10 @@ keywords = {
     "show": show_cmd,
     "best": best_cmd,
     "image": image_cmd,
-    "db": db_cmd,
+    "dbs": db_cmd,
+    "dbr": dbr_cmd,
+    "dbd": dbd_cmd,
+    "dbc": dbc_cmd,
     "version": version_cmd,
     "status": status_cmd,
     "weather": weather_cmd,
@@ -167,7 +187,6 @@ def do_command(sentence, m, account):
 
     logger = logging.getLogger(__name__)
     logger.info("Got Command: " + sentence)
-
 
     action = keywords.get(words[1].strip(), "no_key")
     if action != "no_key":
@@ -259,7 +278,7 @@ def start_interface():
 
 def main():
     utils.set_install_dir()
-    print ("Starting")
+    print("Starting")
     cfg = config.data()
 
     logger = logging.getLogger(__name__)
