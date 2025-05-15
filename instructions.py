@@ -37,12 +37,24 @@ def set_completed_instruction_db (hash_value):
         f.writelines(json.dumps(instructions, indent=4))
 
 
+def remove_hash ():
+    with open('my_instructions.json', 'r') as f:
+        instructions = json.load(f)
+    for instruction in instructions:
+        if 'hash' in instruction.keys():
+            del instruction["hash"]
+
+    with open('my_instructions.json', 'w') as f:
+        f.writelines(json.dumps(instructions, indent=4))
+
+
 def rehash_db ():
+    remove_hash()
     next_hash = 0
     hash_set = {-1}
     utils.set_install_dir()
-    with open('my_instructions.json', 'r') as f:
-        instructions = json.load(f)
+    instructions = get_sorted_instructions()
+
     for instruction in instructions:
         if 'hash' in instruction.keys():
             value = instruction["hash"]
@@ -153,7 +165,7 @@ def create_instructions_table ():
     #ax.set_title("Image Requests", fontsize=20, pad=20)
 
     # Weekday labels
-    headers = ['DSO', 'Requestor', 'State', 'Date', 'Tonight']
+    headers = ['DSO', 'Requestor', 'State', 'Date', 'Tonight','ID']
     for i, header in enumerate(headers):
         ax.text(i + 2.5, len(sorted_l) + 1, header, ha='center', fontsize=12, weight='bold')
 
@@ -169,8 +181,9 @@ def create_instructions_table ():
             color = 'lightblue'
         if instruction["status"] == 'completed':
             color = 'pink'
-        for col_idx in range (5):
+        for col_idx in range (6):
             text = ''
+
             if col_idx == 0:
                 text = instruction["dso"]
             elif col_idx == 1:
@@ -187,7 +200,8 @@ def create_instructions_table ():
                     text = ""
             elif col_idx == 4:
                 text = instruction["above_horizon"]
-
+            elif col_idx == 5:
+                text = instruction["hash"]
 
             rect = mpatches.Rectangle((col_idx+2, row_idx-1), 1, 1, edgecolor="black", facecolor=color)
             ax.add_patch(rect)
@@ -248,7 +262,10 @@ def get_dso_object_tonight():
 
 
 if __name__ == "__main__":
+
    rehash_db()
+   create_instructions_table()
+   #delete_instruction_db(4)
 
 
 
