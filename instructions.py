@@ -171,7 +171,7 @@ def create_instructions_table ():
 
     # Generate the  grid
 
-    for instruction in sorted_l:
+    for instruction in sorted_l[:5]:
        # Get color and text for the day
         color='gray'
         text = 'development'

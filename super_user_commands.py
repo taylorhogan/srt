@@ -24,6 +24,7 @@ def close_roof_cmd ():
     ))
 
     asyncio.run(ku.kasa_do(dev_map, instructions))
+    time.sleep(30)
     r = requests.get('http://192.168.87.41/relay/0?turn=on')
 
 
@@ -38,6 +39,7 @@ def open_roof_cmd ():
     ))
 
     asyncio.run(ku.kasa_do(dev_map, instructions))
+    time.sleep(30)
     r = requests.get('http://192.168.87.41/relay/0?turn=on')
 
 def park_and_close_cmd():
