@@ -194,7 +194,7 @@ def create_instructions_table ():
                 string = instruction["request_time"]
                 if string != "":
                     datetime_object = datetime.strptime(string, '%Y-%m-%d')
-                    formatted_date = datetime_object.strftime("%m\n%d\n%Y")
+                    formatted_date = datetime_object.strftime("%m-%d\n%Y")
                     text = formatted_date
                 else:
                     text = ""
@@ -206,7 +206,7 @@ def create_instructions_table ():
             rect = mpatches.Rectangle((col_idx+2, row_idx-1), 1, 1, edgecolor="black", facecolor=color)
             ax.add_patch(rect)
             # Add text
-            ax.text(col_idx + 2.5, row_idx - 0.5, text, ha='center', va='center', fontsize=12)
+            ax.text(col_idx + 2.5, row_idx - 0.5, text, ha='center', va='center', fontsize=10)
 
         row_idx = row_idx -1
         #break
@@ -265,6 +265,7 @@ if __name__ == "__main__":
 
    rehash_db()
    create_instructions_table()
+   set_completed_instruction_db(0)
    #delete_instruction_db(4)
 
 

@@ -119,16 +119,14 @@ def dbr_cmd(words, index, m, account):
 
 def dbd_cmd(words, index, m, account):
 
-    instructions.delete_instruction_db(words[index + 1])
+    instructions.delete_instruction_db(words[index])
 
     instructions.create_instructions_table()
     post_social_message("", "instructions.png")
 
 
 def dbc_cmd(words, index, m, account):
-
-
-    instructions.set_completed_instruction_db(words[index + 1])
+    instructions.set_completed_instruction_db(words[index])
     instructions.create_instructions_table()
     post_social_message("", "instructions.png")
 
