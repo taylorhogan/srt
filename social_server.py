@@ -108,13 +108,13 @@ def status_cmd(words, index, m, account):
 def db_cmd(words, index, m, account):
 
     instructions.create_instructions_table()
-    post_social_message("", "instructions.png")
+
 
 
 def dbr_cmd(words, index, m, account):
     instructions.rehash_db()
     instructions.create_instructions_table()
-    post_social_message("", "instructions.png")
+
 
 
 def dbd_cmd(words, index, m, account):
@@ -122,13 +122,15 @@ def dbd_cmd(words, index, m, account):
     instructions.delete_instruction_db(words[index])
 
     instructions.create_instructions_table()
-    post_social_message("", "instructions.png")
+
 
 
 def dbc_cmd(words, index, m, account):
+    logger = logging.getLogger(__name__)
+    logger.info("db_cmd", words)
     instructions.set_completed_instruction_db(words[index])
     instructions.create_instructions_table()
-    post_social_message("", "instructions.png")
+
 
 
 def calendar_cmd(words, index, m, account):

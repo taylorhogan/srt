@@ -1,20 +1,20 @@
-import json
 import functools
-
-import matplotlib.pyplot as plt
-import matplotlib.patches as mpatches
+import json
+import logging
 from datetime import datetime
+
+import matplotlib.patches as mpatches
+import matplotlib.pyplot as plt
 from astropy.time import Time
 
 import astro_dso_visibility
-
+import social_server
 import utils
 
-status_dict = {"in process": 3, "waiting":2, "completed":1}
+status_dict = {"in process": 3, "waiting": 2, "completed": 1}
 
 
-
-def delete_instruction_db (hash_value):
+def delete_instruction_db(hash_value):
     utils.set_install_dir()
     with open('my_instructions.json', 'r') as f:
         instructions = json.load(f)
@@ -25,8 +25,7 @@ def delete_instruction_db (hash_value):
         f.writelines(json.dumps(instructions, indent=4))
 
 
-
-def set_completed_instruction_db (hash_value):
+def set_completed_instruction_db(hash_value):
     utils.set_install_dir()
     with open('my_instructions.json', 'r') as f:
         instructions = json.load(f)
@@ -37,7 +36,7 @@ def set_completed_instruction_db (hash_value):
         f.writelines(json.dumps(instructions, indent=4))
 
 
-def remove_hash ():
+def remove_hash():
     with open('my_instructions.json', 'r') as f:
         instructions = json.load(f)
     for instruction in instructions:
@@ -48,7 +47,7 @@ def remove_hash ():
         f.writelines(json.dumps(instructions, indent=4))
 
 
-def rehash_db ():
+def rehash_db():
     remove_hash()
     next_hash = 0
     hash_set = {-1}
@@ -72,11 +71,7 @@ def rehash_db ():
         f.writelines(json.dumps(instructions, indent=4))
 
 
-
-
-
-
-def calc_and_store_hours_above_horizon ():
+def calc_and_store_hours_above_horizon():
     utils.set_install_dir()
     with open('my_instructions.json', 'r') as f:
         instructions = json.load(f)
@@ -108,7 +103,8 @@ def time_to_seconds(time_str):
         multiplier *= 60
     return seconds
 
-def compare (r1, r2):
+
+def compare(r1, r2):
     s1 = r1["status"]
     s2 = r2["status"]
     s1p = status_dict.get(s1, 0)
@@ -127,15 +123,13 @@ def compare (r1, r2):
     if p1 > p2:
         return -1
 
-    oh1 =time_to_seconds( r1["above_horizon"])
+    oh1 = time_to_seconds(r1["above_horizon"])
     oh2 = time_to_seconds(r2["above_horizon"])
 
     if oh1 < oh2:
         return 1
     if oh1 > oh2:
         return -1
-
-
 
     n1 = r1["dso"]
     n2 = r2["dso"]
@@ -148,32 +142,31 @@ def compare (r1, r2):
     return 0
 
 
-
-
-
-
-def create_instructions_table ():
+def create_instructions_table():
     rehash_db()
     calc_and_store_hours_above_horizon()
     sorted_l = get_sorted_instructions()
-    row_idx = 6
 
+    per_page = 6
+    idx = per_page
 
-    fig, ax = plt.subplots(figsize=(10,6))
+    fig, ax = plt.subplots(figsize=(10, 6))
     ax.axis('off')
 
     # Set the title
-    #ax.set_title("Image Requests", fontsize=20, pad=20)
+    # ax.set_title("Image Requests", fontsize=20, pad=20)
 
     # Weekday labels
-    headers = ['DSO', 'Requestor', 'State', 'Date', 'Tonight','ID']
+    headers = ['DSO', 'Requestor', 'State', 'Date', 'Tonight', 'ID']
     for i, header in enumerate(headers):
-        ax.text(i + 2.5,  6, header, ha='center', fontsize=12, weight='bold')
+        ax.text(i + 2.5, 6, header, ha='center', fontsize=12, weight='bold')
 
     # Generate the  grid
 
-    for instruction in sorted_l[:5]:
-       # Get color and text for the days
+    for instruction in sorted_l[:per_page]:
+        # Get color and text for the days
+        logger = logging.getLogger(__name__)
+        logger.info("in create")
         text = 'development'
         if instruction["status"] == 'in process':
             color = 'lightgreen'
@@ -181,7 +174,7 @@ def create_instructions_table ():
             color = 'lightblue'
         if instruction["status"] == 'completed':
             color = 'pink'
-        for col_idx in range (6):
+        for col_idx in range(6):
             text = ''
 
             if col_idx == 0:
@@ -203,35 +196,36 @@ def create_instructions_table ():
             elif col_idx == 5:
                 text = instruction["hash"]
 
-            rect = mpatches.Rectangle((col_idx+2, row_idx-1), 1, 1, edgecolor="black", facecolor=color)
+            rect = mpatches.Rectangle((col_idx + 2, idx - 1), 1, 1, edgecolor="black", facecolor=color)
             ax.add_patch(rect)
             # Add text
-            ax.text(col_idx + 2.5, row_idx - 0.5, text, ha='center', va='center', fontsize=10)
+            ax.text(col_idx + 2.5, idx - 0.5, text, ha='center', va='center', fontsize=10)
 
-        row_idx = row_idx -1
-        #break
+        idx = idx - 1
+    # break
 
 
     # Set limits and aspect
     ax.set_xlim(0, 8)
     ax.set_ylim(0, 10)
-    #ax.set_aspect('equal')
-    fig.savefig ('instructions.png')
+    # ax.set_aspect('equal')
+    fig.savefig('instructions.png')
+    social_server.post_social_message("", "instructions.png")
 
 
-def add_dso_object_instruction (dso_name, recipe, requestor, priority=0):
+def add_dso_object_instruction(dso_name, recipe, requestor, priority=0):
     now = datetime.now()
     formatted_date = now.strftime("%Y-%m-%d")
     with open('my_instructions.json', 'r') as f:
         instructions = json.load(f)
     new_instruction = {
-      "dso": dso_name,
-      "uuid": "1",
-      "recipe": recipe,
-      "requestor": requestor,
-      "request_time": formatted_date,
-      "status": "waiting",
-      "priority": priority
+        "dso": dso_name,
+        "uuid": "1",
+        "recipe": recipe,
+        "requestor": requestor,
+        "request_time": formatted_date,
+        "status": "waiting",
+        "priority": priority
     }
     utils.set_install_dir()
     instructions.append(new_instruction)
@@ -249,27 +243,16 @@ def get_sorted_instructions():
     return sorted_l
 
 
-
-
-
 def get_dso_object_tonight():
-    sorted_l =get_sorted_instructions()
+    sorted_l = get_sorted_instructions()
 
     best = sorted_l[0]
 
     return best
 
 
-
 if __name__ == "__main__":
-
-   rehash_db()
-   create_instructions_table()
-   set_completed_instruction_db(0)
-   #delete_instruction_db(4)
-
-
-
-
-
-
+    rehash_db()
+    create_instructions_table()
+    set_completed_instruction_db(0)
+    # delete_instruction_db(4)
