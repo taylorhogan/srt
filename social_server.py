@@ -189,6 +189,8 @@ def do_command(sentence, m, account):
     logger.info("Got Command: " + sentence)
 
     action = keywords.get(words[1].strip(), "no_key")
+    logger.info("Action: " + str(action))
+
     if action != "no_key":
         action(words, 1, m, account)
         seen_base_command = True
