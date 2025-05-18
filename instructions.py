@@ -156,9 +156,10 @@ def create_instructions_table ():
     rehash_db()
     calc_and_store_hours_above_horizon()
     sorted_l = get_sorted_instructions()
-    row_idx =  len(sorted_l) + 1
+    row_idx = 6
 
-    fig, ax = plt.subplots(figsize=(10,row_idx + 4))
+
+    fig, ax = plt.subplots(figsize=(10,6))
     ax.axis('off')
 
     # Set the title
@@ -167,7 +168,7 @@ def create_instructions_table ():
     # Weekday labels
     headers = ['DSO', 'Requestor', 'State', 'Date', 'Tonight','ID']
     for i, header in enumerate(headers):
-        ax.text(i + 2.5, len(sorted_l) + 1, header, ha='center', fontsize=12, weight='bold')
+        ax.text(i + 2.5,  6, header, ha='center', fontsize=12, weight='bold')
 
     # Generate the  grid
 
