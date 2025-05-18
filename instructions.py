@@ -172,8 +172,7 @@ def create_instructions_table ():
     # Generate the  grid
 
     for instruction in sorted_l[:5]:
-       # Get color and text for the day
-        color='gray'
+       # Get color and text for the days
         text = 'development'
         if instruction["status"] == 'in process':
             color = 'lightgreen'
