@@ -26,6 +26,9 @@ def delete_instruction_db(hash_value):
 
 
 def set_completed_instruction_db(hash_value):
+    logger = logging.getLogger(__name__)
+    logger.info("completing", hash_value)
+
     utils.set_install_dir()
     with open('my_instructions.json', 'r') as f:
         instructions = json.load(f)
@@ -146,6 +149,9 @@ def create_instructions_table():
     rehash_db()
     calc_and_store_hours_above_horizon()
     sorted_l = get_sorted_instructions()
+    logger = logging.getLogger(__name__)
+    logger.info("in create")
+
 
     per_page = 6
     idx = per_page
@@ -165,9 +171,7 @@ def create_instructions_table():
 
     for instruction in sorted_l[:per_page]:
         # Get color and text for the days
-        logger = logging.getLogger(__name__)
-        logger.info("in create")
-        text = 'development'
+
         if instruction["status"] == 'in process':
             color = 'lightgreen'
         if instruction["status"] == 'waiting':
