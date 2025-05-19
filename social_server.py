@@ -119,7 +119,7 @@ def dbr_cmd(words, index, m, account):
 
 def dbd_cmd(words, index, m, account):
 
-    instructions.delete_instruction_db(words[index])
+    instructions.delete_instruction_db(words[index+1])
 
     instructions.create_instructions_table()
 
@@ -128,7 +128,7 @@ def dbd_cmd(words, index, m, account):
 def dbc_cmd(words, index, m, account):
     logger = logging.getLogger(__name__)
     logger.info("db_cmd", words)
-    instructions.set_completed_instruction_db(words[index])
+    instructions.set_completed_instruction_db(words[index+1])
     instructions.create_instructions_table()
 
 

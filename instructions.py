@@ -58,17 +58,8 @@ def rehash_db():
     instructions = get_sorted_instructions()
 
     for instruction in instructions:
-        if 'hash' in instruction.keys():
-            value = instruction["hash"]
-            while value in hash_set:
-                value = value + 1
-            instruction["hash"] = value
-            hash_set.add(value)
-
-        else:
-            instruction["hash"] = next_hash
-            hash_set.add(next_hash)
-            next_hash = next_hash + 1
+        instruction["hash"] = str(next_hash)
+        next_hash = next_hash + 1
 
     with open('my_instructions.json', 'w') as f:
         f.writelines(json.dumps(instructions, indent=4))
