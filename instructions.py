@@ -109,16 +109,16 @@ def compare(r1, r2):
     if s1p > s2p:
         return -1
 
-    p1 = r1["priority"]
-    p2 = r2["priority"]
+    p1 = r1.get("priority", 5)
+    p2 = r2.get("priority", 5)
 
     if p1 < p2:
         return 1
     if p1 > p2:
         return -1
 
-    oh1 = time_to_seconds(r1["above_horizon"])
-    oh2 = time_to_seconds(r2["above_horizon"])
+    oh1 = time_to_seconds(r1.get("above_horizon",0))
+    oh2 = time_to_seconds(r2.get("above_horizon",0))
 
     if oh1 < oh2:
         return 1
