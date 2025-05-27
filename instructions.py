@@ -117,8 +117,8 @@ def compare(r1, r2):
     if p1 > p2:
         return -1
 
-    oh1 = time_to_seconds(r1.get("above_horizon",0))
-    oh2 = time_to_seconds(r2.get("above_horizon",0))
+    oh1 = time_to_seconds(r1.get("above_horizon","0"))
+    oh2 = time_to_seconds(r2.get("above_horizon","0"))
 
     if oh1 < oh2:
         return 1
