@@ -10,7 +10,7 @@ import pwi4_utils
 import os
 
 
-def determine_roof_state():
+def determine_roof_state_visually():
     cfg = config.data()
     inside_camera_server.take_snapshot()
     is_closed, is_parked, is_open, mod_date = vision_safety.analyse_safety(cfg["camera safety"]["scope_view"])
@@ -36,31 +36,36 @@ if __name__ == "__main__":
         dev_map = asyncio.run(ku.make_discovery_map())
 
         parked = pwi4_utils.get_is_parked()
-        if parked:
-            social_server.post_social_message("Mount says Iris is parked")
-            instructions = (dict
-                (
-                {
-                    "Telescope mount": 'off',
-                    "Roof motor": 'on',
-                    "Iris inside light": 'on'
-                }
-            ))
+        try:
+            if parked:
+                social_server.post_social_message("Mount says Iris is parked")
+                instructions = (dict
+                    (
+                    {
+                        "Telescope mount": 'off',
+                        "Roof motor": 'on',
+                        "Iris inside light": 'on'
+                    }
+                ))
 
-            asyncio.run(ku.kasa_do(dev_map, instructions))
-        else:
-            social_server.post_social_message("Mount says Iris is NOT parked")
-            instructions = (dict
-                (
-                {
-                    "Telescope mount": 'off',
-                    "Roof motor": 'off',
-                    "Iris inside light": 'on'
-                }
-            ))
+                asyncio.run(ku.kasa_do(dev_map, instructions))
+            else:
+                social_server.post_social_message("Mount says Iris is NOT parked")
+                instructions = (dict
+                    (
+                    {
+                        "Telescope mount": 'off',
+                        "Roof motor": 'off',
+                        "Iris inside light": 'on'
+                    }
+                ))
 
-            asyncio.run(ku.kasa_do(dev_map, instructions))
-            determine_roof_state()
+                asyncio.run(ku.kasa_do(dev_map, instructions))
+        except:
+            logger.info('Problem')
+            logger.exception("Exception")
+
+        determine_roof_state_visually()
 
     except:
         logger.info('Problem')
