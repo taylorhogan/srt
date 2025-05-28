@@ -144,10 +144,10 @@ def create_instructions_table():
     logger.info("in create")
 
 
-    per_page = 6
+    per_page = 20
     idx = per_page
 
-    fig, ax = plt.subplots(figsize=(10, 6))
+    fig, ax = plt.subplots(figsize=(10, per_page))
     ax.axis('off')
 
     # Set the title
@@ -156,7 +156,7 @@ def create_instructions_table():
     # Weekday labels
     headers = ['DSO', 'Requestor', 'State', 'Date', 'Tonight', 'ID']
     for i, header in enumerate(headers):
-        ax.text(i + 2.5, 6, header, ha='center', fontsize=12, weight='bold')
+        ax.text(i + 1.5, per_page, header, ha='center', fontsize=12, weight='bold')
 
     # Generate the  grid
 
@@ -191,10 +191,10 @@ def create_instructions_table():
             elif col_idx == 5:
                 text = instruction["hash"]
 
-            rect = mpatches.Rectangle((col_idx + 2, idx - 1), 1, 1, edgecolor="black", facecolor=color)
+            rect = mpatches.Rectangle((col_idx + 1, idx - 1), 1, 1, edgecolor="black", facecolor=color)
             ax.add_patch(rect)
             # Add text
-            ax.text(col_idx + 2.5, idx - 0.5, text, ha='center', va='center', fontsize=10)
+            ax.text(col_idx + 1.5, idx - 0.5, text, ha='center', va='center', fontsize=10)
 
         idx = idx - 1
     # break
@@ -202,7 +202,7 @@ def create_instructions_table():
 
     # Set limits and aspect
     ax.set_xlim(0, 8)
-    ax.set_ylim(0, 10)
+    ax.set_ylim(0, per_page)
     # ax.set_aspect('equal')
     fig.savefig('instructions.png')
     social_server.post_social_message("", "instructions.png")
@@ -249,5 +249,5 @@ def get_dso_object_tonight():
 if __name__ == "__main__":
     rehash_db()
     create_instructions_table()
-    set_completed_instruction_db(0)
+    #set_completed_instruction_db(0)
     # delete_instruction_db(4)
