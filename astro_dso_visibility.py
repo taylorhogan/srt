@@ -11,8 +11,10 @@ import astropy.units as u
 import matplotlib.pyplot as plt
 import numpy as np
 import pytz
+import astroplan.plots
 from astroplan import FixedTarget
 from astroplan import Observer
+from astroplan.plots import plot_finder_image
 from astropy.coordinates import EarthLocation
 from astropy.time import Time
 from matplotlib import dates
@@ -168,17 +170,17 @@ def show_plots(dso):
     if not os.path.exists(scratch_dir):
         os.mkdir(scratch_dir)
 
-    # ax, hdu = plot_finder_image(dso, fov_radius=42*u.arcmin, reticle=True)
+    ax, hdu = plot_finder_image(dso, fov_radius=42*u.arcmin, reticle=True)
 
     image_path = os.path.join(scratch_dir, "image.png")
-    # plt.savefig(image_path)
-    # plt.clf()
+    plt.savefig(image_path)
+    plt.clf()
 
-    # astroplan.plots.plot_sky(dso, my_observatory, observe_time)
-    # plt.legend(loc='center left', bbox_to_anchor=(1.25, 0.5))
+    astroplan.plots.plot_sky(dso, my_observatory, observe_time)
+    plt.legend(loc='center left', bbox_to_anchor=(1.25, 0.5))
     sky_path = os.path.join(scratch_dir, "sky.png")
-    # plt.savefig(sky_path)
-    # plt.clf()
+    plt.savefig(sky_path)
+    plt.clf()
 
     plot_my_dso_and_horizon(dso, my_observatory, observe_time)
     altitude_path = os.path.join(scratch_dir, "horizon.png")
@@ -271,34 +273,10 @@ def best_day_for_dso(dso):
 
 def test_me():
     obj = is_a_dso_object("ngc2903")
-    best_date, best_time = best_day_for_dso(obj)
-    if best_date is None:
-        print(obj.name, " Never")
-    else:
-        print(obj.name, best_date, best_time)
 
     show_plots(obj)
-    with open('my_instructions.json', 'r') as f:
-        instructions = json.load(f)
-    for instruction in instructions:
-        dso = instruction['dso']
-        obj = is_a_dso_object(dso)
-        if obj is not None:
-            elapsed_time = get_above_horizon_time(obj, Time.now())
-            if elapsed_time is not None:
-                print(dso, str(elapsed_time))
-            else:
-                print(dso + " is never above horizon")
 
-def f(q):
-    q.put([42, None, 'hello'])
 
-if __name__ == '__main__':
-    q = Queue()
-    p = Process(target=f, args=(q,))
-    p.start()
-    print(q.get())    # prints "[42, None, 'hello']"
-    p.join()
 
 if __name__ == '__main__':
     test_me()
