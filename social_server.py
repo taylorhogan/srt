@@ -65,10 +65,12 @@ def show_cmd(words, index, m, account):
         obj = astro_dso_visibility.is_a_dso_object(dso_name)
         if obj is not None:
             horizon, image, sky = astro_dso_visibility.show_plots(obj)
-            logger.info(horizon)
-            post_social_message("altitude \n", horizon)
-            # post_social_message("image\n", image)
-        # post_social_message("sky\n", sky)
+            if horizon is not None:
+                post_social_message("altitude \n", horizon)
+            if image is not None:
+                post_social_message("image\n", image)
+            if sky is not None:
+                post_social_message("sky\n", sky)
         else:
             post_social_message(dso_name + " Not a known object\n")
 

@@ -169,6 +169,8 @@ def show_plots(dso):
 
     dir_name = os.path.dirname(__file__)
     scratch_dir = os.path.join(dir_name + "/scratch")
+    image_path = sky_path = horizon_path = None
+
     if not os.path.exists(scratch_dir):
         os.mkdir(scratch_dir)
     try:
