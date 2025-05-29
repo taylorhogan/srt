@@ -18,6 +18,8 @@ from astroplan.plots import plot_finder_image
 from astropy.coordinates import EarthLocation
 from astropy.time import Time
 from matplotlib import dates
+import logging
+
 
 import config
 
@@ -169,24 +171,40 @@ def show_plots(dso):
     scratch_dir = os.path.join(dir_name + "/scratch")
     if not os.path.exists(scratch_dir):
         os.mkdir(scratch_dir)
+    try:
+        ax, hdu = plot_finder_image(dso, fov_radius=42*u.arcmin)
 
-    ax, hdu = plot_finder_image(dso, fov_radius=42*u.arcmin, reticle=True)
+        image_path = os.path.join(scratch_dir, "image.png")
+        plt.savefig(image_path)
+        plt.clf()
+    except:
+        logger = logging.getLogger(__name__)
+        logger.info('Problem')
+        logger.exception("Exception")
 
-    image_path = os.path.join(scratch_dir, "image.png")
-    plt.savefig(image_path)
-    plt.clf()
+    try:
 
-    astroplan.plots.plot_sky(dso, my_observatory, observe_time)
-    plt.legend(loc='center left', bbox_to_anchor=(1.25, 0.5))
-    sky_path = os.path.join(scratch_dir, "sky.png")
-    plt.savefig(sky_path)
-    plt.clf()
+        astroplan.plots.plot_sky(dso, my_observatory, observe_time)
+        plt.legend(loc='center left', bbox_to_anchor=(1.25, 0.5))
+        sky_path = os.path.join(scratch_dir, "sky.png")
+        plt.savefig(sky_path)
+        plt.clf()
+    except:
+        logger = logging.getLogger(__name__)
+        logger.info('Problem')
+        logger.exception("Exception")
 
-    plot_my_dso_and_horizon(dso, my_observatory, observe_time)
-    altitude_path = os.path.join(scratch_dir, "horizon.png")
+    try:
 
-    plt.savefig(altitude_path)
-    plt.clf()
+        plot_my_dso_and_horizon(dso, my_observatory, observe_time)
+        altitude_path = os.path.join(scratch_dir, "horizon.png")
+
+        plt.savefig(altitude_path)
+        plt.clf()
+    except:
+        logger = logging.getLogger(__name__)
+        logger.info('Problem')
+        logger.exception("Exception")
 
     return altitude_path, image_path, sky_path
 
@@ -273,7 +291,8 @@ def best_day_for_dso(dso):
 
 def test_me():
     obj = is_a_dso_object("ngc2903")
-
+    d, t = best_day_for_dso(obj)
+    print (d, t)
     show_plots(obj)
 
 
