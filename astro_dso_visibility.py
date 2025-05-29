@@ -174,7 +174,8 @@ def show_plots(dso):
     if not os.path.exists(scratch_dir):
         os.mkdir(scratch_dir)
     try:
-        ax, hdu = plot_finder_image(dso, fov_radius=42*u.arcmin)
+        #ax, hdu = plot_finder_image(dso, fov_radius=42*u.arcmin)
+        ax, hdu = plot_finder_image(dso)
 
         image_path = os.path.join(scratch_dir, "image.png")
         plt.savefig(image_path)
