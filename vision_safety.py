@@ -15,7 +15,7 @@ def find_template(image, template_image_path):
     #d, w, h = template.shape[::-1]
     w, h = template.shape[::-1]
 
-    method = 'cv.TM_SQDIFF'
+    method = 'cv.TM_CCOEFF'
 
     methods = ['TM_CCOEFF', 'TM_CCOEFF_NORMED', 'TM_CCORR',
                'TM_CCORR_NORMED', 'TM_SQDIFF', 'TM_SQDIFF_NORMED']
