@@ -31,6 +31,9 @@ def get_dso_object_name(words, index):
 
 
 def image_cmd(words, index, m, account):
+    """
+    example image m 13
+    """
     dso_name = get_dso_object_name(words, index)
     if dso_name is not None:
         object = astro_dso_visibility.is_a_dso_object(dso_name)
@@ -44,6 +47,9 @@ def image_cmd(words, index, m, account):
 
 
 def best_cmd(words, index, m, account):
+    """
+       example best m 13
+    """
     dso_name = get_dso_object_name(words, index)
     if dso_name is not None:
         object = astro_dso_visibility.is_a_dso_object(dso_name)
@@ -59,6 +65,9 @@ def best_cmd(words, index, m, account):
 
 
 def show_cmd(words, index, m, account):
+    """
+           example show m 13
+    """
     logger = logging.getLogger(__name__)
     dso_name = get_dso_object_name(words, index)
     if dso_name is not None:
@@ -114,13 +123,18 @@ def db_cmd(words, index, m, account):
 
 
 def dbr_cmd(words, index, m, account):
+    """
+    rehash db, example dbr
+    """
     instructions.rehash_db()
     instructions.create_instructions_table()
 
 
 
 def dbd_cmd(words, index, m, account):
-
+    """
+       delete a db entry, example dbd 12
+    """
     instructions.delete_instruction_db(words[index+1])
 
     instructions.create_instructions_table()
@@ -128,6 +142,9 @@ def dbd_cmd(words, index, m, account):
 
 
 def dbc_cmd(words, index, m, account):
+    """
+       mark db entry as complete, example dbc 1
+        """
     logger = logging.getLogger(__name__)
     logger.info("db_cmd", words)
     instructions.set_completed_instruction_db(words[index+1])
@@ -145,9 +162,16 @@ def calendar_cmd(words, index, m, account):
 
 
 def help_cmd(words, index, m, account):
+
     reply = "Available commands are\n"
     for word in keywords:
-        reply += word + "\n"
+        action = keywords.get(word.strip(), "no_key")
+        example = action.__doc__
+        if example is None:
+            reply += word + "\n"
+        else:
+            stripped = example.replace("\n", "")
+            reply += word + "  " + stripped + "\n"
     post_social_message(reply)
     su.print_help(account)
 
@@ -312,4 +336,5 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    #main()
+    help_cmd(None,None,None,None)

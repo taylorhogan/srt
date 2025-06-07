@@ -43,20 +43,15 @@ def find_template(image, template_image_path):
 
 def fitness(image, delta):
 
-    c_roof, r_roof, accuracy = find_template(image, cfg['camera safety']['roof template'])
     c_scope, r_scope, accuracy = find_template(image, cfg['camera safety']['parked template'])
 
-    roof_closed_error = math.dist(c_roof, cfg["camera safety"]["closed pos"])
-    roof_open_error = math.dist(c_roof, cfg["camera safety"]["open pos"])
     parked_error = math.dist(c_scope, cfg["camera safety"]["parked pos"])
 
 
 
-    closed = abs(roof_closed_error) < delta
     parked = abs(parked_error) < delta
-    open = abs(roof_open_error) < delta
 
-    return closed, parked, open, c_roof, c_scope, r_roof, r_scope
+    return  parked,  c_scope,  r_scope, accuracy
 
 
 def analyse_safety(image_path):
@@ -79,37 +74,32 @@ def analyse_safety(image_path):
     best_alpha = 0
     best_beta = 0
 
+    best_accuracy = 0
     for attempt in range(0, 10):
 
         # call convertScaleAbs function
         adjusted = cv.convertScaleAbs(img_rgb, alpha=alpha, beta=beta)
-        closed, parked, open, c_roof, c_scope, r_roof, r_scope = fitness(adjusted, delta)
+        parked, c_scope, r_scope, accuracy  = fitness(adjusted, delta)
+        print (parked, c_scope, r_scope, accuracy)
 
-        found = 0
-        if closed:
-            found = found + 1
-        if open:
-            found = found + 1
-        if parked:
-            found = found + 1
-        print ("Attempt:" + str(attempt) + " Found:" + str(found))
-        if found > best:
-            best = found
+        if (accuracy > best_accuracy):
+            best_accuracy = accuracy
             best_alpha = alpha
             best_beta = beta
-        else:
-            alpha = alpha + 0.2
+
+
+
+
+        alpha = alpha + 0.2
 
     alpha = best_alpha
     beta = best_beta
     adjusted = cv.convertScaleAbs(img_rgb, alpha=alpha, beta=beta)
-    closed, parked, open, c_roof, c_scope, r_roof, r_scope = fitness(adjusted, delta)
+    parked, c_scope, r_scope, accuracy = fitness(adjusted, delta)
     print("solution found at " + str(alpha))
-    cv.circle(img_rgb_copy, c_roof, r_roof, (255, 0, 0), 2)
     cv.circle(img_rgb_copy, c_scope, r_scope, (0, 0, 255), 2)
     plt.imshow(img_rgb_copy,cmap = 'gray')
 
-    plt.title('roof (x,y) parked (x,y)' + str(c_roof) + " " + str(c_scope)), plt.xticks([]), plt.yticks([])
 
     plot_path = 'base_images/position.png'
     if os.path.exists(plot_path):
@@ -118,16 +108,14 @@ def analyse_safety(image_path):
     plt.savefig(plot_path)
 
     mod_date = time.ctime(os.path.getmtime(image_path))
-    return closed, parked, open, mod_date
+    return parked,  mod_date
 
 
 if __name__ == '__main__':
     cfg = config.data()
     inside_camera_server.take_snapshot()
-    is_closed, is_parked, is_open, mod_date = analyse_safety(cfg["camera safety"]["scope_view"])
+    is_parked,  mod_date = analyse_safety(cfg["camera safety"]["scope_view"])
     #is_closed, is_parked, is_open, mod_date = analyse_safety("./base_images/inside.jpg")
-    reply = "Roof Closed: " + str(is_closed) + "\n"
-    reply += "Roof Open: " + str(is_open) + "\n"
-    reply += "Scope Parked:" + str(is_parked) + "\n"
+    reply = "Scope Parked:" + str(is_parked) + "\n"
     reply += "Copied Date:" + mod_date + "\n"
     print(reply)
