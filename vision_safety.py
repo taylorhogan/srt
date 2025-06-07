@@ -29,7 +29,6 @@ def find_template(image, template_image_path):
     print ("fitness: " + str(max_val))
 
 
-
     top_left = min_loc
 
     bottom_right = (top_left[0] + w, top_left[1] + h)
