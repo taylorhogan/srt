@@ -10,29 +10,29 @@ import matplotlib.pyplot as plt
 cfg = config.data()
 
 def test_find_template(image, template_image_path):
-    import cv2
+
+
 
     # Load the main image and the template
-    #main_image = cv2.imread("main_image.jpg", cv2.IMREAD_COLOR)  # Path to the main image
-    template = cv2.imread(template_image_path, cv2.IMREAD_COLOR)  # Path to the template
+    template = cv.imread(template_image_path, cv.IMREAD_COLOR)  # Path to the template
     main_image = image
 
     # Convert the images to grayscale for processing
-    main_image_gray = cv2.cvtColor(main_image, cv2.COLOR_BGR2GRAY)
-    template_gray = cv2.cvtColor(template, cv2.COLOR_BGR2GRAY)
+    main_image_gray = cv.cvtColor(main_image, cv.COLOR_BGR2GRAY)
+    template_gray = cv.cvtColor(template, cv.COLOR_BGR2GRAY)
 
     # Get dimensions of the template
     template_height, template_width = template_gray.shape[:2]
 
     # Apply template matching (choose a method, e.g., TM_CCOEFF_NORMED)
-    method = cv2.TM_CCOEFF_NORMED
-    result = cv2.matchTemplate(main_image_gray, template_gray, method)
+    method = cv.TM_CCOEFF_NORMED
+    result = cv.matchTemplate(main_image_gray, template_gray, method)
 
     # Find the minimum and maximum values with their locations
-    min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(result)
+    min_val, max_val, min_loc, max_loc = cv.minMaxLoc(result)
 
     # Decide the top-left corner of the best match based on the method
-    if method in [cv2.TM_SQDIFF, cv2.TM_SQDIFF_NORMED]:
+    if method in [cv.TM_SQDIFF, cv.TM_SQDIFF_NORMED]:
         best_match_top_left = min_loc
     else:
         best_match_top_left = max_loc
@@ -41,63 +41,52 @@ def test_find_template(image, template_image_path):
     best_match_bottom_right = (best_match_top_left[0] + template_width,
                                best_match_top_left[1] + template_height)
 
+    print (best_match_top_left, best_match_bottom_right)
     # Draw a rectangle around the matched region on the original image
-    cv2.rectangle(main_image, best_match_top_left, best_match_bottom_right, (0, 255, 0), 2)
+    cv.rectangle(main_image, best_match_top_left, best_match_bottom_right, (0, 255, 0), 2)
+
 
     # Display the results
-    cv2.imshow("Matched Image", main_image)
-    cv2.waitKey(0)
-    cv2.destroyAllWindows()
+    cv.imshow("Matched Image", main_image)
+    cv.waitKey(0)
+    cv.destroyAllWindows()
 
 
 def find_template(image, template_image_path):
-    template = cv.imread(template_image_path,  cv.IMREAD_GRAYSCALE)
-    assert template is not None, "file could not be read, check with os.path.exists()"
-    #d, w, h = template.shape[::-1]
-    w, h = template.shape[::-1]
+    # Load the main image and the template
+    template = cv.imread(template_image_path, cv.IMREAD_COLOR)  # Path to the template
+    main_image = image
 
-    method = 'cv.TM_CCOEFF'
+    # Convert the images to grayscale for processing
+    main_image_gray = cv2cv.cvtColor(main_image, cv.COLOR_BGR2GRAY)
+    template_gray = cv.cvtColor(template, cv.COLOR_BGR2GRAY)
 
-    methods = ['TM_CCOEFF', 'TM_CCOEFF_NORMED', 'TM_CCORR',
-               'TM_CCORR_NORMED', 'TM_SQDIFF', 'TM_SQDIFF_NORMED']
-    for method in methods:
-        local_img = image.copy()
-        method = eval(method)
+    # Get dimensions of the template
+    template_height, template_width = template_gray.shape[:2]
 
-        # Apply template Matching
-        res = cv.matchTemplate(local_img, template, method)
-        min_val, max_val, min_loc, max_loc = cv.minMaxLoc(res)
-        print ("fitness: " + str(max_val))
+    # Apply template matching (choose a method, e.g., TM_CCOEFF_NORMED)
+    method = cv.TM_CCOEFF_NORMED
+    result = cv.matchTemplate(main_image_gray, template_gray, method)
 
+    # Find the minimum and maximum values with their locations
+    min_val, max_val, min_loc, max_loc = cv.minMaxLoc(result)
 
-        top_left = min_loc
+    # Decide the top-left corner of the best match based on the method
+    if method in [cv.TM_SQDIFF, cv.TM_SQDIFF_NORMED]:
+        best_match_top_left = min_loc
+    else:
+        best_match_top_left = max_loc
 
-        bottom_right = (top_left[0] + w, top_left[1] + h)
+    # Calculate the bottom-right corner using the top-left corner and template size
+    best_match_bottom_right = (best_match_top_left[0] + template_width,
+                               best_match_top_left[1] + template_height)
 
-        r = int(min(w, h) / 2)
-
-        c = (int(top_left[0] + w / 2), int(top_left[1] + h / 2))
-
-        print ("center", c)
-
-
-    return c, r, max_val
-
-
-def fitness(image, delta):
-
-
-    c_scope, r_scope, accuracy = test_find_template(image, cfg['camera safety']['parked template'])
-
-    print ("center", c_scope, accuracy)
-
-    parked_error = math.dist(c_scope, cfg["camera safety"]["parked pos"])
+    c_scope = (best_match_top_left[0] + template_width // 2, best_match_top_left[1] + template_height // 2)
 
 
 
-    parked = abs(parked_error) < delta
 
-    return  parked,  c_scope,  r_scope, accuracy
+
 
 
 def analyse_safety(image_path):
@@ -141,10 +130,10 @@ def analyse_safety(image_path):
     alpha = best_alpha
     beta = best_beta
     adjusted = cv.convertScaleAbs(img_rgb, alpha=alpha, beta=beta)
-    parked, c_scope, r_scope, accuracy = fitness(adjusted, delta)
+    #parked, c_scope, r_scope, accuracy = fitness(adjusted, delta)
     print("solution found at " + str(alpha))
     cv.circle(img_rgb_copy, c_scope, r_scope, (0, 0, 255), 2)
-    plt.imshow(img_rgb_copy,cmap = 'gray')
+    #plt.imshow(img_rgb_copy,cmap = 'gray')
 
 
     plot_path = 'base_images/position.png'
