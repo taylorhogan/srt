@@ -15,7 +15,7 @@ def find_template(image, template_image_path):
     #d, w, h = template.shape[::-1]
     w, h = template.shape[::-1]
 
-    method = 'cv.TM_SQDIFF_NORMED'
+    method = 'cv.TM_SQDIFF'
 
     methods = ['TM_CCOEFF', 'TM_CCOEFF_NORMED', 'TM_CCORR',
                'TM_CCORR_NORMED', 'TM_SQDIFF', 'TM_SQDIFF_NORMED']
@@ -43,7 +43,10 @@ def find_template(image, template_image_path):
 
 def fitness(image, delta):
 
+
     c_scope, r_scope, accuracy = find_template(image, cfg['camera safety']['parked template'])
+
+    print ("center", c_scope, accuracy)
 
     parked_error = math.dist(c_scope, cfg["camera safety"]["parked pos"])
 
@@ -80,7 +83,7 @@ def analyse_safety(image_path):
         # call convertScaleAbs function
         adjusted = cv.convertScaleAbs(img_rgb, alpha=alpha, beta=beta)
         parked, c_scope, r_scope, accuracy  = fitness(adjusted, delta)
-        print (parked, c_scope, r_scope, accuracy)
+        #print (parked, c_scope, r_scope, accuracy)
 
         if (accuracy > best_accuracy):
             best_accuracy = accuracy
