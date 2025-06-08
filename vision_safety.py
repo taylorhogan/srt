@@ -71,7 +71,7 @@ def find_template(image, template_image_path):
 
 
 
-def is_visually_parked():
+def visual_status():
 
     print ("take snapshot")
     inside_camera_server.take_snapshot()
@@ -80,21 +80,31 @@ def is_visually_parked():
     image_path = cfg["camera safety"]["scope_view"]
     image_rgb = cv.imread(image_path, cv.IMREAD_COLOR)
     mod_date = time.ctime(os.path.getmtime(image_path))
+
     print ("analysing image")
-    best_match_top_left, best_match_bottom_right, center = find_template_rectangle(image_rgb, cfg['camera safety']['parked template'])
-    cv.rectangle(image_rgb, best_match_top_left, best_match_bottom_right, (0, 255, 0), 2)
+    parked_best_match_top_left, parked_best_match_bottom_right, parked_center = find_template_rectangle(image_rgb, cfg['camera safety']['parked template'])
+    closed_best_match_top_left, closed_best_match_bottom_right, closed_center = find_template_rectangle(image_rgb, cfg['camera safety']['closed template'])
+
+    cv.rectangle(image_rgb, parked_best_match_top_left, parked_best_match_bottom_right, (255, 0, 0), 2)
+    cv.imwrite(cfg["camera safety"]["scope_view"], image_rgb)
+    cv.rectangle(image_rgb, closed_best_match_top_left, closed_best_match_bottom_right, (0, 255, 0), 2)
     cv.imwrite(cfg["camera safety"]["scope_view"], image_rgb)
 
 
-    parked_error = math.dist(center, cfg["camera safety"]["parked pos"])
-    print(center)
+    parked_error = math.dist(parked_center, cfg["camera safety"]["parked pos"])
+    print(parked_center)
     print(cfg["camera safety"]["parked pos"])
     print (parked_error)
-
     parked = abs(parked_error) < 20
 
+    closed_error = math.dist(closed_center, cfg["camera safety"]["parked pos"])
+    print(closed_center)
+    print(cfg["camera safety"]["closed pos"])
+    print(closed_error)
+    closed = abs(parked_error) < 20
+
     mod_date = time.ctime(os.path.getmtime(cfg["camera safety"]["scope_view"]))
-    return parked,  mod_date
+    return parked,  closed, mod_date
 
     # img_rgb_copy = img_rgb.copy()
     #
@@ -144,12 +154,12 @@ def is_visually_parked():
 
 if __name__ == '__main__':
     cfg = config.data()
-    just_finding_template = True
+    just_finding_template = False
     if just_finding_template:
 
         inside_camera_server.take_snapshot()
         image =  img_rgb = cv.imread(cfg["camera safety"]["scope_view"], cv.IMREAD_COLOR)
         test_find_template(image, cfg['camera safety']['closed template'])
     else:
-        parked, mod_date = is_visually_parked()
-        print (parked, mod_date)
+        parked, closed, mod_date = visual_status()
+        print (parked, closed, mod_date)
