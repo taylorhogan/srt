@@ -113,7 +113,7 @@ def status_cmd(words, index, m, account):
     reply = "Observatory Status: " + cfg["Globals"]["Observatory State"]
 
     post_social_message(reply)
-    end.determine_roof_state()
+    end.determine_roof_state_visually()
 
 
 def db_cmd(words, index, m, account):
