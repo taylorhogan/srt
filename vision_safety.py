@@ -101,7 +101,7 @@ def visual_status():
     print(closed_center)
     print(cfg["camera safety"]["closed pos"])
     print(closed_error)
-    closed = abs(parked_error) < 20
+    closed = abs(closed_error) < 20
 
     mod_date = time.ctime(os.path.getmtime(cfg["camera safety"]["scope_view"]))
     return parked,  closed, mod_date
