@@ -13,10 +13,9 @@ import os
 def determine_roof_state_visually():
     cfg = config.data()
     inside_camera_server.take_snapshot()
-    is_closed, is_parked, is_open, mod_date = vision_safety.analyse_safety(cfg["camera safety"]["scope_view"])
-    reply = "Roof Closed Visual: " + str(is_closed) + "\n"
-    reply += "Roof Open Visual: " + str(is_open) + "\n"
-    reply += "Scope Parked Visual:" + str(is_parked) + "\n"
+    is_parked, mod_date = vision_safety.is_visually_parked()
+
+    reply = "Scope Parked Visual:" + str(is_parked) + "\n"
     reply += "Copied Date:" + mod_date + "\n"
     social_server.post_social_message(reply, cfg["camera safety"]["scope_view"])
 
