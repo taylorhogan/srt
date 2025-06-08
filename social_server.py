@@ -336,5 +336,5 @@ def main():
 
 
 if __name__ == '__main__':
-    #main()
-    help_cmd(None,None,None,None)
+    main()
+    #help_cmd(None,None,None,None)
