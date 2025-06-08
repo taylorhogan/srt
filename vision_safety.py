@@ -144,12 +144,12 @@ def is_visually_parked():
 
 if __name__ == '__main__':
     cfg = config.data()
-    just_finding_template = False
+    just_finding_template = True
     if just_finding_template:
 
         inside_camera_server.take_snapshot()
         image =  img_rgb = cv.imread(cfg["camera safety"]["scope_view"], cv.IMREAD_COLOR)
-        test_find_template(image, cfg['camera safety']['parked template'])
+        test_find_template(image, cfg['camera safety']['closed template'])
     else:
         parked, mod_date = is_visually_parked()
         print (parked, mod_date)
