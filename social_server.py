@@ -18,6 +18,9 @@ import sun as s
 import super_user_commands as su
 import utils
 import weather
+import svr_scehduler
+from concurrent.futures import ThreadPoolExecutor
+
 
 
 def get_dso_object_name(words, index):
@@ -325,6 +328,8 @@ def main():
     cfg["mastodon"]["instance"] = mastodon
     print(mastodon)
     try:
+        with ThreadPoolExecutor() as executor:
+            future = executor.submit(svr_scehduler.main())
         start_interface()
     except:
         logger.info('Problem')

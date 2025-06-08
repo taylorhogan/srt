@@ -21,6 +21,9 @@ def take_snapshot(test_path=None):
     vid = cv.VideoCapture(0)
     vid.set(cv.CAP_PROP_FRAME_WIDTH, 1920)
     vid.set(cv.CAP_PROP_FRAME_HEIGHT, 1080)
+    vid.set(cv.CAP_PROP_AUTO_EXPOSURE, 0)
+    vid.set(cv.CAP_PROP_EXPOSURE, 12)
+
     ret, frame = vid.read()
     if ret:
         img_src = frame
@@ -34,4 +37,5 @@ def take_snapshot(test_path=None):
 
 if __name__ == '__main__':
     cfg = config.data()
+    take_snapshot(None)
 
