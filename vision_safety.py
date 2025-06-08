@@ -85,7 +85,7 @@ def visual_status():
     parked_best_match_top_left, parked_best_match_bottom_right, parked_center = find_template_rectangle(image_rgb, cfg['camera safety']['parked template'])
     closed_best_match_top_left, closed_best_match_bottom_right, closed_center = find_template_rectangle(image_rgb, cfg['camera safety']['closed template'])
 
-    cv.rectangle(image_rgb, parked_best_match_top_left, parked_best_match_bottom_right, (255, 0, 0), 2)
+    cv.rectangle(image_rgb, parked_best_match_top_left, parked_best_match_bottom_right, (0, 0, 255), 2)
     cv.imwrite(cfg["camera safety"]["scope_view"], image_rgb)
     cv.rectangle(image_rgb, closed_best_match_top_left, closed_best_match_bottom_right, (0, 255, 0), 2)
     cv.imwrite(cfg["camera safety"]["scope_view"], image_rgb)
