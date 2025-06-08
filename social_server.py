@@ -19,7 +19,7 @@ import super_user_commands as su
 import utils
 import weather
 import svr_scehduler
-from concurrent.futures import ThreadPoolExecutor
+import threading
 
 
 
@@ -328,8 +328,10 @@ def main():
     cfg["mastodon"]["instance"] = mastodon
     print(mastodon)
     try:
-        with ThreadPoolExecutor() as executor:
-            future = executor.submit(svr_scehduler.main())
+        logger.info('starting scheduler')
+        thread = threading.Thread(target=svr_scehduler.main)
+        thread.start()
+        logger.info('starting social server')
         start_interface()
     except:
         logger.info('Problem')
