@@ -10,14 +10,19 @@ import social_server
 import obs_calendar
 import utils
 
+observatory_state = {
+    "state":"Unknown",
+    "dso":"Unknown"
+}
+
+def get_state ():
+    pass
 
 def set_state (state, dso = "Unknown"):
-    cfg = config.data()
-    cfg["Globals"]["Observatory State"] = state
-    cfg["Globals"]["Imaging Tonight"] = dso
-
+    observatory_state["state"] = state
+    observatory_state["dso"] = dso
     print ("State: " + state)
-    #social_server.post_social_message("Scheduler State: " + state)
+    social_server.post_social_message("Scheduler State: " + state)
 
 
 def waiting_for_boot ():
@@ -88,8 +93,7 @@ def waiting_for_sunrise():
 
     waiting_for_noon()
 
-def start_state_machine():
-    waiting_for_sunrise ()
+
 
 def announce_plans_before_sunset():
     description, weather_ok = weather.get_current_weather(False)
