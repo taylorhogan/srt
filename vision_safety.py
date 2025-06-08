@@ -91,7 +91,7 @@ def is_visually_parked():
     print(cfg["camera safety"]["parked pos"])
     print (parked_error)
 
-    parked = abs(parked_error) < 10
+    parked = abs(parked_error) < 20
 
     mod_date = time.ctime(os.path.getmtime(cfg["camera safety"]["scope_view"]))
     return parked,  mod_date
@@ -144,7 +144,7 @@ def is_visually_parked():
 
 if __name__ == '__main__':
     cfg = config.data()
-    just_finding_template = True
+    just_finding_template = False
     if just_finding_template:
 
         inside_camera_server.take_snapshot()
