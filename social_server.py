@@ -330,7 +330,7 @@ def main():
     print(mastodon)
     try:
         logger.info('starting scheduler')
-        asyncio.run (svr_scehduler.main())
+        #asyncio.run (svr_scehduler.main())
 
         logger.info('starting social server')
         start_interface()
