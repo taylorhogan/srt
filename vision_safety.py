@@ -156,12 +156,12 @@ def visual_status():
 
 if __name__ == '__main__':
     cfg = config.data()
-    just_finding_template = False
+    just_finding_template = True
     if just_finding_template:
 
         inside_camera_server.take_snapshot()
         image =  img_rgb = cv.imread(cfg["camera safety"]["scope_view"], cv.IMREAD_COLOR)
-        test_find_template(image, cfg['camera safety']['closed template'])
+        test_find_template(image, cfg['camera safety']['open template'])
     else:
         parked, closed, mod_date = visual_status()
         print (parked, closed, mod_date)

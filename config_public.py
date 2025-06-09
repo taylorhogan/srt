@@ -33,6 +33,7 @@ class PublicConfig():
             "parked altitude deg": 5,
             "closed template": "./base_images/closed_marker.jpg",
             "parked template": "./base_images/parked_marker.png",
+            "open template": "./base_images/open_marker.jpg",
             "open pos": (1, 1),
             "closed pos": (827, 125),
             "parked pos": (584, 264),
