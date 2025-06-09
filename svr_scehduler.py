@@ -9,6 +9,7 @@ import logging
 import social_server
 import obs_calendar
 import utils
+import asyncio
 
 observatory_state = {
     "state":"Unknown",
@@ -112,7 +113,7 @@ def announce_plans_before_sunset():
 
 
 
-def main ():
+async def main ():
     cfg = config.data()
     path = utils.set_install_dir()
     path = os.path.join(path, 'iris.log')
@@ -133,6 +134,6 @@ def main ():
         waiting_for_boot()
 
 if __name__ == '__main__':
-    main()
+   asyncio.run( main())
 
 

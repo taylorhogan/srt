@@ -19,7 +19,8 @@ import super_user_commands as su
 import utils
 import weather
 import svr_scehduler
-import threading
+import asyncio
+
 
 
 
@@ -329,8 +330,8 @@ def main():
     print(mastodon)
     try:
         logger.info('starting scheduler')
-        thread = threading.Thread(target=svr_scehduler.main)
-        thread.start()
+        asyncio.run (svr_scehduler.main())
+
         logger.info('starting social server')
         start_interface()
     except:

@@ -5,7 +5,7 @@ import math
 import cv2 as cv
 import inside_camera_server
 import config
-import matplotlib.pyplot as plt
+
 
 cfg = config.data()
 
@@ -101,7 +101,9 @@ def visual_status():
     print(closed_center)
     print(cfg["camera safety"]["closed pos"])
     print(closed_error)
-    closed = abs(closed_error) < 20
+    accuracy = cfg["camera safety"]["accuracy"]
+    print(accuracy)
+    closed = abs(closed_error) < accuracy
 
     mod_date = time.ctime(os.path.getmtime(cfg["camera safety"]["scope_view"]))
     return parked,  closed, mod_date
