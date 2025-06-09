@@ -140,14 +140,14 @@ def image_nina():
     print("Starting Nina")
     path = utils.set_install_dir()
     print(path)
-    subprocess.run(["image_nina.bat"])
+    subprocess.Popen(["image_nina.bat"])
     print("Done with Nina")
 
 def image_nina_a():
     print("Starting Nina")
     path = utils.set_install_dir()
     print(path)
-    subprocess.run(["image_ninaA.bat"])
+    subprocess.Popen(["image_ninaA.bat"])
     print("Done with Nina")
 
 

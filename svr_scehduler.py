@@ -113,7 +113,7 @@ def announce_plans_before_sunset():
 
 
 
-async def main ():
+def main ():
     cfg = config.data()
     path = utils.set_install_dir()
     path = os.path.join(path, 'iris.log')
@@ -134,6 +134,6 @@ async def main ():
         waiting_for_boot()
 
 if __name__ == '__main__':
-   asyncio.run( main())
+   main()
 
 
