@@ -46,7 +46,7 @@ async def waiting_for_noon ():
 
     instructions.calc_and_store_hours_above_horizon()
     announce_plans_before_sunset()
-    waiting_for_sunset()
+    await waiting_for_sunset()
 
 
 
@@ -55,7 +55,7 @@ async def imaging ():
     set_state ("Imaging")
     await asyncio.sleep(1)
     time.sleep(60 * 60 * 5)
-    waiting_for_sunrise()
+    await waiting_for_sunrise()
 
 async def wait_for_tomorrow ():
     now = datetime.now().time()
@@ -86,11 +86,11 @@ async def waiting_for_sunset():
 
             time.sleep(60)
 
-        waiting_for_imaging ()
+        await waiting_for_imaging ()
 
 
 async def waiting_for_sunrise():
-    wait_for_tomorrow()
+    await wait_for_tomorrow()
     set_state("Waiting For Sunrise")
     sunrise, sunset = weather.get_sunrise_sunset()
     now = datetime.now().time()
@@ -100,7 +100,7 @@ async def waiting_for_sunrise():
         await asyncio.sleep(1)
         time.sleep(60)
 
-    waiting_for_noon()
+    await waiting_for_noon()
 
 
 
@@ -133,13 +133,13 @@ async def main ():
     logger.info('Start Scheduler')
     utils.set_install_dir()
     try:
-       waiting_for_noon()
+       await waiting_for_noon()
     except:
 
         logger.info('Problem')
         logger.exception("Exception")
         social_server.get_mastodon_instance().status_post("Oops I had a problem with Scheduler server")
-        waiting_for_boot()
+        await waiting_for_boot()
 
 if __name__ == '__main__':
    main()
