@@ -113,11 +113,8 @@ def version_cmd(words, index, m, account):
 
 def status_cmd(words, index, m, account):
     # Observatory State
-    cfg = config.data()
-    reply = "Observatory Status: " + cfg["Globals"]["Observatory State"]
-
-    post_social_message(reply)
     end.determine_roof_state_visually()
+    svr_scehduler.get_state()
 
 
 def db_cmd(words, index, m, account):
@@ -297,6 +294,7 @@ def handle_mention(notification):
 
 
 async def start_interface():
+    print ("Starting Social Server")
     cfg = config.data()
     post_social_message("Starting Version " + cfg["version"]["date"])
 
@@ -308,7 +306,7 @@ async def start_interface():
         await asyncio.sleep(1)
 
 
-def main():
+async def main():
     utils.set_install_dir()
     print("Starting")
     cfg = config.data()
@@ -329,20 +327,18 @@ def main():
     cfg["mastodon"]["instance"] = mastodon
     print(mastodon)
     try:
-        logger.info('starting scheduler')
-        asyncio.run (svr_scehduler.main())
+         await asyncio.gather(start_interface(), svr_scehduler.main())
 
-        logger.info('starting social server')
-        asyncio.run (start_interface())
+
     except:
         logger.info('Problem')
         logger.exception("Exception")
         get_mastodon_instance().status_post("Oops I had a problem with Social server")
-        start_interface()
+        await start_interface()
 
     print("stop")
 
 
 if __name__ == '__main__':
-    main()
+   asyncio.run(main())
     #help_cmd(None,None,None,None)

@@ -17,7 +17,8 @@ observatory_state = {
 }
 
 def get_state ():
-    pass
+    state= observatory_state["state"] + " " + observatory_state["dso"]
+    social_server.post_social_message("Scheduler State: " + state)
 
 def set_state (state, dso = "Unknown"):
     observatory_state["state"] = state
@@ -41,8 +42,6 @@ async def waiting_for_noon ():
     while now.hour < 12:
         now = datetime.now().time()
         await asyncio.sleep(1)
-
-        time.sleep(60)
 
     instructions.calc_and_store_hours_above_horizon()
     announce_plans_before_sunset()
@@ -122,6 +121,7 @@ def announce_plans_before_sunset():
 
 
 async def main ():
+    print("Starting Scheduler Server")
     cfg = config.data()
     path = utils.set_install_dir()
     path = os.path.join(path, 'iris.log')
