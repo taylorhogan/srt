@@ -163,6 +163,10 @@
                         "8": {
                             "state": "weather",
                             "dso": "ngc6505"
+                        },
+                        "10": {
+                            "state": "weather",
+                            "dso": "ngc6505"
                         }
                     }
                 }

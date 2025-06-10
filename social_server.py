@@ -327,7 +327,7 @@ async def main():
     cfg["mastodon"]["instance"] = mastodon
     print(mastodon)
     try:
-         await asyncio.gather(start_interface(), svr_scehduler.main())
+         await asyncio.gather(start_interface())
 
 
     except:

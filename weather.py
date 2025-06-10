@@ -24,8 +24,8 @@ async def get_sunrise_sunset_internal() -> [datetime, datetime]:
         return sunrise, sunset
 
 
-def get_sunrise_sunset() -> [datetime, datetime]:
-    return asyncio.run(get_sunrise_sunset_internal())
+async def get_sunrise_sunset() -> [datetime, datetime]:
+    return await get_sunrise_sunset_internal()
 
 
 async def get_weather(current) -> [str, bool]:
@@ -86,13 +86,13 @@ async def get_weather(current) -> [str, bool]:
         return description, weather_ok
 
 
-def get_current_weather(current) -> [str, bool]:
+async def get_current_weather(current) -> [str, bool]:
     # see https://stackoverflow.com/questions/45600579/asyncio-event-loop-is-closed-when-getting-loop
     # for more details
     if os.name == 'nt':
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
-    description, weather_ok = asyncio.run(get_weather(current))
+    description, weather_ok = await get_weather(current)
     return description, weather_ok
 
 

@@ -44,7 +44,7 @@ async def waiting_for_noon ():
         await asyncio.sleep(1)
 
     instructions.calc_and_store_hours_above_horizon()
-    announce_plans_before_sunset()
+    await announce_plans_before_sunset()
     await waiting_for_sunset()
 
 
@@ -65,18 +65,18 @@ async def wait_for_tomorrow ():
         time.sleep(60)
 
 
-def waiting_for_imaging ():
+async def waiting_for_imaging ():
     set_state ("Waiting For Imaging")
-    description, weather_ok = weather.get_current_weather(False)
+    description, weather_ok = await weather.get_current_weather(False)
     if weather_ok:
-        imaging ()
+        await imaging ()
     else:
-        waiting_for_sunrise()
+        await waiting_for_sunrise()
 
 async def waiting_for_sunset():
 
         set_state ("Waiting For Sunset")
-        sunrise, sunset = weather.get_sunrise_sunset()
+        sunrise, sunset = await weather.get_sunrise_sunset()
         now = datetime.now().time()
 
         while now < sunset:
@@ -91,7 +91,7 @@ async def waiting_for_sunset():
 async def waiting_for_sunrise():
     await wait_for_tomorrow()
     set_state("Waiting For Sunrise")
-    sunrise, sunset = weather.get_sunrise_sunset()
+    sunrise, sunset = await weather.get_sunrise_sunset()
     now = datetime.now().time()
 
     while now < sunrise:
@@ -103,11 +103,17 @@ async def waiting_for_sunrise():
 
 
 
-def announce_plans_before_sunset():
-    description, weather_ok = weather.get_current_weather(False)
-    best_instruction = instructions.get_dso_object_tonight()
-    dso = best_instruction["dso"]
-    requestor = best_instruction["requestor"]
+async def announce_plans_before_sunset():
+    try:
+
+        best_instruction = instructions.get_dso_object_tonight()
+        dso = best_instruction["dso"]
+        requestor = best_instruction["requestor"]
+        description, weather_ok = await weather.get_current_weather(False)
+    except:
+        weather_ok = False
+
+
 
     if weather_ok:
         social_server.post_social_message("Will image " + dso + " requested by " + requestor + " tonight")
