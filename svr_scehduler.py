@@ -26,12 +26,13 @@ def set_state (state, dso = "Unknown"):
     social_server.post_social_message("Scheduler State: " + state)
 
 
-def waiting_for_boot ():
+async def waiting_for_boot ():
     set_state ("Waiting For Boot")
     while True:
+        await asyncio.sleep(1)
         time.sleep(60)
 
-def waiting_for_noon ():
+async def waiting_for_noon ():
     set_state("Waiting For Noon")
     instructions.calc_and_store_hours_above_horizon()
 
@@ -39,6 +40,8 @@ def waiting_for_noon ():
 
     while now.hour < 12:
         now = datetime.now().time()
+        await asyncio.sleep(1)
+
         time.sleep(60)
 
     instructions.calc_and_store_hours_above_horizon()
@@ -48,16 +51,18 @@ def waiting_for_noon ():
 
 
 
-def imaging ():
+async def imaging ():
     set_state ("Imaging")
+    await asyncio.sleep(1)
     time.sleep(60 * 60 * 5)
     waiting_for_sunrise()
 
-def wait_for_tomorrow ():
+async def wait_for_tomorrow ():
     now = datetime.now().time()
 
     while now.hour > 0:
         now = datetime.now().time()
+        await asyncio.sleep(1)
         time.sleep(60)
 
 
@@ -69,7 +74,7 @@ def waiting_for_imaging ():
     else:
         waiting_for_sunrise()
 
-def waiting_for_sunset():
+async def waiting_for_sunset():
 
         set_state ("Waiting For Sunset")
         sunrise, sunset = weather.get_sunrise_sunset()
@@ -77,12 +82,14 @@ def waiting_for_sunset():
 
         while now < sunset:
             now = datetime.now().time()
+            await asyncio.sleep(1)
+
             time.sleep(60)
 
         waiting_for_imaging ()
 
 
-def waiting_for_sunrise():
+async def waiting_for_sunrise():
     wait_for_tomorrow()
     set_state("Waiting For Sunrise")
     sunrise, sunset = weather.get_sunrise_sunset()
@@ -90,6 +97,7 @@ def waiting_for_sunrise():
 
     while now < sunrise:
         now = datetime.now().time()
+        await asyncio.sleep(1)
         time.sleep(60)
 
     waiting_for_noon()
@@ -113,7 +121,7 @@ def announce_plans_before_sunset():
 
 
 
-def main ():
+async def main ():
     cfg = config.data()
     path = utils.set_install_dir()
     path = os.path.join(path, 'iris.log')
