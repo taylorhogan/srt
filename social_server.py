@@ -296,7 +296,7 @@ def handle_mention(notification):
         do_notification(notification, mastodon)
 
 
-def start_interface():
+async def start_interface():
     cfg = config.data()
     post_social_message("Starting Version " + cfg["version"]["date"])
 
@@ -305,7 +305,7 @@ def start_interface():
     listener = CallbackStreamListener(notification_handler=handle_mention)
     mastodon.stream_user(listener, run_async=True, reconnect_async=True, timeout=600)
     while True:
-        time.sleep(1)
+        await asyncio.sleep(1)
 
 
 def main():
@@ -330,10 +330,10 @@ def main():
     print(mastodon)
     try:
         logger.info('starting scheduler')
-        #asyncio.run (svr_scehduler.main())
+        asyncio.run (svr_scehduler.main())
 
         logger.info('starting social server')
-        start_interface()
+        asyncio.run (start_interface())
     except:
         logger.info('Problem')
         logger.exception("Exception")

@@ -108,50 +108,6 @@ def visual_status():
     mod_date = time.ctime(os.path.getmtime(cfg["camera safety"]["scope_view"]))
     return parked,  closed, mod_date
 
-    # img_rgb_copy = img_rgb.copy()
-    #
-    #
-    # alpha = 0.5  # Contrast control
-    # beta = 0  # Brightness control
-    # best = 0
-    # best_alpha = 0
-    # best_beta = 0
-    #
-    # best_accuracy = 0
-    # for attempt in range(0, 10):
-    #
-    #     # call convertScaleAbs function
-    #     adjusted = cv.convertScaleAbs(img_rgb, alpha=alpha, beta=beta)
-    #     parked, c_scope, r_scope, accuracy  = fitness(adjusted, delta)
-    #     #print (parked, c_scope, r_scope, accuracy)
-    #
-    #     if (accuracy > best_accuracy):
-    #         best_accuracy = accuracy
-    #         best_alpha = alpha
-    #         best_beta = beta
-    #
-    #
-    #
-    #
-    #     alpha = alpha + 0.2
-    #
-    # alpha = best_alpha
-    # beta = best_beta
-    # adjusted = cv.convertScaleAbs(img_rgb, alpha=alpha, beta=beta)
-    # #parked, c_scope, r_scope, accuracy = fitness(adjusted, delta)
-    # print("solution found at " + str(alpha))
-    # cv.circle(img_rgb_copy, c_scope, r_scope, (0, 0, 255), 2)
-    # #plt.imshow(img_rgb_copy,cmap = 'gray')
-    #
-    #
-    # plot_path = 'base_images/position.png'
-    # if os.path.exists(plot_path):
-    #     os.remove(plot_path)
-    #
-    # plt.savefig(plot_path)
-    #
-    # mod_date = time.ctime(os.path.getmtime(image_path))
-    # return parked,  mod_date
 
 
 if __name__ == '__main__':
