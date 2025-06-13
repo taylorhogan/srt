@@ -88,7 +88,7 @@ def show_cmd(words, index, m, account):
             post_social_message(dso_name + " Not a known object\n")
 
 
-def weather_cmd(words, index, m, account):
+async def weather_cmd(words, index, m, account):
     is_night, angle = s.is_night()
     sun = "daytime"
     if is_night:
@@ -98,7 +98,7 @@ def weather_cmd(words, index, m, account):
     description, weather_ok = weather.get_current_weather(True)
     reply += description
     post_social_message(reply)
-    description, weather_ok = weather.get_current_weather(False)
+    description, weather_ok =await weather.get_current_weather(False)
     post_social_message(description)
 
 
