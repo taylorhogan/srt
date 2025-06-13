@@ -1,7 +1,7 @@
+import asyncio
 import datetime
 import logging
 import os
-import time
 from datetime import date
 
 from bs4 import BeautifulSoup
@@ -16,12 +16,10 @@ import instructions
 import obs_calendar
 import sun as s
 import super_user_commands as su
+import svr_scehduler
 import utils
 import weather
-import svr_scehduler
-import asyncio
-
-
+import time
 
 
 def get_dso_object_name(words, index):
@@ -88,7 +86,7 @@ def show_cmd(words, index, m, account):
             post_social_message(dso_name + " Not a known object\n")
 
 
-async def weather_cmd(words, index, m, account):
+def weather_cmd(words, index, m, account):
     is_night, angle = s.is_night()
     sun = "daytime"
     if is_night:
@@ -98,7 +96,7 @@ async def weather_cmd(words, index, m, account):
     description, weather_ok = weather.get_current_weather(True)
     reply += description
     post_social_message(reply)
-    description, weather_ok =await weather.get_current_weather(False)
+    description, weather_ok = weather.get_current_weather(False)
     post_social_message(description)
 
 
@@ -118,9 +116,7 @@ def status_cmd(words, index, m, account):
 
 
 def db_cmd(words, index, m, account):
-
     instructions.create_instructions_table()
-
 
 
 def dbr_cmd(words, index, m, account):
@@ -131,15 +127,13 @@ def dbr_cmd(words, index, m, account):
     instructions.create_instructions_table()
 
 
-
 def dbd_cmd(words, index, m, account):
     """
        delete a db entry, example dbd 12
     """
-    instructions.delete_instruction_db(words[index+1])
+    instructions.delete_instruction_db(words[index + 1])
 
     instructions.create_instructions_table()
-
 
 
 def dbc_cmd(words, index, m, account):
@@ -148,9 +142,8 @@ def dbc_cmd(words, index, m, account):
         """
     logger = logging.getLogger(__name__)
     logger.info("db_cmd", words)
-    instructions.set_completed_instruction_db(words[index+1])
+    instructions.set_completed_instruction_db(words[index + 1])
     instructions.create_instructions_table()
-
 
 
 def calendar_cmd(words, index, m, account):
@@ -163,7 +156,6 @@ def calendar_cmd(words, index, m, account):
 
 
 def help_cmd(words, index, m, account):
-
     reply = "Available commands are\n"
     for word in keywords:
         action = keywords.get(word.strip(), "no_key")
@@ -293,8 +285,8 @@ def handle_mention(notification):
         do_notification(notification, mastodon)
 
 
-async def start_interface():
-    print ("Starting Social Server")
+def start_interface():
+    print("Starting Social Server")
     cfg = config.data()
     post_social_message("Starting Version " + cfg["version"]["date"])
 
@@ -303,10 +295,10 @@ async def start_interface():
     listener = CallbackStreamListener(notification_handler=handle_mention)
     mastodon.stream_user(listener, run_async=True, reconnect_async=True, timeout=600)
     while True:
-        await asyncio.sleep(1)
+        time.sleep(1)
 
 
-async def main():
+def main():
     utils.set_install_dir()
     print("Starting")
     cfg = config.data()
@@ -327,18 +319,18 @@ async def main():
     cfg["mastodon"]["instance"] = mastodon
     print(mastodon)
     try:
-         await asyncio.gather(start_interface())
+        start_interface()
 
 
     except:
         logger.info('Problem')
         logger.exception("Exception")
         get_mastodon_instance().status_post("Oops I had a problem with Social server")
-        await start_interface()
+        start_interface()
 
     print("stop")
 
 
 if __name__ == '__main__':
-   asyncio.run(main())
-    #help_cmd(None,None,None,None)
+    main()
+    # help_cmd(None,None,None,None)

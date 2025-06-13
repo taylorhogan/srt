@@ -86,13 +86,15 @@ async def get_weather(current) -> [str, bool]:
         return description, weather_ok
 
 
-async def get_current_weather(current) -> [str, bool]:
+
+def get_current_weather(current) -> [str, bool]:
     # see https://stackoverflow.com/questions/45600579/asyncio-event-loop-is-closed-when-getting-loop
     # for more details
     if os.name == 'nt':
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
-
-    description, weather_ok = await get_weather(current)
+    print ("before get weather")
+    description, weather_ok =  asyncio.run (get_weather(current))
+    print ("after get weather")
     return description, weather_ok
 
 
