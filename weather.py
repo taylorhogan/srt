@@ -25,7 +25,7 @@ async def get_sunrise_sunset_internal() -> [datetime, datetime]:
 
 
 async def get_sunrise_sunset() -> [datetime, datetime]:
-    return await get_sunrise_sunset_internal()
+    return asyncio.run(get_sunrise_sunset_internal())
 
 
 async def get_weather(current) -> [str, bool]:
