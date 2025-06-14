@@ -6,7 +6,7 @@ import paho.mqtt.client as paho
 topic1 = "iris/r_condition"
 topic2 = "iris/s_condition"
 topic3 = "iris/inside_jpg"
-topic1q = "iris/r_condition?"
+topic1q = "iris/from_sched"
 
 def message_handling(client, userdata, msg):
     print (msg.topic)
@@ -31,10 +31,8 @@ if client.connect("localhost", 1883, 60) != 0:
     print("Couldn't connect to the mqtt broker")
     sys.exit(1)
 
-client.subscribe(topic1)
-client.subscribe(topic2)
-client.subscribe(topic3)
-client.publish(topic1q, "", 0)
+
+client.publish(topic1q, "This is a test", 0)
 
 
 try:
