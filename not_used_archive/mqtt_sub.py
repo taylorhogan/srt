@@ -1,12 +1,10 @@
 import sys
-#https://medium.com/@potekh.anastasia/a-beginners-guide-to-mqtt-understanding-mqtt-mosquitto-broker-and-paho-python-mqtt-client-990822274923
+
 
 import paho.mqtt.client as paho
 
-topic1 = "iris/r_condition"
-topic2 = "iris/s_condition"
-topic3 = "iris/inside_jpg"
-topic1q = "iris/from_sched"
+to_sched = "iris/to_sched"
+from_sched = "iris/from_sched"
 
 def message_handling(client, userdata, msg):
     print (msg.topic)
@@ -32,7 +30,7 @@ if client.connect("localhost", 1883, 60) != 0:
     sys.exit(1)
 
 
-client.publish(topic1q, "This is a test", 0)
+client.publish(from_sched, "This is a test", 0)
 
 
 try:

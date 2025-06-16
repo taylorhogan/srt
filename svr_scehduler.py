@@ -10,11 +10,23 @@ import social_server
 import obs_calendar
 import utils
 import asyncio
+import paho.mqtt.client as paho
+import sys
+
 
 observatory_state = {
     "state":"Unknown",
     "dso":"Unknown"
 }
+to_sched = "iris/to_sched"
+from_sched = "iris/from_sched"
+
+
+def message_handling(client, userdata, msg):
+    print (msg.topic)
+    if msg.topic == to_sched:
+        print ("to scheduler: " + str(msg.payload))
+
 
 def get_state ():
     state= observatory_state["state"] + " " + observatory_state["dso"]
@@ -23,17 +35,17 @@ def get_state ():
 def set_state (state, dso = "Unknown"):
     observatory_state["state"] = state
     observatory_state["dso"] = dso
+
     print ("State: " + state)
     social_server.post_social_message("Scheduler State: " + state)
 
 
-async def waiting_for_boot ():
+def waiting_for_boot ():
     set_state ("Waiting For Boot")
     while True:
-        await asyncio.sleep(1)
         time.sleep(60)
 
-async def waiting_for_noon ():
+def waiting_for_noon ():
     set_state("Waiting For Noon")
     instructions.calc_and_store_hours_above_horizon()
 
@@ -41,75 +53,76 @@ async def waiting_for_noon ():
 
     while now.hour < 12:
         now = datetime.now().time()
-        await asyncio.sleep(1)
+        asyncio.sleep(1)
 
     instructions.calc_and_store_hours_above_horizon()
-    await announce_plans_before_sunset()
-    await waiting_for_sunset()
+    announce_plans_before_sunset()
+    waiting_for_sunset()
 
 
 
 
-async def imaging ():
+def imaging ():
     set_state ("Imaging")
-    await asyncio.sleep(1)
-    time.sleep(60 * 60 * 5)
-    await waiting_for_sunrise()
 
-async def wait_for_tomorrow ():
+    time.sleep(60 * 60 * 5)
+    waiting_for_sunrise()
+
+def wait_for_tomorrow ():
     now = datetime.now().time()
 
     while now.hour > 0:
         now = datetime.now().time()
-        await asyncio.sleep(1)
+        asyncio.sleep(1)
         time.sleep(60)
 
 
-async def waiting_for_imaging ():
+def waiting_for_imaging ():
     set_state ("Waiting For Imaging")
-    description, weather_ok = await weather.get_current_weather(False)
+    description, weather_ok = weather.get_current_weather(False)
     if weather_ok:
-        await imaging ()
+        imaging ()
     else:
-        await waiting_for_sunrise()
+        waiting_for_sunrise()
+async def wait_a_bit ():
+    await asyncio.sleep(10)
 
-async def waiting_for_sunset():
+def waiting_for_sunset():
 
         set_state ("Waiting For Sunset")
-        sunrise, sunset = await weather.get_sunrise_sunset()
+        sunrise, sunset = weather.get_sunrise_sunset()
         now = datetime.now().time()
 
         while now < sunset:
             now = datetime.now().time()
-            await asyncio.sleep(1)
 
-            time.sleep(60)
+            asyncio.run(wait_a_bit())
 
-        await waiting_for_imaging ()
+        waiting_for_imaging ()
 
 
-async def waiting_for_sunrise():
-    await wait_for_tomorrow()
+def waiting_for_sunrise():
+    wait_for_tomorrow()
     set_state("Waiting For Sunrise")
-    sunrise, sunset = await weather.get_sunrise_sunset()
+    sunrise, sunset = weather.get_sunrise_sunset()
     now = datetime.now().time()
 
     while now < sunrise:
         now = datetime.now().time()
-        await asyncio.sleep(1)
+        asyncio.sleep(1)
         time.sleep(60)
 
-    await waiting_for_noon()
+    waiting_for_noon()
 
 
 
-async def announce_plans_before_sunset():
+def announce_plans_before_sunset():
     try:
 
         best_instruction = instructions.get_dso_object_tonight()
         dso = best_instruction["dso"]
         requestor = best_instruction["requestor"]
-        description, weather_ok = await weather.get_current_weather(False)
+        description, weather_ok = weather.get_current_weather(False)
     except:
         weather_ok = False
 
@@ -126,7 +139,7 @@ async def announce_plans_before_sunset():
 
 
 
-async def main ():
+def main ():
     print("Starting Scheduler Server")
     cfg = config.data()
     path = utils.set_install_dir()
@@ -138,14 +151,27 @@ async def main ():
     cfg["logger"]["logging"] = logger
     logger.info('Start Scheduler')
     utils.set_install_dir()
+    client = paho.Client()
+    client.on_message = message_handling
+
+    if client.connect("localhost", 1883, 60) != 0:
+        print("Couldn't connect to the mqtt broker")
+        sys.exit(1)
+    client.loop_start()
+
+
+
     try:
-       await waiting_for_noon()
+       # waiting_for_noon()
+       while True:
+            asyncio.run(wait_a_bit())
+
     except:
 
         logger.info('Problem')
         logger.exception("Exception")
         social_server.get_mastodon_instance().status_post("Oops I had a problem with Scheduler server")
-        await waiting_for_boot()
+        waiting_for_boot()
 
 if __name__ == '__main__':
    main()

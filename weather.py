@@ -24,7 +24,7 @@ async def get_sunrise_sunset_internal() -> [datetime, datetime]:
         return sunrise, sunset
 
 
-async def get_sunrise_sunset() -> [datetime, datetime]:
+def get_sunrise_sunset() -> [datetime, datetime]:
     return asyncio.run(get_sunrise_sunset_internal())
 
 
