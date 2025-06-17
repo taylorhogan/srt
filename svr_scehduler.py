@@ -12,6 +12,7 @@ import utils
 import asyncio
 import paho.mqtt.client as paho
 import sys
+import random
 
 
 observatory_state = {
@@ -23,9 +24,20 @@ from_sched = "iris/from_sched"
 
 
 def message_handling(client, userdata, msg):
-    print (msg.topic)
+
+    message = msg.payload.decode("utf-8")
     if msg.topic == to_sched:
-        print ("to scheduler: " + str(msg.payload))
+        print (msg)
+    msg =  observatory_state["state"] + " " + observatory_state["dso"]
+
+    topic = "iris/from_sched"
+    result = client.publish(topic, msg)
+    status = result[0]
+    if status == 0:
+        print(f"Send `{msg}` to topic `{topic}`")
+    else:
+        print(f"Failed to send message to topic {topic}")
+
 
 
 def get_state ():
@@ -53,7 +65,7 @@ def waiting_for_noon ():
 
     while now.hour < 12:
         now = datetime.now().time()
-        asyncio.sleep(1)
+        asyncio.run(wait_a_bit())
 
     instructions.calc_and_store_hours_above_horizon()
     announce_plans_before_sunset()
@@ -65,7 +77,7 @@ def waiting_for_noon ():
 def imaging ():
     set_state ("Imaging")
 
-    time.sleep(60 * 60 * 5)
+    asyncio.run(wait_a_bit())
     waiting_for_sunrise()
 
 def wait_for_tomorrow ():
@@ -73,8 +85,7 @@ def wait_for_tomorrow ():
 
     while now.hour > 0:
         now = datetime.now().time()
-        asyncio.sleep(1)
-        time.sleep(60)
+        asyncio.run(wait_a_bit())
 
 
 def waiting_for_imaging ():
@@ -84,6 +95,7 @@ def waiting_for_imaging ():
         imaging ()
     else:
         waiting_for_sunrise()
+
 async def wait_a_bit ():
     await asyncio.sleep(10)
 
@@ -109,8 +121,7 @@ def waiting_for_sunrise():
 
     while now < sunrise:
         now = datetime.now().time()
-        asyncio.sleep(1)
-        time.sleep(60)
+        asyncio.run(wait_a_bit())
 
     waiting_for_noon()
 
@@ -138,6 +149,25 @@ def announce_plans_before_sunset():
         obs_calendar.set_today_stat('weather', dso)
 
 
+def connect_mqtt():
+    #def on_connect(client, userdata, flags, rc):
+    # For paho-mqtt 2.0.0, you need to add the properties parameter.
+    def on_connect(client, userdata, flags, rc, properties):
+        if rc == 0:
+            print("Connected to MQTT Broker!")
+        else:
+            print("Failed to connect, return code %d\n", rc)
+    # Set Connecting Client ID
+    client_id = f'publish-{random.randint(0, 1000)}'
+    #client = paho.Client(client_id)
+
+    # For paho-mqtt 2.0.0, you need to set callback_api_version.
+    client = paho.Client(client_id=client_id, callback_api_version=paho.CallbackAPIVersion.VERSION2)
+
+    # client.username_pw_set(username, password)
+    client.on_connect = on_connect
+    client.connect('localhost', 1883)
+    return client
 
 def main ():
     print("Starting Scheduler Server")
@@ -151,20 +181,30 @@ def main ():
     cfg["logger"]["logging"] = logger
     logger.info('Start Scheduler')
     utils.set_install_dir()
-    client = paho.Client()
+    client = connect_mqtt()
+    client.subscribe(to_sched)
+
+
     client.on_message = message_handling
 
-    if client.connect("localhost", 1883, 60) != 0:
-        print("Couldn't connect to the mqtt broker")
-        sys.exit(1)
+
     client.loop_start()
+    msg = "hello"
+    topic = "iris/to_sched"
+    result = client.publish(topic, msg)
+    status = result[0]
+    if status == 0:
+        print(f"Send `{msg}` to topic `{topic}`")
+    else:
+        print(f"Failed to send message to topic {topic}")
 
 
 
     try:
        # waiting_for_noon()
        while True:
-            asyncio.run(wait_a_bit())
+           asyncio.run(wait_a_bit())
+           waiting_for_noon()
 
     except:
 
