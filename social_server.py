@@ -16,11 +16,14 @@ import instructions
 import obs_calendar
 import sun as s
 import super_user_commands as su
-import svr_scehduler
 import utils
 import weather
-import time
+from utils import topic_to_sched
+import json
 
+
+client = None
+json_payload = None
 
 def get_dso_object_name(words, index):
     if len(words) > index + 1:
@@ -108,11 +111,18 @@ def version_cmd(words, index, m, account):
     reply += "Observatory Status: " + cfg["Globals"]["Observatory State"]
     post_social_message(reply)
 
+def wait_for_mqtt_message (client, userdata, msg):
+    json_payload = json.loads(msg.payload.decode("utf-8"))
+
 
 def status_cmd(words, index, m, account):
     # Observatory State
     end.determine_roof_state_visually()
-    svr_scehduler.get_state()
+    json_payload = None
+    result = client.publish(topic_to_sched, "status?")
+    while json_payload is None:
+        wait_a_bit()
+
 
 
 def db_cmd(words, index, m, account):
@@ -295,8 +305,13 @@ def start_interface():
     listener = CallbackStreamListener(notification_handler=handle_mention)
     mastodon.stream_user(listener, run_async=True, reconnect_async=True, timeout=600)
     while True:
-        time.sleep(1)
+        asyncio.run(wait_a_bit())
 
+
+
+
+async def wait_a_bit ():
+    await asyncio.sleep(10)
 
 def main():
     utils.set_install_dir()
@@ -317,11 +332,13 @@ def main():
     mastodon = get_mastodon_instance()
 
     cfg["mastodon"]["instance"] = mastodon
-    print(mastodon)
+    client = utils.connect_mqtt()
+    client.subscribe(utils.topic_from_sched)
+    client.on_message = wait_for_mqtt_message
+    client.loop_start()
+
     try:
         start_interface()
-
-
     except:
         logger.info('Problem')
         logger.exception("Exception")

@@ -8,41 +8,32 @@ import os
 import logging
 import social_server
 import obs_calendar
-import utils
 import asyncio
-import paho.mqtt.client as paho
-import sys
-import random
+import utils
+import json
 
-
+client = None
 observatory_state = {
     "state":"Unknown",
     "dso":"Unknown"
 }
-to_sched = "iris/to_sched"
-from_sched = "iris/from_sched"
+
 
 
 def message_handling(client, userdata, msg):
 
     message = msg.payload.decode("utf-8")
-    if msg.topic == to_sched:
+    if msg.topic == utils.topic_to_sched:
         print (msg)
-    msg =  observatory_state["state"] + " " + observatory_state["dso"]
+    json_payload = json.dumps(observatory_state)
 
     topic = "iris/from_sched"
-    result = client.publish(topic, msg)
+    result = client.publish(topic, json_payload)
     status = result[0]
     if status == 0:
         print(f"Send `{msg}` to topic `{topic}`")
     else:
         print(f"Failed to send message to topic {topic}")
-
-
-
-def get_state ():
-    state= observatory_state["state"] + " " + observatory_state["dso"]
-    social_server.post_social_message("Scheduler State: " + state)
 
 def set_state (state, dso = "Unknown"):
     observatory_state["state"] = state
@@ -149,25 +140,7 @@ def announce_plans_before_sunset():
         obs_calendar.set_today_stat('weather', dso)
 
 
-def connect_mqtt():
-    #def on_connect(client, userdata, flags, rc):
-    # For paho-mqtt 2.0.0, you need to add the properties parameter.
-    def on_connect(client, userdata, flags, rc, properties):
-        if rc == 0:
-            print("Connected to MQTT Broker!")
-        else:
-            print("Failed to connect, return code %d\n", rc)
-    # Set Connecting Client ID
-    client_id = f'publish-{random.randint(0, 1000)}'
-    #client = paho.Client(client_id)
 
-    # For paho-mqtt 2.0.0, you need to set callback_api_version.
-    client = paho.Client(client_id=client_id, callback_api_version=paho.CallbackAPIVersion.VERSION2)
-
-    # client.username_pw_set(username, password)
-    client.on_connect = on_connect
-    client.connect('localhost', 1883)
-    return client
 
 def main ():
     print("Starting Scheduler Server")
@@ -181,31 +154,16 @@ def main ():
     cfg["logger"]["logging"] = logger
     logger.info('Start Scheduler')
     utils.set_install_dir()
-    client = connect_mqtt()
-    client.subscribe(to_sched)
-
-
+    client = utils.connect_mqtt()
+    client.subscribe(utils.topic_to_sched)
     client.on_message = message_handling
-
-
     client.loop_start()
-    msg = "hello"
-    topic = "iris/to_sched"
-    result = client.publish(topic, msg)
-    status = result[0]
-    if status == 0:
-        print(f"Send `{msg}` to topic `{topic}`")
-    else:
-        print(f"Failed to send message to topic {topic}")
-
 
 
     try:
-       # waiting_for_noon()
        while True:
            asyncio.run(wait_a_bit())
            waiting_for_noon()
-
     except:
 
         logger.info('Problem')
