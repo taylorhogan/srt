@@ -20,10 +20,11 @@ import utils
 import weather
 from utils import topic_to_sched
 import json
+import time
 
 
 client = None
-json_payload = None
+_json_payload = None
 
 def get_dso_object_name(words, index):
     if len(words) > index + 1:
@@ -112,16 +113,22 @@ def version_cmd(words, index, m, account):
     post_social_message(reply)
 
 def wait_for_mqtt_message (client, userdata, msg):
-    json_payload = json.loads(msg.payload.decode("utf-8"))
+    _json_payload = json.loads(msg.payload.decode("utf-8"))
+    print(_json_payload)
+
 
 
 def status_cmd(words, index, m, account):
     # Observatory State
+    timeout = 60  # Timeout in seconds
+    start_time = time.time()
     end.determine_roof_state_visually()
     json_payload = None
-    result = client.publish(topic_to_sched, "status?")
-    while json_payload is None:
+    client.publish(topic_to_sched, "status?")
+    while _json_payload is None and (time.time() - start_time < timeout) :
         wait_a_bit()
+    if _json_payload is None:
+        post_social_message("Status could not be determined")
 
 
 
