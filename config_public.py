@@ -8,7 +8,7 @@ from config_private import PrivateConfig
 class PublicConfig():
     _config = dict({
         "install_location": '/Users/taylorhogan/Documents/tmh',
-
+        "mttq_client":None,
         "version": {
             "date": "2025.6.7  .1"
         },

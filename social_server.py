@@ -23,8 +23,9 @@ import json
 import time
 
 
-client = None
+
 _json_payload = None
+_mtqq_client = None
 
 def get_dso_object_name(words, index):
     if len(words) > index + 1:
@@ -120,11 +121,15 @@ def wait_for_mqtt_message (client, userdata, msg):
 
 def status_cmd(words, index, m, account):
     # Observatory State
+    cfg = config.data()
+    global _mttq_client
+    global _json_payload
+
     timeout = 60  # Timeout in seconds
     start_time = time.time()
     end.determine_roof_state_visually()
-    json_payload = None
-    client.publish(topic_to_sched, "status?")
+    _json_payload = None
+    _mtqq_client.publish(topic_to_sched, "status?")
     while _json_payload is None and (time.time() - start_time < timeout) :
         wait_a_bit()
     if _json_payload is None:
@@ -339,10 +344,12 @@ def main():
     mastodon = get_mastodon_instance()
 
     cfg["mastodon"]["instance"] = mastodon
-    client = utils.connect_mqtt()
-    client.subscribe(utils.topic_from_sched)
-    client.on_message = wait_for_mqtt_message
-    client.loop_start()
+    global _mtqq_client
+    _mtqq_client = utils.connect_mqtt()
+
+    _mtqq_client.subscribe(utils.topic_from_sched)
+    _mtqq_client.on_message = wait_for_mqtt_message
+    _mtqq_client.loop_start()
 
     try:
         start_interface()
