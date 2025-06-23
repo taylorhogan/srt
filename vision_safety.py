@@ -97,7 +97,7 @@ def visual_status():
     print (parked_error)
     parked = abs(parked_error) < 20
 
-    closed_error = math.dist(closed_center, cfg["camera safety"]["parked pos"])
+    closed_error = math.dist(closed_center, cfg["camera safety"]["closed pos"])
     print(closed_center)
     print(cfg["camera safety"]["closed pos"])
     print(closed_error)
