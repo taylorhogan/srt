@@ -131,7 +131,7 @@ def status_cmd(words, index, m, account):
     _json_payload = None
     _mtqq_client.publish(topic_to_sched, "status?")
     while _json_payload is None and (time.time() - start_time < timeout) :
-        wait_a_bit()
+        asyncio.run(wait_a_bit())
     if _json_payload is None:
         post_social_message("Status could not be determined")
 
