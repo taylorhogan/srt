@@ -114,6 +114,8 @@ def version_cmd(words, index, m, account):
     post_social_message(reply)
 
 def wait_for_mqtt_message (client, userdata, msg):
+    global _json_payload
+    print ("setting payload to ")
     _json_payload = json.loads(msg.payload.decode("utf-8"))
     print(_json_payload)
 
@@ -127,8 +129,10 @@ def status_cmd(words, index, m, account):
 
     timeout = 60  # Timeout in seconds
     start_time = time.time()
-    end.determine_roof_state_visually()
     _json_payload = None
+    print ("setting state to None")
+    end.determine_roof_state_visually()
+    print ("asking for status")
     _mtqq_client.publish(topic_to_sched, "status?")
     while _json_payload is None and (time.time() - start_time < timeout) :
         asyncio.run(wait_a_bit())

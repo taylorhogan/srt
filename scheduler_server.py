@@ -24,7 +24,7 @@ def message_handling(client, userdata, msg):
 
     message = msg.payload.decode("utf-8")
     if msg.topic == utils.topic_to_sched:
-        print (msg)
+        print ("incoming message", msg)
     json_payload = json.dumps(observatory_state)
 
     topic = "iris/from_sched"
