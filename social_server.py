@@ -139,6 +139,9 @@ def status_cmd(words, index, m, account):
         asyncio.run(wait_a_bit())
     if _json_payload is None:
         post_social_message("Status could not be determined")
+    else:
+        post_social_message(_json_payload)
+
 
 
 
@@ -346,6 +349,7 @@ def main():
                         datefmt='%m/%d/%Y %I:%M:%S %p')
     logger.info('Started Social Server')
 
+
     mastodon = get_mastodon_instance()
 
     cfg["mastodon"]["instance"] = mastodon
@@ -369,4 +373,4 @@ def main():
 
 if __name__ == '__main__':
     main()
-    # help_cmd(None,None,None,None)
+

@@ -35,7 +35,8 @@ def message_handling(client, userdata, msg):
     else:
         print(f"Failed to send message to topic {topic}")
 
-def set_state (state, dso = "Unknown"):
+def set_state (state, dso):
+    global observatory_state
     observatory_state["state"] = state
     observatory_state["dso"] = dso
 
@@ -49,7 +50,7 @@ def waiting_for_boot ():
         time.sleep(60)
 
 def waiting_for_noon ():
-    set_state("Waiting For Noon")
+    set_state("Waiting For Noon", )
     instructions.calc_and_store_hours_above_horizon()
 
     now = datetime.now().time()
