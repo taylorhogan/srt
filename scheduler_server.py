@@ -35,7 +35,7 @@ def message_handling(client, userdata, msg):
     else:
         print(f"Failed to send message to topic {topic}")
 
-def set_state (state, dso):
+def set_state (state, dso=observatory_state["dso"]):
     global observatory_state
     observatory_state["state"] = state
     observatory_state["dso"] = dso
@@ -50,7 +50,7 @@ def waiting_for_boot ():
         time.sleep(60)
 
 def waiting_for_noon ():
-    set_state("Waiting For Noon", )
+    set_state("Waiting For Noon" )
     instructions.calc_and_store_hours_above_horizon()
 
     now = datetime.now().time()
@@ -60,7 +60,10 @@ def waiting_for_noon ():
         asyncio.run(wait_a_bit())
 
     instructions.calc_and_store_hours_above_horizon()
-    announce_plans_before_sunset()
+    image, dso = announce_plans_before_sunset()
+
+    set_state (observatory_state["state"], dso)
+
     waiting_for_sunset()
 
 
@@ -134,11 +137,13 @@ def announce_plans_before_sunset():
     if weather_ok:
         social_server.post_social_message("Will image " + dso + " requested by " + requestor + " tonight")
         obs_calendar.set_today_stat('image', dso)
+        return True, dso
 
     else:
         social_server.post_social_message(
             "Will NOT image " + dso + " requested by " + requestor + " tonight because of weather")
         obs_calendar.set_today_stat('weather', dso)
+        return False, dso
 
 
 

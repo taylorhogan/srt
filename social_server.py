@@ -333,11 +333,10 @@ def start_interface():
 async def wait_a_bit ():
     await asyncio.sleep(10)
 
+
 def main():
     utils.set_install_dir()
-    print("Starting")
     cfg = config.data()
-
     logger = logging.getLogger(__name__)
 
     cfg["logger"]["logging"] = logger

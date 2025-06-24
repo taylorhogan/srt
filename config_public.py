@@ -9,8 +9,9 @@ class PublicConfig():
     _config = dict({
         "install_location": '/Users/taylorhogan/Documents/tmh',
         "mttq_client":None,
+
         "version": {
-            "date": "2025.6.7  .1"
+            "date": "2025.6.24.1"
         },
 
         "logger": {
@@ -55,6 +56,10 @@ class PublicConfig():
             {
                 "Observatory State": "In Development",
                 "Imaging Tonight": "Unknown"
+            },
+        "mastodon":
+            {
+                "instance": None,
             }
 
     })
