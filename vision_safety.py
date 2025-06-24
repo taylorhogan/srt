@@ -90,18 +90,18 @@ def visual_status():
     cv.rectangle(image_rgb, closed_best_match_top_left, closed_best_match_bottom_right, (0, 255, 0), 2)
     cv.imwrite(cfg["camera safety"]["scope_view"], image_rgb)
 
-
+    accuracy = cfg["camera safety"]["accuracy"]
     parked_error = math.dist(parked_center, cfg["camera safety"]["parked pos"])
     print(parked_center)
     print(cfg["camera safety"]["parked pos"])
     print (parked_error)
-    parked = abs(parked_error) < 20
+    parked = abs(parked_error) < accuracy
 
     closed_error = math.dist(closed_center, cfg["camera safety"]["closed pos"])
     print(closed_center)
     print(cfg["camera safety"]["closed pos"])
     print(closed_error)
-    accuracy = cfg["camera safety"]["accuracy"]
+
     print(accuracy)
     closed = abs(closed_error) < accuracy
 
