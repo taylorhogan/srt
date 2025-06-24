@@ -1,15 +1,11 @@
-from collections import OrderedDict
-from re import fullmatch
-
-import config_private
-from config_private import PrivateConfig
-
-
 class PublicConfig():
     _config = dict({
-        "install_location": '/Users/taylorhogan/Documents/tmh',
-        "mttq_client":None,
 
+        "globals": {
+            "mastodon instance": None,
+            "mqtt_client": None,
+            "install_location": '/Users/taylorhogan/Documents/tmh'
+        },
         "version": {
             "date": "2025.6.24.1"
         },
@@ -57,15 +53,11 @@ class PublicConfig():
                 "Observatory State": "In Development",
                 "Imaging Tonight": "Unknown"
             },
-        "mastodon":
-            {
-                "instance": None,
-            }
 
     })
 
     def data(self):
-      return self._config
+        return self._config
 
 
 if __name__ == "__main__":

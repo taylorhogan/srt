@@ -25,7 +25,7 @@ import time
 
 
 _json_payload = None
-_mtqq_client = None
+
 
 def get_dso_object_name(words, index):
     if len(words) > index + 1:
@@ -274,7 +274,7 @@ class TheStreamListener(StreamListener):
     def on_notification(self, notification):
         cfg = config.data()
         logger = logging.getLogger(__name__)
-        mastodon = cfg["mastodon"]["instance"]
+        mastodon = cfg["globals"]["mastodon instance"]
         do_notification(notification, mastodon)
 
 
@@ -290,7 +290,7 @@ def get_mastodon_instance():
 def post_social_message(message, image=None):
     cfg = config.data()
     logger = logging.getLogger(__name__)
-    mastodon = cfg["mastodon"]["instance"]
+    mastodon = cfg["globals"]["mastodon instance"]
 
     if mastodon is None:
         mastodon = get_mastodon_instance()
@@ -311,7 +311,7 @@ def handle_mention(notification):
     cfg = config.data()
     if notification.type == "mention":
         print(notification.status.content)
-        mastodon = cfg["mastodon"]["instance"]
+        mastodon = cfg["globals"]["mastodon instance"]
         do_notification(notification, mastodon)
 
 
@@ -351,13 +351,14 @@ def main():
 
     mastodon = get_mastodon_instance()
 
-    cfg["mastodon"]["instance"] = mastodon
-    global _mtqq_client
-    _mtqq_client = utils.connect_mqtt()
+    mastodon = cfg["globals"]["mastodon instance"]
 
-    _mtqq_client.subscribe(utils.topic_from_sched)
-    _mtqq_client.on_message = wait_for_mqtt_message
-    _mtqq_client.loop_start()
+    mqtt_client = utils.connect_mqtt()
+    cfg["globals"]["mqtt_client"] = mqtt_client
+
+    mqtt_client.subscribe(utils.topic_from_sched)
+    mqtt_client.on_message = wait_for_mqtt_message
+    mqtt_client.loop_start()
 
     try:
         start_interface()
