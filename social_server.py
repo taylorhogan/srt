@@ -125,16 +125,16 @@ def wait_for_mqtt_message (client, userdata, msg):
 def status_cmd(words, index, m, account):
     # Observatory State
     cfg = config.data()
-    global _mttq_client
-    global _json_payload
 
+    global _json_payload
+    mqtt_client = cfg["globals"]["mqtt_client"]
     timeout = 60  # Timeout in seconds
     start_time = time.time()
     _json_payload = None
     print ("setting state to None")
     end.determine_roof_state_visually()
     print ("asking for status")
-    _mtqq_client.publish(topic_to_sched, "status?")
+    mqtt_client.publish(topic_to_sched, "status?")
     while _json_payload is None and (time.time() - start_time < timeout) :
         asyncio.run(wait_a_bit())
     if _json_payload is None:
