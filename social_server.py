@@ -117,6 +117,9 @@ def wait_for_mqtt_message (client, userdata, msg):
     global _json_payload
     print ("setting payload to ")
     _json_payload = json.loads(msg.payload.decode("utf-8"))
+    _json_payload = json.dumps(_json_payload)
+    logger = logging.getLogger(__name__)
+    logger.info("Received message: " + _json_payload)
     print("to ", _json_payload)
 
 
