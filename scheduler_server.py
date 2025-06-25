@@ -28,6 +28,10 @@ def message_handling(client, userdata, msg):
     json_payload = json.dumps(observatory_state)
 
     topic = "iris/from_sched"
+    cfg = config.data()
+    logger = cfg["logger"]["logging"]
+    logger.info(f"Send `{json_payload}` to topic `{topic}`")
+
     result = client.publish(topic, json_payload)
     status = result[0]
     if status == 0:
