@@ -84,13 +84,17 @@ def visual_status():
     print ("analysing image")
     parked_best_match_top_left, parked_best_match_bottom_right, parked_center = find_template_rectangle(image_rgb, cfg['camera safety']['parked template'])
     closed_best_match_top_left, closed_best_match_bottom_right, closed_center = find_template_rectangle(image_rgb, cfg['camera safety']['closed template'])
-
+    open_best_match_top_left, open_best_match_bottom_right, open_center = find_template_rectangle(image_rgb, cfg['camera safety']['open template'])
     cv.rectangle(image_rgb, parked_best_match_top_left, parked_best_match_bottom_right, (0, 0, 255), 2)
     cv.imwrite(cfg["camera safety"]["scope_view"], image_rgb)
     cv.rectangle(image_rgb, closed_best_match_top_left, closed_best_match_bottom_right, (0, 255, 0), 2)
     cv.imwrite(cfg["camera safety"]["scope_view"], image_rgb)
+    cv.rectangle(image_rgb, open_best_match_top_left, open_best_match_bottom_right, (255, 0, 0), 2)
+    cv.imwrite(cfg["camera safety"]["scope_view"], image_rgb)
 
     accuracy = cfg["camera safety"]["accuracy"]
+    print(accuracy)
+
     parked_error = math.dist(parked_center, cfg["camera safety"]["parked pos"])
     print(parked_center)
     print(cfg["camera safety"]["parked pos"])
@@ -101,12 +105,16 @@ def visual_status():
     print(closed_center)
     print(cfg["camera safety"]["closed pos"])
     print(closed_error)
-
-    print(accuracy)
     closed = abs(closed_error) < accuracy
 
+    open_error = math.dist(closed_center, cfg["camera safety"]["open pos"])
+    print(open_center)
+    print(cfg["camera safety"]["open pos"])
+    print(open_error)
+    open = abs(open_error) < accuracy
+
     mod_date = time.ctime(os.path.getmtime(cfg["camera safety"]["scope_view"]))
-    return parked,  closed, mod_date
+    return parked,  closed, open, mod_date
 
 
 
@@ -119,5 +127,5 @@ if __name__ == '__main__':
         image =  img_rgb = cv.imread(cfg["camera safety"]["scope_view"], cv.IMREAD_COLOR)
         test_find_template(image, cfg['camera safety']['open template'])
     else:
-        parked, closed, mod_date = visual_status()
-        print (parked, closed, mod_date)
+        parked, closed, open, mod_date = visual_status()
+        print (parked, closed, open, mod_date)

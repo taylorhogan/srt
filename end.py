@@ -13,12 +13,16 @@ import os
 def determine_roof_state_visually():
     cfg = config.data()
 
-    is_parked, is_closed, mod_date = vision_safety.visual_status()
+    is_parked, is_closed, is_open, mod_date = vision_safety.visual_status()
     if is_parked:
         if is_closed:
             reply = "Scope is parked and roof is closed"
         else:
             reply = "Scope is parked and roof is not closed"
+        if is_open:
+            reply = "Scope is parked and roof is open"
+        else:
+            reply = "Scope is parked and roof is not open"
     else:
         reply = "Scope is not parked"
 

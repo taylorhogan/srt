@@ -15,7 +15,8 @@ import json
 client = None
 observatory_state = {
     "state":"Unknown",
-    "dso":"Unknown"
+    "dso":"Unknown",
+    "will image tonight":"Unknown"
 }
 
 
@@ -39,10 +40,11 @@ def message_handling(client, userdata, msg):
     else:
         print(f"Failed to send message to topic {topic}")
 
-def set_state (state, dso=observatory_state["dso"]):
+def set_state (state, dso=observatory_state["dso"], will_image_tonight=observatory_state["will image tonight"]):
     global observatory_state
     observatory_state["state"] = state
     observatory_state["dso"] = dso
+    observatory_state["will image tonight"] = will_image_tonight
 
     print ("State: " + state)
     social_server.post_social_message("Scheduler State: " + state)
@@ -67,8 +69,10 @@ def waiting_for_noon ():
     image, dso = announce_plans_before_sunset()
 
     set_state (observatory_state["state"], dso)
-
-    waiting_for_sunset()
+    if image:
+        waiting_for_sunset()
+    else:
+        waiting_for_sunrise()
 
 
 
@@ -93,6 +97,7 @@ def waiting_for_imaging ():
     if weather_ok:
         imaging ()
     else:
+        social_server.post_social_message("Will NOT image tonight because of weather")
         waiting_for_sunrise()
 
 async def wait_a_bit ():
@@ -127,6 +132,7 @@ def waiting_for_sunrise():
 
 
 def announce_plans_before_sunset():
+    global observatory_state
     try:
 
         best_instruction = instructions.get_dso_object_tonight()
@@ -141,12 +147,14 @@ def announce_plans_before_sunset():
     if weather_ok:
         social_server.post_social_message("Will image " + dso + " requested by " + requestor + " tonight")
         obs_calendar.set_today_stat('image', dso)
+        set_state(observatory_state["state"], dso, True)
         return True, dso
 
     else:
         social_server.post_social_message(
             "Will NOT image " + dso + " requested by " + requestor + " tonight because of weather")
         obs_calendar.set_today_stat('weather', dso)
+        set_state(observatory_state["state"], dso, False)
         return False, dso
 
 

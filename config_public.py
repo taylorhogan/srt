@@ -31,9 +31,10 @@ class PublicConfig():
             "closed template": "./base_images/closed_marker.jpg",
             "parked template": "./base_images/parked_marker.png",
             "open template": "./base_images/open_marker.jpg",
-            "open pos": (1, 1),
+            "open pos": (900, 50),
             "closed pos": (827, 125),
             "parked pos": (584, 264),
+
             "accuracy": 50,
             "scope_view": "./base_images/scope_view.jpg",
             "processed_view": "./base_images/processed.jpg",
