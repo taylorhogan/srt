@@ -89,7 +89,7 @@ def visual_status():
     cv.imwrite(cfg["camera safety"]["scope_view"], image_rgb)
     cv.rectangle(image_rgb, closed_best_match_top_left, closed_best_match_bottom_right, (0, 255, 0), 2)
     cv.imwrite(cfg["camera safety"]["scope_view"], image_rgb)
-    cv.rectangle(image_rgb, open_best_match_top_left, open_best_match_bottom_right, (255, 0, 0), 2)
+    cv.rectangle(image_rgb, open_best_match_top_left, open_best_match_bottom_right, (255, 255, 255), 2)
     cv.imwrite(cfg["camera safety"]["scope_view"], image_rgb)
 
     accuracy = cfg["camera safety"]["accuracy"]

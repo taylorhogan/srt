@@ -40,11 +40,13 @@ def message_handling(client, userdata, msg):
     else:
         print(f"Failed to send message to topic {topic}")
 
-def set_state (state, dso=observatory_state["dso"], will_image_tonight=observatory_state["will image tonight"]):
+def set_state (state, dso=None, will_image_tonight=None):
     global observatory_state
     observatory_state["state"] = state
-    observatory_state["dso"] = dso
-    observatory_state["will image tonight"] = will_image_tonight
+    if dso is not  None:
+        observatory_state["dso"] = dso
+    if will_image_tonight is not None:
+        observatory_state["will image tonight"] = will_image_tonight
 
     print ("State: " + state)
     social_server.post_social_message("Scheduler State: " + state)
@@ -111,7 +113,6 @@ def waiting_for_sunset():
 
         while now < sunset:
             now = datetime.now().time()
-
             asyncio.run(wait_a_bit())
 
         waiting_for_imaging ()

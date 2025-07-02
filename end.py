@@ -15,14 +15,15 @@ def determine_roof_state_visually():
 
     is_parked, is_closed, is_open, mod_date = vision_safety.visual_status()
     if is_parked:
+        reply = "Scope is Parked"
         if is_closed:
-            reply = "Scope is parked and roof is closed"
+            reply += "\nRoof is closed"
         else:
-            reply = "Scope is parked and roof is not closed"
+            reply = "\nRoof is not closed"
         if is_open:
-            reply = "Scope is parked and roof is open"
+            reply += "\nRoof is open"
         else:
-            reply = "Scope is parked and roof is not open"
+            reply += "\nRoof is not open"
     else:
         reply = "Scope is not parked"
 
