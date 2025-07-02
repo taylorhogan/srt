@@ -31,7 +31,7 @@ class PublicConfig():
             "closed template": "./base_images/closed_marker.jpg",
             "parked template": "./base_images/parked_marker.png",
             "open template": "./base_images/open_marker.jpg",
-            "open pos": (900, 50),
+            "open pos": (172, 165),
             "closed pos": (827, 125),
             "parked pos": (584, 264),
 

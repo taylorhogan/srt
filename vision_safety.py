@@ -41,13 +41,13 @@ def find_template_rectangle (image, template_image_path):
 
 
     center = ((best_match_top_left[0] + template_width) / 2, (best_match_top_left[1] + template_height) / 2)
-    return best_match_top_left, best_match_bottom_right, center
+    return best_match_top_left, best_match_bottom_right, center, max_val
 
 def test_find_template(image, template_image_path):
 
     main_image = image
 
-    best_match_top_left, best_match_bottom_right, center = find_template_rectangle(image, template_image_path)
+    best_match_top_left, best_match_bottom_right, center, max_val = find_template_rectangle(image, template_image_path)
 
     print (best_match_top_left, best_match_bottom_right, center)
     # Draw a rectangle around the matched region on the original image
@@ -61,7 +61,7 @@ def test_find_template(image, template_image_path):
 
 
 def find_template(image, template_image_path):
-    best_match_top_left, best_match_bottom_right, center = find_template_rectangle(image, template_image_path)
+    best_match_top_left, best_match_bottom_right, center, max_val = find_template_rectangle(image, template_image_path)
 
 
 
@@ -82,9 +82,9 @@ def visual_status():
     mod_date = time.ctime(os.path.getmtime(image_path))
 
     print ("analysing image")
-    parked_best_match_top_left, parked_best_match_bottom_right, parked_center = find_template_rectangle(image_rgb, cfg['camera safety']['parked template'])
-    closed_best_match_top_left, closed_best_match_bottom_right, closed_center = find_template_rectangle(image_rgb, cfg['camera safety']['closed template'])
-    open_best_match_top_left, open_best_match_bottom_right, open_center = find_template_rectangle(image_rgb, cfg['camera safety']['open template'])
+    parked_best_match_top_left, parked_best_match_bottom_right, parked_center, max_val_parked = find_template_rectangle(image_rgb, cfg['camera safety']['parked template'])
+    closed_best_match_top_left, closed_best_match_bottom_right, closed_center, max_val_closed = find_template_rectangle(image_rgb, cfg['camera safety']['closed template'])
+    open_best_match_top_left, open_best_match_bottom_right, open_center, max_val_open = find_template_rectangle(image_rgb, cfg['camera safety']['open template'])
     cv.rectangle(image_rgb, parked_best_match_top_left, parked_best_match_bottom_right, (0, 0, 255), 2)
     cv.imwrite(cfg["camera safety"]["scope_view"], image_rgb)
     cv.rectangle(image_rgb, closed_best_match_top_left, closed_best_match_bottom_right, (0, 255, 0), 2)
