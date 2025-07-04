@@ -19,7 +19,7 @@ def determine_roof_state_visually():
         if is_closed:
             reply += "\nRoof is closed"
         else:
-            reply = "\nRoof is not closed"
+            reply +="\nRoof is not closed"
         if is_open:
             reply += "\nRoof is open"
         else:

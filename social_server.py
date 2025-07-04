@@ -300,7 +300,7 @@ def post_social_message(message, image=None):
         print(mastodon)
 
     if image is None:
-        mastodon.status_post(message)
+        mastodon.status_post(message, visibility='private')
     else:
         #       media_upload_mastodon = mastodon.media_post(image)
         #        mastodon.media_update(media_upload_mastodon, description="text")

@@ -105,7 +105,7 @@ def waiting_for_imaging ():
 async def wait_a_bit ():
     await asyncio.sleep(10)
 
-def waiting_for_sunset():
+def     waiting_for_sunset():
 
         set_state ("Waiting For Sunset")
         sunrise, sunset = weather.get_sunrise_sunset()
