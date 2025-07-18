@@ -26,8 +26,9 @@ def determine_roof_state_visually(account):
     else:
         reply = "Scope is not parked"
     reply += "\nPicture Date:" + mod_date + "\n"
-
-    if cfg["super users"] in account:
+    logger = cfg["logger"]["logging"]
+    logger.info(account)
+    if account in cfg["Super Users"]:
         social_server.post_social_message(reply, cfg["camera safety"]["scope_view"])
     else:
         social_server.post_social_message(reply)
