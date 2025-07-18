@@ -135,7 +135,7 @@ def status_cmd(words, index, m, account):
     start_time = time.time()
     _json_payload = None
     print ("setting state to None")
-    end.determine_roof_state_visually()
+    end.determine_roof_state_visually(account)
     print ("asking for status")
     mqtt_client.publish(topic_to_sched, "status?")
     while _json_payload is None and (time.time() - start_time < timeout) :
@@ -152,31 +152,7 @@ def db_cmd(words, index, m, account):
     instructions.create_instructions_table()
 
 
-def dbr_cmd(words, index, m, account):
-    """
-    rehash db, example dbr
-    """
-    instructions.rehash_db()
-    instructions.create_instructions_table()
 
-
-def dbd_cmd(words, index, m, account):
-    """
-       delete a db entry, example dbd 12
-    """
-    instructions.delete_instruction_db(words[index + 1])
-
-    instructions.create_instructions_table()
-
-
-def dbc_cmd(words, index, m, account):
-    """
-       mark db entry as complete, example dbc 1
-        """
-    logger = logging.getLogger(__name__)
-    logger.info("db_cmd", words)
-    instructions.set_completed_instruction_db(words[index + 1])
-    instructions.create_instructions_table()
 
 
 def calendar_cmd(words, index, m, account):
@@ -215,13 +191,10 @@ def latest_cmd(words, index, m, account):
 
 
 keywords = {
-    "show": show_cmd,
+    "tonight": show_cmd,
     "best": best_cmd,
     "image": image_cmd,
-    "dbs": db_cmd,
-    "dbr": dbr_cmd,
-    "dbd": dbd_cmd,
-    "dbc": dbc_cmd,
+    "db": db_cmd,
     "version": version_cmd,
     "status": status_cmd,
     "weather": weather_cmd,
@@ -290,7 +263,7 @@ def get_mastodon_instance():
     return mastodon
 
 
-def post_social_message(message, image=None):
+def post_social_message(message, image=None, vis=None):
     cfg = config.data()
     logger = logging.getLogger(__name__)
     mastodon = cfg["globals"]["mastodon instance"]
@@ -300,14 +273,14 @@ def post_social_message(message, image=None):
         print(mastodon)
 
     if image is None:
-        mastodon.status_post(message, visibility='private')
+        mastodon.status_post(message, visibility=vis)
     else:
         #       media_upload_mastodon = mastodon.media_post(image)
         #        mastodon.media_update(media_upload_mastodon, description="text")
         #       post = mastodon.status_post(message, media_ids=media_upload_mastodon)
 
         media = mastodon.media_post(image, "image/png")
-        mastodon.status_post(message, media_ids=media)
+        mastodon.status_post(message, media_ids=media, visibility=vis)
 
 
 def handle_mention(notification):

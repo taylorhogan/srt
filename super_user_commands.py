@@ -9,6 +9,8 @@ import os
 import asyncio
 import requests
 import time
+import instructions
+import logging
 
 
 
@@ -19,7 +21,6 @@ def close_roof_cmd ():
         (
         {
             "Roof motor": 'on',
-            "Iris inside light": 'off'
         }
     ))
 
@@ -34,7 +35,6 @@ def open_roof_cmd ():
         (
         {
             "Roof motor": 'on',
-            "Iris inside light": 'off'
         }
     ))
 
@@ -164,9 +164,37 @@ def print_help(account):
         reply += word + "\n"
     social_server.post_social_message(reply)
 
+def dbr_cmd(words, index, m, account):
+    """
+    rehash db, example dbr
+    """
+    instructions.rehash_db()
+    instructions.create_instructions_table()
+
+
+def dbd_cmd(words, index, m, account):
+    """
+       delete a db entry, example dbd 12
+    """
+    instructions.delete_instruction_db(words[index + 1])
+
+    instructions.create_instructions_table()
+
+
+def dbc_cmd(words, index, m, account):
+    """
+       mark db entry as complete, example dbc 1
+        """
+    logger = logging.getLogger(__name__)
+    logger.info("db_cmd", words)
+    instructions.set_completed_instruction_db(words[index + 1])
+    instructions.create_instructions_table()
 
 def get_super_user_commands():
     return {
+        "dbr": dbr_cmd,
+        "dbd": dbd_cmd,
+        "dbc": dbc_cmd,
         "start!": open_if_mount_off_cmd,
         "stop!": park_and_close_cmd,
         "nina1!": on_nina,
