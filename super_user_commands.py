@@ -15,7 +15,7 @@ import logging
 
 
 
-def close_roof_cmd ():
+def close_roof_cmd (words, account):
     dev_map = asyncio.run(ku.make_discovery_map())
     instructions = (dict
         (
@@ -29,7 +29,7 @@ def close_roof_cmd ():
     r = requests.get('http://192.168.87.41/relay/0?turn=on')
 
 
-def open_roof_cmd ():
+def open_roof_cmd (words, account):
     dev_map = asyncio.run(ku.make_discovery_map())
     instructions = (dict
         (
@@ -42,7 +42,7 @@ def open_roof_cmd ():
     time.sleep(30)
     r = requests.get('http://192.168.87.41/relay/0?turn=on')
 
-def park_and_close_cmd():
+def park_and_close_cmd(words, account):
     if not pwi4_utils.park_scope():
         return False
     print ("true from park")
@@ -83,7 +83,7 @@ def park_and_close_cmd():
 
 
 
-def open_if_mount_off_cmd():
+def open_if_mount_off_cmd(words, account):
     dev_map = asyncio.run(ku.make_discovery_map())
     instructions = (dict
         (
@@ -127,7 +127,7 @@ def open_if_mount_off_cmd():
     return
 
 
-def on_nina():
+def on_nina(words, account):
     print("Starting Nina")
     path = utils.set_install_dir()
     os.chdir(path)
@@ -136,14 +136,14 @@ def on_nina():
     #subprocess.run(["on_nina.bat"])
     print("Done with Nina")
 
-def image_nina():
+def image_nina(words, account):
     print("Starting Nina")
     path = utils.set_install_dir()
     print(path)
     subprocess.Popen(["image_nina.bat"])
     print("Done with Nina")
 
-def image_nina_a():
+def image_nina_a(words, account):
     print("Starting Nina")
     path = utils.set_install_dir()
     print(path)
@@ -151,7 +151,7 @@ def image_nina_a():
     print("Done with Nina")
 
 
-def shutdown():
+def shutdown(words, account):
     return
 
 
@@ -164,7 +164,7 @@ def print_help(account):
         reply += word + "\n"
     social_server.post_social_message(reply)
 
-def dbr_cmd(words, index, m, account):
+def dbr_cmd(words, account):
     """
     rehash db, example dbr
     """
@@ -172,22 +172,22 @@ def dbr_cmd(words, index, m, account):
     instructions.create_instructions_table()
 
 
-def dbd_cmd(words, index, m, account):
+def dbd_cmd(words, account):
     """
        delete a db entry, example dbd 12
     """
-    instructions.delete_instruction_db(words[index + 1])
+    instructions.delete_instruction_db(words[2])
 
     instructions.create_instructions_table()
 
 
-def dbc_cmd(words, index, m, account):
+def dbc_cmd(words, account):
     """
        mark db entry as complete, example dbc 1
         """
     logger = logging.getLogger(__name__)
     logger.info("db_cmd", words)
-    instructions.set_completed_instruction_db(words[index + 1])
+    instructions.set_completed_instruction_db(words[2])
     instructions.create_instructions_table()
 
 def get_super_user_commands():
@@ -225,7 +225,7 @@ def do_super_user_command(words, account):
     action = su_commands.get(words[1], "no_key")
     print("action is " + str(action) + " word " + str(words[1]) + ".")
     if action != "no_key":
-        action()
+        action(words, account)
         return True
     else:
         return False
