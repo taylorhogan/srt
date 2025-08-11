@@ -75,7 +75,7 @@ if __name__ == "__main__":
                         social_server.post_social_message("Vision Safety says roof is NOT closed")
 
                     # turn off recepticle
-                    r = requests.get('http://192.168.87.28/relay/0?turn=off')
+                    r = requests.get('http://192.168.87.28/relay/0?turn=on')
                     instructions = (dict
                         (
                         {
@@ -106,7 +106,7 @@ if __name__ == "__main__":
             logger.info('Problem')
             logger.exception("Exception")
 
-        determine_roof_state_visually()
+        determine_roof_state_visually(None)
         instructions = (dict
             (
             {
@@ -122,6 +122,6 @@ if __name__ == "__main__":
         logger.exception("Exception")
 
     # turn off recepticle
-    r = requests.get('http://192.168.87.28/relay/0?turn=off')
+    r = requests.get('http://192.168.87.28/relay/0?turn=on')
 
     logger.info('End End Sequence')
