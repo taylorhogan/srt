@@ -7,6 +7,8 @@ import vision_safety
 import kasa_utils as ku
 import pwi4_utils
 import os
+import requests
+import time
 
 
 def determine_roof_state_visually(account):
@@ -65,7 +67,23 @@ if __name__ == "__main__":
                 if parked:
                     social_server.post_social_message("Vision Safety says Scope is parked, closing roof")
                     #super_user_commands.close_roof_cmd()
+                    time.sleep(30)
+                    parked, closed, open, mod_date = vision_safety.visual_status()
+                    if closed:
+                        social_server.post_social_message("Vision Safety says roof is closed")
+                    else:
+                        social_server.post_social_message("Vision Safety says roof is NOT closed")
 
+                    # turn off recepticle
+                    r = requests.get('http://192.168.87.28/relay/0?turn=off')
+                    instructions = (dict
+                        (
+                        {
+                            "Iris inside light": 'off'
+                        }
+                    ))
+
+                    asyncio.run(ku.kasa_do(dev_map, instructions))
 
                 else:
                     social_server.post_social_message("Vision Safety says Scope is NOT parked")
@@ -77,7 +95,7 @@ if __name__ == "__main__":
                     {
                         "Telescope mount": 'off',
                         "Roof motor": 'off',
-                        "Iris inside light": 'on'
+                        "Iris inside light": 'off'
                     }
                 ))
 
@@ -102,5 +120,8 @@ if __name__ == "__main__":
     except:
         logger.info('Problem')
         logger.exception("Exception")
+
+    # turn off recepticle
+    r = requests.get('http://192.168.87.28/relay/0?turn=off')
 
     logger.info('End End Sequence')

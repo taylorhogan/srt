@@ -3,6 +3,8 @@ import logging
 import kasa_utils as ku
 import config
 import os
+import requests
+
 
 
 
@@ -22,7 +24,6 @@ if __name__ == "__main__":
         (
         {
             "Telescope mount": 'on',
-            "Iris back lights": 'off',
             "Iris door light": 'off',
             "Iris inside light": "off",
             "Driveway lights": "off"
@@ -30,4 +31,8 @@ if __name__ == "__main__":
     ))
 
     asyncio.run(ku.kasa_do(dev_map, instructions))
+
+# turn off recepticle
+    r = requests.get('http://192.168.87.28/relay/0?turn=off')
+
     logger.info('End Start Sequence')

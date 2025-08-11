@@ -1,31 +1,29 @@
-
+import asyncio
+import json
+import logging
+import os
 import time
 from datetime import datetime
-import weather
-import instructions
+
 import config
-import os
-import logging
-import social_server
+import instructions
 import obs_calendar
-import asyncio
+import social_server
 import utils
-import json
+import weather
 
 client = None
 observatory_state = {
-    "state":"Unknown",
-    "dso":"Unknown",
-    "will image tonight":"Unknown"
+    "state": "Unknown",
+    "dso": "Unknown",
+    "will image tonight": "Unknown"
 }
 
 
-
 def message_handling(client, userdata, msg):
-
     message = msg.payload.decode("utf-8")
     if msg.topic == utils.topic_to_sched:
-        print ("incoming message", msg)
+        print("incoming message", msg)
     json_payload = json.dumps(observatory_state)
 
     topic = "iris/from_sched"
@@ -40,25 +38,27 @@ def message_handling(client, userdata, msg):
     else:
         print(f"Failed to send message to topic {topic}")
 
-def set_state (state, dso=None, will_image_tonight=None):
+
+def set_state(state, dso=None, will_image_tonight=None):
     global observatory_state
     observatory_state["state"] = state
-    if dso is not  None:
+    if dso is not None:
         observatory_state["dso"] = dso
     if will_image_tonight is not None:
         observatory_state["will image tonight"] = will_image_tonight
 
-    print ("State: " + state)
-    social_server.post_social_message("Scheduler State: " + state)
+    print("State: " + state)
+    # social_server.post_social_message("Scheduler State: " + state)
 
 
-def waiting_for_boot ():
-    set_state ("Waiting For Boot")
+def waiting_for_boot():
+    set_state("Waiting For Boot")
     while True:
         time.sleep(60)
 
-def waiting_for_noon ():
-    set_state("Waiting For Noon" )
+
+def waiting_for_noon():
+    set_state("Waiting For Noon")
     instructions.calc_and_store_hours_above_horizon()
 
     now = datetime.now().time()
@@ -70,22 +70,21 @@ def waiting_for_noon ():
     instructions.calc_and_store_hours_above_horizon()
     image, dso = announce_plans_before_sunset()
 
-    set_state (observatory_state["state"], dso)
+    set_state(observatory_state["state"], dso)
     if image:
         waiting_for_sunset()
     else:
         waiting_for_sunrise()
 
 
-
-
-def imaging ():
-    set_state ("Imaging")
+def imaging():
+    set_state("Imaging")
 
     asyncio.run(wait_a_bit())
     waiting_for_sunrise()
 
-def wait_for_tomorrow ():
+
+def wait_for_tomorrow():
     now = datetime.now().time()
 
     while now.hour > 0:
@@ -93,29 +92,30 @@ def wait_for_tomorrow ():
         asyncio.run(wait_a_bit())
 
 
-def waiting_for_imaging ():
-    set_state ("Waiting For Imaging")
+def waiting_for_imaging():
+    set_state("Waiting For Imaging")
     description, weather_ok = weather.get_current_weather(False)
     if weather_ok:
-        imaging ()
+        imaging()
     else:
         social_server.post_social_message("Will NOT image tonight because of weather")
         waiting_for_sunrise()
 
-async def wait_a_bit ():
+
+async def wait_a_bit():
     await asyncio.sleep(10)
 
-def     waiting_for_sunset():
 
-        set_state ("Waiting For Sunset")
-        sunrise, sunset = weather.get_sunrise_sunset()
+def waiting_for_sunset():
+    set_state("Waiting For Sunset")
+    sunrise, sunset = weather.get_sunrise_sunset()
+    now = datetime.now().time()
+
+    while now < sunset:
         now = datetime.now().time()
+        asyncio.run(wait_a_bit())
 
-        while now < sunset:
-            now = datetime.now().time()
-            asyncio.run(wait_a_bit())
-
-        waiting_for_imaging ()
+    waiting_for_imaging()
 
 
 def waiting_for_sunrise():
@@ -131,7 +131,6 @@ def waiting_for_sunrise():
     waiting_for_noon()
 
 
-
 def announce_plans_before_sunset():
     global observatory_state
     try:
@@ -142,8 +141,6 @@ def announce_plans_before_sunset():
         description, weather_ok = weather.get_current_weather(False)
     except:
         weather_ok = False
-
-
 
     if weather_ok:
         social_server.post_social_message("Will image " + dso + " requested by " + requestor + " tonight")
@@ -159,9 +156,7 @@ def announce_plans_before_sunset():
         return False, dso
 
 
-
-
-def main ():
+def main():
     print("Starting Scheduler Server")
     cfg = config.data()
     path = utils.set_install_dir()
@@ -178,11 +173,10 @@ def main ():
     client.on_message = message_handling
     client.loop_start()
 
-
     try:
-       while True:
-           asyncio.run(wait_a_bit())
-           waiting_for_noon()
+        while True:
+            asyncio.run(wait_a_bit())
+            waiting_for_noon()
     except:
 
         logger.info('Problem')
@@ -190,7 +184,6 @@ def main ():
         social_server.get_mastodon_instance().status_post("Oops I had a problem with Scheduler server")
         waiting_for_boot()
 
+
 if __name__ == '__main__':
-   main()
-
-
+    main()
