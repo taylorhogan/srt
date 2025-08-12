@@ -67,6 +67,7 @@ if __name__ == "__main__":
                 if parked:
                     social_server.post_social_message("Vision Safety says Scope is parked, closing roof")
                     #super_user_commands.close_roof_cmd()
+                    # wait for roof to close
                     time.sleep(30)
                     parked, closed, open, mod_date = vision_safety.visual_status()
                     if closed:
@@ -74,8 +75,9 @@ if __name__ == "__main__":
                     else:
                         social_server.post_social_message("Vision Safety says roof is NOT closed")
 
-                    # turn off recepticle
+                    # turn on dehumidifier
                     r = requests.get('http://192.168.87.28/relay/0?turn=on')
+                    # turn off lights
                     instructions = (dict
                         (
                         {
@@ -106,22 +108,10 @@ if __name__ == "__main__":
             logger.info('Problem')
             logger.exception("Exception")
 
-        determine_roof_state_visually(None)
-        instructions = (dict
-            (
-            {
-                "Telescope mount": 'off',
-                "Roof motor": 'off',
-                "Iris inside light": 'off'
-            }
-        ))
 
-        asyncio.run(ku.kasa_do(dev_map, instructions))
     except:
         logger.info('Problem')
         logger.exception("Exception")
 
-    # turn off recepticle
-    r = requests.get('http://192.168.87.28/relay/0?turn=on')
 
     logger.info('End End Sequence')
