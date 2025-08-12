@@ -2,7 +2,7 @@ import calendar
 import json
 import os
 from datetime import date
-from datetime import datetime
+from astropy.time import Time
 
 from astroplan import moon_illumination
 
@@ -36,7 +36,7 @@ def generate_custom_calendar(year, month, cal_data, cfg):
             continue  # Skip days not in the month
         week_row = row
         col_pos = weekday
-        specific_date = datetime(year, month, day)
+        specific_date = Time(str(year) + '-' + str(month) + '-' + str(day) + 'T00:00:00',format='isot', scale='utc')
         illumination = int (float(moon_illumination(specific_date) * 100))
         # Get color and text for the day
         s = get_day_stats(cal_data, str(year), str(month), str(day))
