@@ -58,7 +58,8 @@ if __name__ == "__main__":
                     {
                         "Telescope mount": 'off',
                         "Roof motor": 'on',
-                        "Iris inside light": 'on'
+                        "Iris inside light": 'on',
+                        "Iris inside camera":"on"
                     }
                 ))
 
@@ -97,7 +98,8 @@ if __name__ == "__main__":
                     {
                         "Telescope mount": 'off',
                         "Roof motor": 'off',
-                        "Iris inside light": 'off'
+                        "Iris inside light": 'off',
+                        "Iris inside camera":"on"
                     }
                 ))
 
