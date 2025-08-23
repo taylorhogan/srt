@@ -15,7 +15,7 @@ import logging
 
 
 
-def close_roof_cmd (words, account):
+def close_roof_cmd (words="", account=""):
     dev_map = asyncio.run(ku.make_discovery_map())
     instructions = (dict
         (

@@ -67,7 +67,7 @@ if __name__ == "__main__":
                 parked, closed, open, mod_date = vision_safety.visual_status()
                 if parked:
                     social_server.post_social_message("Vision Safety says Scope is parked, closing roof")
-                    #super_user_commands.close_roof_cmd()
+                    super_user_commands.close_roof_cmd()
                     # wait for roof to close
                     time.sleep(30)
                     parked, closed, open, mod_date = vision_safety.visual_status()
