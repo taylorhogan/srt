@@ -39,8 +39,16 @@ def open_roof_cmd (words, account):
     ))
 
     asyncio.run(ku.kasa_do(dev_map, instructions))
-    time.sleep(30)
+    time.sleep(10)
     r = requests.get('http://192.168.87.41/relay/0?turn=on')
+    time.sleep(30)
+    instructions = (dict
+        (
+        {
+            "Roof motor": 'off',
+        }
+    ))
+    asyncio.run(ku.kasa_do(dev_map, instructions))
 
 def park_and_close_cmd(words, account):
     if not pwi4_utils.park_scope():
