@@ -110,7 +110,8 @@ def visual_status():
 
     open_error = math.dist(closed_center, cfg["camera safety"]["open pos"])
     print(open_center)
-    social_server.post_social_message(str (open_center), str (open_error))
+    message = str (open_center) + " " + str (open_error)
+    social_server.post_social_message(message)
     print(cfg["camera safety"]["open pos"])
     print(open_error)
     open = abs(open_error) < accuracy
