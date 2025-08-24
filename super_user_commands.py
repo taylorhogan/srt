@@ -90,6 +90,7 @@ def open_roof_cmd (words, account):
 
 
 def park_and_close_cmd(words, account):
+    social_server.post_social_message("User has stopped imaging")
     with open("safety.txt", "w") as file:  # 'w' mode to write (overwrites if file exists)
         file.write("USER UNSAFE")
 
@@ -211,10 +212,10 @@ def get_super_user_commands():
         "start!": open_if_mount_off_cmd,
         "stop!": park_and_close_cmd,
         "nina1!": on_nina,
-        "nina2!!": image_nina,
+        "nina2!": image_nina,
         "nina2A!": image_nina_a,
-        "open!!": open_roof_cmd,
-        "open!!!": open_roof_cmd_no_check
+        "open!": open_roof_cmd,
+        "open!!": open_roof_cmd_no_check
     }
 
 
