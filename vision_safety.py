@@ -5,6 +5,7 @@ import math
 import cv2 as cv
 import inside_camera_server
 import config
+import social_server
 
 
 cfg = config.data()
@@ -109,6 +110,7 @@ def visual_status():
 
     open_error = math.dist(closed_center, cfg["camera safety"]["open pos"])
     print(open_center)
+    social_server.post_social_message(str (open_center), str (open_error))
     print(cfg["camera safety"]["open pos"])
     print(open_error)
     open = abs(open_error) < accuracy

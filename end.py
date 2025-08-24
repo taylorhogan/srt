@@ -82,7 +82,8 @@ if __name__ == "__main__":
                     instructions = (dict
                         (
                         {
-                            "Iris inside light": 'off'
+                            "Iris inside light": 'off',
+                            "Roof motor": 'off',
                         }
                     ))
 

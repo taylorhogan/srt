@@ -11,25 +11,12 @@ import requests
 import time
 import instructions
 import logging
+import vision_safety
 
 
 
 
-def close_roof_cmd (words="", account=""):
-    dev_map = asyncio.run(ku.make_discovery_map())
-    instructions = (dict
-        (
-        {
-            "Roof motor": 'on',
-        }
-    ))
-
-    asyncio.run(ku.kasa_do(dev_map, instructions))
-    time.sleep(30)
-    r = requests.get('http://192.168.87.41/relay/0?turn=on')
-
-
-def open_roof_cmd (words, account):
+def open_roof ():
     dev_map = asyncio.run(ku.make_discovery_map())
     instructions = (dict
         (
@@ -49,6 +36,38 @@ def open_roof_cmd (words, account):
         }
     ))
     asyncio.run(ku.kasa_do(dev_map, instructions))
+
+def open_roof_with_option (check:bool):
+    if check:
+        parked, closed, open, mod_date = vision_safety.visual_status()
+        if parked:
+            if closed:
+                social_server.post_social_message("Vision Safety says roof is closed, opening roof")
+                open_roof()
+
+            else:
+                social_server.post_social_message("Vision Safety says roof is NOT closed, therefore will not open")
+                return
+        else:
+            social_server.post_social_message("Vision Safety says Scope is NOT parked, therefore will not open")
+            return
+    else:
+        open_roof()
+
+
+
+
+
+
+def open_roof_cmd_no_check(words, account):
+    open_roof_with_option(False)
+
+
+
+def open_roof_cmd (words, account):
+    open_roof_with_option(True)
+
+
 
 def park_and_close_cmd(words, account):
     if not pwi4_utils.park_scope():
@@ -208,9 +227,8 @@ def get_super_user_commands():
         "nina1!": on_nina,
         "nina2!!": image_nina,
         "nina2A!": image_nina_a,
-        "reboot!": shutdown,
-        "close!!": close_roof_cmd,
-        "open!!": open_roof_cmd
+        "open!!": open_roof_cmd,
+        "open!!!": open_roof_cmd_no_check
     }
 
 
