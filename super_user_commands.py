@@ -39,7 +39,27 @@ def open_roof ():
 
 def open_roof_with_option (check:bool):
     if check:
+        dev_map = asyncio.run(ku.make_discovery_map())
+        instructions = (dict
+            (
+            {
+                "Iris inside light": 'on'
+            }
+        ))
+
+        asyncio.run(ku.kasa_do(dev_map, instructions))
+
         parked, closed, open, mod_date = vision_safety.visual_status()
+
+        instructions = (dict
+            (
+            {
+                "Iris inside light": 'off'
+            }
+        ))
+
+        asyncio.run(ku.kasa_do(dev_map, instructions))
+
         if parked:
             if closed:
                 social_server.post_social_message("Vision Safety says roof is closed, opening roof")
