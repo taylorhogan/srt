@@ -16,7 +16,7 @@ import vision_safety
 
 
 
-def open_roof ():
+def toggle_roof ():
     dev_map = asyncio.run(ku.make_discovery_map())
     instructions = (dict
         (
@@ -63,7 +63,7 @@ def open_roof_with_option (check:bool):
         if parked:
             if closed:
                 social_server.post_social_message("Vision Safety says roof is closed, opening roof")
-                open_roof()
+                toggle_roof()
 
             else:
                 social_server.post_social_message("Vision Safety says roof is NOT closed, therefore will not open")
@@ -72,7 +72,7 @@ def open_roof_with_option (check:bool):
             social_server.post_social_message("Vision Safety says Scope is NOT parked, therefore will not open")
             return
     else:
-        open_roof()
+        toggle_roof()
 
 
 
@@ -90,42 +90,8 @@ def open_roof_cmd (words, account):
 
 
 def park_and_close_cmd(words, account):
-    if not pwi4_utils.park_scope():
-        return False
-    print ("true from park")
-    parked = pwi4_utils.get_is_parked()
-    if parked:
-        social_server.post_social_message("Mount says Iris is parked")
-        dev_map = asyncio.run(ku.make_discovery_map())
-        instructions = (dict
-            (
-            {
-                "Telescope mount": 'off',
-                "Roof motor": 'on',
-                "Iris inside light": 'on'
-            }
-        ))
-
-        asyncio.run(ku.kasa_do(dev_map, instructions))
-        r = requests.get('http://192.168.87.41/relay/0?turn=on')
-        time.sleep(30)
-        instructions = (dict
-            (
-            {
-
-                "Roof motor": 'off',
-
-            }
-        ))
-
-        asyncio.run(ku.kasa_do(dev_map, instructions))
-
-
-
-
-    else:
-        social_server.post_social_message("Mount says Iris is NOT parked")
-        return False
+    with open("safety.txt", "w") as file:  # 'w' mode to write (overwrites if file exists)
+        file.write("USER UNSAFE")
 
 
 

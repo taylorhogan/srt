@@ -35,8 +35,8 @@ def determine_roof_state_visually(account):
     else:
         social_server.post_social_message(reply)
 
-if __name__ == "__main__":
 
+def do_main ():
     cfg = config.data()
     path = os.path.join(cfg["Install"], 'iris.log')
     logging.basicConfig(filename=path, level=logging.INFO, format='%(asctime)s %(message)s',
@@ -59,18 +59,18 @@ if __name__ == "__main__":
                         "Telescope mount": 'off',
                         "Roof motor": 'on',
                         "Iris inside light": 'on',
-                        "Iris inside camera":"on"
+                        "Iris inside camera": "on"
                     }
                 ))
 
                 asyncio.run(ku.kasa_do(dev_map, instructions))
-                parked, closed, open, mod_date = vision_safety.visual_status()
+                parked, closed, is_open, mod_date = vision_safety.visual_status()
                 if parked:
                     social_server.post_social_message("Vision Safety says Scope is parked, closing roof")
-                    super_user_commands.close_roof_cmd()
+                    super_user_commands.toggle_roof()
                     # wait for roof to close
                     time.sleep(30)
-                    parked, closed, open, mod_date = vision_safety.visual_status()
+                    parked, closed, is_open, mod_date = vision_safety.visual_status()
                     if closed:
                         social_server.post_social_message("Vision Safety says roof is closed")
                     else:
@@ -100,7 +100,7 @@ if __name__ == "__main__":
                         "Telescope mount": 'off',
                         "Roof motor": 'off',
                         "Iris inside light": 'off',
-                        "Iris inside camera":"on"
+                        "Iris inside camera": "on"
                     }
                 ))
 
@@ -116,5 +116,11 @@ if __name__ == "__main__":
         logger.info('Problem')
         logger.exception("Exception")
 
-
     logger.info('End End Sequence')
+    with open("safety.txt", "w") as file:  # 'w' mode to write (overwrites if file exists)
+        file.write("USER SAFE")
+
+if __name__ == "__main__":
+    do_main()
+
+
