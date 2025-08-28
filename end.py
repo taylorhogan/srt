@@ -67,7 +67,7 @@ def do_main ():
                 parked, closed, is_open, mod_date = vision_safety.visual_status()
                 if parked:
                     social_server.post_social_message("Vision Safety says Scope is parked, closing roof")
-                    super_user_commands.toggle_roof()
+                    super_user_commands.toggle_roof(dev_map)
                     # wait for roof to close
                     time.sleep(30)
                     parked, closed, is_open, mod_date = vision_safety.visual_status()

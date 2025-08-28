@@ -16,8 +16,8 @@ import vision_safety
 
 
 
-def toggle_roof ():
-    dev_map = asyncio.run(ku.make_discovery_map())
+def toggle_roof (dev_map):
+
     instructions = (dict
         (
         {
@@ -38,8 +38,9 @@ def toggle_roof ():
     asyncio.run(ku.kasa_do(dev_map, instructions))
 
 def open_roof_with_option (check:bool):
+    dev_map = asyncio.run(ku.make_discovery_map())
     if check:
-        dev_map = asyncio.run(ku.make_discovery_map())
+
         instructions = (dict
             (
             {
@@ -63,7 +64,7 @@ def open_roof_with_option (check:bool):
         if parked:
             if closed:
                 social_server.post_social_message("Vision Safety says roof is closed, opening roof")
-                toggle_roof()
+                toggle_roof(dev_map)
 
             else:
                 social_server.post_social_message("Vision Safety says roof is NOT closed, therefore will not open")
@@ -72,7 +73,7 @@ def open_roof_with_option (check:bool):
             social_server.post_social_message("Vision Safety says Scope is NOT parked, therefore will not open")
             return
     else:
-        toggle_roof()
+        toggle_roof(dev_map)
 
 
 

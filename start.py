@@ -27,6 +27,8 @@ if __name__ == "__main__":
             "Iris door light": 'off',
             "Iris inside light": "off",
             "Driveway lights": "off",
+
+
             "Iris inside camera":"off"
         }
     ))

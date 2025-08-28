@@ -15,7 +15,7 @@ import astroplan.plots
 from astroplan import FixedTarget
 from astroplan import Observer
 from astroplan.plots import plot_finder_image
-from astropy.coordinates import EarthLocation
+from astropy.coordinates import EarthLocation, AltAz, get_body
 from astropy.time import Time
 from matplotlib import dates
 import logging
@@ -41,6 +41,22 @@ def get_horizon_from_azimuth(this_az, az, al):
     return al[-1]
 
 
+def get_dark_times (my_observatory, observe_time):
+
+    start = observe_time[0]
+    local_tz = pytz.timezone('America/New_York')
+    utc_timezone = pytz.utc
+
+    end_of_dark_naive = my_observatory.twilight_morning_astronomical(Time(start), which='next').datetime
+    end_of_dark_utc = utc_timezone.localize(end_of_dark_naive)
+    end_of_dark_local = end_of_dark_utc.astimezone(local_tz)
+
+    start_of_dark_naive = my_observatory.twilight_evening_astronomical(Time(start), which='next').datetime
+    start_of_dark_utc = utc_timezone.localize(start_of_dark_naive)
+    start_of_dark_local = start_of_dark_utc.astimezone(local_tz)
+
+    return start_of_dark_local, end_of_dark_local
+
 def find_alt_az_horizon_times(dso, my_observatory, observe_time):
     altitude = (my_observatory.altaz(observe_time, dso).alt) * (1 / u.deg)
 
@@ -58,14 +74,9 @@ def find_alt_az_horizon_times(dso, my_observatory, observe_time):
     start = observe_time[0]
     local_tz = pytz.timezone('America/New_York')
     utc_timezone = pytz.utc
+    start_of_dark_local, end_of_dark_local = get_dark_times(my_observatory, observe_time)
 
-    end_of_dark_naive = my_observatory.twilight_morning_astronomical(Time(start), which='next').datetime
-    end_of_dark_utc = utc_timezone.localize(end_of_dark_naive)
-    end_of_dark_local = end_of_dark_utc.astimezone(local_tz)
 
-    start_of_dark_naive = my_observatory.twilight_evening_astronomical(Time(start), which='next').datetime
-    start_of_dark_utc = utc_timezone.localize(start_of_dark_naive)
-    start_of_dark_local = start_of_dark_utc.astimezone(local_tz)
 
     for idx in range(len(local_datetime)):
         h = get_horizon_from_azimuth(azimuth[idx], az, al)
@@ -104,6 +115,12 @@ def plot_my_dso_and_horizon(dso, my_observatory, observe_time):
     local_tz = pytz.timezone('America/New_York')
     ax.plot(local_datetime, masked_altitude)
     ax.plot(local_datetime, horizon)
+
+    moon = get_body("moon", observe_time, location=location)
+    altaz = moon.transform_to(AltAz(obstime=observe_time, location=location))
+    moon_alt = altaz.alt.deg
+    moon_alt = np.ma.array(moon_alt, mask=moon_alt < 0)
+    ax.plot(local_datetime, moon_alt)
 
     ax.set_xlim([local_datetime[0], local_datetime[-1]])
     date_formatter = dates.DateFormatter('%H', tz=local_tz)
@@ -162,7 +179,7 @@ def show_plots(dso):
     sunset_tonight = my_observatory.sun_set_time(time, which='nearest')
     sunrise_tonight = my_observatory.sun_rise_time(time, which='nearest')
 
-    object_is_up = my_observatory.target_is_up(time, dso)
+    #object_is_up = my_observatory.target_is_up(time, dso)
 
     observe_time = sunset_tonight
     observe_time = observe_time + np.linspace(-1, 14, 55) * u.hour
@@ -208,6 +225,7 @@ def show_plots(dso):
         logger = logging.getLogger(__name__)
         logger.info('Problem')
         logger.exception("Exception")
+
 
     return altitude_path, image_path, sky_path
 
@@ -290,10 +308,10 @@ def best_day_for_dso(dso):
 
 
 def test_me():
-    obj = is_a_dso_object("m13")
+    obj = is_a_dso_object("m31")
     d, t = best_day_for_dso(obj)
     print (d, t)
-    show_plots(obj)
+    #show_plots(obj)
 
 
 
