@@ -112,6 +112,15 @@ def plot_my_dso_and_horizon(dso, my_observatory, observe_time):
     ax = plt.gca()
     style_kwargs = None
 
+    longitude = cfg["location"]["longitude"]
+    latitude = cfg["location"]["latitude"]
+    elevation = cfg["location"]["elevation"]
+    observatory_name = cfg["location"]["observatory_name"]
+
+    location = EarthLocation.from_geodetic(longitude * u.deg, latitude * u.deg, elevation * u.m)
+    my_observatory = Observer(location=location, name=observatory_name, timezone="US/Eastern")
+
+
     local_tz = pytz.timezone('America/New_York')
     ax.plot(local_datetime, masked_altitude)
     ax.plot(local_datetime, horizon)
@@ -308,10 +317,10 @@ def best_day_for_dso(dso):
 
 
 def test_me():
-    obj = is_a_dso_object("m31")
-    d, t = best_day_for_dso(obj)
-    print (d, t)
-    #show_plots(obj)
+    obj = is_a_dso_object("ngc7217")
+    #d, t = best_day_for_dso(obj)
+    #print (d, t)
+    show_plots(obj)
 
 
 
