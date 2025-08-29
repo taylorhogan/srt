@@ -7,7 +7,6 @@ async def make_discovery_map():
     devices = await Discover.discover()
     for dev in devices.values():
         await dev.update()
-        print(dev.host + " " + dev.alias)
         map_from_name_to_ip.update({dev.alias: dev.host})
     return map_from_name_to_ip
 
