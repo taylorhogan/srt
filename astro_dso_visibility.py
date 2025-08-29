@@ -3,7 +3,7 @@
 #   how many hours will it be visible > some altitude
 # https://astroplan.readthedocs.io/en/stable/
 import datetime
-import json
+import weather
 import operator
 import os
 
@@ -116,25 +116,52 @@ def plot_my_dso_and_horizon(dso, my_observatory, observe_time):
     latitude = cfg["location"]["latitude"]
     elevation = cfg["location"]["elevation"]
     observatory_name = cfg["location"]["observatory_name"]
+    city = cfg["location"]["city"]
 
     location = EarthLocation.from_geodetic(longitude * u.deg, latitude * u.deg, elevation * u.m)
     my_observatory = Observer(location=location, name=observatory_name, timezone="US/Eastern")
 
 
     local_tz = pytz.timezone('America/New_York')
-    ax.plot(local_datetime, masked_altitude)
-    ax.plot(local_datetime, horizon)
+    #plot the altitude of the DSO
+    ax.plot(local_datetime, masked_altitude, color='purple', label = dso.name)
 
+    #plot the horizon
+    ax.plot(local_datetime, horizon, color='green', linestyle='solid', label = 'Horizon'   )
+
+    #plot the moon
     moon = get_body("moon", observe_time, location=location)
     altaz = moon.transform_to(AltAz(obstime=observe_time, location=location))
     moon_alt = altaz.alt.deg
     moon_alt = np.ma.array(moon_alt, mask=moon_alt < 0)
-    ax.plot(local_datetime, moon_alt)
+    ax.plot(local_datetime, moon_alt, color='blue', label = 'Moon')
+
+    #plot the cloud cover
+    cloud_times,cloud_covers = weather.get_cloud_coverage(latitude, longitude, 24)
+    time_format = "%Y-%m-%d %H:%M"
+    clipped_cloud = []
+    for i in range(len(local_datetime)):
+        hour = local_datetime[i].hour
+        found_hour = False
+        for j in range(len(cloud_times)):
+            cloud_time_hour = cloud_times[j]
+            if hour == cloud_time_hour:
+                found_hour = True
+                clipped_cloud.append(cloud_covers[j]/100*90)
+                print (str(hour), cloud_covers[j], cloud_time_hour)
+
+            if found_hour:
+                break
+
+
+    ax.plot(local_datetime, clipped_cloud, color='red', label = 'Cloud Cover')
+
 
     ax.set_xlim([local_datetime[0], local_datetime[-1]])
     date_formatter = dates.DateFormatter('%H', tz=local_tz)
     ax.xaxis.set_major_formatter(date_formatter)
     plt.setp(ax.get_xticklabels(), rotation=30, ha='right')
+    plt.legend(loc="upper right", title="Legend")
 
     # Shade background during night time
 
@@ -184,7 +211,7 @@ def show_plots(dso):
     location = EarthLocation.from_geodetic(longitude * u.deg, latitude * u.deg, elevation * u.m)
     my_observatory = Observer(location=location, name=observatory_name, timezone="US/Eastern")
     time = Time.now()
-    now = datetime.datetime.now()
+
     sunset_tonight = my_observatory.sun_set_time(time, which='nearest')
     sunrise_tonight = my_observatory.sun_rise_time(time, which='nearest')
 
@@ -195,21 +222,21 @@ def show_plots(dso):
 
     dir_name = os.path.dirname(__file__)
     scratch_dir = os.path.join(dir_name + "/scratch")
-    image_path = sky_path = horizon_path = None
-
+    image_path = sky_path = altitude_path = None
+    print ('a')
     if not os.path.exists(scratch_dir):
         os.mkdir(scratch_dir)
-    try:
-        #ax, hdu = plot_finder_image(dso, fov_radius=42*u.arcmin)
-        ax, hdu = plot_finder_image(dso)
-
-        image_path = os.path.join(scratch_dir, "image.png")
-        plt.savefig(image_path)
-        plt.clf()
-    except:
-        logger = logging.getLogger(__name__)
-        logger.info('Problem')
-        logger.exception("Exception")
+    # try:
+    #     #ax, hdu = plot_finder_image(dso, fov_radius=42*u.arcmin)
+    #     ax, hdu = plot_finder_image(dso)
+    #
+    #     image_path = os.path.join(scratch_dir, "image.png")
+    #     plt.savefig(image_path)
+    #     plt.clf()
+    # except:
+    #     logger = logging.getLogger(__name__)
+    #     logger.info('Problem')
+    #     logger.exception("Exception")
 
     try:
 
@@ -224,10 +251,10 @@ def show_plots(dso):
         logger.exception("Exception")
 
     try:
-
+        print("a")
         plot_my_dso_and_horizon(dso, my_observatory, observe_time)
         altitude_path = os.path.join(scratch_dir, "horizon.png")
-
+        print ("b")
         plt.savefig(altitude_path)
         plt.clf()
     except:

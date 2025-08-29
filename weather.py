@@ -1,11 +1,12 @@
 import asyncio
-import datetime
+from datetime import datetime
 import os
 
 import python_weather
 
 import config
-
+import requests
+import pytz
 cfg = config.data()
 
 
@@ -98,6 +99,72 @@ def get_current_weather(current) -> [str, bool]:
     return description, weather_ok
 
 
+
+
+
+
+
+def get_cloud_coverage(lat, lon, hours):
+
+
+
+    # Open-Meteo Forecast API (no key needed)
+    forecast_url = "https://api.open-meteo.com/v1/forecast"
+    params = {
+        "latitude": lat,
+        "longitude": lon,
+        "hourly": "cloud_cover",
+        "forecast_days": 2,  # Ensure enough days
+        "timezone": "auto"
+    }
+
+    try:
+        response = requests.get(forecast_url, params=params)
+        response.raise_for_status()
+        data = response.json()
+
+
+        cloud_times = data["hourly"]["time"]
+        cloud_covers = data["hourly"]["cloud_cover"]
+        local_tz = pytz.timezone('America/New_York')
+        utc_timezone = pytz.utc
+        local_cloud_times = []
+        local_cloud_covers = []
+        now = datetime.now(local_tz)
+
+
+        for i in range(len(cloud_times)):
+            forecast_time = datetime.fromisoformat(cloud_times[i])
+            forcast_time_local = forecast_time.astimezone(local_tz)
+            if forcast_time_local < now:
+                continue
+
+
+            time_str = forcast_time_local.strftime("%Y-%m-%d %H:%M")
+            hour = forcast_time_local.hour
+            print(f"{hour}: {cloud_covers[i]}% cloud cover")
+            local_cloud_times.append (hour)
+            local_cloud_covers.append (cloud_covers[i])
+
+
+    except requests.RequestException as e:
+        print(f"Error fetching forecast: {e}")
+    return local_cloud_times, local_cloud_covers
+
+
+
+
+
+
+
+
+
+
+
 if __name__ == '__main__':
-    description, weather_ok = get_current_weather(False)
-    print(description)
+    longitude = cfg["location"]["longitude"]
+    latitude = cfg["location"]["latitude"]
+    get_cloud_coverage(latitude, longitude, 24)
+    #description, weather_ok = get_current_weather(False)
+    #print(description)
+
