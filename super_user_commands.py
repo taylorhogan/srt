@@ -17,7 +17,7 @@ import vision_safety
 
 
 def toggle_roof (dev_map):
-
+    new_dev_map = asyncio.run(ku.make_discovery_map())
     instructions = (dict
         (
         {
@@ -25,7 +25,7 @@ def toggle_roof (dev_map):
         }
     ))
 
-    asyncio.run(ku.kasa_do(dev_map, instructions))
+    asyncio.run(ku.kasa_do(new_dev_map, instructions))
     time.sleep(10)
     r = requests.get('http://192.168.87.41/relay/0?turn=on')
     time.sleep(30)
@@ -35,7 +35,7 @@ def toggle_roof (dev_map):
             "Roof motor": 'off',
         }
     ))
-    asyncio.run(ku.kasa_do(dev_map, instructions))
+    asyncio.run(ku.kasa_do(new_dev_map, instructions))
 
 def open_roof_with_option (check:bool):
     dev_map = asyncio.run(ku.make_discovery_map())

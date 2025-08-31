@@ -58,12 +58,12 @@ def do_main ():
                     {
                         "Telescope mount": 'off',
                         "Roof motor": 'on',
-                        "Iris inside light": 'on',
-                        "Iris inside camera": "on"
+                        "Iris inside light": 'on'
                     }
                 ))
 
                 asyncio.run(ku.kasa_do(dev_map, instructions))
+
                 parked, closed, is_open, mod_date = vision_safety.visual_status()
                 if parked:
                     social_server.post_social_message("Vision Safety says Scope is parked, closing roof")
@@ -100,7 +100,6 @@ def do_main ():
                         "Telescope mount": 'off',
                         "Roof motor": 'off',
                         "Iris inside light": 'off',
-                        "Iris inside camera": "on"
                     }
                 ))
 
