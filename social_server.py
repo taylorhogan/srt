@@ -76,7 +76,12 @@ def show_cmd(words, index, m, account):
            example show m 13
     """
     logger = logging.getLogger(__name__)
-    dso_name = get_dso_object_name(words, index)
+    if len(words) <= index + 1:
+        best_instruction = instructions.get_dso_object_tonight()
+        dso_name = best_instruction["dso"]
+        post_social_message("show command needs an object name")
+    else:
+        dso_name = get_dso_object_name(words, index)
     if dso_name is not None:
         obj = astro_dso_visibility.is_a_dso_object(dso_name)
         if obj is not None:
@@ -209,10 +214,10 @@ def do_command(sentence, m, account):
     cmd = sentence.lower()
     words = cmd.split(" ")
     seen_base_command = False
+    #todo does not seem to remove leading blanks
 
     logger = logging.getLogger(__name__)
     logger.info("Got Command: " + sentence)
-
     action = keywords.get(words[1].strip(), "no_key")
     logger.info("Action: " + str(action))
 
