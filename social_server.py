@@ -79,7 +79,6 @@ def show_cmd(words, index, m, account):
     if len(words) <= index + 1:
         best_instruction = instructions.get_dso_object_tonight()
         dso_name = best_instruction["dso"]
-        post_social_message("show command needs an object name")
     else:
         dso_name = get_dso_object_name(words, index)
     if dso_name is not None:

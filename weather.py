@@ -104,7 +104,7 @@ def get_current_weather(current) -> [str, bool]:
 
 
 
-def get_cloud_coverage(lat, lon, hours):
+def get_weather_by_hour(lat, lon, hours):
 
 
 
@@ -113,7 +113,7 @@ def get_cloud_coverage(lat, lon, hours):
     params = {
         "latitude": lat,
         "longitude": lon,
-        "hourly": "cloud_cover",
+        "hourly": ["cloud_cover", "precipitation_probability","wind_speed_80m"],
         "forecast_days": 2,  # Ensure enough days
         "timezone": "auto"
     }
@@ -126,10 +126,16 @@ def get_cloud_coverage(lat, lon, hours):
 
         cloud_times = data["hourly"]["time"]
         cloud_covers = data["hourly"]["cloud_cover"]
+        precipitation_probability = data["hourly"]["precipitation_probability"]
+        wind_speed = data["hourly"]["wind_speed_80m"]
+
         local_tz = pytz.timezone('America/New_York')
         utc_timezone = pytz.utc
         local_cloud_times = []
         local_cloud_covers = []
+        local_precipitation_probability = []
+        local_wind_speed = []
+
         now = datetime.now(local_tz)
 
 
@@ -145,11 +151,14 @@ def get_cloud_coverage(lat, lon, hours):
             print(f"{hour}: {cloud_covers[i]}% cloud cover")
             local_cloud_times.append (hour)
             local_cloud_covers.append (cloud_covers[i])
+            local_precipitation_probability.append (precipitation_probability[i])
+            local_wind_speed.append(wind_speed[i])
 
 
     except requests.RequestException as e:
         print(f"Error fetching forecast: {e}")
-    return local_cloud_times, local_cloud_covers
+    return local_cloud_times, local_cloud_covers, local_precipitation_probability, local_wind_speed
+
 
 
 
@@ -164,7 +173,7 @@ def get_cloud_coverage(lat, lon, hours):
 if __name__ == '__main__':
     longitude = cfg["location"]["longitude"]
     latitude = cfg["location"]["latitude"]
-    get_cloud_coverage(latitude, longitude, 24)
+    get_weather_by_hour(latitude, longitude, 24)
     #description, weather_ok = get_current_weather(False)
     #print(description)
 

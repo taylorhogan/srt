@@ -137,9 +137,11 @@ def plot_my_dso_and_horizon(dso, my_observatory, observe_time):
     ax.plot(local_datetime, moon_alt, color='blue', label = 'Moon')
 
     #plot the cloud cover
-    cloud_times,cloud_covers = weather.get_cloud_coverage(latitude, longitude, 24)
+    cloud_times,cloud_covers,pp,wsp = weather.get_weather_by_hour(latitude, longitude, 24)
     time_format = "%Y-%m-%d %H:%M"
     clipped_cloud = []
+    clipped_pp = []
+    clipped_wsp = []
     for i in range(len(local_datetime)):
         hour = local_datetime[i].hour
         found_hour = False
@@ -148,6 +150,8 @@ def plot_my_dso_and_horizon(dso, my_observatory, observe_time):
             if hour == cloud_time_hour:
                 found_hour = True
                 clipped_cloud.append(cloud_covers[j]/100*90)
+                clipped_pp.append(pp[j]/100*90)
+                clipped_wsp.append(wsp[j]/40*90)
                 print (str(hour), cloud_covers[j], cloud_time_hour)
 
             if found_hour:
@@ -155,6 +159,8 @@ def plot_my_dso_and_horizon(dso, my_observatory, observe_time):
 
 
     ax.plot(local_datetime, clipped_cloud, color='red', label = 'Cloud Cover')
+    ax.plot(local_datetime, clipped_pp, color='pink', label='Prob. Precip.')
+    ax.plot(local_datetime, clipped_wsp, color='black', label='Wind Speed')
 
 
     ax.set_xlim([local_datetime[0], local_datetime[-1]])
