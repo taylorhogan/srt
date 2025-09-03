@@ -109,8 +109,10 @@ def plot_my_dso_and_horizon(dso, my_observatory, observe_time):
     masked_altitude = np.ma.array(altitude, mask=altitude < 0)
     local_datetime = my_observatory.astropy_time_to_datetime(observe_time)
 
+    plt.figure(figsize=(10, 12))
     ax = plt.gca()
-    style_kwargs = None
+
+
 
     longitude = cfg["location"]["longitude"]
     latitude = cfg["location"]["latitude"]
@@ -124,17 +126,17 @@ def plot_my_dso_and_horizon(dso, my_observatory, observe_time):
 
     local_tz = pytz.timezone('America/New_York')
     #plot the altitude of the DSO
-    ax.plot(local_datetime, masked_altitude, color='purple', label = dso.name)
+    ax.plot(local_datetime, masked_altitude, color='purple', label = dso.name,linewidth=6)
 
     #plot the horizon
-    ax.plot(local_datetime, horizon, color='green', linestyle='solid', label = 'Horizon'   )
+    ax.plot(local_datetime, horizon, color='green', linestyle='solid', label = 'Horizon' ,linewidth=6  )
 
     #plot the moon
     moon = get_body("moon", observe_time, location=location)
     altaz = moon.transform_to(AltAz(obstime=observe_time, location=location))
     moon_alt = altaz.alt.deg
     moon_alt = np.ma.array(moon_alt, mask=moon_alt < 0)
-    ax.plot(local_datetime, moon_alt, color='blue', label = 'Moon')
+    ax.plot(local_datetime, moon_alt, color='blue', label = 'Moon',linewidth=2)
 
     #plot the cloud cover
     cloud_times,cloud_covers,pp,wsp = weather.get_weather_by_hour(latitude, longitude, 24)
@@ -158,16 +160,16 @@ def plot_my_dso_and_horizon(dso, my_observatory, observe_time):
                 break
 
 
-    ax.plot(local_datetime, clipped_cloud, color='red', label = 'Cloud Cover')
-    ax.plot(local_datetime, clipped_pp, color='pink', label='Prob. Precip.')
-    ax.plot(local_datetime, clipped_wsp, color='black', label='Wind Speed')
+    ax.plot(local_datetime, clipped_cloud, color='red', label = 'Cloud Cover',linewidth=2)
+    ax.plot(local_datetime, clipped_pp, color='pink', label='Prob. Precip.',linewidth=2)
+    ax.plot(local_datetime, clipped_wsp, color='black', label='Wind Speed % of 25 mph',linewidth=2)
 
 
     ax.set_xlim([local_datetime[0], local_datetime[-1]])
     date_formatter = dates.DateFormatter('%H', tz=local_tz)
     ax.xaxis.set_major_formatter(date_formatter)
     plt.setp(ax.get_xticklabels(), rotation=30, ha='right')
-    plt.legend(loc="center", bbox_to_anchor = (0.5, -0.1), title="Legend")
+    plt.legend(loc="center", bbox_to_anchor = (0.5, -0.1), title="Legend", fontsize=10, ncol=4, fancybox=True, shadow=True)
 
     # Shade background during night time
 
