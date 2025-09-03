@@ -1,13 +1,12 @@
 import asyncio
 from datetime import datetime
 import os
-
 import python_weather
-from numba.scripts.generate_lower_listing import description
-
 import config
 import requests
 import pytz
+
+
 cfg = config.data()
 
 
