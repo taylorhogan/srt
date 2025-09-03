@@ -167,7 +167,7 @@ def plot_my_dso_and_horizon(dso, my_observatory, observe_time):
     date_formatter = dates.DateFormatter('%H', tz=local_tz)
     ax.xaxis.set_major_formatter(date_formatter)
     plt.setp(ax.get_xticklabels(), rotation=30, ha='right')
-    plt.legend(loc="upper right", title="Legend")
+    plt.legend(loc="center", bbox_to_anchor = (0.5, -0.1), title="Legend")
 
     # Shade background during night time
 
