@@ -14,10 +14,8 @@ import end
 import fitstojpg
 import instructions
 import obs_calendar
-import sun as s
 import super_user_commands as su
 import utils
-import weather
 from utils import topic_to_sched
 import json
 import time
@@ -65,17 +63,17 @@ def best_cmd(words, index, m, account):
             if best_date is not None:
                 formatted_date = best_date.strftime("%Y-%m-%d")
                 post_social_message(dso_name + " is above horizon for " + str(best_time) + " on " + formatted_date)
+                if best_time.hour > 3:
+                    image_cmd(words, index, m, account)
+
             else:
                 post_social_message(dso_name + " is never above horizon")
         else:
             post_social_message(dso_name + " Not a known object\n")
 
 
-def show_cmd(words, index, m, account):
-    """
-           example show m 13
-    """
-    logger = logging.getLogger(__name__)
+def tonight_cmd(words, index, m, account):
+
     if len(words) <= index + 1:
         best_instruction = instructions.get_dso_object_tonight()
         dso_name = best_instruction["dso"]
@@ -84,7 +82,7 @@ def show_cmd(words, index, m, account):
     if dso_name is not None:
         obj = astro_dso_visibility.is_a_dso_object(dso_name)
         if obj is not None:
-            horizon, image, sky = astro_dso_visibility.show_plots(obj)
+            horizon, image, sky, weather_ok = astro_dso_visibility.show_plots(obj)
             if horizon is not None:
                 post_social_message("altitude \n", horizon)
             if image is not None:
@@ -93,20 +91,8 @@ def show_cmd(words, index, m, account):
                 post_social_message("sky\n", sky)
         else:
             post_social_message(dso_name + " Not a known object\n")
+    return
 
-
-def weather_cmd(words, index, m, account):
-    is_night, angle = s.is_night()
-    sun = "daytime"
-    if is_night:
-        sun = "night "
-    reply = "\nMode: " + sun + "\n"
-    reply += "Sun Angle: " + "{:10.2f}".format(angle) + "\n"
-    description, weather_ok = weather.get_current_weather(True)
-    reply += description
-    post_social_message(reply)
-    description, weather_ok = weather.get_current_weather(False)
-    post_social_message(description)
 
 
 def version_cmd(words, index, m, account):
@@ -195,13 +181,12 @@ def latest_cmd(words, index, m, account):
 
 
 keywords = {
-    "tonight": show_cmd,
+    "tonight": tonight_cmd,
     "best": best_cmd,
     "image": image_cmd,
     "db": db_cmd,
     "version": version_cmd,
     "status": status_cmd,
-    "weather": weather_cmd,
     "latest": latest_cmd,
     "calendar": calendar_cmd,
     "help": help_cmd,

@@ -135,21 +135,15 @@ def waiting_for_sunrise():
 def announce_plans_before_sunset():
     global observatory_state
     dso = "Unknown"
-    try:
 
-        best_instruction = instructions.get_dso_object_tonight()
-        dso = best_instruction["dso"]
-        requestor = best_instruction["requestor"]
-        description, weather_ok = weather.get_current_weather(False)
-    except:
-        weather_ok = False
+    weather_ok = social_server.tonight_cmd("", 1, "", "")
 
-    obj = astro_dso_visibility.is_a_dso_object(dso)
-    horizon, image, sky = astro_dso_visibility.show_plots(obj)
-    if horizon is not None:
-        social_server.post_social_message("altitude \n", horizon)
+    best_instruction = instructions.get_dso_object_tonight()
+    dso = best_instruction["dso"]
+    requestor = best_instruction["requestor"]
 
     if weather_ok:
+
         social_server.post_social_message("Will image " + dso + " requested by " + requestor + " tonight")
         obs_calendar.set_today_stat('image', dso)
         set_state(observatory_state["state"], dso, True)

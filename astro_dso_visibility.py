@@ -14,7 +14,7 @@ import pytz
 import astroplan.plots
 from astroplan import FixedTarget
 from astroplan import Observer
-from astroplan.plots import plot_finder_image
+from astroplan import moon_illumination
 from astropy.coordinates import EarthLocation, AltAz, get_body
 from astropy.time import Time
 from matplotlib import dates
@@ -136,7 +136,13 @@ def plot_my_dso_and_horizon(dso, my_observatory, observe_time):
     altaz = moon.transform_to(AltAz(obstime=observe_time, location=location))
     moon_alt = altaz.alt.deg
     moon_alt = np.ma.array(moon_alt, mask=moon_alt < 0)
-    ax.plot(local_datetime, moon_alt, color='blue', label = 'Moon',linewidth=2)
+    year = local_datetime[0].year
+    month = local_datetime[0].month
+    day = local_datetime[0].day
+    specific_date = Time(str(year) + '-' + str(month) + '-' + str(day) + 'T00:00:00', format='isot', scale='utc')
+    illumination = int(float(moon_illumination(specific_date) * 100))
+    print (illumination)
+    ax.plot(local_datetime, moon_alt, color='blue', label = 'Moon(' + str(illumination) + "%)",linewidth=2)
 
     #plot the cloud cover
     cloud_times,cloud_covers,pp,wsp = weather.get_weather_by_hour(latitude, longitude, 24)
@@ -207,7 +213,8 @@ def plot_my_dso_and_horizon(dso, my_observatory, observe_time):
     ax.figure.canvas.draw()
 
     # Output.
-    return ax
+    weather_ok = False
+    return weather_ok
 
 
 def show_plots(dso):
@@ -245,7 +252,7 @@ def show_plots(dso):
     #     logger = logging.getLogger(__name__)
     #     logger.info('Problem')
     #     logger.exception("Exception")
-
+    weather_ok = False
     try:
 
         astroplan.plots.plot_sky(dso, my_observatory, observe_time)
@@ -260,7 +267,7 @@ def show_plots(dso):
 
     try:
         print("a")
-        plot_my_dso_and_horizon(dso, my_observatory, observe_time)
+        weather_ok = plot_my_dso_and_horizon(dso, my_observatory, observe_time)
         altitude_path = os.path.join(scratch_dir, "horizon.png")
         print ("b")
         plt.savefig(altitude_path)
@@ -271,7 +278,7 @@ def show_plots(dso):
         logger.exception("Exception")
 
 
-    return altitude_path, image_path, sky_path
+    return altitude_path, image_path, sky_path, weather_ok
 
 
 def get_above_horizon_time(dso, time):
@@ -355,7 +362,8 @@ def test_me():
     obj = is_a_dso_object("ngc7217")
     #d, t = best_day_for_dso(obj)
     #print (d, t)
-    show_plots(obj)
+    p1, p2, p3, weather_ok = show_plots(obj)
+    print ("weather ok", weather_ok)
 
 
 

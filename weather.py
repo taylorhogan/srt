@@ -1,11 +1,10 @@
 import asyncio
 from datetime import datetime
-import os
 import python_weather
-import config
-import requests
 import pytz
+import requests
 
+import config
 
 cfg = config.data()
 
@@ -29,41 +28,13 @@ def get_sunrise_sunset() -> [datetime, datetime]:
     return asyncio.run(get_sunrise_sunset_internal())
 
 
-def get_weather(current) -> [str, bool]:
-
-    weather_ok = True
-    description = ""
-    if weather_ok:
-        description += "Will image tonight"
-    else:
-        description += "Will NOT image tonight"
-
-    return description, weather_ok
-
-
-
-def get_current_weather(current) -> [str, bool]:
-
-    description, weather_ok = get_weather(current)
-    print ("after get weather")
-    return description, weather_ok
-
-
-
-
-
-
-
 def get_weather_by_hour(lat, lon, hours):
-
-
-
     # Open-Meteo Forecast API (no key needed)
     forecast_url = "https://api.open-meteo.com/v1/forecast"
     params = {
         "latitude": lat,
         "longitude": lon,
-        "hourly": ["cloud_cover", "precipitation_probability","wind_speed_80m"],
+        "hourly": ["cloud_cover", "precipitation_probability", "wind_speed_80m"],
         "forecast_days": 2,  # Ensure enough days
         "timezone": "auto"
     }
@@ -73,6 +44,7 @@ def get_weather_by_hour(lat, lon, hours):
         response.raise_for_status()
         data = response.json()
 
+        sunrise, sunset = get_sunrise_sunset()
 
         cloud_times = data["hourly"]["time"]
         cloud_covers = data["hourly"]["cloud_cover"]
@@ -88,42 +60,32 @@ def get_weather_by_hour(lat, lon, hours):
 
         now = datetime.now(local_tz)
 
-
+        sunrise_hour = sunrise.hour
+        sunset_hour = sunset.hour
+        print(f"Sunrise: {sunrise_hour}, Sunset: {sunset_hour}")
         for i in range(len(cloud_times)):
             forecast_time = datetime.fromisoformat(cloud_times[i])
             forcast_time_local = forecast_time.astimezone(local_tz)
             if forcast_time_local < now:
                 continue
 
-
             time_str = forcast_time_local.strftime("%Y-%m-%d %H:%M")
             hour = forcast_time_local.hour
             print(f"{hour}: {cloud_covers[i]}% cloud cover")
-            local_cloud_times.append (hour)
-            local_cloud_covers.append (cloud_covers[i])
-            local_precipitation_probability.append (precipitation_probability[i])
+            local_cloud_times.append(hour)
+            local_cloud_covers.append(cloud_covers[i])
+            local_precipitation_probability.append(precipitation_probability[i])
             local_wind_speed.append(wind_speed[i])
 
 
     except requests.RequestException as e:
         print(f"Error fetching forecast: {e}")
+
     return local_cloud_times, local_cloud_covers, local_precipitation_probability, local_wind_speed
-
-
-
-
-
-
-
-
-
-
 
 
 if __name__ == '__main__':
     longitude = cfg["location"]["longitude"]
     latitude = cfg["location"]["latitude"]
     get_weather_by_hour(latitude, longitude, 24)
-    #description, weather_ok = get_current_weather(False)
-    #print(description)
-
+    print(get_sunrise_sunset())
