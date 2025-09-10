@@ -63,7 +63,8 @@ def best_cmd(words, index, m, account):
             if best_date is not None:
                 formatted_date = best_date.strftime("%Y-%m-%d")
                 post_social_message(dso_name + " is above horizon for " + str(best_time) + " on " + formatted_date)
-                if best_time.hour > 3:
+                hours = best_time.seconds / 3600
+                if hours > 3:
                     image_cmd(words, index, m, account)
 
             else:

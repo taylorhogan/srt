@@ -359,11 +359,13 @@ def best_day_for_dso(dso):
 
 
 def test_me():
-    obj = is_a_dso_object("ngc7217")
-    #d, t = best_day_for_dso(obj)
-    #print (d, t)
-    p1, p2, p3, weather_ok = show_plots(obj)
-    print ("weather ok", weather_ok)
+    obj = is_a_dso_object("m77")
+    d, t = best_day_for_dso(obj)
+    hours = t.seconds/3600
+    print (hours)
+    print (d, t)
+    #p1, p2, p3, weather_ok = show_plots(obj)
+    #print ("weather ok", weather_ok)
 
 
 
