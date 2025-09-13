@@ -261,7 +261,7 @@ def post_social_message(message, image=None, vis=None):
 
     if mastodon is None:
         mastodon = get_mastodon_instance()
-        print(mastodon)
+
 
     if image is None:
         mastodon.status_post(message, visibility=vis)

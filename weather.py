@@ -44,7 +44,7 @@ def get_weather_by_hour(lat, lon, hours):
         response.raise_for_status()
         data = response.json()
 
-        sunrise, sunset = get_sunrise_sunset()
+
 
         cloud_times = data["hourly"]["time"]
         cloud_covers = data["hourly"]["cloud_cover"]
@@ -60,9 +60,7 @@ def get_weather_by_hour(lat, lon, hours):
 
         now = datetime.now(local_tz)
 
-        sunrise_hour = sunrise.hour
-        sunset_hour = sunset.hour
-        print(f"Sunrise: {sunrise_hour}, Sunset: {sunset_hour}")
+
         for i in range(len(cloud_times)):
             forecast_time = datetime.fromisoformat(cloud_times[i])
             forcast_time_local = forecast_time.astimezone(local_tz)
