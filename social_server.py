@@ -75,11 +75,12 @@ def best_cmd(words, index, m, account):
 
 def tonight_cmd(words, index, m, account):
 
-    if len(words) <= index:
+    if len(words) == 2:
         best_instruction = instructions.get_dso_object_tonight()
         dso_name = best_instruction["dso"]
     else:
         dso_name = get_dso_object_name(words, index)
+
     if dso_name is not None:
         obj = astro_dso_visibility.is_a_dso_object(dso_name)
         if obj is not None:
