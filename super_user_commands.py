@@ -155,7 +155,7 @@ def image_nina(words, account):
     print("Starting Nina")
     path = utils.set_install_dir()
     print(path)
-    subprocess.Popen(["image_nina.bat"])
+    subprocess.Popen(["image_nina.bat"],shell=True)
     print("Done with Nina")
 
 def image_nina_a(words, account):
