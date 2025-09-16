@@ -148,7 +148,7 @@ def on_nina(words, account):
     os.chdir(path)
     #os.startfile("on_nina.bat")
     print(path)
-    subprocess.run(["on_nina.bat"])
+    subprocess.run(["on_nina.bat"],shell=True)
     print("Done with Nina")
 
 def image_nina(words, account):
