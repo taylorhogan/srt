@@ -244,3 +244,11 @@ def do_super_user_command(words, account):
     else:
         return False
 
+if __name__ == "__main__":
+    print("Starting Nina")
+    path = utils.set_install_dir()
+    os.chdir(path)
+    #os.startfile("on_nina.bat")
+    print(path)
+    subprocess.run(["on_nina.bat"])
+    print("Done with Nina")
