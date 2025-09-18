@@ -47,8 +47,11 @@ def do_main ():
     logger.info('Begin End Sequence')
 
     try:
+        with open("safety.txt", "w") as file:
+            file.write("USER SAFE")
+        logger.info ("before discovery")
         dev_map = asyncio.run(ku.make_discovery_map())
-
+        logger.info("after discovery")
         parked = pwi4_utils.get_is_parked()
         try:
             if parked:
@@ -61,11 +64,12 @@ def do_main ():
                         "Iris inside light": 'on'
                     }
                 ))
-
+                logger.info("step 1")
                 asyncio.run(ku.kasa_do(dev_map, instructions))
-
+                logger.info("step 2")
                 parked, closed, is_open, mod_date = vision_safety.visual_status()
                 if parked:
+                    logger.info("step 3")
                     social_server.post_social_message("Vision Safety says Scope is parked, closing roof")
                     super_user_commands.toggle_roof(dev_map)
                     # wait for roof to close
@@ -75,7 +79,7 @@ def do_main ():
                         social_server.post_social_message("Vision Safety says roof is closed")
                     else:
                         social_server.post_social_message("Vision Safety says roof is NOT closed")
-
+                    logger.info("step 4")
                     # turn on dehumidifier
                     r = requests.get('http://192.168.87.28/relay/0?turn=on')
                     # turn off lights
@@ -86,9 +90,9 @@ def do_main ():
                             "Roof motor": 'off',
                         }
                     ))
-
+                    logger.info("step 5")
                     asyncio.run(ku.kasa_do(dev_map, instructions))
-
+                    logger.info("step 6")
                 else:
                     social_server.post_social_message("Vision Safety says Scope is NOT parked")
 
@@ -102,9 +106,9 @@ def do_main ():
                         "Iris inside light": 'off',
                     }
                 ))
-
+                logger.info("step 7")
                 asyncio.run(ku.kasa_do(dev_map, instructions))
-
+                logger.info("step 8")
 
         except:
             logger.info('Problem')
@@ -116,10 +120,10 @@ def do_main ():
         logger.exception("Exception")
 
     logger.info('End End Sequence')
-    with open("safety.txt", "w") as file:  # 'w' mode to write (overwrites if file exists)
-        file.write("USER SAFE")
+
 
 if __name__ == "__main__":
+
     do_main()
 
 

@@ -26,7 +26,11 @@ if __name__ == "__main__":
             "Telescope mount": 'on',
             "Iris door light": 'off',
             "Iris inside light": "off",
-            "Driveway lights": "off"
+            "Driveway lights": "off",
+            "Deck lights": "off",
+            "Grill lights":"off",
+            "Iris landscape lights": "off",
+            "Main landscape lights": "off"
 
         }
     ))
