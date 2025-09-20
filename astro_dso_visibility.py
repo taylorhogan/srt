@@ -307,7 +307,11 @@ def get_above_horizon_time(dso, time):
 
 
 def air_mass (altitude):
-    return 1.0 / math.sin(math.radians(altitude))
+    h = math.sin(math.radians(altitude))
+    if h == 0:
+        return 100
+    else:
+        return 1.0 / math.sin(math.radians(altitude))
 
 def map_az_to_horizon():
     ax = plt.gca()
