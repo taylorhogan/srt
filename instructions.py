@@ -75,8 +75,11 @@ def calc_and_store_hours_above_horizon():
         if obj is not None:
             above, max_altitude  = astro_dso_visibility.get_above_horizon_time(obj, Time.now())
             instruction["above_horizon"] = str(above)
+            instruction["air_mass"] = "{:.2f}".format(max_altitude)
         else:
             instruction["above_horizon"] = '0'
+            instruction["air_mass"] = '0'
+
     with open('my_instructions.json', 'w') as f:
         f.writelines(json.dumps(instructions, indent=4))
 
@@ -154,7 +157,7 @@ def create_instructions_table():
     # ax.set_title("Image Requests", fontsize=20, pad=20)
 
     # Weekday labels
-    headers = ['DSO', 'Requestor', 'State', 'Date', 'Tonight', 'ID']
+    headers = ['DSO', 'Requestor', 'State', 'Date', 'Tonight', 'Air Mass','ID']
     for i, header in enumerate(headers):
         ax.text(i + 1.5, per_page, header, ha='center', fontsize=12, weight='bold')
 
@@ -169,7 +172,7 @@ def create_instructions_table():
             color = 'lightblue'
         if instruction["status"] == 'completed':
             color = 'pink'
-        for col_idx in range(6):
+        for col_idx in range(7):
             text = ''
 
             if col_idx == 0:
@@ -189,6 +192,8 @@ def create_instructions_table():
             elif col_idx == 4:
                 text = instruction["above_horizon"]
             elif col_idx == 5:
+                text = instruction["air_mass"]
+            elif col_idx == 6:
                 text = instruction["hash"]
 
             rect = mpatches.Rectangle((col_idx + 1, idx - 1), 1, 1, edgecolor="black", facecolor=color)
