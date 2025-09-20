@@ -347,7 +347,7 @@ def enumerate_days_of_year():
     first_day = datetime.date(now.year, now.month, now.day)
 
 
-    for day_number in range(1, 365):
+    for day_number in range(1, 10):
         current_day = first_day + datetime.timedelta(days=day_number - 1)
         yield current_day
 

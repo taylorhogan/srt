@@ -79,9 +79,9 @@ def calc_and_store_hours_above_horizon():
         else:
             instruction["above_horizon"] = '0'
             instruction["air_mass"] = '0'
-        try:
-            value = instruction['best']
-        except KeyError:
+
+        value = instruction.get("best",None)
+        if value is None:
             best_date, best_time, max_altitude = astro_dso_visibility.best_day_for_dso(obj)
             if best_date is None:
                 instruction['best'] = 'None'
