@@ -3,6 +3,8 @@
 #   how many hours will it be visible > some altitude
 # https://astroplan.readthedocs.io/en/stable/
 import datetime
+import math
+
 import weather
 import operator
 import os
@@ -75,6 +77,7 @@ def find_alt_az_horizon_times(dso, my_observatory, observe_time):
     local_tz = pytz.timezone('America/New_York')
     utc_timezone = pytz.utc
     start_of_dark_local, end_of_dark_local = get_dark_times(my_observatory, observe_time)
+    max_altitude = 0
 
 
 
@@ -95,15 +98,18 @@ def find_alt_az_horizon_times(dso, my_observatory, observe_time):
                     if finish_time is None:
                         finish_time = local_datetime[idx]
 
+                if altitude[idx] > max_altitude:
+                    max_altitude = altitude[idx]
+
     elapsed_time = None
     if start_time is not None:
         elapsed_time = finish_time - start_time
 
-    return altitude, azimuth, horizon, start_time, finish_time, elapsed_time
+    return altitude, azimuth, horizon, start_time, finish_time, elapsed_time, max_altitude
 
 
 def plot_my_dso_and_horizon(dso, my_observatory, observe_time):
-    altitude, azimuth, horizon, start_time, finish_time, elapsed_time = find_alt_az_horizon_times(dso, my_observatory,
+    altitude, azimuth, horizon, start_time, finish_time, elapsed_time, max_altitude = find_alt_az_horizon_times(dso, my_observatory,
                                                                                                   observe_time)
 
     masked_altitude = np.ma.array(altitude, mask=altitude < 0)
@@ -204,7 +210,7 @@ def plot_my_dso_and_horizon(dso, my_observatory, observe_time):
     ax.set_xlabel("Time")
     if elapsed_time is not None:
         title = dso.name + "\n" + "Start: " + start_time.strftime("%H:%M") + " Finish: " + finish_time.strftime(
-            "%H:%M") + " Elapsed Time: " + str(elapsed_time)
+            "%H:%M") + " Elapsed Time: " + str(elapsed_time) + " Air mass: " + "{:.2f}".format(air_mass(max_altitude))
     else:
         title = dso.name + " Not Visible"
     plt.title(title)
@@ -238,7 +244,7 @@ def show_plots(dso):
     dir_name = os.path.dirname(__file__)
     scratch_dir = os.path.join(dir_name + "/scratch")
     image_path = sky_path = altitude_path = None
-    print ('a')
+
     if not os.path.exists(scratch_dir):
         os.mkdir(scratch_dir)
     # try:
@@ -295,10 +301,13 @@ def get_above_horizon_time(dso, time):
 
     observe_time = sunset_tonight
     observe_time = observe_time + np.linspace(-1, 14, 55) * u.hour
-    altitude, azimuth, horizon, start_time, finish_time, elapsed_time = find_alt_az_horizon_times(dso, my_observatory,
+    altitude, azimuth, horizon, start_time, finish_time, elapsed_time, max_altitude = find_alt_az_horizon_times(dso, my_observatory,
                                                                                                   observe_time)
-    return elapsed_time
+    return elapsed_time, max_altitude
 
+
+def air_mass (altitude):
+    return 1.0 / math.sin(math.radians(altitude))
 
 def map_az_to_horizon():
     ax = plt.gca()
@@ -327,27 +336,31 @@ def map_az_to_horizon():
     return az, al
 
 
-def enumerate_days_of_year(year):
-    first_day = datetime.date(year, 1, 1)
-    last_day = datetime.date(year, 12, 31)
+def enumerate_days_of_year():
 
-    for day_number in range(1, (last_day - first_day).days + 2):
+    now = datetime.datetime.now()
+
+    first_day = datetime.date(now.year, now.month, now.day)
+
+
+    for day_number in range(1, 365):
         current_day = first_day + datetime.timedelta(days=day_number - 1)
-        yield day_number, current_day
+        yield current_day
 
 
 def best_day_for_dso(dso):
     # Example usage for the year 2025
-    year_to_enumerate = 2025
     best_time = None
     best_date = None
-    for day_number, day in enumerate_days_of_year(year_to_enumerate):
-        print(day.year, day.month, day.day)
+    max_altitude = 0
+    for  day in enumerate_days_of_year():
+
         this_day = datetime.datetime(day.year, day.month, day.day, 14, 0, 0)
         this_time = Time(this_day)
-        above_time = get_above_horizon_time(dso, this_time)
+        above_time, max_altitude = get_above_horizon_time(dso, this_time)
 
         if above_time is not None:
+            print(day.year, day.month, day.day, above_time / 3600, "{:.2f}".format((air_mass(max_altitude))))
             if best_time is None or above_time > best_time:
                 best_date = this_day
                 best_time = above_time
@@ -355,12 +368,12 @@ def best_day_for_dso(dso):
     if best_date is None:
         return None, None
     else:
-        return best_date, best_time
+        return best_date, best_time, max_altitude
 
 
 def test_me():
-    obj = is_a_dso_object("m77")
-    d, t = best_day_for_dso(obj)
+    obj = is_a_dso_object("m74")
+    d, t, max_altitude = best_day_for_dso(obj)
     hours = t.seconds/3600
     print (hours)
     print (d, t)

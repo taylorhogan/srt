@@ -73,7 +73,7 @@ def calc_and_store_hours_above_horizon():
         dso = text = instruction["dso"]
         obj = astro_dso_visibility.is_a_dso_object(dso)
         if obj is not None:
-            above = astro_dso_visibility.get_above_horizon_time(obj, Time.now())
+            above, max_altitude  = astro_dso_visibility.get_above_horizon_time(obj, Time.now())
             instruction["above_horizon"] = str(above)
         else:
             instruction["above_horizon"] = '0'

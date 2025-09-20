@@ -59,10 +59,11 @@ def best_cmd(words, index, m, account):
     if dso_name is not None:
         object = astro_dso_visibility.is_a_dso_object(dso_name)
         if object is not None:
-            best_date, best_time = astro_dso_visibility.best_day_for_dso(object)
+            best_date, best_time, max_altitude = astro_dso_visibility.best_day_for_dso(object)
             if best_date is not None:
                 formatted_date = best_date.strftime("%Y-%m-%d")
-                post_social_message(dso_name + " is above horizon for " + str(best_time) + " on " + formatted_date)
+                formatted_air_mass = "{:.2f}".format((astro_dso_visibility.air_mass(max_altitude)))
+                post_social_message(dso_name + " is above horizon for " + str(best_time) + " on " + formatted_date  + " with air mass of "+formatted_air_mass )
                 hours = best_time.seconds / 3600
                 if hours > 3:
                     image_cmd(words, index, m, account)
