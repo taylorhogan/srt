@@ -82,7 +82,7 @@ def calc_and_store_hours_above_horizon():
         try:
             value = instruction['best']
         except KeyError:
-            best_date, best_time, max_altitude = astro_dso_visibility.best_day_for_dso(object)
+            best_date, best_time, max_altitude = astro_dso_visibility.best_day_for_dso(obj)
             formatted_date = best_date.strftime("%Y-%m-%d")
             instruction['best']=formatted_date + "\n"+str(best_time)
 
