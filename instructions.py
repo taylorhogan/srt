@@ -75,7 +75,7 @@ def calc_and_store_hours_above_horizon():
         if obj is not None:
             above, max_altitude  = astro_dso_visibility.get_above_horizon_time(obj, Time.now())
             instruction["above_horizon"] = str(above)
-            instruction["air_mass"] = "{:.2f}".format(max_altitude)
+            instruction["air_mass"] = "{:.2f}".format(astro_dso_visibility.air_mass (max_altitude))
         else:
             instruction["above_horizon"] = '0'
             instruction["air_mass"] = '0'
@@ -157,7 +157,7 @@ def create_instructions_table():
     # ax.set_title("Image Requests", fontsize=20, pad=20)
 
     # Weekday labels
-    headers = ['DSO', 'Requestor', 'State', 'Date', 'Tonight', 'Air Mass','ID']
+    headers = ['DSO', 'Requestor', 'State', 'Best Date', 'Tonight', 'Air Mass','ID']
     for i, header in enumerate(headers):
         ax.text(i + 1.5, per_page, header, ha='center', fontsize=12, weight='bold')
 
@@ -179,16 +179,16 @@ def create_instructions_table():
                 text = instruction["dso"]
             elif col_idx == 1:
                 text = instruction["requestor"]
-            elif col_idx == 2:
-                text = instruction["status"]
-            elif col_idx == 3:
                 string = instruction["request_time"]
                 if string != "":
                     datetime_object = datetime.strptime(string, '%Y-%m-%d')
                     formatted_date = datetime_object.strftime("%m-%d\n%Y")
-                    text = formatted_date
-                else:
-                    text = ""
+                    text += "\n" + formatted_date
+
+            elif col_idx == 2:
+                text = instruction["status"]
+            elif col_idx == 3:
+                text = "?"
             elif col_idx == 4:
                 text = instruction["above_horizon"]
             elif col_idx == 5:
