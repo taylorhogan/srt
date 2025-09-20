@@ -79,6 +79,9 @@ def calc_and_store_hours_above_horizon():
         else:
             instruction["above_horizon"] = '0'
             instruction["air_mass"] = '0'
+        if instruction["best"] is None:
+            instruction["best"] = 'calc'
+
 
     with open('my_instructions.json', 'w') as f:
         f.writelines(json.dumps(instructions, indent=4))
@@ -188,7 +191,7 @@ def create_instructions_table():
             elif col_idx == 2:
                 text = instruction["status"]
             elif col_idx == 3:
-                text = "?"
+                text = instruction["best"]
             elif col_idx == 4:
                 text = instruction["above_horizon"]
             elif col_idx == 5:
