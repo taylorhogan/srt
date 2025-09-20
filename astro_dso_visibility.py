@@ -366,7 +366,7 @@ def best_day_for_dso(dso):
                 best_time = above_time
 
     if best_date is None:
-        return None, None
+        return None, None, None
     else:
         return best_date, best_time, max_altitude
 
