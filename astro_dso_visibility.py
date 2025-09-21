@@ -358,17 +358,18 @@ def best_day_for_dso(dso):
     best_date = None
     max_altitude = 0
     for  day in enumerate_days_of_year():
+        try:
+            this_day = datetime.datetime(day.year, day.month, day.day, 14, 0, 0)
+            this_time = Time(this_day)
+            above_time, max_altitude = get_above_horizon_time(dso, this_time)
 
-        this_day = datetime.datetime(day.year, day.month, day.day, 14, 0, 0)
-        this_time = Time(this_day)
-        above_time, max_altitude = get_above_horizon_time(dso, this_time)
-
-        if above_time is not None:
-            print(day.year, day.month, day.day, above_time / 3600, "{:.2f}".format((air_mass(max_altitude))))
-            if best_time is None or above_time > best_time:
-                best_date = this_day
-                best_time = above_time
-
+            if above_time is not None:
+                print(day.year, day.month, day.day, above_time / 3600, "{:.2f}".format((air_mass(max_altitude))))
+                if best_time is None or above_time > best_time:
+                    best_date = this_day
+                    best_time = above_time
+        except:
+            return None, None, None
     if best_date is None:
         return None, None, None
     else:
