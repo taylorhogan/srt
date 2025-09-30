@@ -65,7 +65,7 @@ def rehash_db():
         f.writelines(json.dumps(instructions, indent=4))
 
 
-def calc_and_store_hours_above_horizon():
+def calc_and_store_hours_above_horizon(force=False):
     utils.set_install_dir()
     with open('my_instructions.json', 'r') as f:
         instructions = json.load(f)
@@ -81,8 +81,8 @@ def calc_and_store_hours_above_horizon():
             instruction["air_mass"] = '0'
 
         value = instruction.get("best",None)
-        print ("DSO is", text)
-        if value is None:
+
+        if value is None or force is True:
             best_date, best_time, max_altitude = astro_dso_visibility.best_day_for_dso(obj)
             if best_date is None:
                 instruction['best'] = 'None'
@@ -150,9 +150,9 @@ def compare(r1, r2):
     return 0
 
 
-def create_instructions_table():
+def create_instructions_table(force = False):
     rehash_db()
-    calc_and_store_hours_above_horizon()
+    calc_and_store_hours_above_horizon(force)
     sorted_l = get_sorted_instructions()
     logger = logging.getLogger(__name__)
     logger.info("in create")

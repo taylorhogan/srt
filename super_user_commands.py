@@ -184,7 +184,7 @@ def dbr_cmd(words, account):
     rehash db, example dbr
     """
     instructions.rehash_db()
-    instructions.create_instructions_table()
+    instructions.create_instructions_table(True)
 
 
 def dbd_cmd(words, account):
