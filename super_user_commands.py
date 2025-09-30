@@ -179,12 +179,16 @@ def print_help(account):
         reply += word + "\n"
     social_server.post_social_message(reply)
 
+def dbb_cmd (words, account):
+    instructions.rehash_db()
+    instructions.create_instructions_table(True)
+
 def dbr_cmd(words, account):
     """
     rehash db, example dbr
     """
     instructions.rehash_db()
-    instructions.create_instructions_table(True)
+    instructions.create_instructions_table()
 
 
 def dbd_cmd(words, account):
@@ -210,6 +214,7 @@ def get_super_user_commands():
         "dbr": dbr_cmd,
         "dbd": dbd_cmd,
         "dbc": dbc_cmd,
+        "dbb": dbb_cmd,
         "start!": open_if_mount_off_cmd,
         "stop!": park_and_close_cmd,
         "nina1!": on_nina,

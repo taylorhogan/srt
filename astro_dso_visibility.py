@@ -166,7 +166,7 @@ def plot_my_dso_and_horizon(dso, my_observatory, observe_time):
                 clipped_cloud.append(cloud_covers[j]/100*90)
                 clipped_pp.append(pp[j]/100*90)
                 clipped_wsp.append(wsp[j]/40*90)
-                print (str(hour), cloud_covers[j], cloud_time_hour)
+
 
             if found_hour:
                 break
@@ -378,11 +378,11 @@ def best_day_for_dso(dso):
 
 def test_me():
     obj = is_a_dso_object("m74")
-    d, t, max_altitude = best_day_for_dso(obj)
-    hours = t.seconds/3600
-    print (hours)
-    print (d, t)
-    #p1, p2, p3, weather_ok = show_plots(obj)
+    #d, t, max_altitude = best_day_for_dso(obj)
+    #hours = t.seconds/3600
+    #print (hours)
+    #print (d, t)
+    p1, p2, p3, weather_ok = show_plots(obj)
     #print ("weather ok", weather_ok)
 
 
