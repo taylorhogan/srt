@@ -156,6 +156,7 @@ def plot_my_dso_and_horizon(dso, my_observatory, observe_time):
     clipped_cloud = []
     clipped_pp = []
     clipped_wsp = []
+    weather_ok = True
     for i in range(len(local_datetime)):
         hour = local_datetime[i].hour
         found_hour = False
@@ -166,6 +167,15 @@ def plot_my_dso_and_horizon(dso, my_observatory, observe_time):
                 clipped_cloud.append(cloud_covers[j]/100*90)
                 clipped_pp.append(pp[j]/100*90)
                 clipped_wsp.append(wsp[j]/40*90)
+                if cloud_covers[j] > 80:
+                    weather_ok = False
+                    print (cloud_time_hour, cloud_covers[j])
+
+                if pp[j] > 20:
+                    weather_ok = False
+                    print (cloud_time_hour, pp[j])
+
+
 
 
             if found_hour:
@@ -219,7 +229,7 @@ def plot_my_dso_and_horizon(dso, my_observatory, observe_time):
     ax.figure.canvas.draw()
 
     # Output.
-    weather_ok = False
+
     return weather_ok
 
 
