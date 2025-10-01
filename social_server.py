@@ -203,6 +203,8 @@ keywords = {
 
 
 def do_command(sentence, m, account):
+    print (str(account))
+    return
     cmd = sentence.lower()
     words = cmd.split(" ")
     seen_base_command = False
