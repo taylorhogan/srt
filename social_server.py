@@ -92,6 +92,10 @@ def tonight_cmd(words, index, m, account):
                 post_social_message("image\n", image)
             if sky is not None:
                 post_social_message("sky\n", sky)
+            if weather_ok:
+                post_social_message("Weather ok tonight")
+            else:
+                post_social_message("Weather not ok tonight")
         else:
             post_social_message(dso_name + " Not a known object\n")
     return

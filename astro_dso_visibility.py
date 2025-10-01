@@ -147,7 +147,7 @@ def plot_my_dso_and_horizon(dso, my_observatory, observe_time):
     day = local_datetime[0].day
     specific_date = Time(str(year) + '-' + str(month) + '-' + str(day) + 'T00:00:00', format='isot', scale='utc')
     illumination = int(float(moon_illumination(specific_date) * 100))
-    print (illumination)
+
     ax.plot(local_datetime, moon_alt, color='blue', label = 'Moon(' + str(illumination) + "%)",linewidth=2)
 
     #plot the cloud cover
@@ -169,11 +169,11 @@ def plot_my_dso_and_horizon(dso, my_observatory, observe_time):
                 clipped_wsp.append(wsp[j]/40*90)
                 if cloud_covers[j] > 80:
                     weather_ok = False
-                    print (cloud_time_hour, cloud_covers[j])
+                    print ("bad cloud cover", cloud_time_hour, cloud_covers[j])
 
                 if pp[j] > 20:
                     weather_ok = False
-                    print (cloud_time_hour, pp[j])
+                    print ("bad prob of precip", cloud_time_hour, pp[j])
 
 
 

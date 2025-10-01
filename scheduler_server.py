@@ -134,7 +134,6 @@ def waiting_for_sunrise():
 
 def announce_plans_before_sunset():
     global observatory_state
-    dso = "Unknown"
 
     weather_ok = social_server.tonight_cmd("", 1, "", "")
 
