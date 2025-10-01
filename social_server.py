@@ -96,9 +96,10 @@ def tonight_cmd(words, index, m, account):
                 post_social_message("Weather ok tonight")
             else:
                 post_social_message("Weather not ok tonight")
+            return weather_ok
         else:
             post_social_message(dso_name + " Not a known object\n")
-    return
+    return False
 
 
 

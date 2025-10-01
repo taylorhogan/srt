@@ -153,7 +153,7 @@ def announce_plans_before_sunset():
             "Will NOT image " + dso + " requested by " + requestor + " tonight because of weather")
         obs_calendar.set_today_stat('weather', dso)
         set_state(observatory_state["state"], dso, False)
-        return False, dso
+        return weather_ok, dso
 
 
 def main():
