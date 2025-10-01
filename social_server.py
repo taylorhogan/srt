@@ -203,8 +203,10 @@ keywords = {
 
 
 def do_command(sentence, m, account):
-    print (str(account))
-    return
+
+    if not su.is_super_user(account):
+        return
+
     cmd = sentence.lower()
     words = cmd.split(" ")
     seen_base_command = False
