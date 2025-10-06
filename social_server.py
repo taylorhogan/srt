@@ -75,17 +75,18 @@ def best_cmd(words, index, m, account):
 
 
 def tonight_cmd(words, index, m, account):
-
+    print (words, index)
     if len(words) == 2:
         best_instruction = instructions.get_dso_object_tonight()
         dso_name = best_instruction["dso"]
     else:
         dso_name = get_dso_object_name(words, index)
-
+    print (dso_name)
     if dso_name is not None:
         obj = astro_dso_visibility.is_a_dso_object(dso_name)
         if obj is not None:
             horizon, image, sky, weather_ok = astro_dso_visibility.show_plots(obj)
+
             if horizon is not None:
                 post_social_message("altitude \n", horizon)
             if image is not None:
