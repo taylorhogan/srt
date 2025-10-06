@@ -75,7 +75,7 @@ def best_cmd(words, index, m, account):
 
 
 def tonight_cmd(words, index, m, account):
-    print (words, index)
+    print ("in tonight cmd", words, index)
     if len(words) == 2:
         best_instruction = instructions.get_dso_object_tonight()
         dso_name = best_instruction["dso"]
