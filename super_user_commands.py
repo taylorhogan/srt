@@ -3,7 +3,6 @@ import subprocess
 import config
 import social_server
 import kasa_utils as ku
-import pwi4_utils
 import utils
 import os
 import asyncio
@@ -215,7 +214,6 @@ def get_super_user_commands():
         "dbd": dbd_cmd,
         "dbc": dbc_cmd,
         "dbb": dbb_cmd,
-        "start!": open_if_mount_off_cmd,
         "stop!": park_and_close_cmd,
         "nina1!": on_nina,
         "nina2!": image_nina,

@@ -19,6 +19,9 @@ if __name__ == "__main__":
     cfg["logger"]["logging"] = logger
     logger.info('Start Start Sequence')
 
+    with open("safety.txt", "w") as file:
+        file.write("USER SAFE")
+
     dev_map = asyncio.run(ku.make_discovery_map())
     instructions = (dict
         (
@@ -37,7 +40,7 @@ if __name__ == "__main__":
 
     asyncio.run(ku.kasa_do(dev_map, instructions))
 
-# turn off recepticle
+
     r = requests.get('http://192.168.87.28/relay/0?turn=off')
 
     logger.info('End Start Sequence')
