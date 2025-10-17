@@ -21,6 +21,7 @@ if __name__ == "__main__":
 
     with open("safety.txt", "w") as file:
         file.write("USER SAFE")
+    logger.info('Setting safety to safe')
 
     dev_map = asyncio.run(ku.make_discovery_map())
     instructions = (dict
@@ -31,7 +32,7 @@ if __name__ == "__main__":
             "Iris inside light": "off",
             "Driveway lights": "off",
             "Deck lights": "off",
-            "Grill lights":"off",
+            "Grill Lights":"off",
             "Iris landscape lights": "off",
             "Main landscape lights": "off"
 
@@ -39,8 +40,9 @@ if __name__ == "__main__":
     ))
 
     asyncio.run(ku.kasa_do(dev_map, instructions))
-
+    logger.info('Turning off lights')
 
     r = requests.get('http://192.168.87.28/relay/0?turn=off')
-
+    logger.info('Turning off dehumidifier')
     logger.info('End Start Sequence')
+    print ("Done with startup")
