@@ -1,25 +1,13 @@
 import asyncio
+
 from kasa import Discover
-
-
 async def make_discovery_map():
-
-        map_from_name_to_ip = dict()
-        try:
-            devices = await Discover.discover()
-        except:
-            print("Problem in discover")
-        for dev in devices.values():
-
-            await dev.update()
-            try:
-                map_from_name_to_ip.update({dev.alias: dev.host})
-            except:
-                print("Problem in update")
-
-        return map_from_name_to_ip
-
-
+    map_from_name_to_ip = dict()
+    devices = await Discover.discover()
+    for dev in devices.values():
+        await dev.update()
+        map_from_name_to_ip.update({dev.alias: dev.host})
+    return map_from_name_to_ip
 
 
 
@@ -54,6 +42,8 @@ async def kasa_check(cfg, instructions):
             print("Key " + key + " not found")
             return False
         return True
+
+
 if __name__ == "__main__":
     dev_map = asyncio.run(make_discovery_map())
-    print (dev_map)
+    print(dev_map)
