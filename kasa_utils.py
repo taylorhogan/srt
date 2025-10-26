@@ -3,16 +3,23 @@ from kasa import Discover
 
 
 async def make_discovery_map():
-    try:
+
         map_from_name_to_ip = dict()
-        devices = await Discover.discover()
+        try:
+            devices = await Discover.discover()
+        except:
+            print("Problem in discover")
         for dev in devices.values():
 
             await dev.update()
-            map_from_name_to_ip.update({dev.alias: dev.host})
+            try:
+                map_from_name_to_ip.update({dev.alias: dev.host})
+            except:
+                print("Problem in update")
+
         return map_from_name_to_ip
-    except:
-        return {}
+
+
 
 
 
