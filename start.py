@@ -4,6 +4,7 @@ import kasa_utils as ku
 import config
 import os
 import requests
+import utils
 
 
 
@@ -18,7 +19,7 @@ if __name__ == "__main__":
     logger = logging.getLogger(__name__)
     cfg["logger"]["logging"] = logger
     logger.info('Start Start Sequence')
-
+    utils.set_install_dir()
     with open("safety.txt", "w") as file:
         file.write("USER SAFE")
     logger.info('Setting safety to safe')

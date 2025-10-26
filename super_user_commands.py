@@ -91,6 +91,7 @@ def open_roof_cmd (words, account):
 
 def park_and_close_cmd(words, account):
     social_server.post_social_message("User has stopped imaging")
+    utils.set_install_dir()
     with open("safety.txt", "w") as file:  # 'w' mode to write (overwrites if file exists)
         file.write("USER UNSAFE")
 
