@@ -35,7 +35,7 @@ class PublicConfig():
             "closed pos": (829, 152),
             "parked pos": (590, 290),
 
-            "accuracy": 100,
+            "accuracy": 150,
             "scope_view": "./base_images/scope_view.jpg",
             "processed_view": "./base_images/processed.jpg",
             "no_image": "./base_images/no_image.jpg",
