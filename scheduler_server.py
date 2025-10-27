@@ -182,9 +182,9 @@ def main():
     client.loop_start()
 
     try:
-        while True:
-            asyncio.run(wait_a_bit())
-            waiting_for_noon()
+
+        asyncio.run(wait_a_bit())
+        waiting_for_noon()
     except:
 
         logger.info('Problem')
