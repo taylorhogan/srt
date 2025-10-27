@@ -72,12 +72,16 @@ def waiting_for_noon():
         asyncio.run(wait_a_bit())
 
     instructions.calc_and_store_hours_above_horizon()
+    print ("announcing plans before sunset")
     image, dso = announce_plans_before_sunset()
+    print ("announced")
 
     set_state(observatory_state["state"], dso)
     if image:
+        print ("imaging, waiting for sunset")
         waiting_for_sunset()
     else:
+        print ("not imaging, waiting for sunrise")
         waiting_for_sunrise()
 
 
