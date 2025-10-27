@@ -11,6 +11,9 @@ import time
 import instructions
 import logging
 import vision_safety
+import pushover
+
+
 
 
 
@@ -36,43 +39,53 @@ def toggle_roof (dev_map):
     ))
     asyncio.run(ku.kasa_do(dev_map, instructions))
 
-def open_roof_with_option (check:bool):
+
+def get_status_with_lights():
+    dev_map = asyncio.run(ku.make_discovery_map())
+
+    instructions = (dict
+        (
+        {
+            "Iris inside light": 'on',
+            "Observatory strip": 'on'
+        }
+    ))
+
+    asyncio.run(ku.kasa_do(dev_map, instructions))
+
+    parked, closed, open, mod_date = vision_safety.visual_status()
+
+    instructions = (dict
+        (
+        {
+            "Iris inside light": 'off',
+            "Observatory strip": 'off'
+        }
+    ))
+
+    asyncio.run(ku.kasa_do(dev_map, instructions))
+
+    return parked, closed, open, mod_date
+
+def open_roof_with_option (check:bool)->bool:
     dev_map = asyncio.run(ku.make_discovery_map())
     if check:
-
-        instructions = (dict
-            (
-            {
-                "Iris inside light": 'on'
-            }
-        ))
-
-        asyncio.run(ku.kasa_do(dev_map, instructions))
-
-        parked, closed, open, mod_date = vision_safety.visual_status()
-
-        instructions = (dict
-            (
-            {
-                "Iris inside light": 'off'
-            }
-        ))
-
-        asyncio.run(ku.kasa_do(dev_map, instructions))
-
+        parked, closed, open, mod_date = get_status_with_lights()
         if parked:
             if closed:
                 social_server.post_social_message("Vision Safety says roof is closed, opening roof")
                 toggle_roof(dev_map)
+                return True
 
             else:
                 social_server.post_social_message("Vision Safety says roof is NOT closed, therefore will not open")
-                return
+                return False
         else:
             social_server.post_social_message("Vision Safety says Scope is NOT parked, therefore will not open")
-            return
+            return False
     else:
         toggle_roof(dev_map)
+        return False
 
 
 
@@ -215,6 +228,7 @@ def get_super_user_commands():
         "dbd": dbd_cmd,
         "dbc": dbc_cmd,
         "dbb": dbb_cmd,
+        "doit!!":doit_cmd,
         "stop!": park_and_close_cmd,
         "nina1!": on_nina,
         "nina2!": image_nina,
@@ -247,6 +261,68 @@ def do_super_user_command(words, account):
         return True
     else:
         return False
+
+def is_safe ():
+    utils.set_install_dir()
+    with open("safety.txt", "r") as file:
+        first_line = file.readline()
+    if first_line == "USER SAFE":
+        return True
+    else:
+        return False
+
+def doit_cmd ():
+
+    wait_time = 1 * 60
+    utils.set_install_dir()
+    pushover.push_message_with_picture("starting run in 5 min", "./base_images/inside.jpg")
+    if not is_safe():
+        pushover.push_message("not safe 1, stopping")
+        return
+
+
+    time.sleep(wait_time)
+
+    if not is_safe():
+        pushover.push_message("not safe 2, stopping")
+        return
+    #add in check to make sure mount is off
+
+    ok = open_roof_with_option(True)
+
+    if not ok:
+        pushover.push_message("roof not open, stopping")
+        return
+
+    pushover.push_message("roof is open, starting nina in 5 min")
+    time.sleep(wait_time)
+
+    if not is_safe():
+        pushover.push_message("not safe 3, stopping")
+        return
+
+    on_nina(None, None)
+    pushover.push_message("nina prelude is finished, starting imaging in 5 min")
+    time.sleep(wait_time)
+
+    if not is_safe():
+        pushover.push_message("not safe 4, stopping")
+        return
+    # add in check to make sure mount is on
+
+    parked, closed, open, mod_date = get_status_with_lights()
+    if not parked:
+        pushover.push_message("scope is not parked, stopping")
+        return
+    if closed:
+        pushover.push_message("roof is closed, stopping")
+        return
+    if not open:
+        pushover.push_message("roof is not open, stopping")
+        return
+
+    image_nina(None, None)
+    pushover.push_message("imaging!")
 
 if __name__ == "__main__":
     print("Starting Nina")

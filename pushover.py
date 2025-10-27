@@ -8,48 +8,13 @@ import config
 
 cfg = config.data()
 
-broker = cfg["mqtt"]["broker_url"]
-port = cfg["mqtt"]["port"]
-topic = "flow/pushover"
+
 
 client_id = f'subscribe-{random.randint(0, 100)}'
-username = cfg["mqtt"]["user_name"]
-password = cfg["mqtt"]["password"]
-
 token = cfg['pushover']['token']
 user = cfg['pushover']['user']
 
 
-def connect_mqtt() -> mqtt_client:
-    def on_connect(client, userdata, flags, rc):
-        if rc == 0:
-            print("Connected to MQTT Broker!")
-        else:
-            print("Failed to connect, return code %d\n", rc)
-
-    client = mqtt_client.Client(client_id)
-    client.username_pw_set(username, password)
-    client.on_connect = on_connect
-    client.connect(broker, port)
-    return client
-
-
-def subscribe(client: mqtt_client):
-    def on_message(client, userdata, msg):
-        print(f"Received `{msg.payload.decode()}` from `{msg.topic}` topic")
-
-    client.subscribe(topic)
-    client.on_message = on_message
-
-    conn = http.client.HTTPSConnection("api.pushover.net:443")
-    conn.request("POST", "/1/messages.json",
-                 urllib.parse.urlencode({
-                     "token": token,
-                     "user": user,
-                     "message": "hello world",
-                 }), {"Content-type": "application/x-www-form-urlencoded"})
-    output = conn.getresponse().read().decode('utf-8')
-    print(output)
 
 
 def push_message(message):
