@@ -9,9 +9,12 @@ import astro_dso_visibility
 import config
 import instructions
 import obs_calendar
+import pushover
 import social_server
 import utils
 import weather
+import super_user_commands
+from astro_dso_visibility import show_plots
 
 client = None
 observatory_state = {
@@ -80,8 +83,8 @@ def waiting_for_noon():
 
 def imaging():
     set_state("Imaging")
-
     asyncio.run(wait_a_bit())
+    super_user_commands.doit_cmd("", "iris")
     waiting_for_sunrise()
 
 
@@ -95,7 +98,11 @@ def wait_for_tomorrow():
 
 def waiting_for_imaging():
     set_state("Waiting For Imaging")
-    description, weather_ok = weather.get_current_weather(False)
+    best_instruction = instructions.get_dso_object_tonight()
+    dso = best_instruction["dso"]
+    obj = astro_dso_visibility.is_a_dso_object(dso)
+    weather_ok = show_plots(obj)
+
     if weather_ok:
         imaging()
     else:
@@ -111,6 +118,7 @@ def waiting_for_sunset():
     set_state("Waiting For Sunset")
     sunrise, sunset = weather.get_sunrise_sunset()
     now = datetime.now().time()
+    pushover.push_message("waiting for sunset at " +  str (sunset))
 
     while now < sunset:
         now = datetime.now().time()
