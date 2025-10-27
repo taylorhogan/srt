@@ -45,8 +45,8 @@ def push_message_with_picture(message, image):
         data={
             "token": token,
             "user": user,
-            "message": "Hello! Check out this image.",  # Required: Your message text (up to 1024 chars)
-            "title": "Optional Title",  # Optional: Notification title (up to 250 chars)
+            "message": "Iris Image",  # Required: Your message text (up to 1024 chars)
+            "title": "News From Iris",  # Optional: Notification title (up to 250 chars)
         },
         files={
             "attachment":
