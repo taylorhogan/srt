@@ -294,12 +294,12 @@ def doit_cmd (words, account):
     #add in check to make sure mount is off
 
     ok = open_roof_with_option(True)
-    pushover.push_message("roof not open, stopping")
+    pushover.push_message_with_picture("roof not open, stopping","./base_images/inside.jpg")
     if not ok:
         pushover.push_message("roof not open, stopping")
         return
 
-    pushover.push_message("roof is open, starting nina in 5 min")
+    pushover.push_message_with_picture("roof is open, starting imaging in 5 min", "./base_images/inside.jpg")
     time.sleep(wait_time)
 
     if not is_safe():
@@ -310,7 +310,7 @@ def doit_cmd (words, account):
 
     # need to add a method to know if Nina is finished
 
-    pushover.push_message("running prelude is finished, starting imaging in 5 min")
+    pushover.push_message_with_picture("prelude has finished", "./base_images/inside.jpg")
     time.sleep(wait_time)
 
     if not is_safe():
