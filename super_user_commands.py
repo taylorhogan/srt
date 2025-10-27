@@ -105,11 +105,15 @@ def open_roof_cmd (words, account):
 def park_and_close_cmd(words, account):
     social_server.post_social_message("User has stopped imaging")
     utils.set_install_dir()
-    with open("safety.txt", "w") as file:  # 'w' mode to write (overwrites if file exists)
+    with open("safety.txt", "w") as file:
         file.write("USER UNSAFE")
 
 
-
+def safe_cmd(words, account):
+    social_server.post_social_message("User has said imaging is safe")
+    utils.set_install_dir()
+    with open("safety.txt", "w") as file:
+        file.write("USER SAFE")
 
 def open_if_mount_off_cmd(words, account):
     dev_map = asyncio.run(ku.make_discovery_map())
@@ -230,6 +234,7 @@ def get_super_user_commands():
         "dbb": dbb_cmd,
         "doit!!":doit_cmd,
         "stop!": park_and_close_cmd,
+        "start!": safe_cmd,
         "nina1!": on_nina,
         "nina2!": image_nina,
         "nina2A!": image_nina_a,
@@ -273,7 +278,7 @@ def is_safe ():
 
 def doit_cmd (words, account):
     print (words, account)
-    wait_time = 1 * 60
+    wait_time = 5 * 60
     utils.set_install_dir()
     pushover.push_message_with_picture("starting run in 5 min", "./base_images/inside.jpg")
     if not is_safe():
@@ -289,7 +294,7 @@ def doit_cmd (words, account):
     #add in check to make sure mount is off
 
     ok = open_roof_with_option(True)
-
+    pushover.push_message("roof not open, stopping")
     if not ok:
         pushover.push_message("roof not open, stopping")
         return
@@ -302,7 +307,10 @@ def doit_cmd (words, account):
         return
 
     on_nina(None, None)
-    pushover.push_message("nina prelude is finished, starting imaging in 5 min")
+
+    # need to add a method to know if Nina is finished
+
+    pushover.push_message("running prelude is finished, starting imaging in 5 min")
     time.sleep(wait_time)
 
     if not is_safe():

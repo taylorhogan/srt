@@ -32,33 +32,37 @@ def push_message(message):
 
 
 def push_message_with_picture(message, image):
-    conn = http.client.HTTPSConnection("api.pushover.net:443")
-    conn.request("POST", "/1/messages.json",
-
-                 urllib.parse.urlencode({
-                     "token": token,
-                     "user": user,
-                     "message": message,
-                     "verify": False,
-                     "attachment": ("image.jpg", open(image, "rb"), "image/jpeg")
-                 }), {"Content-type": "application/x-www-form-urlencoded", "verify": False})
-    output = conn.getresponse().read().decode('utf-8')
-    print(output)
-
     # conn = http.client.HTTPSConnection("api.pushover.net:443")
-    # r = conn.request("POST","https://api.pushover.net/1/messages.json",
-    #                        data={
-    #                            "token": token,
-    #                            "user": user,
-    #                            "message": message
-    #                            "attachment": ("image.jpg", open(image, "rb"), "image/jpeg")
-    #                        },
-    #                        files={
-    #                            "attachment": ("image.jpg", open(image, "rb"), "image/jpeg")
-    #                        })
+    # conn.request("POST", "/1/messages.json",
     #
+    #              urllib.parse.urlencode({
+    #                  "token": token,
+    #                  "user": user,
+    #                  "message": message,
+    #                  "verify": False,
+    #                  "attachment": ("image.jpg", open(image, "rb"), "image/jpeg")
+    #              }), {"Content-type": "application/x-www-form-urlencoded", "verify": False})
     # output = conn.getresponse().read().decode('utf-8')
     # print(output)
+
+    conn = http.client.HTTPSConnection("api.pushover.net:443")
+    r = conn.request("POST","https://api.pushover.net/1/messages.json",
+                           data={
+                               "token": token,
+                               "user": user,
+                               "message": message
+
+                           },
+                           files={
+                               "attachment":
+                                   ("image.jpg",
+                                    open(image, "rb"),
+                                    "image/jpeg")
+                           }
+                     )
+
+    output = conn.getresponse().read().decode('utf-8')
+    print(output)
 
 
 def main():
