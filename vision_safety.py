@@ -115,6 +115,7 @@ def visual_status():
     print(cfg["camera safety"]["open pos"])
     print(open_error)
     open = abs(open_error) < accuracy
+    print ("parked, closed, open", str(parked), str(closed), str(open))
 
     mod_date = time.ctime(os.path.getmtime(cfg["camera safety"]["scope_view"]))
     return parked,  closed, open, mod_date
@@ -123,7 +124,7 @@ def visual_status():
 
 if __name__ == '__main__':
     cfg = config.data()
-    just_finding_template = True
+    just_finding_template = False
     if just_finding_template:
 
         inside_camera_server.take_snapshot()
