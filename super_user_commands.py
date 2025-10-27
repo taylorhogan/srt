@@ -271,8 +271,8 @@ def is_safe ():
     else:
         return False
 
-def doit_cmd ():
-
+def doit_cmd (words, account):
+    print (words, account)
     wait_time = 1 * 60
     utils.set_install_dir()
     pushover.push_message_with_picture("starting run in 5 min", "./base_images/inside.jpg")
