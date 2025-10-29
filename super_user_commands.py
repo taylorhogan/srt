@@ -268,6 +268,7 @@ def do_super_user_command(words, account):
         return False
 
 def is_safe ():
+
     utils.set_install_dir()
     with open("safety.txt", "r") as file:
         first_line = file.readline()
@@ -277,10 +278,13 @@ def is_safe ():
         return False
 
 def doit_cmd (words, account):
+    cfg = config.data()
+    inside_view= cfg["camera safety"]["scope_view"]
+
     print (words, account)
     wait_time = 5 * 60
     utils.set_install_dir()
-    pushover.push_message_with_picture("starting run in 5 min", "./base_images/inside.jpg")
+    pushover.push_message_with_picture("starting run in 5 min", inside_view)
     if not is_safe():
         pushover.push_message("not safe 1, stopping")
         return
@@ -294,12 +298,12 @@ def doit_cmd (words, account):
     #add in check to make sure mount is off
 
     ok = open_roof_with_option(True)
-    pushover.push_message_with_picture("roof not open, stopping","./base_images/inside.jpg")
+    pushover.push_message_with_picture("roof not open, stopping",inside_view)
     if not ok:
         pushover.push_message("roof not open, stopping")
         return
 
-    pushover.push_message_with_picture("roof is open, starting imaging in 5 min", "./base_images/inside.jpg")
+    pushover.push_message_with_picture("roof is open, starting imaging in 5 min", inside_view)
     time.sleep(wait_time)
 
     if not is_safe():
@@ -310,7 +314,7 @@ def doit_cmd (words, account):
 
     # need to add a method to know if Nina is finished
 
-    pushover.push_message_with_picture("prelude has finished", "./base_images/inside.jpg")
+    pushover.push_message_with_picture("prelude has finished", inside_view)
     time.sleep(wait_time)
 
     if not is_safe():
