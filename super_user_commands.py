@@ -279,12 +279,19 @@ def is_safe ():
 
 def doit_cmd (words, account):
     cfg = config.data()
+
     inside_view= cfg["camera safety"]["scope_view"]
 
     print (words, account)
     wait_time = 5 * 60
     utils.set_install_dir()
-    pushover.push_message_with_picture("starting run in 5 min", inside_view)
+    parked, closed, open, mod_date = get_status_with_lights()
+    if not closed:
+        pushover.push_message("roof is not closed, stopping")
+        return
+
+
+    pushover.push_message_with_picture("Roof is closed, starting run in 5 min", inside_view)
     if not is_safe():
         pushover.push_message("not safe 1, stopping")
         return
@@ -298,6 +305,7 @@ def doit_cmd (words, account):
     #add in check to make sure mount is off
 
     ok = open_roof_with_option(True)
+
     pushover.push_message_with_picture("roof not open, stopping",inside_view)
     if not ok:
         pushover.push_message("roof not open, stopping")
