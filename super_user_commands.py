@@ -30,7 +30,7 @@ def toggle_roof (dev_map):
     asyncio.run(ku.kasa_do(dev_map, instructions))
     time.sleep(10)
     r = requests.get('http://192.168.87.41/relay/0?turn=on')
-    time.sleep(30)
+    time.sleep(45)
     instructions = (dict
         (
         {
@@ -52,9 +52,9 @@ def get_status_with_lights():
     ))
 
     asyncio.run(ku.kasa_do(dev_map, instructions))
-
+    time.sleep(10)
     parked, closed, open, mod_date = vision_safety.visual_status()
-
+    time.sleep(10)
     instructions = (dict
         (
         {
@@ -290,7 +290,7 @@ def doit_cmd (words, account):
         pushover.push_message("roof is not closed, stopping")
         return
 
-
+    # the roof is closed, so we can start imaging
     pushover.push_message_with_picture("Roof is closed, starting run in 5 min", inside_view)
     if not is_safe():
         pushover.push_message("not safe 1, stopping")
@@ -302,13 +302,12 @@ def doit_cmd (words, account):
     if not is_safe():
         pushover.push_message("not safe 2, stopping")
         return
-    #add in check to make sure mount is off
+
+
 
     ok = open_roof_with_option(True)
-
-    pushover.push_message_with_picture("roof not open, stopping",inside_view)
     if not ok:
-        pushover.push_message("roof not open, stopping")
+        pushover.push_message("roof not open, stopping", inside_view)
         return
 
     pushover.push_message_with_picture("roof is open, starting imaging in 5 min", inside_view)
@@ -321,9 +320,10 @@ def doit_cmd (words, account):
     on_nina(None, None)
 
     # need to add a method to know if Nina is finished
-
-    pushover.push_message_with_picture("prelude has finished", inside_view)
+    #write to file that prelude has finished
     time.sleep(wait_time)
+    pushover.push_message_with_picture("prelude has finished", inside_view)
+
 
     if not is_safe():
         pushover.push_message("not safe 4, stopping")
