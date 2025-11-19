@@ -1,8 +1,10 @@
 import cv2
+import numpy as np
+
 
 def best_exposure_score(img):
     if len(img.shape) == 3:
-        lab = cv.cvtColor(img, cv.COLOR_BGR2LAB)
+        lab = cv2.cvtColor(img, cv2.COLOR_BGR2LAB)
         L = lab[:, :, 0].astype(np.float32)  # Luminance channel (0-255)
     else:
         L = img.astype(np.float32)
