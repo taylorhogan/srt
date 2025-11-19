@@ -43,7 +43,7 @@ cap.set(cv2.CAP_PROP_EXPOSURE, exposure_value)
 print(f"Exposure set to: {cap.get(cv2.CAP_PROP_EXPOSURE)}")  # May return -1 if not supported
 pictures=[]
 scores = []
-for exposure_value in range(-1, -13, -1):
+for exposure_value in range(-1, -10, -1):
     ret, frame = cap.read()
     cap.set(cv2.CAP_PROP_EXPOSURE, exposure_value)
     #cv2.imshow('Camera - Manual Exposure', frame)
