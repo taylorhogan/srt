@@ -56,21 +56,19 @@ def take_snapshot(test_path=None):
 
     ret, frame = vid.read()
     if ret:
-        img_src = frame
-        cv.imwrite(to_path, img_src)
-        oscore = best_exposure_score(img_src)
+        picture = []
+        scores = []
+        for gamma_val in np.arange(0.1, 4.5, 0.5):
+            print (f"gamma: {gamma_val}")
+            result = gamma_correction(frame, gamma=gamma_val)
+            scores.append(best_exposure_score(result))
+            picture.append(result)
 
-        brighter = gamma_correction (img_src, gamma=2.2)
-        darker = gamma_correction (img_src, gamma=0.5)
-        bscore = best_exposure_score (brighter)
-        dscore = best_exposure_score (darker)
-        print(f"original : {oscore}")
-        print (f"brighter: {bscore}")
-        print (f"darker  : {dscore}")
-        cv.imshow ("original", img_src)
-        cv.imshow ("brighter", brighter)
-        cv.imshow ("darker  ", darker)
-        cv.waitKey(0)
+        best_score = max(scores)
+        best_index = scores.index(best_score)
+        best_picture = picture[best_index]
+        cv.imwrite(to_path, best_picture)
+        print (f"best score:  {best_score} of: {scores}")
         return True
 
     else:
