@@ -51,8 +51,8 @@ def take_snapshot(test_path=None):
     vid = cv.VideoCapture(0)
     vid.set(cv.CAP_PROP_FRAME_WIDTH, 1920)
     vid.set(cv.CAP_PROP_FRAME_HEIGHT, 1080)
-    vid.set(cv.CAP_PROP_AUTO_EXPOSURE, 0)
-    vid.set(cv.CAP_PROP_EXPOSURE, 12)
+    vid.set(cv.CAP_PROP_FPS, 30)
+    vid.set(cv.CAP_PROP_EXPOSURE, -12)
 
 
     ret, frame = vid.read()
