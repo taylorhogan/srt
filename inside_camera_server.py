@@ -59,7 +59,7 @@ def take_snapshot(test_path=None):
     if ret:
         picture = []
         scores = []
-        for gamma_val in np.arange(0.1, 4.5, 0.5):
+        for gamma_val in np.arange(0.1, 4.5, 0.1):
             print (f"gamma: {gamma_val}")
             result = gamma_correction(frame, gamma=gamma_val)
             scores.append(best_exposure_score(result))
