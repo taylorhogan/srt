@@ -2,8 +2,31 @@
 import cv2 as cv
 import config
 import shutil
+import numpy as np
 
 
+def best_exposure_score(img):
+    if len(img.shape) == 3:
+        lab = cv.cvtColor(img, cv.COLOR_BGR2LAB)
+        L = lab[:, :, 0].astype(np.float32)  # Luminance channel (0-255)
+    else:
+        L = img.astype(np.float32)
+
+    L_norm = L / 255.0
+
+    # Count badly clipped pixels
+    under = np.sum(L < 8) / L.size  # < ~3%
+    over = np.sum(L > 248) / L.size  # > ~97%
+
+    # Luminance mean (in log space is better, but linear works fine)
+    mean_lum = np.mean(L_norm)
+
+    # Standard deviation of luminance (more contrast = better)
+    std_lum = np.std(L_norm)
+
+    # Final score
+    score = std_lum * (1 - 8 * (under + over)) * np.exp(-15 * (mean_lum - 0.5) ** 2)
+    return score
 
 def take_snapshot(test_path=None):
     cfg = config.data()
