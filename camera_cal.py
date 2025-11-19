@@ -48,6 +48,7 @@ for exposure_value in range(-1, -13, -1):
     cap.set(cv2.CAP_PROP_EXPOSURE, exposure_value)
     #cv2.imshow('Camera - Manual Exposure', frame)
     score = best_exposure_score(frame)
+    print (f"Exposure: {exposure_value} Score: {score}")
     pictures.append(frame)
     scores.append(score)
 
@@ -56,7 +57,7 @@ best_index = scores.index(best_score)
 best_picture = pictures[best_index]
 cv2.imshow(str(best_score), best_picture)
 
-print (f"best score:  {best_score} of: {scores}")
+print (f"best score:  {best_score} of: {scores} of index {best_index}")
 while True:
     key = cv2.waitKey(1) & 0xFF
     if key == ord('q'):
