@@ -1,5 +1,27 @@
 import cv2
-import inside_camera_server as ics
+
+def best_exposure_score(img):
+    if len(img.shape) == 3:
+        lab = cv.cvtColor(img, cv.COLOR_BGR2LAB)
+        L = lab[:, :, 0].astype(np.float32)  # Luminance channel (0-255)
+    else:
+        L = img.astype(np.float32)
+
+    L_norm = L / 255.0
+
+    # Count badly clipped pixels
+    under = np.sum(L < 8) / L.size  # < ~3%
+    over = np.sum(L > 248) / L.size  # > ~97%
+
+    # Luminance mean (in log space is better, but linear works fine)
+    mean_lum = np.mean(L_norm)
+
+    # Standard deviation of luminance (more contrast = better)
+    std_lum = np.std(L_norm)
+
+    # Final score
+    score = std_lum * (1 - 8 * (under + over)) * np.exp(-15 * (mean_lum - 0.5) ** 2)
+    return score
 
 # Open camera with DirectShow backend (best for exposure on Windows)
 cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)  # Change 0 if you have multiple cameras
@@ -23,7 +45,7 @@ for exposure_value in range(-1, -13, -1):
     ret, frame = cap.read()
     cap.set(cv2.CAP_PROP_EXPOSURE, exposure_value)
     #cv2.imshow('Camera - Manual Exposure', frame)
-    score = ics.best_exposure_score(frame)
+    score = best_exposure_score(frame)
     pictures.append(frame)
     scores.append(score)
 
