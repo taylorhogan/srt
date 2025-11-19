@@ -51,6 +51,8 @@ def take_snapshot(test_path=None):
     if ret:
         img_src = frame
         cv.imwrite(to_path, img_src)
+        score = best_exposure_score(img_src)
+        print (f"best exposure score: {score}")
         return True
     else:
         print("no Image")
