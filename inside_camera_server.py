@@ -28,6 +28,13 @@ def best_exposure_score(img):
     score = std_lum * (1 - 8 * (under + over)) * np.exp(-15 * (mean_lum - 0.5) ** 2)
     return score
 
+def gamma_correction(img, gamma=1.0):
+    # Build a lookup table (fastest method)
+    inv_gamma = 1.0 / gamma
+    table = np.array([((i / 255.0) ** inv_gamma) * 255
+                      for i in np.arange(0, 256)]).astype("uint8")
+    return cv.LUT(img, table)
+
 def take_snapshot(test_path=None):
     cfg = config.data()
     if test_path is not None:
@@ -51,9 +58,21 @@ def take_snapshot(test_path=None):
     if ret:
         img_src = frame
         cv.imwrite(to_path, img_src)
-        score = best_exposure_score(img_src)
-        print (f"best exposure score: {score}")
+        oscore = best_exposure_score(img_src)
+
+        brighter = gamma_correction (img_src, gamma=2.2)
+        darker = gamma_correction (img_src, gamma=0.5)
+        bscore = best_exposure_score (brighter)
+        dscore = best_exposure_score (darker)
+        print(f"original : {oscore}")
+        print (f"brighter: {bscore}")
+        print (f"darker  : {dscore}")
+        cv.imshow ("original", img_src)
+        cv.imshow ("brighter", brighter)
+        cv.imshow ("darker  ", darker)
+        cv.waitKey(0)
         return True
+
     else:
         print("no Image")
         return False
