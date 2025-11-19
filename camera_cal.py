@@ -55,7 +55,11 @@ best_score = max(scores)
 best_index = scores.index(best_score)
 best_picture = pictures[best_index]
 cv2.imshow(str(best_score), best_picture)
-print (f"best score:  {best_score} of: {scores}")
 
+print (f"best score:  {best_score} of: {scores}")
+while True:
+    key = cv2.waitKey(1) & 0xFF
+    if key == ord('q'):
+        break
 
 
