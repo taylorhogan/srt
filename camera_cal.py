@@ -1,4 +1,5 @@
 import cv2
+import inside_camera_server as ics
 
 # Open camera with DirectShow backend (best for exposure on Windows)
 cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)  # Change 0 if you have multiple cameras
@@ -16,26 +17,21 @@ cap.set(cv2.CAP_PROP_EXPOSURE, exposure_value)
 # cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 0.25)
 
 print(f"Exposure set to: {cap.get(cv2.CAP_PROP_EXPOSURE)}")  # May return -1 if not supported
-
-while True:
+pictures=[]
+scores = []
+for exposure_value in range(-1, -13, -1):
     ret, frame = cap.read()
-    if not ret:
-        break
+    cap.set(cv2.CAP_PROP_EXPOSURE, exposure_value)
+    #cv2.imshow('Camera - Manual Exposure', frame)
+    score = ics.best_exposure_score(frame)
+    pictures.append(frame)
+    scores.append(score)
 
-    cv2.imshow('Camera - Manual Exposure', frame)
+best_score = max(scores)
+best_index = scores.index(best_score)
+best_picture = pictures[best_index]
+cv2.imshow(str(best_score), best_picture)
+print (f"best score:  {best_score} of: {scores}")
 
-    # Press 'q' to quit, or '+' / '-' to adjust exposure live
-    key = cv2.waitKey(1) & 0xFF
-    if key == ord('q'):
-        break
-    elif key == ord('+'):
-        exposure_value = max(exposure_value - 1, -13)
-        cap.set(cv2.CAP_PROP_EXPOSURE, exposure_value)
-        print(f"Exposure increased to {exposure_value}")
-    elif key == ord('-'):
-        exposure_value = min(exposure_value + 1, -1)
-        cap.set(cv2.CAP_PROP_EXPOSURE, exposure_value)
-        print(f"Exposure decreased to {exposure_value}")
 
-cap.release()
-cv2.destroyAllWindows()
+
