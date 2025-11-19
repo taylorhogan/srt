@@ -54,6 +54,7 @@ def take_snapshot(test_path=None):
     vid.set(cv.CAP_PROP_AUTO_EXPOSURE, 0)
     vid.set(cv.CAP_PROP_EXPOSURE, 12)
 
+
     ret, frame = vid.read()
     if ret:
         picture = []
