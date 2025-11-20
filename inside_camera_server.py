@@ -1,8 +1,9 @@
+import shutil
 
 import cv2 as cv
-import config
-import shutil
 import numpy as np
+
+import config
 
 
 def best_exposure_score(img):
@@ -28,12 +29,14 @@ def best_exposure_score(img):
     score = std_lum * (1 - 8 * (under + over)) * np.exp(-15 * (mean_lum - 0.5) ** 2)
     return score
 
+
 def gamma_correction(img, gamma=1.0):
     # Build a lookup table (fastest method)
     inv_gamma = 1.0 / gamma
     table = np.array([((i / 255.0) ** inv_gamma) * 255
                       for i in np.arange(0, 256)]).astype("uint8")
     return cv.LUT(img, table)
+
 
 def take_snapshot(test_path=None):
     cfg = config.data()
@@ -48,12 +51,11 @@ def take_snapshot(test_path=None):
     to_path = cfg["camera safety"]["scope_view"]
     shutil.copyfile(no_image, to_path)
 
-    vid = cv.VideoCapture(0,cv.CAP_DSHOW)
+    vid = cv.VideoCapture(0, cv.CAP_DSHOW)
     vid.set(cv.CAP_PROP_FRAME_WIDTH, 1280)
     vid.set(cv.CAP_PROP_FRAME_HEIGHT, 720)
     vid.set(cv.CAP_PROP_FPS, 30)
     vid.set(cv.CAP_PROP_EXPOSURE, -6)
-
 
     ret, frame = vid.read()
     vid.set(cv.CAP_PROP_EXPOSURE, -12)
@@ -64,7 +66,7 @@ def take_snapshot(test_path=None):
         picture = []
         scores = []
         for gamma_val in np.arange(0.1, 4.5, 0.1):
-            print (f"gamma: {gamma_val}")
+            print(f"gamma: {gamma_val}")
             result = gamma_correction(frame, gamma=gamma_val)
             scores.append(best_exposure_score(result))
             picture.append(result)
@@ -73,7 +75,7 @@ def take_snapshot(test_path=None):
         best_index = scores.index(best_score)
         best_picture = picture[best_index]
         cv.imwrite(to_path, best_picture)
-        print (f"best score:  {best_score} of: {scores}")
+        print(f"best score:  {best_score} of: {scores}")
         return True
 
     else:
@@ -81,8 +83,6 @@ def take_snapshot(test_path=None):
         return False
 
 
-
 if __name__ == '__main__':
     cfg = config.data()
     take_snapshot(None)
-
