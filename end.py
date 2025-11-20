@@ -1,14 +1,16 @@
 import asyncio
-import super_user_commands
-import social_server
-import config
 import logging
-import vision_safety
+import os
+import time
+
+import requests
+
+import config
 import kasa_utils as ku
 import pwi4_utils
-import os
-import requests
-import time
+import social_server
+import super_user_commands
+import vision_safety
 
 
 def determine_roof_state_visually(account):
@@ -20,7 +22,7 @@ def determine_roof_state_visually(account):
         if is_closed:
             reply += "\nRoof is closed"
         else:
-            reply +="\nRoof is not closed"
+            reply += "\nRoof is not closed"
         if is_open:
             reply += "\nRoof is open"
         else:
@@ -36,7 +38,7 @@ def determine_roof_state_visually(account):
         social_server.post_social_message(reply)
 
 
-def do_main ():
+def do_main():
     cfg = config.data()
     path = os.path.join(cfg["Install"], 'iris.log')
     logging.basicConfig(filename=path, level=logging.INFO, format='%(asctime)s %(message)s',
@@ -49,7 +51,7 @@ def do_main ():
     try:
         with open("safety.txt", "w") as file:
             file.write("USER SAFE")
-        logger.info ("before discovery")
+        logger.info("before discovery")
         dev_map = asyncio.run(ku.make_discovery_map())
         logger.info("after discovery")
         parked = pwi4_utils.get_is_parked()
@@ -123,7 +125,4 @@ def do_main ():
 
 
 if __name__ == "__main__":
-
     do_main()
-
-
