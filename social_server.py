@@ -318,7 +318,6 @@ def main():
     logger = logging.getLogger(__name__)
 
     cfg["logger"]["logging"] = logger
-
     path = utils.set_install_dir()
     path = os.path.join(path, 'iris.log')
 
