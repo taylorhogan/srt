@@ -11,6 +11,8 @@ import pwi4_utils
 import social_server
 import super_user_commands
 import vision_safety
+import pushover
+
 
 
 def determine_roof_state_visually(account):
@@ -69,6 +71,12 @@ def do_main():
                 logger.info("step 1")
                 asyncio.run(ku.kasa_do(dev_map, instructions))
                 logger.info("step 2")
+                # make sure lights are on
+                time.sleep(60)
+                cfg = config.data()
+
+                inside_view = cfg["camera safety"]["scope_view"]
+                pushover.push_message_with_picture("Investigating if scope is parked", inside_view)
                 parked, closed, is_open, mod_date = vision_safety.visual_status()
                 if parked:
                     logger.info("step 3")
@@ -76,6 +84,8 @@ def do_main():
                     super_user_commands.toggle_roof(dev_map)
                     # wait for roof to close
                     time.sleep(30)
+                    pushover.push_message_with_picture("Investigating if roof is closed", inside_view)
+
                     parked, closed, is_open, mod_date = vision_safety.visual_status()
                     if closed:
                         social_server.post_social_message("Vision Safety says roof is closed")
