@@ -5,5 +5,8 @@ from time import sleep
 sensor = DistanceSensor(echo=24, trigger=23, max_distance=4)  # pins in BCM
 
 while True:
-    print(f"Distance: {sensor.distance * 100:.1f} cm")
+    cm = sensor.distance * 100
+    inches = cm / 2.54
+    print(f"Distance: {inches:.2f} inches")
+
     sleep(0.1)
