@@ -98,9 +98,9 @@ def take_snapshot(test_path=None):
     best_index = scores.index(best_score)
     best_picture = picture[best_index]
     cv.imwrite(to_path, best_picture)
-    cv.imshow('Image Window Title', best_picture)
-    cv.waitKey(0)
-    cv.destroyAllWindows()
+    #cv.imshow('Image Window Title', best_picture)
+    #cv.waitKey(0)
+    #cv.destroyAllWindows()
 
     print(f"best score:  {best_score} of: {scores}")
     return True

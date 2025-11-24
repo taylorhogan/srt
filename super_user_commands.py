@@ -287,7 +287,7 @@ def doit_cmd (words, account):
     utils.set_install_dir()
     parked, closed, open, mod_date = get_status_with_lights()
     if not closed:
-        pushover.push_message("roof is not closed, stopping")
+        pushover.push_message_with_picture("roof is not closed, stopping", inside_view)
         return
 
     # the roof is closed, so we can start imaging
@@ -307,14 +307,14 @@ def doit_cmd (words, account):
 
     ok = open_roof_with_option(True)
     if not ok:
-        pushover.push_message("roof not open, stopping", inside_view)
+        pushover.push_message_with_picture("roof not open, stopping", inside_view)
         return
 
     pushover.push_message_with_picture("roof is open, starting imaging in 5 min", inside_view)
     time.sleep(wait_time)
 
     if not is_safe():
-        pushover.push_message("not safe 3, stopping")
+        pushover.push_message_with_picture("not safe 3, stopping", inside_view)
         return
 
     on_nina(None, None)
@@ -332,13 +332,13 @@ def doit_cmd (words, account):
 
     parked, closed, open, mod_date = get_status_with_lights()
     if not parked:
-        pushover.push_message("scope is not parked, stopping")
+        pushover.push_message_with_picture("scope is not parked, stopping", inside_view)
         return
     if closed:
-        pushover.push_message("roof is closed, stopping")
+        pushover.push_message_with_picture("roof is closed, stopping", inside_view)
         return
     if not open:
-        pushover.push_message("roof is not open, stopping")
+        pushover.push_message_with_picture("roof is not open, stopping", inside_view)
         return
 
     image_nina(None, None)
