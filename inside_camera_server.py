@@ -69,7 +69,7 @@ def take_snapshot(test_path=None):
     print(f"Exposure set to: {vid.get(cv.CAP_PROP_EXPOSURE)}")  # May return -1 if not supported
     pictures = []
     scores = []
-    for exposure_value in range(-1, -14, -1):
+    for exposure_value in range(-1, -11, -1):
         ret, frame = vid.read()
         if not ret:
             return False
@@ -98,6 +98,10 @@ def take_snapshot(test_path=None):
     best_index = scores.index(best_score)
     best_picture = picture[best_index]
     cv.imwrite(to_path, best_picture)
+    cv.imshow('Image Window Title', best_picture)
+    cv.waitKey(0)
+    cv.destroyAllWindows()
+
     print(f"best score:  {best_score} of: {scores}")
     return True
 
