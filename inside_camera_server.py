@@ -55,9 +55,10 @@ def take_snapshot(test_path=None):
     vid = cv.VideoCapture(0, cv.CAP_DSHOW)  # Change 0 if you have multiple cameras
 
     # Optional: set resolution/FPS first (helps some cameras)
-    vid.set(cv.CAP_PROP_FRAME_WIDTH, 1280)
-    vid.set(cv.CAP_PROP_FRAME_HEIGHT, 720)
+    vid.set(cv.CAP_PROP_FRAME_WIDTH, 3840)
+    vid.set(cv.CAP_PROP_FRAME_HEIGHT, 2160)
     vid.set(cv.CAP_PROP_FPS, 30)
+    vid.set(cv.CAP_PROP_AUTOFOCUS, 1)
 
     # --- Set manual exposure here ---
     exposure_value = -6  # Try values from -1 (bright) to -11 (dark/short)
