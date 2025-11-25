@@ -4,6 +4,7 @@ import cv2 as cv
 import numpy as np
 
 import config
+import super_user_commands
 
 
 def best_exposure_score(img):
@@ -67,23 +68,31 @@ def take_snapshot(test_path=None):
     # Sometimes helps to also explicitly disable auto exposure (0.25 or 0.75 works on MSMF)
     # cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 0.25)
 
-    print(f"Exposure set to: {vid.get(cv.CAP_PROP_EXPOSURE)}")  # May return -1 if not supported
-    pictures = []
-    scores = []
-    for exposure_value in range(-1, -11, -1):
-        ret, frame = vid.read()
-        if not ret:
-            return False
-        vid.set(cv.CAP_PROP_EXPOSURE, exposure_value)
-        # cv2.imshow('Camera - Manual Exposure', frame)
-        score = best_exposure_score(frame)
-        print(f"Exposure: {exposure_value} Score: {score}")
-        pictures.append(frame)
-        scores.append(score)
+    incoming_inside_light_status = super_user_commands.is_inside_light_on()
 
-    best_score = max(scores)
-    best_index = scores.index(best_score)
-    best_picture = pictures[best_index]
+    for attempt in range (2):
+        if attempt == 0:
+            turn_inside_light_on ()
+        else
+            turn_inside_light_off()
+
+
+        pictures = []
+        scores = []
+        for exposure_value in range(-1, -11, -1):
+            ret, frame = vid.read()
+            if not ret:
+                return False
+            vid.set(cv.CAP_PROP_EXPOSURE, exposure_value)
+            # cv2.imshow('Camera - Manual Exposure', frame)
+            score = best_exposure_score(frame)
+            print(f"Exposure: {exposure_value} Score: {score}")
+            pictures.append(frame)
+            scores.append(score)
+
+        best_score = max(scores)
+        best_index = scores.index(best_score)
+        best_picture = pictures[best_index]
 
 
 

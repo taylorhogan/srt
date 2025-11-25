@@ -22,7 +22,6 @@ if __name__ == "__main__":
         (
         {
             "Telescope mount": 'ison',
-            "Iris back lights": 'isoff',
             "Iris door light": 'isoff',
             "Iris inside light": "isoff",
             "Driveway lights": "isoff"

@@ -17,6 +17,37 @@ import pushover
 
 
 
+def is_inside_light_on(dev_map):
+
+    instructions = (dict
+        (
+        {
+            "Iris inside light": "ison"
+        }
+    ))
+
+    inside_light_on = asyncio.run(ku.kasa_check(dev_map, instructions))
+    return inside_light_on
+
+
+def turn_inside_light_on (dev_map):
+    instructions = (dict
+        (
+        {
+            "Iris inside light": 'on',
+        }
+    ))
+    asyncio.run(ku.kasa_do(dev_map, instructions))
+    time.sleep(2)
+def turn_inside_light_off (dev_map):
+    instructions = (dict
+        (
+        {
+            "Iris inside light": 'off',
+        }
+    ))
+    asyncio.run(ku.kasa_do(dev_map, instructions))
+    time.sleep(2)
 
 def toggle_roof (dev_map):
 
