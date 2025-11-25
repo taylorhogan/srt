@@ -1,24 +1,21 @@
+import asyncio
+import logging
+import os
 import subprocess
+import time
+
+import requests
 
 import config
-import social_server
-import kasa_utils as ku
-import utils
-import os
-import asyncio
-import requests
-import time
 import instructions
-import logging
-import vision_safety
+import kasa_utils as ku
 import pushover
-
-
-
+import social_server
+import utils
+import vision_safety
 
 
 def is_inside_light_on(dev_map):
-
     instructions = (dict
         (
         {
@@ -30,7 +27,7 @@ def is_inside_light_on(dev_map):
     return inside_light_on
 
 
-def turn_inside_light_on (dev_map):
+def turn_inside_light_on(dev_map):
     instructions = (dict
         (
         {
@@ -39,7 +36,9 @@ def turn_inside_light_on (dev_map):
     ))
     asyncio.run(ku.kasa_do(dev_map, instructions))
     time.sleep(2)
-def turn_inside_light_off (dev_map):
+
+
+def turn_inside_light_off(dev_map):
     instructions = (dict
         (
         {
@@ -49,8 +48,8 @@ def turn_inside_light_off (dev_map):
     asyncio.run(ku.kasa_do(dev_map, instructions))
     time.sleep(2)
 
-def toggle_roof (dev_map):
 
+def toggle_roof(dev_map):
     instructions = (dict
         (
         {
@@ -98,7 +97,8 @@ def get_status_with_lights():
 
     return parked, closed, open, mod_date
 
-def open_roof_with_option (check:bool)->bool:
+
+def open_roof_with_option(check: bool) -> bool:
     dev_map = asyncio.run(ku.make_discovery_map())
     if check:
         parked, closed, open, mod_date = get_status_with_lights()
@@ -119,18 +119,12 @@ def open_roof_with_option (check:bool)->bool:
         return False
 
 
-
-
-
-
 def open_roof_cmd_no_check(words, account):
     open_roof_with_option(False)
 
 
-
-def open_roof_cmd (words, account):
+def open_roof_cmd(words, account):
     open_roof_with_option(True)
-
 
 
 def park_and_close_cmd(words, account):
@@ -145,6 +139,7 @@ def safe_cmd(words, account):
     utils.set_install_dir()
     with open("safety.txt", "w") as file:
         file.write("USER SAFE")
+
 
 def open_if_mount_off_cmd(words, account):
     dev_map = asyncio.run(ku.make_discovery_map())
@@ -186,7 +181,6 @@ def open_if_mount_off_cmd(words, account):
     else:
         social_server.post_social_message("Mount is not Off")
 
-
     return
 
 
@@ -194,17 +188,19 @@ def on_nina(words, account):
     print("Starting Nina")
     path = utils.set_install_dir()
     os.chdir(path)
-    #os.startfile("on_nina.bat")
+    # os.startfile("on_nina.bat")
     print(path)
-    subprocess.run(["on_nina.bat"],shell=True)
+    subprocess.run(["on_nina.bat"], shell=True)
     print("Done with Nina")
+
 
 def image_nina(words, account):
     print("Starting Nina")
     path = utils.set_install_dir()
     print(path)
-    subprocess.Popen(["image_nina.bat"],shell=True)
+    subprocess.Popen(["image_nina.bat"], shell=True)
     print("Done with Nina")
+
 
 def image_nina_a(words, account):
     print("Starting Nina")
@@ -227,9 +223,11 @@ def print_help(account):
         reply += word + "\n"
     social_server.post_social_message(reply)
 
-def dbb_cmd (words, account):
+
+def dbb_cmd(words, account):
     instructions.rehash_db()
     instructions.create_instructions_table(True)
+
 
 def dbr_cmd(words, account):
     """
@@ -257,13 +255,14 @@ def dbc_cmd(words, account):
     instructions.set_completed_instruction_db(words[2])
     instructions.create_instructions_table()
 
+
 def get_super_user_commands():
     return {
         "dbr": dbr_cmd,
         "dbd": dbd_cmd,
         "dbc": dbc_cmd,
         "dbb": dbb_cmd,
-        "image!!":doit_cmd,
+        "image!!": doit_cmd,
         "stop!": park_and_close_cmd,
         "safe!": safe_cmd,
         "nina1!": on_nina,
@@ -298,8 +297,8 @@ def do_super_user_command(words, account):
     else:
         return False
 
-def is_safe ():
 
+def is_safe():
     utils.set_install_dir()
     with open("safety.txt", "r") as file:
         first_line = file.readline()
@@ -308,12 +307,13 @@ def is_safe ():
     else:
         return False
 
-def doit_cmd (words, account):
+
+def doit_cmd(words, account):
     cfg = config.data()
 
-    inside_view= cfg["camera safety"]["scope_view"]
+    inside_view = cfg["camera safety"]["scope_view"]
 
-    print (words, account)
+    print(words, account)
     wait_time = 5 * 60
     utils.set_install_dir()
     parked, closed, open, mod_date = get_status_with_lights()
@@ -327,14 +327,11 @@ def doit_cmd (words, account):
         pushover.push_message("not safe 1, stopping")
         return
 
-
     time.sleep(wait_time)
 
     if not is_safe():
         pushover.push_message("not safe 2, stopping")
         return
-
-
 
     ok = open_roof_with_option(True)
     if not ok:
@@ -351,10 +348,9 @@ def doit_cmd (words, account):
     on_nina(None, None)
 
     # need to add a method to know if Nina is finished
-    #write to file that prelude has finished
+    # write to file that prelude has finished
     time.sleep(wait_time)
     pushover.push_message_with_picture("prelude has finished", inside_view)
-
 
     if not is_safe():
         pushover.push_message("not safe 4, stopping")
@@ -375,11 +371,12 @@ def doit_cmd (words, account):
     image_nina(None, None)
     pushover.push_message("imaging!")
 
+
 if __name__ == "__main__":
     print("Starting Nina")
     path = utils.set_install_dir()
     os.chdir(path)
-    #os.startfile("on_nina.bat")
+    # os.startfile("on_nina.bat")
     print(path)
     subprocess.run(["on_nina.bat"])
     print("Done with Nina")

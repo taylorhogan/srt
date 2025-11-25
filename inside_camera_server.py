@@ -5,6 +5,9 @@ import numpy as np
 
 import config
 import super_user_commands
+import kasa_utils as ku
+import asyncio
+
 
 
 def best_exposure_score(img):
@@ -68,13 +71,14 @@ def take_snapshot(test_path=None):
     # Sometimes helps to also explicitly disable auto exposure (0.25 or 0.75 works on MSMF)
     # cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 0.25)
 
-    incoming_inside_light_status = super_user_commands.is_inside_light_on()
+    dev_map = asyncio.run(ku.make_discovery_map())
+    incoming_inside_light_status = super_user_commands.is_inside_light_on(dev_map)
 
     for attempt in range (2):
         if attempt == 0:
-            turn_inside_light_on ()
-        else
-            turn_inside_light_off()
+            super_user_commands.turn_inside_light_on (dev_map)
+        else:
+            super_user_commands.turn_inside_light_off(dev_map)
 
 
         pictures = []
@@ -90,9 +94,14 @@ def take_snapshot(test_path=None):
             pictures.append(frame)
             scores.append(score)
 
-        best_score = max(scores)
-        best_index = scores.index(best_score)
-        best_picture = pictures[best_index]
+    if not incoming_inside_light_status:
+        super_user_commands.turn_inside_light_off(dev_map)
+    else:
+        super_user_commands.turn_inside_light_on(dev_map)
+
+    best_score = max(scores)
+    best_index = scores.index(best_score)
+    best_picture = pictures[best_index]
 
 
 
