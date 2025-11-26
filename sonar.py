@@ -2,7 +2,7 @@
 from gpiozero import DistanceSensor
 from time import sleep
 
-sensor = DistanceSensor(echo=24, trigger=23, max_distance=4)  # pins in BCM
+sensor = DistanceSensor(echo=21, trigger=20)  # pins in BCM
 
 while True:
     cm = sensor.distance * 100
