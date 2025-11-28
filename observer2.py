@@ -55,10 +55,10 @@ def get_distance_cm():
     return statistics.median(distances)
 
 
-def send_notification(title, message):
+def send_notification(message):
     try:
         pushover.push_message(message)
-        print(f"Pushover sent: {title} - {message}")
+        print(f"Pushover sent:{message}")
     except Exception as e:
         print(f"Failed to send Pushover: {e}")
 
@@ -127,10 +127,10 @@ while True:
 
             if current_roof_state == "CLOSED":
                 set_mount_power(False)
-                send_notification("🔴 Roof CLOSED", "Telescope mount power has been turned OFF for safety.")
+                send_notification("🔴 Roof CLOSED Telescope mount power has been turned OFF for safety.")
             elif current_roof_state == "OPEN":
                 set_mount_power(True)
-                send_notification("🟢 Roof OPEN", "Telescope mount power has been turned ON.")
+                send_notification("🟢 Roof OPEN  Telescope mount power has been turned ON.")
 
         time.sleep(READ_INTERVAL_SECONDS)
 
