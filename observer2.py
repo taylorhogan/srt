@@ -58,7 +58,7 @@ def get_distance_cm():
 
 def send_notification(title, message):
     try:
-        pushover.push_message(message, title=title, sound="intermission")
+        #pushover.push_message(message, title=title, sound="intermission")
         print(f"Pushover sent: {title} - {message}")
     except Exception as e:
         print(f"Failed to send Pushover: {e}")
@@ -103,20 +103,13 @@ while True:
 
         new_state = determine_roof_state(dist)
         print (f"current state {current_roof_state} new state {new_state} current state {current_roof_state} consecutive_count {consecutive_count}")
-        print (str (consecutive_count))
-        if new_state is None:
-            # Ambiguous reading → don't change state, reset debounce
-            consecutive_count = 0
-        elif new_state == current_roof_state:
-            # Same as before → reinforce
-            consecutive_count += 1
-        else:
-            # Potential state change
-            consecutive_count = 1
-            current_roof_state = new_state  # we'll confirm after debounce
+
+
+
+
 
         # Only act after debounce threshold
-        if consecutive_count >= DEBOUNCE_READINGS and new_state != current_roof_state:
+        if new_state != current_roof_state:
             old_state = current_roof_state
             current_roof_state = new_state
 
