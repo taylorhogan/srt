@@ -58,7 +58,7 @@ def get_distance_cm():
 
 def send_notification(title, message):
     try:
-        #pushover.push_message(message, title=title, sound="intermission")
+        pushover.push_message(message, title=title, sound="intermission")
         print(f"Pushover sent: {title} - {message}")
     except Exception as e:
         print(f"Failed to send Pushover: {e}")
@@ -92,6 +92,7 @@ def determine_roof_state(distance_cm):
 print("Observatory roof monitor started...")
 print("Waiting for first valid reading...")
 
+last_state = None
 while True:
     try:
         dist = get_distance_cm()
@@ -101,19 +102,26 @@ while True:
         else:
             print(f"Distance: {dist:.1f} cm")
 
-        new_state = determine_roof_state(dist)
-        print (f"current state {current_roof_state} new state {new_state} current state {current_roof_state} consecutive_count {consecutive_count}")
+        test_state = determine_roof_state(dist)
+        print (f"current state {current_roof_state} new state {test_state} current state {current_roof_state} consecutive_count {consecutive_count}")
 
-
-
-
+        if test_state is None:
+            # Ambiguous reading → don't change state, reset debounce
+            consecutive_count = 0
+        elif test_state == last_state:
+            # Same as before → reinforce
+            consecutive_count += 1
+        else:
+            # Potential state change
+            consecutive_count = 1
+        last_state = test_state
 
         # Only act after debounce threshold
-        if new_state != current_roof_state:
-            old_state = current_roof_state
-            current_roof_state = new_state
+        if consecutive_count >= DEBOUNCE_READINGS and last_state != current_roof_state:
 
-            print(f"ROOF STATE CHANGED: {old_state or 'unknown'} → {current_roof_state}")
+            current_roof_state = last_state
+
+
 
             if current_roof_state == "CLOSED":
                 set_mount_power(False)
