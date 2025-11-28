@@ -34,8 +34,7 @@ echo = DistanceSensor(echo=ECHO_PIN, trigger=TRIGGER_PIN, max_distance=4)  # 4 m
 
 
 # State tracking
-current_roof_state = None  # None, "OPEN", or "CLOSED"
-consecutive_count = 0
+
 
 
 def get_distance_cm():
@@ -93,17 +92,19 @@ print("Observatory roof monitor started...")
 print("Waiting for first valid reading...")
 
 last_state = None
+current_roof_state = None
+consecutive_count = 0
 while True:
     try:
         dist = get_distance_cm()
 
         if dist is None:
-            print("No echo received (roof likely open)")
+            print("No echo received")
         else:
             print(f"Distance: {dist:.1f} cm")
 
         test_state = determine_roof_state(dist)
-        print (f"current state {current_roof_state} new state {test_state} current state {current_roof_state} consecutive_count {consecutive_count}")
+
 
         if test_state is None:
             # Ambiguous reading → don't change state, reset debounce
@@ -115,7 +116,8 @@ while True:
             # Potential state change
             consecutive_count = 1
         last_state = test_state
-
+        print(
+            f"current state {current_roof_state} last state {last_state} current state {current_roof_state} consecutive_count {consecutive_count}")
         # Only act after debounce threshold
         if consecutive_count >= DEBOUNCE_READINGS and last_state != current_roof_state:
 
