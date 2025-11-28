@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 import time
 import statistics
-
+from gpiozero import DistanceSensor
 
 
 # ========================= CONFIGURATION =========================
@@ -28,7 +28,7 @@ DEBOUNCE_READINGS = 3  # need this many consecutive same state before we accept 
 
 # Initialize components
 
-echo = gpiozero.DistanceSensor(echo=ECHO_PIN, trigger=TRIGGER_PIN, max_distance=4)  # 4 meters max
+echo = DistanceSensor(echo=ECHO_PIN, trigger=TRIGGER_PIN, max_distance=4)  # 4 meters max
 
 
 
