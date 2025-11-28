@@ -32,7 +32,7 @@ DEBOUNCE_READINGS = 3  # need this many consecutive same state before we accept 
 
 # Initialize components
 trigger = gpiozero.DigitalOutputDevice(TRIGGER_PIN)
-echo = gpiozero.DistanceSensor(echo_pin=ECHO_PIN, trigger_pin=TRIGGER_PIN, max_distance=4)  # 4 meters max
+echo = gpiozero.DistanceSensor(echo=ECHO_PIN, trigger=TRIGGER_PIN, max_distance=4)  # 4 meters max
 
 plug = pyHS100.SmartPlug(PLUG_IP)
 
