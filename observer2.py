@@ -2,8 +2,10 @@
 import time
 import gpiozero
 import pyHS100  # pip install pyHS100
-from pushover import Client  # pip install python-pushover
+
+
 import statistics
+import pushover
 import os
 
 # ========================= CONFIGURATION =========================
@@ -33,7 +35,7 @@ trigger = gpiozero.DigitalOutputDevice(TRIGGER_PIN)
 echo = gpiozero.DistanceSensor(echo_pin=ECHO_PIN, trigger_pin=TRIGGER_PIN, max_distance=4)  # 4 meters max
 
 plug = pyHS100.SmartPlug(PLUG_IP)
-pushover_client = Client(PUSHOVER_USER, api_token=PUSHOVER_TOKEN)
+
 
 # State tracking
 current_roof_state = None  # None, "OPEN", or "CLOSED"
@@ -60,7 +62,7 @@ def get_distance_cm():
 
 def send_notification(title, message):
     try:
-        pushover_client.send_message(message, title=title, sound="intermission")
+        pushover.push_message(message, title=title, sound="intermission")
         print(f"Pushover sent: {title} - {message}")
     except Exception as e:
         print(f"Failed to send Pushover: {e}")
@@ -69,10 +71,10 @@ def send_notification(title, message):
 def set_mount_power(on: bool):
     try:
         if on:
-            plug.turn_on()
+            #plug.turn_on()
             print("Mount power: ON")
         else:
-            plug.turn_off()
+            #plug.turn_off()
             print("Mount power: OFF")
     except Exception as e:
         print(f"Kasa plug error: {e}")
@@ -140,4 +142,4 @@ while True:
         time.sleep(READ_INTERVAL_SECONDS)
 
 # Final safety: turn mount off when script exits
-set_mount_power(False)
+#set_mount_power(False)
