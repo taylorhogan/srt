@@ -11,8 +11,8 @@ import os
 # ========================= CONFIGURATION =========================
 
 # --- Ultrasonic sensor pins (BCM numbering) ---
-TRIGGER_PIN = 23
-ECHO_PIN = 24
+TRIGGER_PIN = 20
+ECHO_PIN = 21
 
 # --- Kasa Smart Plug ---
 PLUG_IP = "192.168.1.XXX"  # Change to your plug's IP (highly recommended to use static IP)
