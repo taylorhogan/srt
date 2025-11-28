@@ -1,12 +1,8 @@
 #!/usr/bin/env python3
 import time
-import gpiozero
-import pyHS100  # pip install pyHS100
-
-
 import statistics
-import pushover
-import os
+
+
 
 # ========================= CONFIGURATION =========================
 
@@ -31,10 +27,9 @@ DEBOUNCE_READINGS = 3  # need this many consecutive same state before we accept 
 # ================================================================
 
 # Initialize components
-trigger = gpiozero.DigitalOutputDevice(TRIGGER_PIN)
+
 echo = gpiozero.DistanceSensor(echo=ECHO_PIN, trigger=TRIGGER_PIN, max_distance=4)  # 4 meters max
 
-plug = pyHS100.SmartPlug(PLUG_IP)
 
 
 # State tracking
@@ -62,7 +57,7 @@ def get_distance_cm():
 
 def send_notification(title, message):
     try:
-        pushover.push_message(message, title=title, sound="intermission")
+        #pushover.push_message(message, title=title, sound="intermission")
         print(f"Pushover sent: {title} - {message}")
     except Exception as e:
         print(f"Failed to send Pushover: {e}")
