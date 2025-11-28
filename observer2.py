@@ -102,7 +102,8 @@ while True:
             print(f"Distance: {dist:.1f} cm")
 
         new_state = determine_roof_state(dist)
-
+        print (new_state)
+        print (str (consecutive_count))
         if new_state is None:
             # Ambiguous reading → don't change state, reset debounce
             consecutive_count = 0
