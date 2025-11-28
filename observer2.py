@@ -2,6 +2,7 @@
 import time
 import statistics
 from gpiozero import DistanceSensor
+import pushover
 
 
 # ========================= CONFIGURATION =========================
@@ -57,7 +58,7 @@ def get_distance_cm():
 
 def send_notification(title, message):
     try:
-        #pushover.push_message(message, title=title, sound="intermission")
+        pushover.push_message(message, title=title, sound="intermission")
         print(f"Pushover sent: {title} - {message}")
     except Exception as e:
         print(f"Failed to send Pushover: {e}")
