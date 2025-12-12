@@ -314,7 +314,7 @@ def doit_cmd(words, account):
     inside_view = cfg["camera safety"]["scope_view"]
 
     print(words, account)
-    wait_time = 5 * 60
+    wait_time = 1 * 60
     utils.set_install_dir()
     parked, closed, open, mod_date = get_status_with_lights()
     if not closed:
@@ -338,7 +338,7 @@ def doit_cmd(words, account):
         pushover.push_message_with_picture("roof not open, stopping", inside_view)
         return
 
-    pushover.push_message_with_picture("roof is open, starting imaging in 5 min", inside_view)
+    pushover.push_message_with_picture("roof is open, starting imaging in 1 min", inside_view)
     time.sleep(wait_time)
 
     if not is_safe():
@@ -349,7 +349,7 @@ def doit_cmd(words, account):
 
     # need to add a method to know if Nina is finished
     # write to file that prelude has finished
-    time.sleep(wait_time)
+    time.sleep(5*60)
     pushover.push_message_with_picture("prelude has finished", inside_view)
 
     if not is_safe():
