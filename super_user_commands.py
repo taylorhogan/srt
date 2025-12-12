@@ -76,19 +76,17 @@ def get_status_with_lights():
     instructions = (dict
         (
         {
-            "Iris inside light": 'on',
             "Observatory strip": 'on'
         }
     ))
 
-    asyncio.run(ku.kasa_do(dev_map, instructions))
-    time.sleep(10)
+    #asyncio.run(ku.kasa_do(dev_map, instructions))
+    #time.sleep(10)
     parked, closed, open, mod_date = vision_safety.visual_status()
     time.sleep(10)
     instructions = (dict
         (
         {
-            "Iris inside light": 'off',
             "Observatory strip": 'off'
         }
     ))
@@ -106,7 +104,9 @@ def open_roof_with_option(check: bool) -> bool:
             if closed:
                 social_server.post_social_message("Vision Safety says roof is closed, opening roof")
                 toggle_roof(dev_map)
-                return True
+                time.sleep(30)
+                parked, closed, open, mod_date = get_status_with_lights()
+                return open and parked
 
             else:
                 social_server.post_social_message("Vision Safety says roof is NOT closed, therefore will not open")
@@ -322,7 +322,7 @@ def doit_cmd(words, account):
         return
 
     # the roof is closed, so we can start imaging
-    pushover.push_message_with_picture("Roof is closed, starting run in 5 min", inside_view)
+    pushover.push_message_with_picture("Roof is closed, starting run in 1 min", inside_view)
     if not is_safe():
         pushover.push_message("not safe 1, stopping")
         return
@@ -335,8 +335,9 @@ def doit_cmd(words, account):
 
     ok = open_roof_with_option(True)
     if not ok:
-        pushover.push_message_with_picture("roof not open, stopping", inside_view)
+        pushover.push_message_with_picture("problem opening roof, stopping", inside_view)
         return
+
 
     pushover.push_message_with_picture("roof is open, starting imaging in 1 min", inside_view)
     time.sleep(wait_time)
