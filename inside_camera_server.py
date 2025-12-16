@@ -127,6 +127,7 @@ def take_snapshot(test_path=None):
 
 
 
+
 if __name__ == '__main__':
     cfg = config.data()
     take_snapshot(None)
