@@ -5,7 +5,7 @@ import math
 import cv2 as cv
 import inside_camera_server
 import config
-import social_server
+import pushover
 
 
 cfg = config.data()
@@ -131,3 +131,4 @@ if __name__ == '__main__':
     else:
         parked, closed, open, mod_date = visual_status()
         print (parked, closed, open, mod_date)
+        pushover.push_message_with_picture("roof is not closed, stopping", inside_view)
