@@ -122,6 +122,8 @@ def visual_status():
 
 if __name__ == '__main__':
     cfg = config.data()
+    inside_view = cfg["camera safety"]["scope_view"]
+
     just_finding_template = False
     if just_finding_template:
 
