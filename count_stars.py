@@ -60,3 +60,5 @@ def count_stars ():
 
     print(f"best score:  {best_score} of: {scores}")
     return True
+
+count_stars()
