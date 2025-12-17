@@ -35,12 +35,13 @@ def count_stars ():
 
     pictures = []
     scores = []
-    for exposure_value in range(-6, 6, 1):
+    for exposure_value in range(-11, 1, 1):
+        vid.set(cv.CAP_PROP_EXPOSURE, exposure_value)
         ret, frame = vid.read()
         if not ret:
             print("failed to read frame")
             return False
-        vid.set(cv.CAP_PROP_EXPOSURE, exposure_value)
+
 
         score = inside_camera_server.best_exposure_score(frame)
         print(f"Exposure: {exposure_value} Score: {score}")
