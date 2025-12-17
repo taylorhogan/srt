@@ -35,7 +35,7 @@ def count_stars ():
 
     pictures = []
     scores = []
-    for exposure_value in range(-6, -6, 1):
+    for exposure_value in range(-6, 6, 1):
         ret, frame = vid.read()
         if not ret:
             print("failed to read frame")
