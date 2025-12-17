@@ -55,7 +55,9 @@ def count_stars ():
     best_score = max(scores)
     best_index = scores.index(best_score)
     best_picture = pictures[best_index]
-    pushover.push_message_with_picture("picture", best_picture)
+    cv.imwrite(to_path, best_picture)
+
+    pushover.push_message_with_picture("picture", to_path)
 
 
     print(f"best score:  {best_score} of: {scores}")
