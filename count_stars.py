@@ -16,8 +16,8 @@ def count_stars ():
 
 
     # Open camera with DirectShow backend (best for exposure on Windows)
-    vid = cv.VideoCapture(0)  # Change 0 if you have multiple cameras
-
+    #vid = cv.VideoCapture(0)  # Change 0 if you have multiple cameras
+    vid = cv.VideoCapture(0, cv.CAP_DSHOW)
     # Optional: set resolution/FPS first (helps some cameras)
     vid.set(cv.CAP_PROP_FRAME_WIDTH, 3840)
     vid.set(cv.CAP_PROP_FRAME_HEIGHT, 2160)
@@ -41,6 +41,7 @@ def count_stars ():
     for exposure_value in range(-1, -11, -1):
         ret, frame = vid.read()
         if not ret:
+            print("failed to read frame")
             return False
         vid.set(cv.CAP_PROP_EXPOSURE, exposure_value)
 
@@ -54,6 +55,7 @@ def count_stars ():
     best_score = max(scores)
     best_index = scores.index(best_score)
     best_picture = pictures[best_index]
+    pushover.push_message_with_picture("picture", best_picture)
 
 
     print(f"best score:  {best_score} of: {scores}")
