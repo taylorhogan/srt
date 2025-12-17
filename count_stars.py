@@ -26,7 +26,7 @@ def count_stars():
     # vid.set(cv.CAP_PROP_EXPOSURE, exposure_value)
 
     # Sometimes helps to also explicitly disable auto exposure (0.25 or 0.75 works on MSMF)
-    #vid.set(cv.CAP_PROP_AUTO_EXPOSURE, 0.25)
+    vid.set(cv.CAP_PROP_AUTO_EXPOSURE, 0.25)
 
     pictures = []
     scores = []
@@ -36,9 +36,7 @@ def count_stars():
         if not ret:
             print("failed to read frame")
             return False
-        cv.imwrite(to_path, frame)
 
-        pushover.push_message_with_picture(str (exposure_value), to_path)
 
         score = inside_camera_server.best_exposure_score(frame)
         print(f"Exposure: {exposure_value} Score: {score}")

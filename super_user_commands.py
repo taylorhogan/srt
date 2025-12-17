@@ -194,13 +194,19 @@ def on_nina(words, account):
     print("Done with Nina")
 
 
-def image_nina(words, account):
+def image_nina1(words, account):
     print("Starting Nina")
     path = utils.set_install_dir()
     print(path)
-    subprocess.Popen(["image_nina.bat"], shell=True)
+    subprocess.Popen(["image_nina1.bat"], shell=True)
     print("Done with Nina")
 
+def image_nina2(words, account):
+    print("Starting Nina")
+    path = utils.set_install_dir()
+    print(path)
+    subprocess.Popen(["image_nina2.bat"], shell=True)
+    print("Done with Nina")
 
 def image_nina_a(words, account):
     print("Starting Nina")
@@ -314,6 +320,10 @@ def doit_cmd(words, account):
     inside_view = cfg["camera safety"]["scope_view"]
 
     print(words, account)
+    operand = 1
+    if len(words) > 1:
+        operand = int(words[2])
+
     wait_time = 1 * 60
     utils.set_install_dir()
     parked, closed, open, mod_date = get_status_with_lights()
@@ -345,32 +355,39 @@ def doit_cmd(words, account):
     if not is_safe():
         pushover.push_message_with_picture("not safe 3, stopping", inside_view)
         return
+    if operand == 2 or operand == 1:
 
-    on_nina(None, None)
+        on_nina(None, None)
 
-    # need to add a method to know if Nina is finished
-    # write to file that prelude has finished
-    time.sleep(5*60)
-    pushover.push_message_with_picture("prelude has finished", inside_view)
+        # need to add a method to know if Nina is finished
+        # write to file that prelude has finished
+        time.sleep(5*60)
+        pushover.push_message_with_picture("prelude has finished", inside_view)
 
-    if not is_safe():
-        pushover.push_message("not safe 4, stopping")
-        return
-    # add in check to make sure mount is on
+        if not is_safe():
+            pushover.push_message("not safe 4, stopping")
+            return
+        # add in check to make sure mount is on
 
-    parked, closed, open, mod_date = get_status_with_lights()
-    if not parked:
-        pushover.push_message_with_picture("scope is not parked, stopping", inside_view)
-        return
-    if closed:
-        pushover.push_message_with_picture("roof is closed, stopping", inside_view)
-        return
-    if not open:
-        pushover.push_message_with_picture("roof is not open, stopping", inside_view)
-        return
+        parked, closed, open, mod_date = get_status_with_lights()
+        if not parked:
+            pushover.push_message_with_picture("scope is not parked, stopping", inside_view)
+            return
+        if closed:
+            pushover.push_message_with_picture("roof is closed, stopping", inside_view)
+            return
+        if not open:
+            pushover.push_message_with_picture("roof is not open, stopping", inside_view)
+            return
+        if operand == 1:
+            image_nina1(None, None)
+        else:
+            image_nina2(None, None)
 
-    image_nina(None, None)
-    pushover.push_message("imaging!")
+
+        pushover.push_message("imaging!")
+    else:
+        pushover.push_message("operand not 1 or 2, stopping")
 
 
 if __name__ == "__main__":
