@@ -16,8 +16,8 @@ def count_stars ():
 
 
     # Open camera with DirectShow backend (best for exposure on Windows)
-    #vid = cv.VideoCapture(0)  # Change 0 if you have multiple cameras
-    vid = cv.VideoCapture(0, cv.CAP_DSHOW)
+    vid = cv.VideoCapture(0)  # Change 0 if you have multiple cameras
+    #vid = cv.VideoCapture(0, cv.CAP_DSHOW)
     # Optional: set resolution/FPS first (helps some cameras)
     vid.set(cv.CAP_PROP_FRAME_WIDTH, 3840)
     vid.set(cv.CAP_PROP_FRAME_HEIGHT, 2160)
