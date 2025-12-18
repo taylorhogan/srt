@@ -88,7 +88,7 @@ def waiting_for_noon():
 def imaging():
     set_state("Imaging")
     asyncio.run(wait_a_bit())
-    super_user_commands.doit_cmd("", "iris")
+    #super_user_commands.image_cmd("", "iris")
     waiting_for_sunrise()
 
 

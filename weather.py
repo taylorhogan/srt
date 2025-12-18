@@ -34,7 +34,7 @@ def get_weather_by_hour(lat, lon, hours):
     params = {
         "latitude": lat,
         "longitude": lon,
-        "hourly": ["cloud_cover", "precipitation_probability", "wind_speed_80m"],
+        "hourly": ["cloud_cover", "precipitation_probability", "wind_speed_80m", "humidity"],
         "forecast_days": 2,  # Ensure enough days
         "timezone": "auto"
     }
@@ -50,6 +50,7 @@ def get_weather_by_hour(lat, lon, hours):
         cloud_covers = data["hourly"]["cloud_cover"]
         precipitation_probability = data["hourly"]["precipitation_probability"]
         wind_speed = data["hourly"]["wind_speed_80m"]
+        humidity = data["hourly"]["humidity"]
 
         local_tz = pytz.timezone('America/New_York')
         utc_timezone = pytz.utc
@@ -57,6 +58,7 @@ def get_weather_by_hour(lat, lon, hours):
         local_cloud_covers = []
         local_precipitation_probability = []
         local_wind_speed = []
+        local_humidity = []
 
         now = datetime.now(local_tz)
 
@@ -74,12 +76,13 @@ def get_weather_by_hour(lat, lon, hours):
             local_cloud_covers.append(cloud_covers[i])
             local_precipitation_probability.append(precipitation_probability[i])
             local_wind_speed.append(wind_speed[i])
+            local_humidity.append(humidity[i])
 
 
     except requests.RequestException as e:
         print(f"Error fetching forecast: {e}")
 
-    return local_cloud_times, local_cloud_covers, local_precipitation_probability, local_wind_speed
+    return local_cloud_times, local_cloud_covers, local_precipitation_probability, local_wind_speed, local_humidity
 
 
 if __name__ == '__main__':

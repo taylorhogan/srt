@@ -151,11 +151,12 @@ def plot_my_dso_and_horizon(dso, my_observatory, observe_time):
     ax.plot(local_datetime, moon_alt, color='blue', label = 'Moon(' + str(illumination) + "%)",linewidth=2)
 
     #plot the cloud cover
-    cloud_times,cloud_covers,pp,wsp = weather.get_weather_by_hour(latitude, longitude, 24)
+    cloud_times,cloud_covers,pp,wsp,hum = weather.get_weather_by_hour(latitude, longitude, 24)
     time_format = "%Y-%m-%d %H:%M"
     clipped_cloud = []
     clipped_pp = []
     clipped_wsp = []
+    clipped_hum = []
     weather_ok = True
     for i in range(len(local_datetime)):
         hour = local_datetime[i].hour
@@ -167,6 +168,7 @@ def plot_my_dso_and_horizon(dso, my_observatory, observe_time):
                 clipped_cloud.append(cloud_covers[j]/100*90)
                 clipped_pp.append(pp[j]/100*90)
                 clipped_wsp.append(wsp[j]/40*90)
+                clipped_hum.append(hum[j]/100*90)
                 if cloud_covers[j] > 80:
                     weather_ok = False
                     print ("bad cloud cover", cloud_time_hour, cloud_covers[j])
@@ -185,7 +187,7 @@ def plot_my_dso_and_horizon(dso, my_observatory, observe_time):
     ax.plot(local_datetime, clipped_cloud, color='red', label = 'Cloud Cover',linewidth=2)
     ax.plot(local_datetime, clipped_pp, color='pink', label='Prob. Precip.',linewidth=2)
     ax.plot(local_datetime, clipped_wsp, color='black', label='Wind Speed % of 25 mph',linewidth=2)
-
+    ax.plot(local_datetime, clipped_hum, color='green', label='Humidity %',linewidth=2)
 
     ax.set_xlim([local_datetime[0], local_datetime[-1]])
     date_formatter = dates.DateFormatter('%H', tz=local_tz)

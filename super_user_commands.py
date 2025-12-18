@@ -127,7 +127,7 @@ def open_roof_cmd(words, account):
     open_roof_with_option(True)
 
 
-def park_and_close_cmd(words, account):
+def unsafe_cmd(words, account):
     social_server.post_social_message("User has stopped imaging")
     utils.set_install_dir()
     with open("safety.txt", "w") as file:
@@ -140,6 +140,14 @@ def safe_cmd(words, account):
     with open("safety.txt", "w") as file:
         file.write("USER SAFE")
 
+def imaging_state(state):
+
+    utils.set_install_dir()
+    with open("imaging.txt", "w") as file:
+        if state is True:
+            file.write("IMAGING TRUE")
+        else:
+            file.write("IMAGING FALSE")
 
 def open_if_mount_off_cmd(words, account):
     dev_map = asyncio.run(ku.make_discovery_map())
@@ -268,11 +276,11 @@ def get_super_user_commands():
         "dbd": dbd_cmd,
         "dbc": dbc_cmd,
         "dbb": dbb_cmd,
-        "image!!": doit_cmd,
-        "stop!": park_and_close_cmd,
+        "image!!": image_cmd,
+        "stop!": unsafe_cmd,
         "safe!": safe_cmd,
         "nina1!": on_nina,
-        "nina2!": image_nina,
+        "nina2!": image_nina1,
         "nina2A!": image_nina_a,
         "open!": open_roof_cmd,
         "open!!": open_roof_cmd_no_check
@@ -313,8 +321,29 @@ def is_safe():
     else:
         return False
 
+def is_imaging ():
+    utils.set_install_dir()
+    with open("imaging.txt", "r") as file:
+        first_line = file.readline()
+    if first_line == "IMAGING TRUE":
+        return True
+    else:
+        return False
+
+def image_cmd(words, account):
+    if is_imaging():
+        pushover.push_message("Already imaging, cannot restart")
+
+    else:
+        imaging_state(True)
+        do_super_user_command(words, account)
+    imaging_state(False)
+
+
 
 def doit_cmd(words, account):
+
+
     cfg = config.data()
 
     inside_view = cfg["camera safety"]["scope_view"]
