@@ -23,7 +23,7 @@ PUSHOVER_USER = "your_user_key_here"
 PUSHOVER_TOKEN = "your_api_token_here"
 
 # --- Thresholds ---
-ROOF_CLOSED_DISTANCE_CM = 30  # < 12 inches ≈ 30 cm → roof closed
+ROOF_CLOSED_DISTANCE_CM = 50  # < 12 inches ≈ 30 cm → roof closed
 ROOF_OPEN_MIN_CM = 100  # if we can't see anything closer than this → roof open
 SAMPLES_PER_READING = 5  # take 5 measurements and median filter
 READ_INTERVAL_SECONDS = 2  # how often we check the sensor
@@ -121,6 +121,8 @@ def roof_state ():
             elif test_state == last_state:
                 # Same as before → reinforce
                 consecutive_count += 1
+                consecutive_count = min (consecutive_count, DEBOUNCE_READINGS+1)
+
             else:
                 # Potential state change
                 consecutive_count = 1
