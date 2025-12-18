@@ -50,7 +50,7 @@ def get_weather_by_hour(lat, lon, hours):
         cloud_covers = data["hourly"]["cloud_cover"]
         precipitation_probability = data["hourly"]["precipitation_probability"]
         wind_speed = data["hourly"]["wind_speed_80m"]
-        humidity = data["hourly"]["humidity"]
+        humidity = data["hourly"]["relative_humidity_2m"]
 
         local_tz = pytz.timezone('America/New_York')
         utc_timezone = pytz.utc
