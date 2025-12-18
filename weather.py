@@ -34,7 +34,7 @@ def get_weather_by_hour(lat, lon, hours):
     params = {
         "latitude": lat,
         "longitude": lon,
-        "hourly": ["cloud_cover", "precipitation_probability", "wind_speed_80m", "humidity"],
+        "hourly": ["cloud_cover", "precipitation_probability", "wind_speed_80m", "relative_humidity_2m"],
         "forecast_days": 2,  # Ensure enough days
         "timezone": "auto"
     }
