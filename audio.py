@@ -58,6 +58,6 @@ def record_audio(output_filename, duration=5, sample_rate=44100, channels=1, chu
 if __name__ == "__main__":
     # Example usage
     output_file = "rec4.wav"  # Output file name
-    record_duration = 20  # Record for 5 seconds
+    record_duration = 5  # Record for 5 seconds
 
     record_audio(output_file, duration=record_duration)

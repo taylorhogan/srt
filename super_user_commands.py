@@ -322,13 +322,15 @@ def is_safe():
         return False
 
 def is_imaging ():
-    utils.set_install_dir()
-    with open("imaging.txt", "r") as file:
-        first_line = file.readline()
-    if first_line == "IMAGING TRUE":
-        return True
-    else:
-        return False
+    return False
+
+    # utils.set_install_dir()
+    # with open("imaging.txt", "r") as file:
+    #     first_line = file.readline()
+    # if first_line == "IMAGING TRUE":
+    #     return True
+    # else:
+    #     return False
 
 def image_cmd(words, account):
     if is_imaging():
