@@ -15,7 +15,7 @@ CHANNELS = 1
 RATE = 44100                    # Common sample rate
 CHUNK = 1024                    # Audio chunk size
 THRESHOLD = 0.02                # RMS threshold – tune this based on your mic/environment (0.01–0.05 typical)
-RECORD_SECONDS = 5              # Length of audio clip to capture when sound is detected
+RECORD_SECONDS = 10             # Length of audio clip to capture when sound is detected
 LIBRARY_DIR = "library_spectrograms/"   # Folder with your pre-saved spectrogram PNGs
 DETECTED_DIR = "detected_spectrograms/" # Where detected spectrograms will be saved (optional, for review)
 FIG_SIZE = (10, 6)              # Fixed figure size for consistent image dimensions
@@ -83,6 +83,7 @@ try:
         rms = np.sqrt(np.mean(audio_chunk**2))
 
         if rms > THRESHOLD:
+            print (f"Sound detected (RMS: {rms:.4f})")
             if not triggered:
                 print(f"Sound detected (RMS: {rms:.4f}) – starting capture...")
                 triggered = True
