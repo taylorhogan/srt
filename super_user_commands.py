@@ -361,11 +361,11 @@ def doit_cmd(words, account):
     utils.set_install_dir()
     parked, closed, open, mod_date = get_status_with_lights()
     if not closed:
-        pushover.push_message_with_picture("roof is not closed, stopping", inside_view)
+        pushover.push_message("roof is not closed, stopping", inside_view)
         return
 
     # the roof is closed, so we can start imaging
-    pushover.push_message_with_picture("Roof is closed, starting run in 1 min", inside_view)
+    pushover.push_message("Roof is closed, starting run in 1 min", inside_view)
     if not is_safe():
         pushover.push_message("not safe 1, stopping")
         return
@@ -378,15 +378,15 @@ def doit_cmd(words, account):
 
     ok = open_roof_with_option(True)
     if not ok:
-        pushover.push_message_with_picture("problem opening roof, stopping", inside_view)
+        pushover.push_message("problem opening roof, stopping", inside_view)
         return
 
 
-    pushover.push_message_with_picture("roof is open, starting imaging in 1 min", inside_view)
+    pushover.push_message_("roof is open, starting imaging in 1 min", inside_view)
     time.sleep(wait_time)
 
     if not is_safe():
-        pushover.push_message_with_picture("not safe 3, stopping", inside_view)
+        pushover.push_message("not safe 3, stopping", inside_view)
         return
     if operand == 2 or operand == 1:
 
@@ -395,7 +395,7 @@ def doit_cmd(words, account):
         # need to add a method to know if Nina is finished
         # write to file that prelude has finished
         time.sleep(5*60)
-        pushover.push_message_with_picture("prelude has finished", inside_view)
+        pushover.push_message("prelude has finished", inside_view)
 
         if not is_safe():
             pushover.push_message("not safe 4, stopping")
@@ -404,13 +404,13 @@ def doit_cmd(words, account):
 
         parked, closed, open, mod_date = get_status_with_lights()
         if not parked:
-            pushover.push_message_with_picture("scope is not parked, stopping", inside_view)
+            pushover.push_message("scope is not parked, stopping", inside_view)
             return
         if closed:
-            pushover.push_message_with_picture("roof is closed, stopping", inside_view)
+            pushover.push_message("roof is closed, stopping", inside_view)
             return
         if not open:
-            pushover.push_message_with_picture("roof is not open, stopping", inside_view)
+            pushover.push_message("roof is not open, stopping", inside_view)
             return
         if operand == 1:
             image_nina1(None, None)

@@ -9,6 +9,8 @@ import numpy as np  # Already imported, but for clarity
 from skimage.metrics import structural_similarity as ssim
 from skimage import img_as_float
 
+import pushover
+
 # ----------------------------- CONFIGURATION -----------------------------
 FORMAT = pyaudio.paFloat32      # Easier for RMS calculation
 CHANNELS = 1
@@ -120,6 +122,7 @@ try:
             for name, score in all_results:
                 print(f"  - {name}: {score:.4f}")
             print("-" * 50)
+            pushover.push_message("Detected sound!", new_path)
 
             # Reset for next detection
             triggered = False

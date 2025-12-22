@@ -77,7 +77,7 @@ def do_main():
 
                 inside_view = cfg["camera safety"]["scope_view"]
                 parked, closed, is_open, mod_date = vision_safety.visual_status()
-                pushover.push_message_with_picture("Investigating if scope is parked", inside_view)
+                pushover.push_message("Investigating if scope is parked", inside_view)
                 if parked:
                     logger.info("step 3")
                     social_server.post_social_message("Vision Safety says Scope is parked, closing roof")
@@ -88,7 +88,7 @@ def do_main():
 
 
                     parked, closed, is_open, mod_date = vision_safety.visual_status()
-                    pushover.push_message_with_picture("Investigating if roof is closed", inside_view)
+                    pushover.push_message("Investigating if roof is closed", inside_view)
                     if closed:
                         social_server.post_social_message("Vision Safety says roof is closed")
                     else:

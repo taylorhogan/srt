@@ -5,6 +5,7 @@ import urllib
 import requests
 
 import config
+import rate_limit
 
 cfg = config.data()
 
@@ -12,8 +13,16 @@ client_id = f'subscribe-{random.randint(0, 100)}'
 token = cfg['pushover']['token']
 user = cfg['pushover']['user']
 
+api_limiter = rate_limit.RateLimiter(max_calls=6, period=60.0)
+def push_message(message, image=None):
+    if not api_limiter():
+        print("Rate limit exceeded - ignoring this call")
+        return None
 
-def push_message(message):
+    if image is not None:
+        push_message_with_picture(message, image)
+        return
+
     try:
         conn = http.client.HTTPSConnection("api.pushover.net:443")
         conn.request("POST", "/1/messages.json",
@@ -25,7 +34,7 @@ def push_message(message):
                          "verify": False,
                      }), {"Content-type": "application/x-www-form-urlencoded", "verify": False})
         output = conn.getresponse().read().decode('utf-8')
-        print(output)
+
     except Exception as e:
         print(f"Error during pushover: {e}")
 
@@ -55,7 +64,9 @@ def push_message_with_picture(message, image):
 
 
 def main():
-    push_message_with_picture("hi", "./base_images/inside.jpg")
+    for i in range(10):
+        print (i)
+        push_message ("hi", "./base_images/inside.jpg")
 
 
 if __name__ == '__main__':
