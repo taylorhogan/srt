@@ -117,7 +117,7 @@ try:
             print(f"\nClosest match: {best_match}")
             print(f"Similarity score: {best_score:.4f} (1.0 = identical, >0.8 usually very similar)")
             print("Top 3 matches:")
-            for name, score in all_results[:3]:
+            for name, score in all_results:
                 print(f"  - {name}: {score:.4f}")
             print("-" * 50)
 
