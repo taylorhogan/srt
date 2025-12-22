@@ -339,7 +339,7 @@ def image_cmd(words, account):
         pushover.push_message("Already imaging, cannot restart")
     else:
         imaging_state(True)
-        do_super_user_command(words, account)
+        doit_cmd(words, account)
     imaging_state(False)
 
 
