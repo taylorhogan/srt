@@ -328,6 +328,7 @@ def is_imaging ():
     utils.set_install_dir()
     with open("imaging.txt", "r") as file:
         first_line = file.readline()
+    print (first_line)
     if first_line == "IMAGING TRUE":
         return True
     else:
@@ -336,7 +337,6 @@ def is_imaging ():
 def image_cmd(words, account):
     if is_imaging():
         pushover.push_message("Already imaging, cannot restart")
-
     else:
         imaging_state(True)
         do_super_user_command(words, account)
@@ -351,11 +351,12 @@ def doit_cmd(words, account):
 
     inside_view = cfg["camera safety"]["scope_view"]
 
-    print(words, account)
+
     operand = 1
     if len(words) > 1:
         operand = int(words[2])
 
+    pushover.push_message(f"imaging! in mode {operand}")
     wait_time = 1 * 60
     utils.set_install_dir()
     parked, closed, open, mod_date = get_status_with_lights()
