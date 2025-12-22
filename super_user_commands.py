@@ -13,6 +13,7 @@ import pushover
 import social_server
 import utils
 import vision_safety
+import end
 
 
 def is_inside_light_on(dev_map):
@@ -418,7 +419,10 @@ def doit_cmd(words, account):
 
         pushover.push_message("imaging!")
     else:
-        pushover.push_message("operand not 1 or 2, stopping")
+        pushover.push_message("just closing up, no imaging")
+        time.sleep(60)
+        end.do_main()
+
 
 
 if __name__ == "__main__":
