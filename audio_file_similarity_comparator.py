@@ -8,6 +8,7 @@ from PIL import Image
 import numpy as np  # Already imported, but for clarity
 from skimage.metrics import structural_similarity as ssim
 from skimage import img_as_float
+from scipy.io.wavfile import write
 
 import pushover
 
@@ -111,7 +112,13 @@ try:
             # Save detected spectrogram
             timestamp = len(glob.glob(os.path.join(DETECTED_DIR, "*.png")))
             new_path = os.path.join(DETECTED_DIR, f"detected_{timestamp}.png")
+            wav_path = os.path.join(DETECTED_DIR, f"detected_{timestamp}.wav")
+
             generate_spectrogram(audio_np, new_path)
+            # Save WAV file (convert float32 [-1,1] to int16)
+            audio_int16 = np.int16(audio_np * 32767)
+            write(wav_path, RATE, audio_int16)
+
 
             # Compare to library
             best_match, best_score, all_results = compare_to_library(new_path)
