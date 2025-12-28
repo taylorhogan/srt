@@ -125,11 +125,16 @@ try:
 
             print(f"\nClosest match: {best_match}")
             print(f"Similarity score: {best_score:.4f} (1.0 = identical, >0.8 usually very similar)")
-            print("Top 3 matches:")
+            print("matches:")
+            best = None
             for name, score in all_results:
                 print(f"  - {name}: {score:.4f}")
+                if best is None:
+                    best = f"  - {name}: {score:.4f}"
             print("-" * 50)
-            pushover.push_message("Detected sound!", new_path)
+            message = f"Detected sound! Best match: {best}"
+
+            pushover.push_message(message,  new_path)
 
             # Reset for next detection
             triggered = False
