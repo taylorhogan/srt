@@ -1,11 +1,10 @@
 import pyaudio
-import numpy as np
 import librosa
 import matplotlib.pyplot as plt
 import os
 import glob
 from PIL import Image
-import numpy as np  # Already imported, but for clarity
+import numpy as np
 from skimage.metrics import structural_similarity as ssim
 from skimage import img_as_float
 from scipy.io.wavfile import write
@@ -78,12 +77,14 @@ print("Listening... (Ctrl+C to stop)")
 buffer = []
 triggered = False
 frames_since_trigger = 0
+last = None
 
 try:
     while True:
         data = stream.read(CHUNK, exception_on_overflow=False)
         audio_chunk = np.frombuffer(data, dtype=np.float32)
         rms = np.sqrt(np.mean(audio_chunk**2))
+
 
         if rms > THRESHOLD:
             print (f"Sound detected (RMS: {rms:.4f})")
@@ -103,6 +104,7 @@ try:
                 if frames_since_trigger > int(RATE / CHUNK):
                     triggered = False
                     buffer = []
+                    last = None
 
         # If we have enough audio when triggered
         if triggered and len(buffer) * CHUNK >= RATE * RECORD_SECONDS:
@@ -133,8 +135,9 @@ try:
                     best = f"  - {name}: {score:.4f}"
             print("-" * 50)
             message = f"Detected sound! Best match: {best}"
-
-            pushover.push_message(message,  new_path)
+            if last is not None and last != best:
+                pushover.push_message(message,  new_path)
+                last = best
 
             # Reset for next detection
             triggered = False
