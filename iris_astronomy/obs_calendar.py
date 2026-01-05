@@ -1,6 +1,6 @@
 import calendar
 import json
-import os
+import os,sys
 from datetime import date
 from astropy.time import Time
 
@@ -8,7 +8,13 @@ from astroplan import moon_illumination
 
 import matplotlib.patches as mpatches
 import matplotlib.pyplot as plt
-import configs
+
+if __package__ is None or __package__ == "":
+    project_root = os.path.abspath(os.path.join(os.path.dirname(__file__),  '..'))
+    if project_root not in sys.path:
+        sys.path.insert(0, project_root)
+
+from configs import config
 
 
 def generate_custom_calendar(year, month, cal_data, cfg):
@@ -103,7 +109,7 @@ def print_month(y, m, cfg):
 def set_today_stat(state, dso):
     cal = read_cal()
     today = date.today()
-    this_year = str(2025)
+    this_year = str(2026)
     this_month = str(today.month)
     this_day = str(today.day)
 
@@ -134,6 +140,6 @@ def set_today_stat(state, dso):
 
 
 if __name__ == "__main__":
-    cfg = configs.data()
+    cfg = config.data()
     path = os.path.join(cfg["Install"], 'iris.log')
-    print_month(2025, 2, cfg)
+    print_month(2026, 2, cfg)

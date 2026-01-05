@@ -28,17 +28,17 @@ class PublicConfig():
         "camera safety": {
             "parked azimuth deg": 56,
             "parked altitude deg": 5,
-            "closed template": "./base_images/closed_marker.jpg",
-            "parked template": "./base_images/parked_marker.png",
-            "open template": "./base_images/open_marker.jpg",
+            "closed template": "../base_images/closed_marker.jpg",
+            "parked template": "../base_images/parked_marker.png",
+            "open template": "../base_images/open_marker.jpg",
             "open pos": (172, 142),
             "closed pos": (829, 152),
             "parked pos": (590, 290),
 
             "accuracy": 150,
-            "scope_view": "./base_images/scope_view.jpg",
-            "processed_view": "./base_images/processed.jpg",
-            "no_image": "./base_images/no_image.jpg",
+            "scope_view": "../base_images/scope_view.jpg",
+            "processed_view": "../base_images/processed.jpg",
+            "no_image": "../base_images/no_image.jpg",
             "valid_data": False,
             "received_count": 0
 

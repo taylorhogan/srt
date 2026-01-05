@@ -11,4 +11,4 @@ def import_and_change (path, dso_name, az, ra):
 
 
 if __name__ == '__main__':
-    main()
+    pass
