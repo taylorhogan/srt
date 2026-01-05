@@ -1,5 +1,5 @@
 import sys
-import super_user_commands as su
+from cmd_processing import super_user_commands as su
 
 
 def printarg(mystring):

@@ -1,6 +1,6 @@
 import threading
-import scheduler_server
-import social_server
+from end_points import scheduler_server
+from cmd_processing import social_server
 
 
 def call_servers():

@@ -3,7 +3,7 @@ import sqlite3
 import sys
 import os
 import shutil
-import config
+from config import config
 
 
 def db_full_path():

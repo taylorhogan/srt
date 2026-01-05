@@ -22,7 +22,7 @@ My goal is to have all this automated, I never want to be in the observatory. Th
 ## Commands
 
 ## My Hardware Block Diagram
-![block diagram](iris.png)
+![block diagram](doc/iris.png)
 ## Appreciation for others
 This work rest heavily on others
 - Allsky
