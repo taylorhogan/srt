@@ -20,7 +20,9 @@ from end_points import end
 from fits_processing import fitstojpg
 from control import instructions
 from cmd_processing import super_user_commands as su
-from utils.utils import topic_to_sched, utils
+from utils.utils import topic_to_sched
+from utils import utils
+
 
 
 

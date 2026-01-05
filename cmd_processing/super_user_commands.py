@@ -1,15 +1,20 @@
 import asyncio
 import logging
-import os
+import os, sys
 import subprocess
 import time
 
 import requests
 
-import configs
+if __package__ is None or __package__ == "":
+    project_root = os.path.abspath(os.path.join(os.path.dirname(__file__),  '..'))
+    if project_root not in sys.path:
+        sys.path.insert(0, project_root)
+
+from configs import config
 from control import instructions
 from hardware_control import kasa_utils as ku
-import social_server
+from cmd_processing import social_server
 from utils import utils, pushover
 from sentry import vision_safety
 from end_points import end
@@ -288,7 +293,7 @@ def get_super_user_commands():
 
 
 def is_super_user(account):
-    cfg = configs.data()
+    cfg = config.data()
 
     super_users = cfg["Super Users"]
     if account in super_users:
@@ -346,7 +351,7 @@ def image_cmd(words, account):
 def doit_cmd(words, account):
 
 
-    cfg = configs.data()
+    cfg = config.data()
 
     inside_view = cfg["camera safety"]["scope_view"]
 
