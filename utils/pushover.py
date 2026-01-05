@@ -1,13 +1,16 @@
 import http
 import random
 import urllib
-
+import os, sys
 import requests
+if __package__ is None or __package__ == "":
+    project_root = os.path.abspath(os.path.join(os.path.dirname(__file__),  '..'))
+    if project_root not in sys.path:
+        sys.path.insert(0, project_root)
+from configs import config
+import utils.rate_limit as rate_limit
 
-import configs
-from utils import rate_limit
-
-cfg = configs.data()
+cfg = config.data()
 
 client_id = f'subscribe-{random.randint(0, 100)}'
 token = cfg['pushover']['token']
