@@ -15,7 +15,7 @@ if __package__ is None or __package__ == "":
         sys.path.insert(0, project_root)
 
 from iris_astronomy import astro_dso_visibility, obs_calendar
-import configs
+from configs import config
 from end_points import end
 from fits_processing import fitstojpg
 from control import instructions
@@ -109,7 +109,7 @@ def tonight_cmd(words, index, m, account):
 
 def version_cmd(words, index, m, account):
     # Observatory State
-    cfg = configs.data()
+    cfg = config.data()
 
     reply = "Version: " + cfg["version"]["date"] + "\n"
     reply += "Observatory Status: " + cfg["Globals"]["Observatory State"]
@@ -129,7 +129,7 @@ def wait_for_mqtt_message (client, userdata, msg):
 
 def status_cmd(words, index, m, account):
     # Observatory State
-    cfg = configs.data()
+    cfg = config.data()
 
     global _json_payload
     mqtt_client = cfg["globals"]["mqtt_client"]
@@ -159,7 +159,7 @@ def db_cmd(words, index, m, account):
 
 def calendar_cmd(words, index, m, account):
     # Observatory State
-    cfg = configs.data()
+    cfg = config.data()
     today = date.today()
 
     obs_calendar.print_month(today.year, today.month, cfg)
@@ -181,7 +181,7 @@ def help_cmd(words, index, m, account):
 
 
 def latest_cmd(words, index, m, account):
-    cfg = configs.data()
+    cfg = config.data()
 
     logger = logging.getLogger(__name__)
     image_dir = cfg["nina"]["image_dir"]
@@ -253,14 +253,14 @@ class TheStreamListener(StreamListener):
         print(f"Got update: {status['content']}")
 
     def on_notification(self, notification):
-        cfg = configs.data()
+        cfg = config.data()
         logger = logging.getLogger(__name__)
         mastodon = cfg["globals"]["mastodon instance"]
         do_notification(notification, mastodon)
 
 
 def get_mastodon_instance():
-    cfg = configs.data()
+    cfg = config.data()
     logger = logging.getLogger(__name__)
     access_token = cfg["mastodon"]["access_token"]
     api_base_url = cfg["mastodon"]["api_base_url"]
@@ -269,7 +269,7 @@ def get_mastodon_instance():
 
 
 def post_social_message(message, image=None, vis=None):
-    cfg = configs.data()
+    cfg = config.data()
     logger = logging.getLogger(__name__)
     mastodon = cfg["globals"]["mastodon instance"]
 
@@ -289,7 +289,7 @@ def post_social_message(message, image=None, vis=None):
 
 
 def handle_mention(notification):
-    cfg = configs.data()
+    cfg = config.data()
     if notification.type == "mention":
         print(notification.status.content)
         mastodon = cfg["globals"]["mastodon instance"]
@@ -298,7 +298,7 @@ def handle_mention(notification):
 
 def start_interface():
     print("Starting Social Server")
-    cfg = configs.data()
+    cfg = config.data()
     post_social_message("Starting Version " + cfg["version"]["date"])
 
     mastodon = get_mastodon_instance()
@@ -317,7 +317,7 @@ async def wait_a_bit ():
 
 def main():
     utils.set_install_dir()
-    cfg = configs.data()
+    cfg = config.data()
     logger = logging.getLogger(__name__)
 
     cfg["logger"]["logging"] = logger
