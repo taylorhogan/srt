@@ -1,13 +1,18 @@
 # https://stackoverflow.com/questions/52509316/opencv-rectangle-filled
-import os
+import os,sys
 import time
 import math
 import cv2 as cv
-import inside_camera_server
-import configs
+if __package__ is None or __package__ == "":
+    project_root = os.path.abspath(os.path.join(os.path.dirname(__file__),  '..'))
+    if project_root not in sys.path:
+        sys.path.insert(0, project_root)
+
+from sentry import  inside_camera_server
+from configs import config
 from utils import pushover
 
-cfg = configs.data()
+cfg = config.data()
 
 
 def find_template_rectangle (image, template_image_path):
@@ -120,7 +125,7 @@ def visual_status():
 
 
 if __name__ == '__main__':
-    cfg = configs.data()
+    cfg = config.data()
     inside_view = cfg["camera safety"]["scope_view"]
 
     just_finding_template = False

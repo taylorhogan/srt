@@ -50,7 +50,7 @@ def gamma_correction(img, gamma=1.0):
 
 
 def take_snapshot(test_path=None):
-    cfg = configs.data()
+    cfg = config.data()
     if test_path is not None:
         to_path = cfg["camera safety"]["scope_view"]
         shutil.copyfile(test_path, to_path)
