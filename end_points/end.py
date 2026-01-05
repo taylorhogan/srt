@@ -1,11 +1,18 @@
 import asyncio
 import logging
 import os
+import sys
 import time
 
 import requests
 
-import config
+if __package__ is None or __package__ == "":
+    project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+    if project_root not in sys.path:
+        sys.path.insert(0, project_root)
+
+from configs import config
+
 from hardware_control import pwi4_utils, kasa_utils as ku
 from cmd_processing import super_user_commands, social_server
 from sentry import vision_safety
@@ -81,8 +88,6 @@ def do_main():
                     super_user_commands.toggle_roof(dev_map)
                     # wait for roof to close
                     time.sleep(30)
-
-
 
                     parked, closed, is_open, mod_date = vision_safety.visual_status()
                     pushover.push_message("Investigating if roof is closed", inside_view)

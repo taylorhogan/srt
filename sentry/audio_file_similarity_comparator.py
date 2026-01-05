@@ -2,12 +2,18 @@ import pyaudio
 import librosa
 import matplotlib.pyplot as plt
 import os
+import sys
 import glob
 from PIL import Image
 import numpy as np
 from skimage.metrics import structural_similarity as ssim
 from skimage import img_as_float
 from scipy.io.wavfile import write
+
+if __package__ is None or __package__ == "":
+    project_root = os.path.abspath(os.path.join(os.path.dirname(__file__),  '..'))
+    if project_root not in sys.path:
+        sys.path.insert(0, project_root)
 
 from utils import pushover
 

@@ -1,11 +1,11 @@
 import cv2 as cv
 
-import config
+import configs
 from sentry import inside_camera_server
 
 
 def count_stars():
-    cfg = config.data()
+    cfg = configs.data()
 
     print("taking picture")
 

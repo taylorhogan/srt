@@ -5,9 +5,9 @@
 import datetime
 import math
 
-import weather
 import operator
 import os
+import sys
 
 import astropy.units as u
 import matplotlib.pyplot as plt
@@ -20,10 +20,16 @@ from astroplan import moon_illumination
 from astropy.coordinates import EarthLocation, AltAz, get_body
 from astropy.time import Time
 from matplotlib import dates
+from pathlib import Path
+
 import logging
 
-
-import config
+if __package__ is None or __package__ == "":
+    project_root = os.path.abspath(os.path.join(os.path.dirname(__file__),  '..'))
+    if project_root not in sys.path:
+        sys.path.insert(0, project_root)
+from configs import config
+from iris_astronomy import weather
 
 cfg = config.data()
 
@@ -331,7 +337,9 @@ def map_az_to_horizon():
     az = []
     al = []
     dir_name = os.path.dirname(__file__)
-    file_path = os.path.join(dir_name + "/my.hrz")
+    path = Path ( dir_name)
+    root = path.parent
+    file_path = root / "configs" / "my.hrz"
     with open(file_path, 'r') as file:
         for line in file:
             # Strip whitespace and split the line into two columns
@@ -344,9 +352,9 @@ def map_az_to_horizon():
                 al.append(col2)
 
     plt.plot(az, al)
-    ir_name = os.path.dirname(__file__)
-    scratch_dir = os.path.join(dir_name + "/scratch")
-    sky_path = os.path.join(scratch_dir, "h.png")
+
+    sky_path = root / "scratch" / "h.png"
+
     plt.savefig(sky_path)
     plt.clf()
     return az, al

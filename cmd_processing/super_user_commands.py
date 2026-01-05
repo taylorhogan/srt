@@ -6,7 +6,7 @@ import time
 
 import requests
 
-import config
+import configs
 from control import instructions
 from hardware_control import kasa_utils as ku
 import social_server
@@ -288,7 +288,7 @@ def get_super_user_commands():
 
 
 def is_super_user(account):
-    cfg = config.data()
+    cfg = configs.data()
 
     super_users = cfg["Super Users"]
     if account in super_users:
@@ -346,7 +346,7 @@ def image_cmd(words, account):
 def doit_cmd(words, account):
 
 
-    cfg = config.data()
+    cfg = configs.data()
 
     inside_view = cfg["camera safety"]["scope_view"]
 

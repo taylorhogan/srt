@@ -3,8 +3,14 @@ from datetime import datetime
 import python_weather
 import pytz
 import requests
+import sys
+import os
 
-import config
+if __package__ is None or __package__ == "":
+    project_root = os.path.abspath(os.path.join(os.path.dirname(__file__),  '..'))
+    if project_root not in sys.path:
+        sys.path.insert(0, project_root)
+from configs import config
 
 cfg = config.data()
 

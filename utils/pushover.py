@@ -4,10 +4,10 @@ import urllib
 
 import requests
 
-import config
+import configs
 from utils import rate_limit
 
-cfg = config.data()
+cfg = configs.data()
 
 client_id = f'subscribe-{random.randint(0, 100)}'
 token = cfg['pushover']['token']

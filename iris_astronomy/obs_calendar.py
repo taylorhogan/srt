@@ -8,7 +8,7 @@ from astroplan import moon_illumination
 
 import matplotlib.patches as mpatches
 import matplotlib.pyplot as plt
-import config
+import configs
 
 
 def generate_custom_calendar(year, month, cal_data, cfg):
@@ -134,6 +134,6 @@ def set_today_stat(state, dso):
 
 
 if __name__ == "__main__":
-    cfg = config.data()
+    cfg = configs.data()
     path = os.path.join(cfg["Install"], 'iris.log')
     print_month(2025, 2, cfg)

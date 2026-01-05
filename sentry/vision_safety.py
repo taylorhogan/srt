@@ -4,10 +4,10 @@ import time
 import math
 import cv2 as cv
 import inside_camera_server
-import config
+import configs
 from utils import pushover
 
-cfg = config.data()
+cfg = configs.data()
 
 
 def find_template_rectangle (image, template_image_path):
@@ -120,7 +120,7 @@ def visual_status():
 
 
 if __name__ == '__main__':
-    cfg = config.data()
+    cfg = configs.data()
     inside_view = cfg["camera safety"]["scope_view"]
 
     just_finding_template = False

@@ -1,8 +1,11 @@
-from pwi4_client import PWI4
-import config
-import logging
-from utils import utils
 import time
+import logging
+
+from pwi4_client import PWI4
+import configs
+
+from utils import utils
+
 
 def park_scope ():
 
@@ -33,7 +36,7 @@ def park_scope ():
 def get_is_parked ():
 
     try:
-        cfg = config.data()
+        cfg = configs.data()
 
 
         pwi4 = PWI4()

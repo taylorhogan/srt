@@ -1,11 +1,19 @@
 import asyncio
 import logging
-from hardware_control import kasa_utils as ku
-import config
-import os
+
+import os,sys
+
 import requests
 from utils import utils
+if __package__ is None or __package__ == "":
+    project_root = os.path.abspath(os.path.join(os.path.dirname(__file__),  '..'))
+    if project_root not in sys.path:
+        sys.path.insert(0, project_root)
+
 from cmd_processing import super_user_commands
+from hardware_control import kasa_utils as ku
+from configs import config
+
 
 if __name__ == "__main__":
 

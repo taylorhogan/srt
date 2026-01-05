@@ -4,7 +4,7 @@ from hardware_control import kasa_utils as ku
 import asyncio
 import paho.mqtt.client as paho
 import logging
-import config
+import configs
 
 topic_to_sched = "iris/to_sched"
 topic_from_sched = "iris/from_sched"
@@ -18,7 +18,7 @@ def set_install_dir():
     return path
 
 def get_device_map ():
-    cfg = config.data()
+    cfg = configs.data()
     path = os.path.join(set_install_dir(), 'iris.log')
     logging.basicConfig(filename=path, level=logging.INFO, format='%(asctime)s %(message)s',
                         datefmt='%m/%d/%Y %I:%M:%S %p')
