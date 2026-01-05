@@ -7,9 +7,7 @@ if __package__ is None or __package__ == "":
     if project_root not in sys.path:
         sys.path.insert(0, project_root)
 
-from pwi4_client import PWI4
-from configs import config
-
+from hardware_control.pwi4_client import PWI4
 from utils import utils
 
 
