@@ -4,6 +4,8 @@ through a social messaging services (Currently Mastodon). Users request images o
 optimizes each night's imaging based on observability. When complete, the system adds the processed image to its catalog
 and alerts the user that it has completed. 
 My goal is to have all this automated, I never want to be in the observatory. This all just happens. 
+For now this is very very specific to my observatory, but I hope to generalize it in the future.
+
 - **Architecture**
 
     - Social Server 
