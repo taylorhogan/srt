@@ -47,7 +47,7 @@ more-itertools==10.5.0
 msgpack==1.1.0
 multidict==6.1.0
 numba==0.61.2
-numpy==1.26.4
+numpy
 opencv-python==4.10.0.84
 packaging==24.2
 paho-mqtt==2.1.0
