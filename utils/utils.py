@@ -28,7 +28,8 @@ def set_logger ():
     return __logger
 
 def set_install_dir():
-    path = os.path.dirname(__file__).parent.parent.resolve()
+    path = Path(__file__).parent.parent.resolve()
+
 
     if os.path.exists(path):
         os.chdir(path)
@@ -65,5 +66,6 @@ def connect_mqtt():
     return client
 
 if __name__ == '__main__':
+    set_install_dir()
     dev_map = get_device_map()
     print  (dev_map)
