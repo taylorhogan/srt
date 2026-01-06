@@ -33,15 +33,27 @@ This work rest heavily on others
 - Pixinsight
 
 ## How to build
+Install uv
+
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+exit shell and reopen shell
+
+Download the repo
+
 git clone https://github.com/taylorhogan/srt.git
 
 cd srt
 
-python -m venv ./venv
+Create a virtual environment (only needed once)
 
-source ./venv/bin/activate
+uv venv venv
 
-pip install -r requirements.txt
+Activate the virtual environment
+
+follow the commands from uv above, something like ./venv/bin/activate
+
+uv pip install -r requirements.txt
 
 cd configs
 
