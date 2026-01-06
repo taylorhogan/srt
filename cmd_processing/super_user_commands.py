@@ -77,6 +77,7 @@ def toggle_roof(dev_map):
     asyncio.run(ku.kasa_do(dev_map, instructions))
 
 
+
 def get_status_with_lights():
     dev_map = asyncio.run(ku.make_discovery_map())
 
