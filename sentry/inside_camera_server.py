@@ -57,7 +57,7 @@ def gamma_correction(img, gamma=1.0):
 def take_snapshot(test_path=None):
     _loger.info("Starting camera snapshot")
     cfg = config.data()
-    utils.set_install_dir()
+    print (utils.set_install_dir())
 
     if test_path is not None:
         to_path = cfg["camera safety"]["scope_view"]
