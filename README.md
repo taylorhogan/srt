@@ -32,6 +32,23 @@ This work rest heavily on others
 - N.I.N.A
 - Pixinsight
 
+## How to build
+git clone https://github.com/taylorhogan/srt.git
+
+cd srt
+
+python -m venv ./venv
+
+source ./venv/bin/activate
+
+pip install -r requirements.txt
+
+cd configs
+
+cp configs_blank_private.py configs_private.py
+
+
+
 
 
 
