@@ -20,6 +20,8 @@ from sentry import vision_safety
 from end_points import end
 
 
+_logger = utils.set_logger()
+
 def is_inside_light_on(dev_map):
     instructions = (dict
         (
@@ -350,7 +352,7 @@ def image_cmd(words, account):
 
 def doit_cmd(words, account):
 
-
+    _logger.info("doit_cmd")
     cfg = config.data()
 
     inside_view = cfg["camera safety"]["scope_view"]
