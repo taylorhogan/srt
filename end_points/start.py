@@ -19,10 +19,10 @@ if __name__ == "__main__":
 
     cfg = config.data()
     logger = utils.set_logger()
-
+    utils.set_install_dir()
     cfg["logger"]["logging"] = logger
     logger.info('Start Start Sequence')
-    utils.set_install_dir()
+
 
     super_user_commands.safe_cmd (None, None)
     super_user_commands.imaging_state(False)
