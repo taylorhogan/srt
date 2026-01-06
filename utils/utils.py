@@ -28,7 +28,7 @@ def set_logger ():
     return __logger
 
 def set_install_dir():
-    path = os.path.dirname(__file__)
+    path = os.path.dirname(__file__).parent.parent.resolve()
 
     if os.path.exists(path):
         os.chdir(path)
