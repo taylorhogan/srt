@@ -14,10 +14,7 @@ from utils import utils
 if __name__ == "__main__":
 
     utils.set_install_dir()
-
-    logging.basicConfig(filename='../iris.log', level=logging.INFO, format='%(asctime)s %(message)s',
-                        datefmt='%m/%d/%Y %I:%M:%S %p')
-    logger = logging.getLogger(__name__)
+    logger = utils.set_logger()
     logger.info('Go For Image Check')
 
 
@@ -36,6 +33,8 @@ if __name__ == "__main__":
     check_ok = asyncio.run(ku.kasa_check(dev_map, instructions))
     if check_ok:
         social_server.post_social_message("Iris is go for imaging!")
+        logger.info('Iris is go for imaging!')
     else:
         social_server.post_social_message("Iris is NOT go for imaging!")
+        logger.info('Iris is NOT go for imaging!')
 

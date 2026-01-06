@@ -172,12 +172,10 @@ def announce_plans_before_sunset():
 def main():
     print("Starting Scheduler Server")
     cfg = config.data()
-    path = utils.set_install_dir()
-    path = os.path.join(path, 'iris.log')
 
-    logging.basicConfig(filename=path, level=logging.INFO, format='%(asctime)s %(message)s',
-                        datefmt='%m/%d/%Y %I:%M:%S %p')
-    logger = logging.getLogger(__name__)
+
+    logger = utils.set_logger()
+
     cfg["logger"]["logging"] = logger
     logger.info('Start Scheduler')
     utils.set_install_dir()
@@ -187,7 +185,6 @@ def main():
     client.loop_start()
 
     try:
-
         asyncio.run(wait_a_bit())
         waiting_for_noon()
     except:

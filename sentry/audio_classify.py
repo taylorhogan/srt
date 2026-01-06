@@ -15,7 +15,7 @@ if __package__ is None or __package__ == "":
     if project_root not in sys.path:
         sys.path.insert(0, project_root)
 
-from utils import pushover
+from utils import pushover, utils
 
 # ----------------------------- CONFIGURATION -----------------------------
 FORMAT = pyaudio.paFloat32      # Easier for RMS calculation
@@ -34,6 +34,8 @@ CMAP = 'magma'                  # Consistent colormap (common for spectrograms)
 os.makedirs(LIBRARY_DIR, exist_ok=True)
 os.makedirs(DETECTED_DIR, exist_ok=True)
 # -------------------------------------------------------------------------
+
+_logger = utils.set_logger()
 
 def generate_spectrogram(audio_np, save_path):
     """Generate and save a spectrogram image from numpy audio array."""
@@ -141,8 +143,10 @@ try:
                     best = f"  - {name}: {score:.4f}"
             print("-" * 50)
             message = f"Detected sound! Best match: {best}"
+            _logger.info(message)
             if last is not None and last != best:
                 pushover.push_message(message, new_path)
+
                 last = best
 
             # Reset for next detection

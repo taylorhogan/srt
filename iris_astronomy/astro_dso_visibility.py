@@ -22,7 +22,7 @@ from astropy.time import Time
 from matplotlib import dates
 from pathlib import Path
 
-import logging
+
 
 if __package__ is None or __package__ == "":
     project_root = os.path.abspath(os.path.join(os.path.dirname(__file__),  '..'))
@@ -30,8 +30,11 @@ if __package__ is None or __package__ == "":
         sys.path.insert(0, project_root)
 from configs import config
 from iris_astronomy import weather
+from utils import utils
+
 
 cfg = config.data()
+_logger = utils.set_logger()
 
 
 def is_a_dso_object(name):
@@ -242,6 +245,8 @@ def plot_my_dso_and_horizon(dso, my_observatory, observe_time):
 
 
 def show_plots(dso):
+
+
     longitude = cfg["location"]["longitude"]
     latitude = cfg["location"]["latitude"]
     elevation = cfg["location"]["elevation"]
@@ -285,9 +290,9 @@ def show_plots(dso):
         plt.savefig(sky_path)
         plt.clf()
     except:
-        logger = logging.getLogger(__name__)
-        logger.info('Problem')
-        logger.exception("Exception")
+
+        _logger.info('Problem')
+        _logger.exception("Exception")
 
     try:
         print("a")
@@ -297,9 +302,9 @@ def show_plots(dso):
         plt.savefig(altitude_path)
         plt.clf()
     except:
-        logger = logging.getLogger(__name__)
-        logger.info('Problem')
-        logger.exception("Exception")
+
+        _logger.info('Problem')
+        _logger.exception("Exception")
 
 
     return altitude_path, image_path, sky_path, weather_ok

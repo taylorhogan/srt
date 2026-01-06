@@ -16,7 +16,7 @@ from configs import config
 from hardware_control import pwi4_utils, kasa_utils as ku
 from cmd_processing import super_user_commands, social_server
 from sentry import vision_safety
-from utils import pushover
+from utils import pushover, utils
 
 
 def determine_roof_state_visually(account):
@@ -45,12 +45,9 @@ def determine_roof_state_visually(account):
 
 
 def do_main():
+    logger = utils.set_logger()
+
     cfg = config.data()
-    path = os.path.join(cfg["Install"], 'iris.log')
-    logging.basicConfig(filename=path, level=logging.INFO, format='%(asctime)s %(message)s',
-                        datefmt='%m/%d/%Y %I:%M:%S %p')
-    logger = logging.getLogger(__name__)
-    cfg["logger"]["logging"] = logger
 
     logger.info('Begin End Sequence')
 

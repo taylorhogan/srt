@@ -8,6 +8,8 @@ from astroplan import moon_illumination
 
 import matplotlib.patches as mpatches
 import matplotlib.pyplot as plt
+from pathlib import Path
+
 
 if __package__ is None or __package__ == "":
     project_root = os.path.abspath(os.path.join(os.path.dirname(__file__),  '..'))
@@ -15,6 +17,10 @@ if __package__ is None or __package__ == "":
         sys.path.insert(0, project_root)
 
 from configs import config
+from utils import utils
+
+_logger = utils.set_logger()
+
 
 
 def generate_custom_calendar(year, month, cal_data, cfg):
@@ -76,7 +82,8 @@ def generate_custom_calendar(year, month, cal_data, cfg):
     ax.set_aspect('equal')
 
     # plt.show()
-    fig.savefig('cal.png')
+    path = Path(__file__).parent.parent.resolve() / "cal.png"
+    fig.savefig(path)
 
 
 def read_cal():
@@ -141,5 +148,4 @@ def set_today_stat(state, dso):
 
 if __name__ == "__main__":
     cfg = config.data()
-    path = os.path.join(cfg["Install"], 'iris.log')
     print_month(2026, 2, cfg)

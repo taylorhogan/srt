@@ -4,7 +4,7 @@ import logging
 import os,sys
 
 import requests
-from utils import utils
+
 if __package__ is None or __package__ == "":
     project_root = os.path.abspath(os.path.join(os.path.dirname(__file__),  '..'))
     if project_root not in sys.path:
@@ -13,16 +13,13 @@ if __package__ is None or __package__ == "":
 from cmd_processing import super_user_commands
 from hardware_control import kasa_utils as ku
 from configs import config
-
+from utils import utils
 
 if __name__ == "__main__":
 
     cfg = config.data()
-    path = os.path.join(cfg["Install"], 'iris.log')
+    logger = utils.set_logger()
 
-    logging.basicConfig(filename=path, level=logging.INFO, format='%(asctime)s %(message)s',
-                        datefmt='%m/%d/%Y %I:%M:%S %p')
-    logger = logging.getLogger(__name__)
     cfg["logger"]["logging"] = logger
     logger.info('Start Start Sequence')
     utils.set_install_dir()

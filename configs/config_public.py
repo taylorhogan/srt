@@ -3,11 +3,11 @@ class PublicConfig():
 
         "globals": {
             "mastodon instance": None,
-            "mqtt_client": None,
-            "install_location": '/Users/taylorhogan/Documents/tmh'
+            "mqtt_client": None
+
         },
         "version": {
-            "date": "2025.12.12.1"
+            "date": "2026.1.06.1"
         },
 
         "logger": {

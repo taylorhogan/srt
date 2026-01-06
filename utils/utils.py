@@ -4,10 +4,28 @@ from hardware_control import kasa_utils as ku
 import asyncio
 import paho.mqtt.client as paho
 import logging
-import configs
+from configs import config
+from pathlib import Path
+
+
 
 topic_to_sched = "iris/to_sched"
 topic_from_sched = "iris/from_sched"
+__logger = None
+
+def set_logger ():
+    global __logger
+    if __logger is None:
+        cfg = config.data()
+        path = Path (__file__).parent.parent.resolve() / 'iris.log'
+        print("logging at " + str(path))
+        logging.basicConfig(filename=path, level=logging.INFO, format='%(asctime)s %(message)s',
+                            datefmt='%m/%d/%Y %I:%M:%S %p')
+        logger = logging.getLogger(__name__)
+        cfg["logger"]["logging"] = logger
+        __logger = logger
+
+    return __logger
 
 def set_install_dir():
     path = os.path.dirname(__file__)
@@ -18,11 +36,8 @@ def set_install_dir():
     return path
 
 def get_device_map ():
-    cfg = configs.data()
-    path = os.path.join(set_install_dir(), 'iris.log')
-    logging.basicConfig(filename=path, level=logging.INFO, format='%(asctime)s %(message)s',
-                        datefmt='%m/%d/%Y %I:%M:%S %p')
-    logger = logging.getLogger(__name__)
+
+    logger = set_logger()
     dev_map = {}
     try:
         dev_map = asyncio.run(ku.make_discovery_map())
