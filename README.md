@@ -53,13 +53,24 @@ uv venv venv
 
 Activate the virtual environment
 
-follow the commands from uv above, something like ./venv/bin/activate
+follow the commands from uv above to activate the virtual environment
+
+source venv/bin/activate
 
 uv pip install -r requirements.txt
 
 cd configs
 
 cp configs_blank_private.py configs_private.py
+
+to test the sound compare feature
+
+cd sentry 
+
+python audio_compare.py
+
+now make some noise for 10 seconds
+
 
 
 
