@@ -5,6 +5,8 @@ import numpy as np
 import os, sys
 import asyncio
 
+
+
 if __package__ is None or __package__ == "":
     project_root = os.path.abspath(os.path.join(os.path.dirname(__file__),  '..'))
     if project_root not in sys.path:
@@ -13,9 +15,12 @@ if __package__ is None or __package__ == "":
 from configs import config
 from cmd_processing import super_user_commands
 from hardware_control import kasa_utils as ku
+from utils import utils
 
 
 
+
+_loger = utils.set_logger()
 
 def best_exposure_score(img):
     if len(img.shape) == 3:
@@ -50,7 +55,10 @@ def gamma_correction(img, gamma=1.0):
 
 
 def take_snapshot(test_path=None):
+    _loger.info("Starting camera snapshot")
     cfg = config.data()
+    utils.set_install_dir()
+
     if test_path is not None:
         to_path = cfg["camera safety"]["scope_view"]
         shutil.copyfile(test_path, to_path)
