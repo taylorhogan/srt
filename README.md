@@ -34,40 +34,45 @@ This work rest heavily on others
 - N.I.N.A
 - Pixinsight
 
-## How to build
-Install uv
+## How to build on linux/mac
+Install uv ( a package manager for Python, similar to pip) 
+https://uv.readthedocs.io/en/latest/installation.html 
 
-curl -LsSf https://astral.sh/uv/install.sh | sh
+`curl -LsSf https://astral.sh/uv/install.sh | sh`
 
-exit shell and reopen shell
+exit shell and reopen new shell, otherwise uv will not be in your path 
+Download the repo in a location of your choosing
 
-Download the repo
+`git clone https://github.com/taylorhogan/srt.git`  
 
-git clone https://github.com/taylorhogan/srt.git
+go into the repo
 
-cd srt
+`cd srt`  
 
-Create a virtual environment (only needed once)
+Create a virtual environment (only needed once)  
 
-uv venv venv
+`uv venv venv`   
 
-Activate the virtual environment
-
+Activate the virtual environment   
 follow the commands from uv above to activate the virtual environment
 
-source venv/bin/activate
+`source venv/bin/activate`
 
-uv pip install -r requirements.txt
+Install the requirements (dragons be here)
 
-cd configs
+`uv pip install -r requirements.txt`
 
-cp configs_blank_private.py configs_private.py
+copy the blank private config file, utlimately this will be a private config file
+
+`cd configs`
+
+`cp configs_blank_private.py configs_private.py`
 
 to test the sound compare feature
 
-cd sentry 
+`cd sentry`
 
-python audio_compare.py
+`python audio_compare.py`
 
 now make some noise for 10 seconds
 
