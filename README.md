@@ -23,19 +23,26 @@ The only reason to open source this repo is to allow others using the Observator
     - Servers communicate through mqtt
 - 
 
-The user adds a request to the system through Mastodon (@tmhobservatory@mastodon.social).For
-example   
+The user adds a request to the system through Mastodon (`@tmhobservatory@mastodon.social`).For
+example  
+
 `@tmhobservatory image m31`  
+
 The User can also ask what is the best night for a specific DSO  
+
 `@tmhobservatory best m31`
+
 Every night the system optimizes the night's imaging based on observability and weather. Below is a graph
 displayed to of the night given horizon, and weather conditions.  
 ![image](doc/tonight.jpeg)
-The user stops imaging a DSO over multiple nights once the evolution of changes reaches some stopping condition, usually about 20 hours.
+The system stops imaging a DSO once the evolution of changes reaches some stopping condition, usually about 20 hours.
 A combination of manual and automatic image processing is done, and the resulting image is uploaded to
 a [website](https://taylorhogan.github.io) for public viewing. An AI is used to add text to the image to explain the astrophysical context.
 
+There are redundant systems to insure the state of the observatory. This includes cameras, and ultrasonic devices.
+Below is a picture of the push notification to the system administrator.
 
+![image](doc/feedback.jpeg)
 The goal is to have this system run 24/7. Mechanical failures are expected, but these can be mitigated by the use of
 automation to analyze the audio and current draw of various components and compare to known
 good signatures. Below is a spectrogram of the audio of the mount motors compared to the known good audio.
@@ -45,7 +52,7 @@ good signatures. Below is a spectrogram of the audio of the mount motors compare
 
 
 
-## My Hardware Block Diagram
+## My Hardware Block Diagram (very dated)
 ![block diagram](doc/iris.png)
 ## Appreciation for others
 This work rest heavily on others
