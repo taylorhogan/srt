@@ -145,9 +145,8 @@ try:
             message = f"Detected sound! Best match: {best}"
             _logger.info(message)
             print (last, best)
-            if last is not None and last != best:
+            if  last != best:
                 pushover.push_message(message, new_path)
-
                 last = best
 
             # Reset for next detection
