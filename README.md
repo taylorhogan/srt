@@ -3,8 +3,10 @@ The goal of this project is to remove/reduce human interaction in astronomy. Use
 through a social messaging services (Currently Mastodon). Users request images of Deep Sky Objects and the system
 optimizes each night's imaging based on observability. When complete, the system adds the processed image to its catalog
 and alerts the user that it has completed. 
-My goal is to have all this automated, I never want to be in the observatory. This all just happens. 
-For now this is very very specific to my observatory, but I hope to generalize it in the future.
+Our goal is to have all this automated, We never want to be in the observatory. This all just happens. 
+For now this is very very specific to our observatory, but we hope to generalize it in the future.
+The only reason to open source this repo is to allow others using the Observatory to contribute.
+
 
 - **Architecture**
 
@@ -21,7 +23,24 @@ For now this is very very specific to my observatory, but I hope to generalize i
     - Servers communicate through mqtt
 - 
 
-## Commands
+The user adds a request to the system through Mastodon (@tmhobservatory@mastodon.social).For
+example   
+`@tmhobservatory image m31`  
+The User can also ask what is the best night for a specific DSO  
+`@tmhobservatory best m31`
+Every night the system optimizes the night's imaging based on observability and weather. Below is a graph
+displayed to of the night given horizon, and weather conditions.  
+![image](doc/tonight.jpeg)
+The user stops imaging a DSO over multiple nights once the evolution of changes reaches some stopping condition, usually about 20 hours.
+A combination of manual and automatic image processing is done, and the resulting image is uploaded to
+a [website](https://taylorhogan.github.io) for public viewing. An AI is used to add text to the image to explain the astrophysical context.
+
+
+The goal is to have this system run 24/7. Mechanical failures are expected, but these can be mitigated by the use of
+automation to analyse the audio and current draw of various components and compare to known
+good signatures.
+
+
 
 ## My Hardware Block Diagram
 ![block diagram](doc/iris.png)
