@@ -93,4 +93,4 @@ urllib3==2.2.3
 webencodings==0.5.1
 yarl==1.18.3
 speedtest-cli
-
+gpiozero

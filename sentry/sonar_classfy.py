@@ -1,8 +1,13 @@
 #!/usr/bin/env python3
 import statistics
 from gpiozero import DistanceSensor
+import os,sys
 
 import time
+if __package__ is None or __package__ == "":
+    project_root = os.path.abspath(os.path.join(os.path.dirname(__file__),  '..'))
+    if project_root not in sys.path:
+        sys.path.insert(0, project_root)
 
 from utils import pushover
 
