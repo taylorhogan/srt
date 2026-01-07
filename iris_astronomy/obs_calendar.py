@@ -87,7 +87,9 @@ def generate_custom_calendar(year, month, cal_data, cfg):
 
 
 def read_cal():
-    with open('../my_calendar.json', 'r') as f:
+    utils.set_install_dir()
+    path = Path(__file__).parent.parent.resolve() / "my_calendar.png"
+    with open(path, 'r') as f:
         cal = json.load(f)
 
     return cal
@@ -140,7 +142,10 @@ def set_today_stat(state, dso):
     print(dso)
     day['state'] = state
     day['dso'] = dso
-    with open("../my_calendar.json", "w") as outfile:
+    utils.set_install_dir()
+    path = Path(__file__).parent.parent.resolve() / "my_calendar.png"
+
+    with open(path, "w") as outfile:
         json.dump(cal, outfile, indent=4)
 
     return cal
