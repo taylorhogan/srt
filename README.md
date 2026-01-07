@@ -37,8 +37,11 @@ a [website](https://taylorhogan.github.io) for public viewing. An AI is used to 
 
 
 The goal is to have this system run 24/7. Mechanical failures are expected, but these can be mitigated by the use of
-automation to analyse the audio and current draw of various components and compare to known
-good signatures.
+automation to analyze the audio and current draw of various components and compare to known
+good signatures. Below is a spectrogram of the audio of the mount motors compared to the known good audio.
+![image](doc/mount.jpeg)
+
+
 
 
 
@@ -59,7 +62,7 @@ https://uv.readthedocs.io/en/latest/installation.html
 
 `curl -LsSf https://astral.sh/uv/install.sh | sh`
 
-exit shell and reopen new shell, otherwise uv will not be in your path 
+Exit shell and reopen new shell, otherwise uv will not be in your path   
 Download the repo in a location of your choosing
 
 `git clone https://github.com/taylorhogan/srt.git`  
