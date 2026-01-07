@@ -112,7 +112,11 @@ try:
                 if frames_since_trigger > int(RATE / CHUNK):
                     triggered = False
                     buffer = []
+                    if last is not None:
+                        pushover.push_message("Silence detected")
+
                     last = None
+
 
         # If we have enough audio when triggered
         if triggered and len(buffer) * CHUNK >= RATE * RECORD_SECONDS:
