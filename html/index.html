@@ -20,6 +20,11 @@
         }
         #info h2 { margin: 0 0 10px 0; font-size: 16px; }
         #info .sub { color: #aaa; font-size: 12px; line-height: 1.5; }
+        #info .legend { margin-top: 10px; padding-top: 10px; border-top: 1px solid #444; }
+        #info .legend-item { display: flex; align-items: center; margin: 4px 0; }
+        #info .legend-dot { width: 12px; height: 12px; border-radius: 50%; margin-right: 8px; border: 1px solid #fff; }
+        #info .legend-dot.galactic { background: #4488ff; }
+        #info .legend-dot.extragalactic { background: #ff8844; }
         #loading {
             position: absolute;
             top: 50%;
@@ -52,6 +57,12 @@
             pointer-events: auto;
             cursor: pointer;
         }
+        .label-dso.galactic {
+            border-color: rgba(68, 136, 255, 0.5);
+        }
+        .label-dso.extragalactic {
+            border-color: rgba(255, 136, 68, 0.5);
+        }
         .label-dso:hover {
             border-color: #00ffcc;
             box-shadow: 0 0 10px rgba(0, 255, 204, 0.3);
@@ -72,7 +83,7 @@
             padding: 15px;
             border-radius: 10px;
             border: 1px solid #00ffcc;
-            max-width: 300px;
+            max-width: 400px;
             font-size: 13px;
             line-height: 1.5;
             z-index: 300;
@@ -80,9 +91,29 @@
             pointer-events: none;
         }
         #explanation-popup h3 {
-            margin: 0 0 8px 0;
+            margin: 0 0 10px 0;
             color: #00ffcc;
-            font-size: 14px;
+            font-size: 16px;
+            text-align: center;
+        }
+        #popup-distance {
+            text-align: center;
+            color: #aaa;
+            font-size: 11px;
+            margin-bottom: 10px;
+        }
+        #popup-image {
+            width: 100%;
+            max-width: 370px;
+            height: auto;
+            border-radius: 8px;
+            margin-bottom: 12px;
+            border: 2px solid #00ffcc;
+            box-shadow: 0 0 15px rgba(0, 255, 204, 0.2);
+        }
+        #popup-text {
+            margin: 0;
+            text-align: justify;
         }
     </style>
     <script type="importmap">
@@ -105,11 +136,17 @@
         • Double-Click Label: Show Info<br><br>
         <b>Compass:</b> N(0h RA), E(6h), S(12h), W(18h)<br>
         <span id="status">Loading objects...</span>
+        <div class="legend">
+            <div class="legend-item"><div class="legend-dot galactic"></div>Milky Way (inner sphere)</div>
+            <div class="legend-item"><div class="legend-dot extragalactic"></div>Extragalactic (outer sphere)</div>
+        </div>
     </div>
 </div>
 <div id="loading">⏳ Loading Deep Sky Objects...</div>
 <div id="explanation-popup">
     <h3 id="popup-title"></h3>
+    <div id="popup-distance"></div>
+    <img id="popup-image" src="" alt="DSO Image">
     <p id="popup-text"></p>
 </div>
 
@@ -120,266 +157,271 @@
 
     // --- Comprehensive DSO Coordinate Catalog ---
     // RA in decimal hours (0-24), Dec in decimal degrees (-90 to +90)
+    // distance in light-years, type: 'galactic' (Milky Way) or 'extragalactic'
     const dsoCatalog = {
         // Messier Objects
-        'm1':    { ra: 5.575, dec: 22.01, name: 'M1 Crab Nebula', explanation: 'The Crab Nebula is the remnant of a supernova explosion observed by Chinese astronomers in 1054 AD. It contains a rapidly spinning neutron star (pulsar) at its center that emits radiation 30 times per second.' },
-        'm2':    { ra: 21.558, dec: -0.82, name: 'M2 Globular Cluster', explanation: 'M2 is one of the largest known globular clusters, containing about 150,000 stars. It lies approximately 37,500 light-years away and is estimated to be 13 billion years old.' },
-        'm3':    { ra: 13.703, dec: 28.38, name: 'M3 Globular Cluster', explanation: 'M3 contains roughly half a million stars and is one of the brightest globular clusters visible from the Northern Hemisphere. It was the first Messier object discovered by Charles Messier himself.' },
-        'm4':    { ra: 16.393, dec: -26.53, name: 'M4 Globular Cluster', explanation: 'M4 is the closest globular cluster to Earth at about 7,200 light-years away. It contains a notable bar-like structure of stars through its core and hosts a planet orbiting a pulsar.' },
-        'm5':    { ra: 15.310, dec: 2.08, name: 'M5 Globular Cluster', explanation: 'M5 is one of the oldest globular clusters at 13 billion years. It contains over 100,000 stars and is visible to the naked eye under dark skies.' },
-        'm6':    { ra: 17.668, dec: -32.22, name: 'M6 Butterfly Cluster', explanation: 'The Butterfly Cluster gets its name from its butterfly-shaped star pattern. Located in Scorpius, it contains about 80 stars and is roughly 95 million years old.' },
-        'm7':    { ra: 17.898, dec: -34.82, name: 'M7 Ptolemy Cluster', explanation: 'Known since antiquity, Ptolemy recorded this cluster in 130 AD. It contains about 80 stars spread across 25 light-years and is one of the most prominent open clusters in the sky.' },
-        'm8':    { ra: 18.063, dec: -24.38, name: 'M8 Lagoon Nebula', explanation: 'The Lagoon Nebula is a giant interstellar cloud and stellar nursery located 4,100 light-years away. Its distinctive dark lane of dust gives it the lagoon appearance.' },
-        'm9':    { ra: 17.320, dec: -18.52, name: 'M9 Globular Cluster', explanation: 'M9 is one of the nearer globular clusters to the galactic center, lying about 25,800 light-years from Earth. It contains around 250,000 stars.' },
-        'm10':   { ra: 16.952, dec: -4.10, name: 'M10 Globular Cluster', explanation: 'M10 is a bright globular cluster in Ophiuchus, about 14,300 light-years distant. It has a relatively loose core and contains many blue straggler stars.' },
-        'm11':   { ra: 18.851, dec: -6.27, name: 'M11 Wild Duck Cluster', explanation: 'The Wild Duck Cluster is one of the richest open clusters known, containing about 2,900 stars. Its V-shaped pattern resembles a flock of wild ducks in flight.' },
-        'm12':   { ra: 16.787, dec: -1.95, name: 'M12 Globular Cluster', explanation: 'M12 has lost many of its low-mass stars due to gravitational interactions with the Milky Way. It lies about 15,700 light-years away in the constellation Ophiuchus.' },
-        'm13':   { ra: 16.695, dec: 36.46, name: 'M13 Hercules Cluster', explanation: 'The Great Globular Cluster in Hercules is one of the brightest visible from the Northern Hemisphere. It contains about 300,000 stars and was the target of the 1974 Arecibo message sent to potential extraterrestrial life.' },
-        'm14':   { ra: 17.626, dec: -3.25, name: 'M14 Globular Cluster', explanation: 'M14 contains several hundred thousand stars and lies about 30,000 light-years from Earth. A nova was discovered in this cluster in 1938.' },
-        'm15':   { ra: 21.500, dec: 12.17, name: 'M15 Globular Cluster', explanation: 'M15 is one of the densest globular clusters known, possibly containing a black hole at its center. It hosts over 100,000 stars and the first planetary nebula discovered in a globular cluster.' },
-        'm16':   { ra: 18.314, dec: -13.79, name: 'M16 Eagle Nebula', explanation: 'The Eagle Nebula is famous for the "Pillars of Creation" photographed by Hubble. These towering columns of gas and dust are active star-forming regions about 7,000 light-years away.' },
-        'm17':   { ra: 18.347, dec: -16.18, name: 'M17 Swan Nebula', explanation: 'Also called the Omega or Horseshoe Nebula, M17 is one of the brightest emission nebulae. It contains an open cluster of about 35 hot young stars illuminating the surrounding gas.' },
-        'm18':   { ra: 18.332, dec: -17.13, name: 'M18 Open Cluster', explanation: 'M18 is a small, sparse open cluster containing about 20 stars. It lies between the Swan and Lagoon nebulae in the rich Sagittarius star fields.' },
-        'm19':   { ra: 17.043, dec: -26.27, name: 'M19 Globular Cluster', explanation: 'M19 is one of the most oblate (flattened) globular clusters known, likely due to its proximity to the galactic center. It lies about 28,700 light-years from Earth.' },
-        'm20':   { ra: 18.044, dec: -23.03, name: 'M20 Trifid Nebula', explanation: 'The Trifid Nebula is divided into three lobes by dark dust lanes. It uniquely displays emission (red), reflection (blue), and dark nebulae all in one object.' },
-        'm21':   { ra: 18.073, dec: -22.50, name: 'M21 Open Cluster', explanation: 'M21 is a young open cluster about 4.25 million years old, located near the Trifid Nebula. It contains about 57 confirmed member stars.' },
-        'm22':   { ra: 18.606, dec: -23.90, name: 'M22 Globular Cluster', explanation: 'M22 was one of the first globular clusters discovered and is among the nearest to Earth at 10,600 light-years. It may contain two black holes at its center.' },
-        'm23':   { ra: 17.948, dec: -19.02, name: 'M23 Open Cluster', explanation: 'M23 is a rich open cluster containing about 150 stars spread across 15 light-years. At 300 million years old, its stars are still relatively young.' },
-        'm24':   { ra: 18.283, dec: -18.42, name: 'M24 Sagittarius Star Cloud', explanation: 'M24 is not a true cluster but a dense star cloud—a window through the interstellar dust revealing distant Milky Way stars. It spans about 600 light-years.' },
-        'm25':   { ra: 18.527, dec: -19.12, name: 'M25 Open Cluster', explanation: 'M25 contains the notable Cepheid variable star U Sagittarii. The cluster has about 601 stars and lies approximately 2,000 light-years away.' },
-        'm26':   { ra: 18.752, dec: -9.40, name: 'M26 Open Cluster', explanation: 'M26 is a moderately rich open cluster with a dense core. An unusual dark region near its center may be an obscuring dust cloud.' },
-        'm27':   { ra: 19.993, dec: 22.72, name: 'M27 Dumbbell Nebula', explanation: 'The Dumbbell Nebula was the first planetary nebula ever discovered. It represents the final stage of a Sun-like star, with glowing gas expelled as the star died.' },
-        'm28':   { ra: 18.410, dec: -24.87, name: 'M28 Globular Cluster', explanation: 'M28 was one of the first globular clusters found to contain a millisecond pulsar. It lies near the center of our galaxy, about 18,300 light-years away.' },
-        'm29':   { ra: 20.398, dec: 38.53, name: 'M29 Open Cluster', explanation: 'M29 is a small open cluster embedded in the Cygnus Milky Way. Heavy interstellar dust dims its stars by about 2 magnitudes.' },
-        'm30':   { ra: 21.673, dec: -23.18, name: 'M30 Globular Cluster', explanation: 'M30 has undergone core collapse, making its center extremely dense. It contains many blue straggler stars formed from stellar collisions.' },
-        'm31':   { ra: 0.712, dec: 41.27, name: 'M31 Andromeda Galaxy', explanation: 'The Andromeda Galaxy is the nearest major galaxy to the Milky Way at 2.5 million light-years. It contains roughly one trillion stars and will merge with our galaxy in about 4.5 billion years.' },
-        'm32':   { ra: 0.711, dec: 40.87, name: 'M32 Dwarf Galaxy', explanation: 'M32 is a compact satellite galaxy of Andromeda. Despite its small size, it contains a supermassive black hole and may be the remnant core of a larger galaxy stripped by Andromeda.' },
-        'm33':   { ra: 1.564, dec: 30.66, name: 'M33 Triangulum Galaxy', explanation: 'The Triangulum Galaxy is the third-largest member of our Local Group. It contains about 40 billion stars and is home to NGC 604, one of the largest known star-forming regions.' },
-        'm34':   { ra: 2.700, dec: 42.78, name: 'M34 Open Cluster', explanation: 'M34 is a nearby open cluster about 1,500 light-years away. At 200 million years old, it contains about 400 stars visible in amateur telescopes.' },
-        'm35':   { ra: 6.148, dec: 24.33, name: 'M35 Open Cluster', explanation: 'M35 is a rich open cluster containing about 2,500 stars. Near it lies the older, more distant cluster NGC 2158, creating a beautiful visual pairing.' },
-        'm36':   { ra: 5.602, dec: 34.13, name: 'M36 Open Cluster', explanation: 'M36 is one of three bright open clusters in Auriga. At 25 million years old, it contains about 60 confirmed members including several fast-rotating B-type stars.' },
-        'm37':   { ra: 5.873, dec: 32.55, name: 'M37 Open Cluster', explanation: 'M37 is the richest of the three Auriga clusters, containing about 500 stars. At 300 million years old, it has many red giants among its members.' },
-        'm38':   { ra: 5.478, dec: 35.85, name: 'M38 Open Cluster', explanation: 'M38 forms a cross or pi-shaped pattern when viewed through telescopes. It contains about 100 stars and lies 4,200 light-years from Earth.' },
-        'm39':   { ra: 21.535, dec: 48.43, name: 'M39 Open Cluster', explanation: 'M39 is a very loose, nearby open cluster just 800 light-years away. Its 30 member stars are spread across a region larger than the full Moon.' },
-        'm40':   { ra: 12.372, dec: 58.08, name: 'M40 Double Star', explanation: 'M40 is simply a double star, not a deep sky object. Messier catalogued it while searching for a nebula reported in the area. The two stars are likely not gravitationally bound.' },
-        'm41':   { ra: 6.783, dec: -20.73, name: 'M41 Open Cluster', explanation: 'M41 lies just 4 degrees south of Sirius, the brightest star. This 190-million-year-old cluster contains about 100 stars including several red giants.' },
-        'm42':   { ra: 5.588, dec: -5.39, name: 'M42 Orion Nebula', explanation: 'The Orion Nebula is the closest massive star-forming region to Earth at 1,344 light-years. It is visible to the naked eye and contains thousands of young stars in various stages of formation.' },
-        'm43':   { ra: 5.593, dec: -5.27, name: 'M43 De Mairans Nebula', explanation: 'M43 is actually part of the Orion Nebula complex, separated by a dark dust lane. It is illuminated by a single young star, NU Orionis.' },
-        'm44':   { ra: 8.667, dec: 19.67, name: 'M44 Beehive Cluster', explanation: 'The Beehive Cluster has been known since ancient times and was used for weather prediction. It contains about 1,000 stars and lies just 577 light-years away.' },
-        'm45':   { ra: 3.783, dec: 24.12, name: 'M45 Pleiades', explanation: 'The Pleiades or Seven Sisters is the most famous star cluster, known to virtually all ancient cultures. It contains over 1,000 stars wrapped in blue reflection nebulosity.' },
-        'm46':   { ra: 7.697, dec: -14.82, name: 'M46 Open Cluster', explanation: 'M46 appears to contain a planetary nebula (NGC 2438) within it, though this is actually a foreground object. The cluster contains about 500 stars.' },
-        'm47':   { ra: 7.610, dec: -14.50, name: 'M47 Open Cluster', explanation: 'M47 is a bright, loose cluster visible to the naked eye. It lies near M46 but is much closer at 1,600 light-years compared to M46\'s 5,400 light-years.' },
-        'm48':   { ra: 8.228, dec: -5.75, name: 'M48 Open Cluster', explanation: 'M48 was "lost" for nearly two centuries due to an error in Messier\'s coordinates. It contains about 80 stars spread across 23 light-years.' },
-        'm49':   { ra: 12.496, dec: 8.00, name: 'M49 Elliptical Galaxy', explanation: 'M49 was the first Virgo Cluster galaxy discovered. It is a giant elliptical galaxy containing about 200 billion stars and thousands of globular clusters.' },
-        'm50':   { ra: 7.050, dec: -8.33, name: 'M50 Open Cluster', explanation: 'M50 is a heart-shaped open cluster containing about 200 stars. A notable red giant star near its center contrasts beautifully with the blue-white cluster members.' },
-        'm51':   { ra: 13.498, dec: 47.19, name: 'M51 Whirlpool Galaxy', explanation: 'The Whirlpool Galaxy was the first spiral galaxy ever identified. Its dramatic spiral arms are enhanced by interaction with its companion galaxy NGC 5195.' },
-        'm52':   { ra: 23.403, dec: 61.58, name: 'M52 Open Cluster', explanation: 'M52 is a rich open cluster containing about 200 stars. It lies at the edge of the Milky Way near the Bubble Nebula (NGC 7635).' },
-        'm53':   { ra: 13.216, dec: 18.17, name: 'M53 Globular Cluster', explanation: 'M53 is one of the more distant globular clusters at 58,000 light-years. It has a dense core and contains many variable stars.' },
-        'm54':   { ra: 18.918, dec: -30.48, name: 'M54 Globular Cluster', explanation: 'M54 was the first globular cluster found to belong to another galaxy—the Sagittarius Dwarf Elliptical Galaxy being absorbed by the Milky Way.' },
-        'm55':   { ra: 19.667, dec: -30.97, name: 'M55 Globular Cluster', explanation: 'M55 is a large, loose globular cluster that appears almost transparent due to its spread-out stars. It lies about 17,600 light-years from Earth.' },
-        'm56':   { ra: 19.277, dec: 30.18, name: 'M56 Globular Cluster', explanation: 'M56 lies midway between Albireo and Sulafat in the summer sky. It is approaching us at 145 km/s and contains about 230,000 solar masses.' },
-        'm57':   { ra: 18.893, dec: 33.03, name: 'M57 Ring Nebula', explanation: 'The Ring Nebula is a classic planetary nebula showing the expelled outer layers of a dying star. Its central white dwarf is about 200,000°C and illuminates the surrounding gas.' },
-        'm58':   { ra: 12.626, dec: 11.82, name: 'M58 Spiral Galaxy', explanation: 'M58 is one of the brightest barred spiral galaxies in the Virgo Cluster. It was one of the first recognized spiral nebulae.' },
-        'm59':   { ra: 12.700, dec: 11.65, name: 'M59 Elliptical Galaxy', explanation: 'M59 is an elliptical galaxy in the Virgo Cluster with an unusually large central supermassive black hole and a disk of young blue stars.' },
-        'm60':   { ra: 12.728, dec: 11.55, name: 'M60 Elliptical Galaxy', explanation: 'M60 is paired with the spiral galaxy NGC 4647 in an apparent interaction. It hosts one of the largest known black holes at 4.5 billion solar masses.' },
-        'm61':   { ra: 12.366, dec: 4.47, name: 'M61 Spiral Galaxy', explanation: 'M61 is a face-on spiral galaxy and one of the largest in the Virgo Cluster. It has produced six observed supernovae, more than any other galaxy.' },
-        'm62':   { ra: 17.022, dec: -30.12, name: 'M62 Globular Cluster', explanation: 'M62 has an unusually asymmetric shape, likely due to its close passages near the galactic center. It contains many X-ray sources and millisecond pulsars.' },
-        'm63':   { ra: 13.264, dec: 42.03, name: 'M63 Sunflower Galaxy', explanation: 'The Sunflower Galaxy gets its name from its bright, patchy spiral arm pattern. It is part of the M51 galaxy group about 29 million light-years away.' },
-        'm64':   { ra: 12.945, dec: 21.68, name: 'M64 Black Eye Galaxy', explanation: 'The Black Eye Galaxy has a spectacular dark band of absorbing dust in front of its bright nucleus. The outer regions rotate opposite to the inner regions due to a past collision.' },
-        'm65':   { ra: 11.316, dec: 13.09, name: 'M65 Leo Triplet', explanation: 'M65 is a member of the famous Leo Triplet along with M66 and NGC 3628. Its tightly wound spiral arms contain relatively little star formation.' },
-        'm66':   { ra: 11.337, dec: 12.99, name: 'M66 Leo Triplet', explanation: 'M66 is the largest member of the Leo Triplet. Gravitational interaction with its neighbors has distorted its spiral arms and triggered star formation.' },
-        'm67':   { ra: 8.842, dec: 11.82, name: 'M67 Open Cluster', explanation: 'M67 is one of the oldest known open clusters at 4 billion years, nearly as old as our Sun. It is used to study stellar evolution and has over 500 members.' },
-        'm68':   { ra: 12.655, dec: -26.75, name: 'M68 Globular Cluster', explanation: 'M68 is a loose globular cluster about 33,600 light-years away. It is approaching us at 112 km/s and contains over 250 variable stars.' },
-        'm69':   { ra: 18.522, dec: -32.35, name: 'M69 Globular Cluster', explanation: 'M69 is one of the most metal-rich globular clusters known, suggesting it formed from gas already enriched by previous stellar generations.' },
-        'm70':   { ra: 18.720, dec: -32.30, name: 'M70 Globular Cluster', explanation: 'M70 is a core-collapsed globular cluster very similar to nearby M69. Comet Hale-Bopp was discovered near this cluster in 1995.' },
-        'm71':   { ra: 19.895, dec: 18.78, name: 'M71 Globular Cluster', explanation: 'M71 was long classified as an open cluster due to its loose structure. It is one of the most metal-rich globular clusters in the Milky Way.' },
-        'm72':   { ra: 20.892, dec: -12.53, name: 'M72 Globular Cluster', explanation: 'M72 is one of the more remote globular clusters at 55,400 light-years. It contains 43 known variable stars and has a relatively loose structure.' },
-        'm73':   { ra: 20.982, dec: -12.63, name: 'M73 Asterism', explanation: 'M73 is not a true cluster but an asterism of four unrelated stars that happen to appear close together. It remains in the catalogue for historical reasons.' },
-        'm74':   { ra: 1.612, dec: 15.78, name: 'M74 Phantom Galaxy', explanation: 'The Phantom Galaxy is a perfect example of a grand-design spiral. Its symmetric arms and low surface brightness make it challenging to observe but stunning in photographs.' },
-        'm75':   { ra: 20.103, dec: -21.92, name: 'M75 Globular Cluster', explanation: 'M75 is one of the most densely concentrated globular clusters known. It lies about 67,500 light-years away, making it one of the more distant Messier objects.' },
-        'm76':   { ra: 1.707, dec: 51.57, name: 'M76 Little Dumbbell', explanation: 'The Little Dumbbell is one of the faintest Messier objects. Like M27, it is a planetary nebula but appears as two lobes due to our viewing angle.' },
-        'm77':   { ra: 2.711, dec: -0.01, name: 'M77 Cetus A Galaxy', explanation: 'M77 is a Seyfert galaxy with an active galactic nucleus powered by a supermassive black hole of 47 million solar masses. It is the closest and brightest Seyfert galaxy.' },
-        'm78':   { ra: 5.779, dec: 0.08, name: 'M78 Reflection Nebula', explanation: 'M78 is the brightest reflection nebula in the sky. Two young stars illuminate surrounding dust clouds in the Orion molecular cloud complex.' },
-        'm79':   { ra: 5.408, dec: -24.52, name: 'M79 Globular Cluster', explanation: 'M79 is unusual for being located in the winter sky opposite the galactic center. It may have been captured from the Canis Major Dwarf Galaxy.' },
-        'm80':   { ra: 16.283, dec: -22.98, name: 'M80 Globular Cluster', explanation: 'M80 is one of the densest globular clusters in the Milky Way. A nova observed here in 1860 briefly made it as bright as the entire cluster.' },
-        'm81':   { ra: 9.926, dec: 69.07, name: 'M81 Bodes Galaxy', explanation: 'Bode\'s Galaxy is a grand-design spiral galaxy 12 million light-years away. Its gravitational interaction with M82 has enhanced star formation in both galaxies.' },
-        'm82':   { ra: 9.932, dec: 69.68, name: 'M82 Cigar Galaxy', explanation: 'The Cigar Galaxy is a starburst galaxy producing stars 10 times faster than the Milky Way. Its dramatic appearance results from interaction with M81.' },
-        'm83':   { ra: 13.617, dec: -29.87, name: 'M83 Southern Pinwheel', explanation: 'M83 is one of the nearest barred spiral galaxies and has produced six observed supernovae. Its prominent central bar and blue spiral arms make it a favorite target.' },
-        'm84':   { ra: 12.419, dec: 12.88, name: 'M84 Lenticular Galaxy', explanation: 'M84 is a massive galaxy in the Virgo Cluster core. It hosts a supermassive black hole and two jets of material visible in radio wavelengths.' },
-        'm85':   { ra: 12.420, dec: 18.19, name: 'M85 Lenticular Galaxy', explanation: 'M85 is the northernmost member of the Virgo Cluster. It has an unusually young stellar population for an elliptical galaxy, suggesting a recent merger.' },
-        'm86':   { ra: 12.433, dec: 12.95, name: 'M86 Lenticular Galaxy', explanation: 'M86 is the fastest approaching galaxy relative to us at 244 km/s—it is actually falling toward the Virgo Cluster center. It shows signs of interaction with NGC 4438.' },
-        'm87':   { ra: 12.514, dec: 12.39, name: 'M87 Virgo A Galaxy', explanation: 'M87 is a supergiant elliptical galaxy at the center of the Virgo Cluster. It contains a 6.5 billion solar mass black hole famously imaged by the Event Horizon Telescope in 2019.' },
-        'm88':   { ra: 12.533, dec: 14.42, name: 'M88 Spiral Galaxy', explanation: 'M88 is a classic multi-arm spiral galaxy in the Virgo Cluster. It is moving away from the cluster center at high velocity and may be on its first passage through.' },
-        'm89':   { ra: 12.593, dec: 12.55, name: 'M89 Elliptical Galaxy', explanation: 'M89 appears perfectly circular, suggesting we view it face-on or it is truly spherical—unusual for elliptical galaxies. It has an extensive system of shells and plumes.' },
-        'm90':   { ra: 12.613, dec: 13.16, name: 'M90 Spiral Galaxy', explanation: 'M90 is one of the largest spirals in the Virgo Cluster but shows relatively weak star formation. Its smooth arms lack the knots of star-forming regions seen in other spirals.' },
-        'm91':   { ra: 12.592, dec: 14.50, name: 'M91 Barred Spiral', explanation: 'M91 is one of the faintest Messier galaxies and was "lost" for years due to coordinate errors. It has a prominent bar and well-defined spiral arms.' },
-        'm92':   { ra: 17.286, dec: 43.14, name: 'M92 Globular Cluster', explanation: 'M92 is often overlooked due to nearby M13 but is equally impressive. At 14.2 billion years old, it is one of the oldest globular clusters known.' },
-        'm93':   { ra: 7.747, dec: -23.87, name: 'M93 Open Cluster', explanation: 'M93 is a triangular-shaped open cluster of about 80 stars. At 100 million years old, it contains both hot blue stars and evolving giants.' },
-        'm94':   { ra: 12.850, dec: 41.12, name: 'M94 Cats Eye Galaxy', explanation: 'M94 has an unusually bright inner ring of active star formation. It is one of the few galaxies with no signs of ongoing or past interaction with neighbors.' },
-        'm95':   { ra: 10.733, dec: 11.70, name: 'M95 Barred Spiral', explanation: 'M95 has a distinct ring of star formation around its bar. It is part of the M96 galaxy group about 32 million light-years away.' },
-        'm96':   { ra: 10.780, dec: 11.82, name: 'M96 Spiral Galaxy', explanation: 'M96 is the brightest member of the Leo I galaxy group. Its asymmetric arms and displaced nucleus suggest a past gravitational interaction.' },
-        'm97':   { ra: 11.248, dec: 55.02, name: 'M97 Owl Nebula', explanation: 'The Owl Nebula gets its name from two dark "eyes" formed by viewing the inner shell from our angle. It is about 8,000 years old with a central star of 16th magnitude.' },
-        'm98':   { ra: 12.228, dec: 14.90, name: 'M98 Spiral Galaxy', explanation: 'M98 is an edge-on spiral approaching us at 142 km/s—one of very few blueshifted galaxies beyond our Local Group. It has an active nucleus and extensive dust lanes.' },
-        'm99':   { ra: 12.313, dec: 14.42, name: 'M99 Coma Pinwheel', explanation: 'M99 has very asymmetric spiral arms, likely caused by interaction with the intergalactic medium or neighbor galaxies. It has hosted three supernovae.' },
-        'm100':  { ra: 12.383, dec: 15.82, name: 'M100 Mirror Galaxy', explanation: 'M100 is one of the brightest grand-design spirals in the Virgo Cluster. Hubble observations of Cepheid variables here helped refine the cosmic distance scale.' },
-        'm101':  { ra: 14.053, dec: 54.35, name: 'M101 Pinwheel Galaxy', explanation: 'The Pinwheel Galaxy is a face-on spiral with asymmetric arms caused by past interactions. It is nearly twice the diameter of the Milky Way.' },
-        'm102':  { ra: 15.110, dec: 55.76, name: 'M102 Spindle Galaxy', explanation: 'M102 is either NGC 5866 (the Spindle Galaxy) or a duplicate observation of M101—astronomers still debate this. NGC 5866 is an edge-on lenticular galaxy with a prominent dust lane.' },
-        'm103':  { ra: 1.555, dec: 60.70, name: 'M103 Open Cluster', explanation: 'M103 is the last original Messier catalogue entry. It contains about 40 stars in a triangular pattern and is visible in the same binocular field as the Double Cluster.' },
-        'm104':  { ra: 12.667, dec: -11.62, name: 'M104 Sombrero Galaxy', explanation: 'The Sombrero Galaxy is famous for its distinctive dust lane and large central bulge. It contains a supermassive black hole of 1 billion solar masses and thousands of globular clusters.' },
-        'm105':  { ra: 10.797, dec: 12.58, name: 'M105 Elliptical Galaxy', explanation: 'M105 was the first galaxy with a confirmed central supermassive black hole (50 million solar masses). It is the brightest elliptical in the Leo I group.' },
-        'm106':  { ra: 12.316, dec: 47.30, name: 'M106 Spiral Galaxy', explanation: 'M106 has an active nucleus with water masers that enabled precise distance measurement. Two anomalous arms of hot gas are caused by jets from its black hole.' },
-        'm107':  { ra: 16.543, dec: -13.05, name: 'M107 Globular Cluster', explanation: 'M107 is one of the loosest and most open globular clusters. It contains dark patches—rare for globular clusters—caused by obscuring dust.' },
-        'm108':  { ra: 11.187, dec: 55.67, name: 'M108 Surfboard Galaxy', explanation: 'M108 is a near edge-on spiral with no clear bulge. It lies close to the Owl Nebula in the sky, making them a popular pair for observers.' },
-        'm109':  { ra: 11.962, dec: 53.37, name: 'M109 Barred Spiral', explanation: 'M109 is a barred spiral galaxy near the star Phecda in the Big Dipper. It has a faint outer ring and two prominent spiral arms.' },
-        'm110':  { ra: 0.673, dec: 41.68, name: 'M110 Dwarf Elliptical', explanation: 'M110 is a satellite of Andromeda and one of the few dwarf ellipticals with dark dust patches. It contains about 10 billion stars.' },
+        'm1':    { ra: 5.575, dec: 22.01, name: 'M1 Crab Nebula', distance: 6500, type: 'galactic', explanation: 'The Crab Nebula is the remnant of a supernova explosion observed by Chinese astronomers in 1054 AD. It contains a rapidly spinning neutron star (pulsar) at its center that emits radiation 30 times per second.' },
+        'm2':    { ra: 21.558, dec: -0.82, name: 'M2 Globular Cluster', distance: 37500, type: 'galactic', explanation: 'M2 is one of the largest known globular clusters, containing about 150,000 stars. It lies approximately 37,500 light-years away and is estimated to be 13 billion years old.' },
+        'm3':    { ra: 13.703, dec: 28.38, name: 'M3 Globular Cluster', distance: 33900, type: 'galactic', explanation: 'M3 contains roughly half a million stars and is one of the brightest globular clusters visible from the Northern Hemisphere. It was the first Messier object discovered by Charles Messier himself.' },
+        'm4':    { ra: 16.393, dec: -26.53, name: 'M4 Globular Cluster', distance: 7200, type: 'galactic', explanation: 'M4 is the closest globular cluster to Earth at about 7,200 light-years away. It contains a notable bar-like structure of stars through its core and hosts a planet orbiting a pulsar.' },
+        'm5':    { ra: 15.310, dec: 2.08, name: 'M5 Globular Cluster', distance: 24500, type: 'galactic', explanation: 'M5 is one of the oldest globular clusters at 13 billion years. It contains over 100,000 stars and is visible to the naked eye under dark skies.' },
+        'm6':    { ra: 17.668, dec: -32.22, name: 'M6 Butterfly Cluster', distance: 1600, type: 'galactic', explanation: 'The Butterfly Cluster gets its name from its butterfly-shaped star pattern. Located in Scorpius, it contains about 80 stars and is roughly 95 million years old.' },
+        'm7':    { ra: 17.898, dec: -34.82, name: 'M7 Ptolemy Cluster', distance: 980, type: 'galactic', explanation: 'Known since antiquity, Ptolemy recorded this cluster in 130 AD. It contains about 80 stars spread across 25 light-years and is one of the most prominent open clusters in the sky.' },
+        'm8':    { ra: 18.063, dec: -24.38, name: 'M8 Lagoon Nebula', distance: 4100, type: 'galactic', explanation: 'The Lagoon Nebula is a giant interstellar cloud and stellar nursery located 4,100 light-years away. Its distinctive dark lane of dust gives it the lagoon appearance.' },
+        'm9':    { ra: 17.320, dec: -18.52, name: 'M9 Globular Cluster', distance: 25800, type: 'galactic', explanation: 'M9 is one of the nearer globular clusters to the galactic center, lying about 25,800 light-years from Earth. It contains around 250,000 stars.' },
+        'm10':   { ra: 16.952, dec: -4.10, name: 'M10 Globular Cluster', distance: 14300, type: 'galactic', explanation: 'M10 is a bright globular cluster in Ophiuchus, about 14,300 light-years distant. It has a relatively loose core and contains many blue straggler stars.' },
+        'm11':   { ra: 18.851, dec: -6.27, name: 'M11 Wild Duck Cluster', distance: 6200, type: 'galactic', explanation: 'The Wild Duck Cluster is one of the richest open clusters known, containing about 2,900 stars. Its V-shaped pattern resembles a flock of wild ducks in flight.' },
+        'm12':   { ra: 16.787, dec: -1.95, name: 'M12 Globular Cluster', distance: 15700, type: 'galactic', explanation: 'M12 has lost many of its low-mass stars due to gravitational interactions with the Milky Way. It lies about 15,700 light-years away in the constellation Ophiuchus.' },
+        'm13':   { ra: 16.695, dec: 36.46, name: 'M13 Hercules Cluster', distance: 22200, type: 'galactic', explanation: 'The Great Globular Cluster in Hercules is one of the brightest visible from the Northern Hemisphere. It contains about 300,000 stars and was the target of the 1974 Arecibo message sent to potential extraterrestrial life.' },
+        'm14':   { ra: 17.626, dec: -3.25, name: 'M14 Globular Cluster', distance: 30000, type: 'galactic', explanation: 'M14 contains several hundred thousand stars and lies about 30,000 light-years from Earth. A nova was discovered in this cluster in 1938.' },
+        'm15':   { ra: 21.500, dec: 12.17, name: 'M15 Globular Cluster', distance: 33600, type: 'galactic', explanation: 'M15 is one of the densest globular clusters known, possibly containing a black hole at its center. It hosts over 100,000 stars and the first planetary nebula discovered in a globular cluster.' },
+        'm16':   { ra: 18.314, dec: -13.79, name: 'M16 Eagle Nebula', distance: 7000, type: 'galactic', explanation: 'The Eagle Nebula is famous for the "Pillars of Creation" photographed by Hubble. These towering columns of gas and dust are active star-forming regions about 7,000 light-years away.' },
+        'm17':   { ra: 18.347, dec: -16.18, name: 'M17 Swan Nebula', distance: 5500, type: 'galactic', explanation: 'Also called the Omega or Horseshoe Nebula, M17 is one of the brightest emission nebulae. It contains an open cluster of about 35 hot young stars illuminating the surrounding gas.' },
+        'm18':   { ra: 18.332, dec: -17.13, name: 'M18 Open Cluster', distance: 4900, type: 'galactic', explanation: 'M18 is a small, sparse open cluster containing about 20 stars. It lies between the Swan and Lagoon nebulae in the rich Sagittarius star fields.' },
+        'm19':   { ra: 17.043, dec: -26.27, name: 'M19 Globular Cluster', distance: 28700, type: 'galactic', explanation: 'M19 is one of the most oblate (flattened) globular clusters known, likely due to its proximity to the galactic center. It lies about 28,700 light-years from Earth.' },
+        'm20':   { ra: 18.044, dec: -23.03, name: 'M20 Trifid Nebula', distance: 5200, type: 'galactic', explanation: 'The Trifid Nebula is divided into three lobes by dark dust lanes. It uniquely displays emission (red), reflection (blue), and dark nebulae all in one object.' },
+        'm21':   { ra: 18.073, dec: -22.50, name: 'M21 Open Cluster', distance: 4250, type: 'galactic', explanation: 'M21 is a young open cluster about 4.25 million years old, located near the Trifid Nebula. It contains about 57 confirmed member stars.' },
+        'm22':   { ra: 18.606, dec: -23.90, name: 'M22 Globular Cluster', distance: 10600, type: 'galactic', explanation: 'M22 was one of the first globular clusters discovered and is among the nearest to Earth at 10,600 light-years. It may contain two black holes at its center.' },
+        'm23':   { ra: 17.948, dec: -19.02, name: 'M23 Open Cluster', distance: 2150, type: 'galactic', explanation: 'M23 is a rich open cluster containing about 150 stars spread across 15 light-years. At 300 million years old, its stars are still relatively young.' },
+        'm24':   { ra: 18.283, dec: -18.42, name: 'M24 Sagittarius Star Cloud', distance: 10000, type: 'galactic', explanation: 'M24 is not a true cluster but a dense star cloud—a window through the interstellar dust revealing distant Milky Way stars. It spans about 600 light-years.' },
+        'm25':   { ra: 18.527, dec: -19.12, name: 'M25 Open Cluster', distance: 2000, type: 'galactic', explanation: 'M25 contains the notable Cepheid variable star U Sagittarii. The cluster has about 601 stars and lies approximately 2,000 light-years away.' },
+        'm26':   { ra: 18.752, dec: -9.40, name: 'M26 Open Cluster', distance: 5000, type: 'galactic', explanation: 'M26 is a moderately rich open cluster with a dense core. An unusual dark region near its center may be an obscuring dust cloud.' },
+        'm27':   { ra: 19.993, dec: 22.72, name: 'M27 Dumbbell Nebula', distance: 1360, type: 'galactic', explanation: 'The Dumbbell Nebula was the first planetary nebula ever discovered. It represents the final stage of a Sun-like star, with glowing gas expelled as the star died.' },
+        'm28':   { ra: 18.410, dec: -24.87, name: 'M28 Globular Cluster', distance: 18300, type: 'galactic', explanation: 'M28 was one of the first globular clusters found to contain a millisecond pulsar. It lies near the center of our galaxy, about 18,300 light-years away.' },
+        'm29':   { ra: 20.398, dec: 38.53, name: 'M29 Open Cluster', distance: 4000, type: 'galactic', explanation: 'M29 is a small open cluster embedded in the Cygnus Milky Way. Heavy interstellar dust dims its stars by about 2 magnitudes.' },
+        'm30':   { ra: 21.673, dec: -23.18, name: 'M30 Globular Cluster', distance: 26100, type: 'galactic', explanation: 'M30 has undergone core collapse, making its center extremely dense. It contains many blue straggler stars formed from stellar collisions.' },
+        'm31':   { ra: 0.712, dec: 41.27, name: 'M31 Andromeda Galaxy', distance: 2537000, type: 'extragalactic', explanation: 'The Andromeda Galaxy is the nearest major galaxy to the Milky Way at 2.5 million light-years. It contains roughly one trillion stars and will merge with our galaxy in about 4.5 billion years.' },
+        'm32':   { ra: 0.711, dec: 40.87, name: 'M32 Dwarf Galaxy', distance: 2490000, type: 'extragalactic', explanation: 'M32 is a compact satellite galaxy of Andromeda. Despite its small size, it contains a supermassive black hole and may be the remnant core of a larger galaxy stripped by Andromeda.' },
+        'm33':   { ra: 1.564, dec: 30.66, name: 'M33 Triangulum Galaxy', distance: 2730000, type: 'extragalactic', explanation: 'The Triangulum Galaxy is the third-largest member of our Local Group. It contains about 40 billion stars and is home to NGC 604, one of the largest known star-forming regions.' },
+        'm34':   { ra: 2.700, dec: 42.78, name: 'M34 Open Cluster', distance: 1500, type: 'galactic', explanation: 'M34 is a nearby open cluster about 1,500 light-years away. At 200 million years old, it contains about 400 stars visible in amateur telescopes.' },
+        'm35':   { ra: 6.148, dec: 24.33, name: 'M35 Open Cluster', distance: 2800, type: 'galactic', explanation: 'M35 is a rich open cluster containing about 2,500 stars. Near it lies the older, more distant cluster NGC 2158, creating a beautiful visual pairing.' },
+        'm36':   { ra: 5.602, dec: 34.13, name: 'M36 Open Cluster', distance: 4100, type: 'galactic', explanation: 'M36 is one of three bright open clusters in Auriga. At 25 million years old, it contains about 60 confirmed members including several fast-rotating B-type stars.' },
+        'm37':   { ra: 5.873, dec: 32.55, name: 'M37 Open Cluster', distance: 4500, type: 'galactic', explanation: 'M37 is the richest of the three Auriga clusters, containing about 500 stars. At 300 million years old, it has many red giants among its members.' },
+        'm38':   { ra: 5.478, dec: 35.85, name: 'M38 Open Cluster', distance: 4200, type: 'galactic', explanation: 'M38 forms a cross or pi-shaped pattern when viewed through telescopes. It contains about 100 stars and lies 4,200 light-years from Earth.' },
+        'm39':   { ra: 21.535, dec: 48.43, name: 'M39 Open Cluster', distance: 800, type: 'galactic', explanation: 'M39 is a very loose, nearby open cluster just 800 light-years away. Its 30 member stars are spread across a region larger than the full Moon.' },
+        'm40':   { ra: 12.372, dec: 58.08, name: 'M40 Double Star', distance: 510, type: 'galactic', explanation: 'M40 is simply a double star, not a deep sky object. Messier catalogued it while searching for a nebula reported in the area. The two stars are likely not gravitationally bound.' },
+        'm41':   { ra: 6.783, dec: -20.73, name: 'M41 Open Cluster', distance: 2300, type: 'galactic', explanation: 'M41 lies just 4 degrees south of Sirius, the brightest star. This 190-million-year-old cluster contains about 100 stars including several red giants.' },
+        'm42':   { ra: 5.588, dec: -5.39, name: 'M42 Orion Nebula', distance: 1344, type: 'galactic', explanation: 'The Orion Nebula is the closest massive star-forming region to Earth at 1,344 light-years. It is visible to the naked eye and contains thousands of young stars in various stages of formation.' },
+        'm43':   { ra: 5.593, dec: -5.27, name: 'M43 De Mairans Nebula', distance: 1600, type: 'galactic', explanation: 'M43 is actually part of the Orion Nebula complex, separated by a dark dust lane. It is illuminated by a single young star, NU Orionis.' },
+        'm44':   { ra: 8.667, dec: 19.67, name: 'M44 Beehive Cluster', distance: 577, type: 'galactic', explanation: 'The Beehive Cluster has been known since ancient times and was used for weather prediction. It contains about 1,000 stars and lies just 577 light-years away.' },
+        'm45':   { ra: 3.783, dec: 24.12, name: 'M45 Pleiades', distance: 444, type: 'galactic', explanation: 'The Pleiades or Seven Sisters is the most famous star cluster, known to virtually all ancient cultures. It contains over 1,000 stars wrapped in blue reflection nebulosity.' },
+        'm46':   { ra: 7.697, dec: -14.82, name: 'M46 Open Cluster', distance: 5400, type: 'galactic', explanation: 'M46 appears to contain a planetary nebula (NGC 2438) within it, though this is actually a foreground object. The cluster contains about 500 stars.' },
+        'm47':   { ra: 7.610, dec: -14.50, name: 'M47 Open Cluster', distance: 1600, type: 'galactic', explanation: 'M47 is a bright, loose cluster visible to the naked eye. It lies near M46 but is much closer at 1,600 light-years compared to M46\'s 5,400 light-years.' },
+        'm48':   { ra: 8.228, dec: -5.75, name: 'M48 Open Cluster', distance: 1500, type: 'galactic', explanation: 'M48 was "lost" for nearly two centuries due to an error in Messier\'s coordinates. It contains about 80 stars spread across 23 light-years.' },
+        'm49':   { ra: 12.496, dec: 8.00, name: 'M49 Elliptical Galaxy', distance: 56000000, type: 'extragalactic', explanation: 'M49 was the first Virgo Cluster galaxy discovered. It is a giant elliptical galaxy containing about 200 billion stars and thousands of globular clusters.' },
+        'm50':   { ra: 7.050, dec: -8.33, name: 'M50 Open Cluster', distance: 3000, type: 'galactic', explanation: 'M50 is a heart-shaped open cluster containing about 200 stars. A notable red giant star near its center contrasts beautifully with the blue-white cluster members.' },
+        'm51':   { ra: 13.498, dec: 47.19, name: 'M51 Whirlpool Galaxy', distance: 23000000, type: 'extragalactic', explanation: 'The Whirlpool Galaxy was the first spiral galaxy ever identified. Its dramatic spiral arms are enhanced by interaction with its companion galaxy NGC 5195.' },
+        'm52':   { ra: 23.403, dec: 61.58, name: 'M52 Open Cluster', distance: 5000, type: 'galactic', explanation: 'M52 is a rich open cluster containing about 200 stars. It lies at the edge of the Milky Way near the Bubble Nebula (NGC 7635).' },
+        'm53':   { ra: 13.216, dec: 18.17, name: 'M53 Globular Cluster', distance: 58000, type: 'galactic', explanation: 'M53 is one of the more distant globular clusters at 58,000 light-years. It has a dense core and contains many variable stars.' },
+        'm54':   { ra: 18.918, dec: -30.48, name: 'M54 Globular Cluster', distance: 87400, type: 'galactic', explanation: 'M54 was the first globular cluster found to belong to another galaxy—the Sagittarius Dwarf Elliptical Galaxy being absorbed by the Milky Way.' },
+        'm55':   { ra: 19.667, dec: -30.97, name: 'M55 Globular Cluster', distance: 17600, type: 'galactic', explanation: 'M55 is a large, loose globular cluster that appears almost transparent due to its spread-out stars. It lies about 17,600 light-years from Earth.' },
+        'm56':   { ra: 19.277, dec: 30.18, name: 'M56 Globular Cluster', distance: 32900, type: 'galactic', explanation: 'M56 lies midway between Albireo and Sulafat in the summer sky. It is approaching us at 145 km/s and contains about 230,000 solar masses.' },
+        'm57':   { ra: 18.893, dec: 33.03, name: 'M57 Ring Nebula', distance: 2300, type: 'galactic', explanation: 'The Ring Nebula is a classic planetary nebula showing the expelled outer layers of a dying star. Its central white dwarf is about 200,000°C and illuminates the surrounding gas.' },
+        'm58':   { ra: 12.626, dec: 11.82, name: 'M58 Spiral Galaxy', distance: 62000000, type: 'extragalactic', explanation: 'M58 is one of the brightest barred spiral galaxies in the Virgo Cluster. It was one of the first recognized spiral nebulae.' },
+        'm59':   { ra: 12.700, dec: 11.65, name: 'M59 Elliptical Galaxy', distance: 60000000, type: 'extragalactic', explanation: 'M59 is an elliptical galaxy in the Virgo Cluster with an unusually large central supermassive black hole and a disk of young blue stars.' },
+        'm60':   { ra: 12.728, dec: 11.55, name: 'M60 Elliptical Galaxy', distance: 55000000, type: 'extragalactic', explanation: 'M60 is paired with the spiral galaxy NGC 4647 in an apparent interaction. It hosts one of the largest known black holes at 4.5 billion solar masses.' },
+        'm61':   { ra: 12.366, dec: 4.47, name: 'M61 Spiral Galaxy', distance: 52500000, type: 'extragalactic', explanation: 'M61 is a face-on spiral galaxy and one of the largest in the Virgo Cluster. It has produced six observed supernovae, more than any other galaxy.' },
+        'm62':   { ra: 17.022, dec: -30.12, name: 'M62 Globular Cluster', distance: 22200, type: 'galactic', explanation: 'M62 has an unusually asymmetric shape, likely due to its close passages near the galactic center. It contains many X-ray sources and millisecond pulsars.' },
+        'm63':   { ra: 13.264, dec: 42.03, name: 'M63 Sunflower Galaxy', distance: 29000000, type: 'extragalactic', explanation: 'The Sunflower Galaxy gets its name from its bright, patchy spiral arm pattern. It is part of the M51 galaxy group about 29 million light-years away.' },
+        'm64':   { ra: 12.945, dec: 21.68, name: 'M64 Black Eye Galaxy', distance: 17000000, type: 'extragalactic', explanation: 'The Black Eye Galaxy has a spectacular dark band of absorbing dust in front of its bright nucleus. The outer regions rotate opposite to the inner regions due to a past collision.' },
+        'm65':   { ra: 11.316, dec: 13.09, name: 'M65 Leo Triplet', distance: 35000000, type: 'extragalactic', explanation: 'M65 is a member of the famous Leo Triplet along with M66 and NGC 3628. Its tightly wound spiral arms contain relatively little star formation.' },
+        'm66':   { ra: 11.337, dec: 12.99, name: 'M66 Leo Triplet', distance: 36000000, type: 'extragalactic', explanation: 'M66 is the largest member of the Leo Triplet. Gravitational interaction with its neighbors has distorted its spiral arms and triggered star formation.' },
+        'm67':   { ra: 8.842, dec: 11.82, name: 'M67 Open Cluster', distance: 2700, type: 'galactic', explanation: 'M67 is one of the oldest known open clusters at 4 billion years, nearly as old as our Sun. It is used to study stellar evolution and has over 500 members.' },
+        'm68':   { ra: 12.655, dec: -26.75, name: 'M68 Globular Cluster', distance: 33600, type: 'galactic', explanation: 'M68 is a loose globular cluster about 33,600 light-years away. It is approaching us at 112 km/s and contains over 250 variable stars.' },
+        'm69':   { ra: 18.522, dec: -32.35, name: 'M69 Globular Cluster', distance: 29700, type: 'galactic', explanation: 'M69 is one of the most metal-rich globular clusters known, suggesting it formed from gas already enriched by previous stellar generations.' },
+        'm70':   { ra: 18.720, dec: -32.30, name: 'M70 Globular Cluster', distance: 29300, type: 'galactic', explanation: 'M70 is a core-collapsed globular cluster very similar to nearby M69. Comet Hale-Bopp was discovered near this cluster in 1995.' },
+        'm71':   { ra: 19.895, dec: 18.78, name: 'M71 Globular Cluster', distance: 12000, type: 'galactic', explanation: 'M71 was long classified as an open cluster due to its loose structure. It is one of the most metal-rich globular clusters in the Milky Way.' },
+        'm72':   { ra: 20.892, dec: -12.53, name: 'M72 Globular Cluster', distance: 55400, type: 'galactic', explanation: 'M72 is one of the more remote globular clusters at 55,400 light-years. It contains 43 known variable stars and has a relatively loose structure.' },
+        'm73':   { ra: 20.982, dec: -12.63, name: 'M73 Asterism', distance: 2500, type: 'galactic', explanation: 'M73 is not a true cluster but an asterism of four unrelated stars that happen to appear close together. It remains in the catalogue for historical reasons.' },
+        'm74':   { ra: 1.612, dec: 15.78, name: 'M74 Phantom Galaxy', distance: 32000000, type: 'extragalactic', explanation: 'The Phantom Galaxy is a perfect example of a grand-design spiral. Its symmetric arms and low surface brightness make it challenging to observe but stunning in photographs.' },
+        'm75':   { ra: 20.103, dec: -21.92, name: 'M75 Globular Cluster', distance: 67500, type: 'galactic', explanation: 'M75 is one of the most densely concentrated globular clusters known. It lies about 67,500 light-years away, making it one of the more distant Messier objects.' },
+        'm76':   { ra: 1.707, dec: 51.57, name: 'M76 Little Dumbbell', distance: 2500, type: 'galactic', explanation: 'The Little Dumbbell is one of the faintest Messier objects. Like M27, it is a planetary nebula but appears as two lobes due to our viewing angle.' },
+        'm77':   { ra: 2.711, dec: -0.01, name: 'M77 Cetus A Galaxy', distance: 47000000, type: 'extragalactic', explanation: 'M77 is a Seyfert galaxy with an active galactic nucleus powered by a supermassive black hole of 47 million solar masses. It is the closest and brightest Seyfert galaxy.' },
+        'm78':   { ra: 5.779, dec: 0.08, name: 'M78 Reflection Nebula', distance: 1600, type: 'galactic', explanation: 'M78 is the brightest reflection nebula in the sky. Two young stars illuminate surrounding dust clouds in the Orion molecular cloud complex.' },
+        'm79':   { ra: 5.408, dec: -24.52, name: 'M79 Globular Cluster', distance: 41000, type: 'galactic', explanation: 'M79 is unusual for being located in the winter sky opposite the galactic center. It may have been captured from the Canis Major Dwarf Galaxy.' },
+        'm80':   { ra: 16.283, dec: -22.98, name: 'M80 Globular Cluster', distance: 32600, type: 'galactic', explanation: 'M80 is one of the densest globular clusters in the Milky Way. A nova observed here in 1860 briefly made it as bright as the entire cluster.' },
+        'm81':   { ra: 9.926, dec: 69.07, name: 'M81 Bodes Galaxy', distance: 11800000, type: 'extragalactic', explanation: 'Bode\'s Galaxy is a grand-design spiral galaxy 12 million light-years away. Its gravitational interaction with M82 has enhanced star formation in both galaxies.' },
+        'm82':   { ra: 9.932, dec: 69.68, name: 'M82 Cigar Galaxy', distance: 11500000, type: 'extragalactic', explanation: 'The Cigar Galaxy is a starburst galaxy producing stars 10 times faster than the Milky Way. Its dramatic appearance results from interaction with M81.' },
+        'm83':   { ra: 13.617, dec: -29.87, name: 'M83 Southern Pinwheel', distance: 14700000, type: 'extragalactic', explanation: 'M83 is one of the nearest barred spiral galaxies and has produced six observed supernovae. Its prominent central bar and blue spiral arms make it a favorite target.' },
+        'm84':   { ra: 12.419, dec: 12.88, name: 'M84 Lenticular Galaxy', distance: 60000000, type: 'extragalactic', explanation: 'M84 is a massive galaxy in the Virgo Cluster core. It hosts a supermassive black hole and two jets of material visible in radio wavelengths.' },
+        'm85':   { ra: 12.420, dec: 18.19, name: 'M85 Lenticular Galaxy', distance: 60000000, type: 'extragalactic', explanation: 'M85 is the northernmost member of the Virgo Cluster. It has an unusually young stellar population for an elliptical galaxy, suggesting a recent merger.' },
+        'm86':   { ra: 12.433, dec: 12.95, name: 'M86 Lenticular Galaxy', distance: 52000000, type: 'extragalactic', explanation: 'M86 is the fastest approaching galaxy relative to us at 244 km/s—it is actually falling toward the Virgo Cluster center. It shows signs of interaction with NGC 4438.' },
+        'm87':   { ra: 12.514, dec: 12.39, name: 'M87 Virgo A Galaxy', distance: 53500000, type: 'extragalactic', explanation: 'M87 is a supergiant elliptical galaxy at the center of the Virgo Cluster. It contains a 6.5 billion solar mass black hole famously imaged by the Event Horizon Telescope in 2019.' },
+        'm88':   { ra: 12.533, dec: 14.42, name: 'M88 Spiral Galaxy', distance: 47000000, type: 'extragalactic', explanation: 'M88 is a classic multi-arm spiral galaxy in the Virgo Cluster. It is moving away from the cluster center at high velocity and may be on its first passage through.' },
+        'm89':   { ra: 12.593, dec: 12.55, name: 'M89 Elliptical Galaxy', distance: 50000000, type: 'extragalactic', explanation: 'M89 appears perfectly circular, suggesting we view it face-on or it is truly spherical—unusual for elliptical galaxies. It has an extensive system of shells and plumes.' },
+        'm90':   { ra: 12.613, dec: 13.16, name: 'M90 Spiral Galaxy', distance: 59000000, type: 'extragalactic', explanation: 'M90 is one of the largest spirals in the Virgo Cluster but shows relatively weak star formation. Its smooth arms lack the knots of star-forming regions seen in other spirals.' },
+        'm91':   { ra: 12.592, dec: 14.50, name: 'M91 Barred Spiral', distance: 63000000, type: 'extragalactic', explanation: 'M91 is one of the faintest Messier galaxies and was "lost" for years due to coordinate errors. It has a prominent bar and well-defined spiral arms.' },
+        'm92':   { ra: 17.286, dec: 43.14, name: 'M92 Globular Cluster', distance: 26700, type: 'galactic', explanation: 'M92 is often overlooked due to nearby M13 but is equally impressive. At 14.2 billion years old, it is one of the oldest globular clusters known.' },
+        'm93':   { ra: 7.747, dec: -23.87, name: 'M93 Open Cluster', distance: 3600, type: 'galactic', explanation: 'M93 is a triangular-shaped open cluster of about 80 stars. At 100 million years old, it contains both hot blue stars and evolving giants.' },
+        'm94':   { ra: 12.850, dec: 41.12, name: 'M94 Cats Eye Galaxy', distance: 16000000, type: 'extragalactic', explanation: 'M94 has an unusually bright inner ring of active star formation. It is one of the few galaxies with no signs of ongoing or past interaction with neighbors.' },
+        'm95':   { ra: 10.733, dec: 11.70, name: 'M95 Barred Spiral', distance: 32000000, type: 'extragalactic', explanation: 'M95 has a distinct ring of star formation around its bar. It is part of the M96 galaxy group about 32 million light-years away.' },
+        'm96':   { ra: 10.780, dec: 11.82, name: 'M96 Spiral Galaxy', distance: 31000000, type: 'extragalactic', explanation: 'M96 is the brightest member of the Leo I galaxy group. Its asymmetric arms and displaced nucleus suggest a past gravitational interaction.' },
+        'm97':   { ra: 11.248, dec: 55.02, name: 'M97 Owl Nebula', distance: 2030, type: 'galactic', explanation: 'The Owl Nebula gets its name from two dark "eyes" formed by viewing the inner shell from our angle. It is about 8,000 years old with a central star of 16th magnitude.' },
+        'm98':   { ra: 12.228, dec: 14.90, name: 'M98 Spiral Galaxy', distance: 44000000, type: 'extragalactic', explanation: 'M98 is an edge-on spiral approaching us at 142 km/s—one of very few blueshifted galaxies beyond our Local Group. It has an active nucleus and extensive dust lanes.' },
+        'm99':   { ra: 12.313, dec: 14.42, name: 'M99 Coma Pinwheel', distance: 45000000, type: 'extragalactic', explanation: 'M99 has very asymmetric spiral arms, likely caused by interaction with the intergalactic medium or neighbor galaxies. It has hosted three supernovae.' },
+        'm100':  { ra: 12.383, dec: 15.82, name: 'M100 Mirror Galaxy', distance: 55000000, type: 'extragalactic', explanation: 'M100 is one of the brightest grand-design spirals in the Virgo Cluster. Hubble observations of Cepheid variables here helped refine the cosmic distance scale.' },
+        'm101':  { ra: 14.053, dec: 54.35, name: 'M101 Pinwheel Galaxy', distance: 21000000, type: 'extragalactic', explanation: 'The Pinwheel Galaxy is a face-on spiral with asymmetric arms caused by past interactions. It is nearly twice the diameter of the Milky Way.' },
+        'm102':  { ra: 15.110, dec: 55.76, name: 'M102 Spindle Galaxy', distance: 50000000, type: 'extragalactic', explanation: 'M102 is either NGC 5866 (the Spindle Galaxy) or a duplicate observation of M101—astronomers still debate this. NGC 5866 is an edge-on lenticular galaxy with a prominent dust lane.' },
+        'm103':  { ra: 1.555, dec: 60.70, name: 'M103 Open Cluster', distance: 10000, type: 'galactic', explanation: 'M103 is the last original Messier catalogue entry. It contains about 40 stars in a triangular pattern and is visible in the same binocular field as the Double Cluster.' },
+        'm104':  { ra: 12.667, dec: -11.62, name: 'M104 Sombrero Galaxy', distance: 29000000, type: 'extragalactic', explanation: 'The Sombrero Galaxy is famous for its distinctive dust lane and large central bulge. It contains a supermassive black hole of 1 billion solar masses and thousands of globular clusters.' },
+        'm105':  { ra: 10.797, dec: 12.58, name: 'M105 Elliptical Galaxy', distance: 32000000, type: 'extragalactic', explanation: 'M105 was the first galaxy with a confirmed central supermassive black hole (50 million solar masses). It is the brightest elliptical in the Leo I group.' },
+        'm106':  { ra: 12.316, dec: 47.30, name: 'M106 Spiral Galaxy', distance: 23500000, type: 'extragalactic', explanation: 'M106 has an active nucleus with water masers that enabled precise distance measurement. Two anomalous arms of hot gas are caused by jets from its black hole.' },
+        'm107':  { ra: 16.543, dec: -13.05, name: 'M107 Globular Cluster', distance: 20900, type: 'galactic', explanation: 'M107 is one of the loosest and most open globular clusters. It contains dark patches—rare for globular clusters—caused by obscuring dust.' },
+        'm108':  { ra: 11.187, dec: 55.67, name: 'M108 Surfboard Galaxy', distance: 45000000, type: 'extragalactic', explanation: 'M108 is a near edge-on spiral with no clear bulge. It lies close to the Owl Nebula in the sky, making them a popular pair for observers.' },
+        'm109':  { ra: 11.962, dec: 53.37, name: 'M109 Barred Spiral', distance: 83500000, type: 'extragalactic', explanation: 'M109 is a barred spiral galaxy near the star Phecda in the Big Dipper. It has a faint outer ring and two prominent spiral arms.' },
+        'm110':  { ra: 0.673, dec: 41.68, name: 'M110 Dwarf Elliptical', distance: 2690000, type: 'extragalactic', explanation: 'M110 is a satellite of Andromeda and one of the few dwarf ellipticals with dark dust patches. It contains about 10 billion stars.' },
         // NGC Objects (commonly photographed)
-        'ngc281':    { ra: 0.877, dec: 56.62, name: 'NGC 281 Pacman Nebula', explanation: 'The Pacman Nebula gets its name from its resemblance to the video game character. It contains Bok globules—dense dark clouds that may form new stars.' },
-        'ngc457':    { ra: 1.327, dec: 58.28, name: 'NGC 457 Owl Cluster', explanation: 'Also called the ET Cluster for its resemblance to the movie alien. Two bright stars form the "eyes" with fainter stars creating the body.' },
-        'ngc869':    { ra: 2.317, dec: 57.13, name: 'NGC 869 Double Cluster', explanation: 'NGC 869 and NGC 884 form the famous Double Cluster, visible to the naked eye. They are relatively young clusters about 13 million years old.' },
-        'ngc884':    { ra: 2.373, dec: 57.15, name: 'NGC 884 Double Cluster', explanation: 'The eastern half of the Double Cluster is slightly older than NGC 869. Together they contain several hundred young blue and red supergiant stars.' },
-        'ngc891':    { ra: 2.378, dec: 42.35, name: 'NGC 891 Silver Sliver', explanation: 'NGC 891 is considered a twin of the Milky Way seen edge-on. Its prominent dust lane and boxy bulge closely match our galaxy\'s structure.' },
-        'ngc1333':   { ra: 3.486, dec: 31.37, name: 'NGC 1333 Reflection Nebula', explanation: 'NGC 1333 is a young stellar nursery with many protostars and outflows. It lies within a larger dark cloud in the Perseus molecular cloud complex.' },
-        'ngc1499':   { ra: 4.050, dec: 36.40, name: 'NGC 1499 California Nebula', explanation: 'The California Nebula is named for its resemblance to the US state. It is illuminated by the bright star Xi Persei and spans 100 light-years.' },
-        'ngc1977':   { ra: 5.585, dec: -4.84, name: 'NGC 1977 Running Man', explanation: 'The Running Man Nebula is a reflection nebula just north of the Orion Nebula. Its blue color comes from starlight scattered by dust particles.' },
-        'ngc2024':   { ra: 5.683, dec: -1.85, name: 'NGC 2024 Flame Nebula', explanation: 'The Flame Nebula lies near Alnitak in Orion\'s Belt. Its flame-like appearance is caused by dark lanes of dust against bright ionized hydrogen.' },
-        'ngc2070':   { ra: 5.647, dec: -69.10, name: 'NGC 2070 Tarantula Nebula', explanation: 'The Tarantula Nebula in the Large Magellanic Cloud is the most active star-forming region in the Local Group. If it were as close as Orion, it would cast shadows on Earth.' },
-        'ngc2237':   { ra: 6.540, dec: 4.95, name: 'NGC 2237 Rosette Nebula', explanation: 'The Rosette Nebula is a circular emission nebula shaped by winds from the central star cluster NGC 2244. It spans 130 light-years across.' },
-        'ngc2244':   { ra: 6.540, dec: 4.87, name: 'NGC 2244 Rosette Cluster', explanation: 'NGC 2244 is the young star cluster at the heart of the Rosette Nebula. Its energetic O-type stars carved out the central cavity and illuminate the surrounding gas.' },
-        'ngc2264':   { ra: 6.680, dec: 9.90, name: 'NGC 2264 Cone Nebula', explanation: 'NGC 2264 includes the Cone Nebula and Christmas Tree Cluster. The dark Cone is a pillar of dense gas and dust being eroded by nearby stars.' },
-        'ngc2359':   { ra: 7.303, dec: -13.23, name: 'NGC 2359 Thors Helmet', explanation: 'Thor\'s Helmet is a bubble of gas blown by a Wolf-Rayet star. The "wings" are formed by the interaction with surrounding interstellar medium.' },
-        'ngc2392':   { ra: 7.486, dec: 20.92, name: 'NGC 2392 Eskimo Nebula', explanation: 'The Eskimo Nebula shows a face-like pattern in small telescopes. It has an unusual double-shell structure and complex inner features.' },
-        'ngc2736':   { ra: 9.040, dec: -45.95, name: 'NGC 2736 Pencil Nebula', explanation: 'The Pencil Nebula is part of the Vela Supernova Remnant, representing the shock wave edge. It moves through space at about 500,000 km/h.' },
-        'ngc2903':   { ra: 9.538, dec: 21.50, name: 'NGC 2903 Spiral Galaxy', explanation: 'NGC 2903 is a barred spiral often considered worthy of Messier catalogue inclusion. It has intense star formation in its central bar and circumnuclear ring.' },
-        'ngc3132':   { ra: 10.117, dec: -40.43, name: 'NGC 3132 Eight Burst', explanation: 'The Eight-Burst or Southern Ring Nebula is one of the brightest planetary nebulae. JWST revealed previously hidden features including a binary central star.' },
-        'ngc3242':   { ra: 10.410, dec: -18.63, name: 'NGC 3242 Ghost of Jupiter', explanation: 'The Ghost of Jupiter got its name for its similar apparent size to the planet. It has multiple shells from different mass-loss episodes.' },
-        'ngc3372':   { ra: 10.750, dec: -59.87, name: 'NGC 3372 Carina Nebula', explanation: 'The Carina Nebula is one of the largest nebulae in the sky, containing the famous Eta Carinae—a massive unstable star that may explode as a supernova soon.' },
-        'ngc3628':   { ra: 11.338, dec: 13.59, name: 'NGC 3628 Hamburger Galaxy', explanation: 'NGC 3628 is the edge-on member of the Leo Triplet. Its distinctive dark dust lane and subtle tidal tail from interaction make it a popular target.' },
-        'ngc4565':   { ra: 12.603, dec: 25.99, name: 'NGC 4565 Needle Galaxy', explanation: 'The Needle Galaxy is one of the most famous edge-on spirals. Its thin profile and prominent dust lane make it a classic example of spiral galaxy structure.' },
-        'ngc4631':   { ra: 12.703, dec: 32.54, name: 'NGC 4631 Whale Galaxy', explanation: 'The Whale Galaxy has a distorted shape from interaction with its companion NGC 4627. Active star formation creates its mottled, blue appearance.' },
-        'ngc4656':   { ra: 12.720, dec: 32.17, name: 'NGC 4656 Hockey Stick', explanation: 'The Hockey Stick Galaxy has a dramatic curved shape caused by gravitational interaction with NGC 4631. One end appears to break off as a separate object.' },
-        'ngc4755':   { ra: 12.893, dec: -60.37, name: 'NGC 4755 Jewel Box', explanation: 'The Jewel Box cluster contains contrasting blue, white, and orange stars that John Herschel compared to a box of multicolored gems.' },
-        'ngc5128':   { ra: 13.423, dec: -43.02, name: 'NGC 5128 Centaurus A', explanation: 'Centaurus A is the nearest giant radio galaxy. Its distinctive dark dust lane is the remnant of a smaller spiral galaxy it consumed.' },
-        'ngc5139':   { ra: 13.445, dec: -47.48, name: 'NGC 5139 Omega Centauri', explanation: 'Omega Centauri is the largest globular cluster in the Milky Way with 10 million stars. It may be the core of a dwarf galaxy absorbed by our galaxy.' },
-        'ngc5907':   { ra: 15.265, dec: 56.33, name: 'NGC 5907 Splinter Galaxy', explanation: 'The Splinter Galaxy is an extremely thin edge-on spiral. Deep images reveal faint stellar streams from a past merger event.' },
-        'ngc6334':   { ra: 17.340, dec: -35.77, name: 'NGC 6334 Cats Paw Nebula', explanation: 'The Cat\'s Paw Nebula is one of the most active stellar nurseries in our galaxy. Its paw-print shape contains several embedded star-forming regions.' },
-        'ngc6357':   { ra: 17.410, dec: -34.35, name: 'NGC 6357 Lobster Nebula', explanation: 'The Lobster Nebula (also War and Peace Nebula) contains some of the most massive stars known. Its complex structure shows multiple stages of star formation.' },
-        'ngc6543':   { ra: 17.976, dec: 66.63, name: 'NGC 6543 Cats Eye Nebula', explanation: 'The Cat\'s Eye is one of the most complex planetary nebulae known. Its intricate concentric shells and jets remain not fully explained.' },
-        'ngc6572':   { ra: 18.203, dec: 6.85, name: 'NGC 6572 Emerald Nebula', explanation: 'NGC 6572 appears as a brilliant blue-green disk, one of the brightest planetary nebulae. Its compact size makes it challenging to resolve.' },
-        'ngc6604':   { ra: 18.305, dec: -12.23, name: 'NGC 6604 Open Cluster', explanation: 'NGC 6604 is a young open cluster associated with the Eagle Nebula region. It contains several hot O-type stars ionizing surrounding gas.' },
-        'ngc6611':   { ra: 18.313, dec: -13.80, name: 'NGC 6611 Eagle Cluster', explanation: 'NGC 6611 is the young cluster embedded in the Eagle Nebula. Its massive stars have created the famous Pillars of Creation through their radiation.' },
-        'ngc6726':   { ra: 19.025, dec: -36.90, name: 'NGC 6726 Corona Australis', explanation: 'NGC 6726/6727 is a beautiful reflection nebula complex illuminated by young stars. It lies at the northern end of the Corona Australis cloud.' },
-        'ngc6820':   { ra: 19.720, dec: 23.07, name: 'NGC 6820 Emission Nebula', explanation: 'NGC 6820 surrounds the open cluster NGC 6823. Its pillar-like formations and dark globules are being sculpted by the cluster\'s hot stars.' },
-        'ngc6822':   { ra: 19.748, dec: -14.80, name: 'NGC 6822 Barnards Galaxy', explanation: 'Barnard\'s Galaxy is a nearby irregular dwarf galaxy similar to the Magellanic Clouds. It is one of the Local Group\'s most active star-forming dwarfs.' },
-        'ngc6826':   { ra: 19.748, dec: 50.53, name: 'NGC 6826 Blinking Nebula', explanation: 'The Blinking Nebula appears to "blink" when viewed through a telescope—looking directly at it makes the nebula fade while the star appears.' },
-        'ngc6888':   { ra: 20.200, dec: 38.35, name: 'NGC 6888 Crescent Nebula', explanation: 'The Crescent Nebula is a cosmic bubble blown by the Wolf-Rayet star WR 136. This massive star is shedding its outer layers before exploding as a supernova.' },
-        'ngc6960':   { ra: 20.760, dec: 30.70, name: 'NGC 6960 Western Veil', explanation: 'The Western Veil (Witch\'s Broom) is part of the Cygnus Loop supernova remnant. The shock wave passing through interstellar gas creates its delicate filaments.' },
-        'ngc6979':   { ra: 20.918, dec: 32.15, name: 'NGC 6979 Pickerings Triangle', explanation: 'Pickering\'s Triangle is a faint portion of the Veil Nebula complex. It was discovered photographically and is challenging to observe visually.' },
-        'ngc6992':   { ra: 20.940, dec: 31.72, name: 'NGC 6992 Eastern Veil', explanation: 'The Eastern Veil is the brightest part of the Cygnus Loop. The supernova that created it exploded 10,000-20,000 years ago.' },
-        'ngc6995':   { ra: 20.960, dec: 31.03, name: 'NGC 6995 Network Nebula', explanation: 'The Network Nebula is part of the Eastern Veil, showing intricate filamentary structure where the supernova shock interacts with dense gas.' },
-        'ngc7000':   { ra: 20.983, dec: 44.33, name: 'NGC 7000 North America Nebula', explanation: 'The North America Nebula resembles the continent in outline. The "Gulf of Mexico" is a dark nebula foreground dust cloud, not a real gap.' },
-        'ngc7009':   { ra: 21.070, dec: -11.37, name: 'NGC 7009 Saturn Nebula', explanation: 'The Saturn Nebula has ansae (handles) extending from its sides like Saturn\'s rings. It is a relatively young planetary nebula about 4,000 years old.' },
-        'ngc7023':   { ra: 21.028, dec: 68.17, name: 'NGC 7023 Iris Nebula', explanation: 'The Iris Nebula is a beautiful reflection nebula with a flower-like appearance. Its blue color comes from starlight scattered by surrounding dust.' },
-        'ngc7027':   { ra: 21.120, dec: 42.23, name: 'NGC 7027 Jewel Bug Nebula', explanation: 'NGC 7027 is one of the youngest and brightest planetary nebulae. It is rapidly evolving and shows complex molecular emission.' },
-        'ngc7293':   { ra: 22.493, dec: -20.83, name: 'NGC 7293 Helix Nebula', explanation: 'The Helix Nebula is the closest bright planetary nebula at 700 light-years. Its central star will become a white dwarf similar to Earth\'s Sun\'s fate.' },
-        'ngc7331':   { ra: 22.617, dec: 34.42, name: 'NGC 7331 Deer Lick Group', explanation: 'NGC 7331 is often considered a Milky Way twin. The background galaxies (NGC 7335-7340) appear close but are actually 10 times farther away.' },
-        'ngc7380':   { ra: 22.790, dec: 58.13, name: 'NGC 7380 Wizard Nebula', explanation: 'The Wizard Nebula contains a young star cluster whose radiation sculpts surrounding gas into dramatic shapes resembling a wizard\'s face.' },
-        'ngc7635':   { ra: 23.346, dec: 61.20, name: 'NGC 7635 Bubble Nebula', explanation: 'The Bubble Nebula is a nearly perfect sphere of gas blown by the stellar wind of the massive star BD+60°2522. The bubble is about 10 light-years across.' },
-        'ngc7662':   { ra: 23.433, dec: 42.55, name: 'NGC 7662 Blue Snowball', explanation: 'The Blue Snowball has a distinctive blue-green color from oxygen emission. It shows multiple shells and is one of the easier planetary nebulae to observe.' },
-        'ngc7822':   { ra: 0.053, dec: 67.42, name: 'NGC 7822 Cederblad 214', explanation: 'NGC 7822 is a star-forming region with dramatic pillars of gas and dust. Its hot young stars are actively eroding and illuminating the surrounding cloud.' },
+        'ngc281':    { ra: 0.877, dec: 56.62, name: 'NGC 281 Pacman Nebula', distance: 9500, type: 'galactic', explanation: 'The Pacman Nebula gets its name from its resemblance to the video game character. It contains Bok globules—dense dark clouds that may form new stars.' },
+        'ngc457':    { ra: 1.327, dec: 58.28, name: 'NGC 457 Owl Cluster', distance: 7900, type: 'galactic', explanation: 'Also called the ET Cluster for its resemblance to the movie alien. Two bright stars form the "eyes" with fainter stars creating the body.' },
+        'ngc869':    { ra: 2.317, dec: 57.13, name: 'NGC 869 Double Cluster', distance: 7500, type: 'galactic', explanation: 'NGC 869 and NGC 884 form the famous Double Cluster, visible to the naked eye. They are relatively young clusters about 13 million years old.' },
+        'ngc884':    { ra: 2.373, dec: 57.15, name: 'NGC 884 Double Cluster', distance: 7500, type: 'galactic', explanation: 'The eastern half of the Double Cluster is slightly older than NGC 869. Together they contain several hundred young blue and red supergiant stars.' },
+        'ngc891':    { ra: 2.378, dec: 42.35, name: 'NGC 891 Silver Sliver', distance: 30000000, type: 'extragalactic', explanation: 'NGC 891 is considered a twin of the Milky Way seen edge-on. Its prominent dust lane and boxy bulge closely match our galaxy\'s structure.' },
+        'ngc1333':   { ra: 3.486, dec: 31.37, name: 'NGC 1333 Reflection Nebula', distance: 1000, type: 'galactic', explanation: 'NGC 1333 is a young stellar nursery with many protostars and outflows. It lies within a larger dark cloud in the Perseus molecular cloud complex.' },
+        'ngc1499':   { ra: 4.050, dec: 36.40, name: 'NGC 1499 California Nebula', distance: 1000, type: 'galactic', explanation: 'The California Nebula is named for its resemblance to the US state. It is illuminated by the bright star Xi Persei and spans 100 light-years.' },
+        'ngc1977':   { ra: 5.585, dec: -4.84, name: 'NGC 1977 Running Man', distance: 1500, type: 'galactic', explanation: 'The Running Man Nebula is a reflection nebula just north of the Orion Nebula. Its blue color comes from starlight scattered by dust particles.' },
+        'ngc2024':   { ra: 5.683, dec: -1.85, name: 'NGC 2024 Flame Nebula', distance: 1350, type: 'galactic', explanation: 'The Flame Nebula lies near Alnitak in Orion\'s Belt. Its flame-like appearance is caused by dark lanes of dust against bright ionized hydrogen.' },
+        'ngc2070':   { ra: 5.647, dec: -69.10, name: 'NGC 2070 Tarantula Nebula', distance: 160000, type: 'extragalactic', explanation: 'The Tarantula Nebula in the Large Magellanic Cloud is the most active star-forming region in the Local Group. If it were as close as Orion, it would cast shadows on Earth.' },
+        'ngc2237':   { ra: 6.540, dec: 4.95, name: 'NGC 2237 Rosette Nebula', distance: 5200, type: 'galactic', explanation: 'The Rosette Nebula is a circular emission nebula shaped by winds from the central star cluster NGC 2244. It spans 130 light-years across.' },
+        'ngc2244':   { ra: 6.540, dec: 4.87, name: 'NGC 2244 Rosette Cluster', distance: 5200, type: 'galactic', explanation: 'NGC 2244 is the young star cluster at the heart of the Rosette Nebula. Its energetic O-type stars carved out the central cavity and illuminate the surrounding gas.' },
+        'ngc2264':   { ra: 6.680, dec: 9.90, name: 'NGC 2264 Cone Nebula', distance: 2700, type: 'galactic', explanation: 'NGC 2264 includes the Cone Nebula and Christmas Tree Cluster. The dark Cone is a pillar of dense gas and dust being eroded by nearby stars.' },
+        'ngc2359':   { ra: 7.303, dec: -13.23, name: 'NGC 2359 Thors Helmet', distance: 15000, type: 'galactic', explanation: 'Thor\'s Helmet is a bubble of gas blown by a Wolf-Rayet star. The "wings" are formed by the interaction with surrounding interstellar medium.' },
+        'ngc2392':   { ra: 7.486, dec: 20.92, name: 'NGC 2392 Eskimo Nebula', distance: 2900, type: 'galactic', explanation: 'The Eskimo Nebula shows a face-like pattern in small telescopes. It has an unusual double-shell structure and complex inner features.' },
+        'ngc2736':   { ra: 9.040, dec: -45.95, name: 'NGC 2736 Pencil Nebula', distance: 815, type: 'galactic', explanation: 'The Pencil Nebula is part of the Vela Supernova Remnant, representing the shock wave edge. It moves through space at about 500,000 km/h.' },
+        'ngc2903':   { ra: 9.538, dec: 21.50, name: 'NGC 2903 Spiral Galaxy', distance: 30000000, type: 'extragalactic', explanation: 'NGC 2903 is a barred spiral often considered worthy of Messier catalogue inclusion. It has intense star formation in its central bar and circumnuclear ring.' },
+        'ngc3132':   { ra: 10.117, dec: -40.43, name: 'NGC 3132 Eight Burst', distance: 2000, type: 'galactic', explanation: 'The Eight-Burst or Southern Ring Nebula is one of the brightest planetary nebulae. JWST revealed previously hidden features including a binary central star.' },
+        'ngc3242':   { ra: 10.410, dec: -18.63, name: 'NGC 3242 Ghost of Jupiter', distance: 1400, type: 'galactic', explanation: 'The Ghost of Jupiter got its name for its similar apparent size to the planet. It has multiple shells from different mass-loss episodes.' },
+        'ngc3372':   { ra: 10.750, dec: -59.87, name: 'NGC 3372 Carina Nebula', distance: 7500, type: 'galactic', explanation: 'The Carina Nebula is one of the largest nebulae in the sky, containing the famous Eta Carinae—a massive unstable star that may explode as a supernova soon.' },
+        'ngc3628':   { ra: 11.338, dec: 13.59, name: 'NGC 3628 Hamburger Galaxy', distance: 35000000, type: 'extragalactic', explanation: 'NGC 3628 is the edge-on member of the Leo Triplet. Its distinctive dark dust lane and subtle tidal tail from interaction make it a popular target.' },
+        'ngc4565':   { ra: 12.603, dec: 25.99, name: 'NGC 4565 Needle Galaxy', distance: 43000000, type: 'extragalactic', explanation: 'The Needle Galaxy is one of the most famous edge-on spirals. Its thin profile and prominent dust lane make it a classic example of spiral galaxy structure.' },
+        'ngc4631':   { ra: 12.703, dec: 32.54, name: 'NGC 4631 Whale Galaxy', distance: 30000000, type: 'extragalactic', explanation: 'The Whale Galaxy has a distorted shape from interaction with its companion NGC 4627. Active star formation creates its mottled, blue appearance.' },
+        'ngc4656':   { ra: 12.720, dec: 32.17, name: 'NGC 4656 Hockey Stick', distance: 30000000, type: 'extragalactic', explanation: 'The Hockey Stick Galaxy has a dramatic curved shape caused by gravitational interaction with NGC 4631. One end appears to break off as a separate object.' },
+        'ngc4755':   { ra: 12.893, dec: -60.37, name: 'NGC 4755 Jewel Box', distance: 6440, type: 'galactic', explanation: 'The Jewel Box cluster contains contrasting blue, white, and orange stars that John Herschel compared to a box of multicolored gems.' },
+        'ngc5128':   { ra: 13.423, dec: -43.02, name: 'NGC 5128 Centaurus A', distance: 13000000, type: 'extragalactic', explanation: 'Centaurus A is the nearest giant radio galaxy. Its distinctive dark dust lane is the remnant of a smaller spiral galaxy it consumed.' },
+        'ngc5139':   { ra: 13.445, dec: -47.48, name: 'NGC 5139 Omega Centauri', distance: 15800, type: 'galactic', explanation: 'Omega Centauri is the largest globular cluster in the Milky Way with 10 million stars. It may be the core of a dwarf galaxy absorbed by our galaxy.' },
+        'ngc5907':   { ra: 15.265, dec: 56.33, name: 'NGC 5907 Splinter Galaxy', distance: 50000000, type: 'extragalactic', explanation: 'The Splinter Galaxy is an extremely thin edge-on spiral. Deep images reveal faint stellar streams from a past merger event.' },
+        'ngc6334':   { ra: 17.340, dec: -35.77, name: 'NGC 6334 Cats Paw Nebula', distance: 5500, type: 'galactic', explanation: 'The Cat\'s Paw Nebula is one of the most active stellar nurseries in our galaxy. Its paw-print shape contains several embedded star-forming regions.' },
+        'ngc6357':   { ra: 17.410, dec: -34.35, name: 'NGC 6357 Lobster Nebula', distance: 8000, type: 'galactic', explanation: 'The Lobster Nebula (also War and Peace Nebula) contains some of the most massive stars known. Its complex structure shows multiple stages of star formation.' },
+        'ngc6543':   { ra: 17.976, dec: 66.63, name: 'NGC 6543 Cats Eye Nebula', distance: 3300, type: 'galactic', explanation: 'The Cat\'s Eye is one of the most complex planetary nebulae known. Its intricate concentric shells and jets remain not fully explained.' },
+        'ngc6572':   { ra: 18.203, dec: 6.85, name: 'NGC 6572 Emerald Nebula', distance: 3500, type: 'galactic', explanation: 'NGC 6572 appears as a brilliant blue-green disk, one of the brightest planetary nebulae. Its compact size makes it challenging to resolve.' },
+        'ngc6604':   { ra: 18.305, dec: -12.23, name: 'NGC 6604 Open Cluster', distance: 5500, type: 'galactic', explanation: 'NGC 6604 is a young open cluster associated with the Eagle Nebula region. It contains several hot O-type stars ionizing surrounding gas.' },
+        'ngc6611':   { ra: 18.313, dec: -13.80, name: 'NGC 6611 Eagle Cluster', distance: 7000, type: 'galactic', explanation: 'NGC 6611 is the young cluster embedded in the Eagle Nebula. Its massive stars have created the famous Pillars of Creation through their radiation.' },
+        'ngc6726':   { ra: 19.025, dec: -36.90, name: 'NGC 6726 Corona Australis', distance: 420, type: 'galactic', explanation: 'NGC 6726/6727 is a beautiful reflection nebula complex illuminated by young stars. It lies at the northern end of the Corona Australis cloud.' },
+        'ngc6820':   { ra: 19.720, dec: 23.07, name: 'NGC 6820 Emission Nebula', distance: 6000, type: 'galactic', explanation: 'NGC 6820 surrounds the open cluster NGC 6823. Its pillar-like formations and dark globules are being sculpted by the cluster\'s hot stars.' },
+        'ngc6822':   { ra: 19.748, dec: -14.80, name: 'NGC 6822 Barnards Galaxy', distance: 1630000, type: 'extragalactic', explanation: 'Barnard\'s Galaxy is a nearby irregular dwarf galaxy similar to the Magellanic Clouds. It is one of the Local Group\'s most active star-forming dwarfs.' },
+        'ngc6826':   { ra: 19.748, dec: 50.53, name: 'NGC 6826 Blinking Nebula', distance: 2200, type: 'galactic', explanation: 'The Blinking Nebula appears to "blink" when viewed through a telescope—looking directly at it makes the nebula fade while the star appears.' },
+        'ngc6888':   { ra: 20.200, dec: 38.35, name: 'NGC 6888 Crescent Nebula', distance: 5000, type: 'galactic', explanation: 'The Crescent Nebula is a cosmic bubble blown by the Wolf-Rayet star WR 136. This massive star is shedding its outer layers before exploding as a supernova.' },
+        'ngc6960':   { ra: 20.760, dec: 30.70, name: 'NGC 6960 Western Veil', distance: 2400, type: 'galactic', explanation: 'The Western Veil (Witch\'s Broom) is part of the Cygnus Loop supernova remnant. The shock wave passing through interstellar gas creates its delicate filaments.' },
+        'ngc6979':   { ra: 20.918, dec: 32.15, name: 'NGC 6979 Pickerings Triangle', distance: 2400, type: 'galactic', explanation: 'Pickering\'s Triangle is a faint portion of the Veil Nebula complex. It was discovered photographically and is challenging to observe visually.' },
+        'ngc6992':   { ra: 20.940, dec: 31.72, name: 'NGC 6992 Eastern Veil', distance: 2400, type: 'galactic', explanation: 'The Eastern Veil is the brightest part of the Cygnus Loop. The supernova that created it exploded 10,000-20,000 years ago.' },
+        'ngc6995':   { ra: 20.960, dec: 31.03, name: 'NGC 6995 Network Nebula', distance: 2400, type: 'galactic', explanation: 'The Network Nebula is part of the Eastern Veil, showing intricate filamentary structure where the supernova shock interacts with dense gas.' },
+        'ngc7000':   { ra: 20.983, dec: 44.33, name: 'NGC 7000 North America Nebula', distance: 2200, type: 'galactic', explanation: 'The North America Nebula resembles the continent in outline. The "Gulf of Mexico" is a dark nebula foreground dust cloud, not a real gap.' },
+        'ngc7009':   { ra: 21.070, dec: -11.37, name: 'NGC 7009 Saturn Nebula', distance: 2000, type: 'galactic', explanation: 'The Saturn Nebula has ansae (handles) extending from its sides like Saturn\'s rings. It is a relatively young planetary nebula about 4,000 years old.' },
+        'ngc7023':   { ra: 21.028, dec: 68.17, name: 'NGC 7023 Iris Nebula', distance: 1300, type: 'galactic', explanation: 'The Iris Nebula is a beautiful reflection nebula with a flower-like appearance. Its blue color comes from starlight scattered by surrounding dust.' },
+        'ngc7027':   { ra: 21.120, dec: 42.23, name: 'NGC 7027 Jewel Bug Nebula', distance: 3000, type: 'galactic', explanation: 'NGC 7027 is one of the youngest and brightest planetary nebulae. It is rapidly evolving and shows complex molecular emission.' },
+        'ngc7293':   { ra: 22.493, dec: -20.83, name: 'NGC 7293 Helix Nebula', distance: 700, type: 'galactic', explanation: 'The Helix Nebula is the closest bright planetary nebula at 700 light-years. Its central star will become a white dwarf similar to Earth\'s Sun\'s fate.' },
+        'ngc7331':   { ra: 22.617, dec: 34.42, name: 'NGC 7331 Deer Lick Group', distance: 40000000, type: 'extragalactic', explanation: 'NGC 7331 is often considered a Milky Way twin. The background galaxies (NGC 7335-7340) appear close but are actually 10 times farther away.' },
+        'ngc7380':   { ra: 22.790, dec: 58.13, name: 'NGC 7380 Wizard Nebula', distance: 7200, type: 'galactic', explanation: 'The Wizard Nebula contains a young star cluster whose radiation sculpts surrounding gas into dramatic shapes resembling a wizard\'s face.' },
+        'ngc7635':   { ra: 23.346, dec: 61.20, name: 'NGC 7635 Bubble Nebula', distance: 7100, type: 'galactic', explanation: 'The Bubble Nebula is a nearly perfect sphere of gas blown by the stellar wind of the massive star BD+60°2522. The bubble is about 10 light-years across.' },
+        'ngc7662':   { ra: 23.433, dec: 42.55, name: 'NGC 7662 Blue Snowball', distance: 5600, type: 'galactic', explanation: 'The Blue Snowball has a distinctive blue-green color from oxygen emission. It shows multiple shells and is one of the easier planetary nebulae to observe.' },
+        'ngc7822':   { ra: 0.053, dec: 67.42, name: 'NGC 7822 Cederblad 214', distance: 3000, type: 'galactic', explanation: 'NGC 7822 is a star-forming region with dramatic pillars of gas and dust. Its hot young stars are actively eroding and illuminating the surrounding cloud.' },
         // IC Objects
-        'ic59':      { ra: 0.983, dec: 61.05, name: 'IC 59 Ghost Nebula', explanation: 'IC 59 and IC 63 are illuminated by the nearby star Gamma Cassiopeiae. IC 59 shows primarily reflection nebulosity from scattered starlight.' },
-        'ic63':      { ra: 0.993, dec: 60.90, name: 'IC 63 Ghost of Cassiopeia', explanation: 'IC 63 is being shaped and ionized by radiation from Gamma Cassiopeiae. Its ghostly blue and red colors show both reflection and emission components.' },
-        'ic342':     { ra: 3.780, dec: 68.10, name: 'IC 342 Hidden Galaxy', explanation: 'IC 342 is called the Hidden Galaxy because it lies behind the dusty Milky Way plane. It would be one of the brightest galaxies if not obscured.' },
-        'ic405':     { ra: 5.273, dec: 34.27, name: 'IC 405 Flaming Star Nebula', explanation: 'The Flaming Star Nebula surrounds the runaway star AE Aurigae. The star is not related to the nebula but is passing through and illuminating it.' },
-        'ic410':     { ra: 5.440, dec: 33.42, name: 'IC 410 Tadpoles Nebula', explanation: 'IC 410 contains the famous "Tadpoles"—two streams of gas and dust that point away from the central cluster like swimming tadpoles.' },
-        'ic417':     { ra: 5.473, dec: 34.42, name: 'IC 417 Spider Nebula', explanation: 'The Spider Nebula is part of a larger star-forming complex in Auriga. Its shape comes from radiation pressure from embedded young stars.' },
-        'ic434':     { ra: 5.683, dec: -2.47, name: 'IC 434 Horsehead Nebula', explanation: 'The Horsehead Nebula is the most famous dark nebula, its distinctive shape silhouetted against the emission nebula IC 434. It lies 1,500 light-years away.' },
-        'ic443':     { ra: 6.283, dec: 22.47, name: 'IC 443 Jellyfish Nebula', explanation: 'The Jellyfish Nebula is a supernova remnant interacting with a dense molecular cloud. This interaction creates its distinctive curved shock fronts.' },
-        'ic1318':    { ra: 20.283, dec: 40.35, name: 'IC 1318 Butterfly Nebula', explanation: 'IC 1318 is a large emission nebula complex surrounding the star Sadr in Cygnus. Its butterfly shape spans several degrees of sky.' },
-        'ic1396':    { ra: 21.640, dec: 57.50, name: 'IC 1396 Elephants Trunk', explanation: 'IC 1396 contains the famous Elephant\'s Trunk—a dark column of gas and dust where new stars are forming, compressed by radiation from nearby massive stars.' },
-        'ic1805':    { ra: 2.545, dec: 61.47, name: 'IC 1805 Heart Nebula', explanation: 'The Heart Nebula is a vast emission nebula with a cluster of stars at its center. Together with IC 1848, it forms the popular Heart and Soul complex.' },
-        'ic1848':    { ra: 2.855, dec: 60.42, name: 'IC 1848 Soul Nebula', explanation: 'The Soul Nebula lies east of the Heart Nebula. It contains several small emission nebulae including the "Baby" nebula in its center.' },
-        'ic2118':    { ra: 5.068, dec: -7.23, name: 'IC 2118 Witch Head Nebula', explanation: 'The Witch Head Nebula is illuminated by the bright star Rigel. Its eerie bluish glow comes from fine dust particles scattering blue light.' },
-        'ic2177':    { ra: 7.065, dec: -10.42, name: 'IC 2177 Seagull Nebula', explanation: 'The Seagull Nebula is a large emission nebula complex resembling a bird in flight. It lies at the border of Monoceros and Canis Major.' },
-        'ic4592':    { ra: 16.233, dec: -19.47, name: 'IC 4592 Blue Horsehead', explanation: 'IC 4592 is a faint reflection nebula that resembles a horse head in profile. It is illuminated by the bright star Nu Scorpii.' },
-        'ic4628':    { ra: 16.933, dec: -40.33, name: 'IC 4628 Prawn Nebula', explanation: 'The Prawn Nebula (or Gum 56) is a large emission nebula in Scorpius. It contains many hot young stars ionizing hydrogen gas.' },
-        'ic4703':    { ra: 18.303, dec: -13.78, name: 'IC 4703 Eagle Nebula', explanation: 'IC 4703 is the emission nebula surrounding the Eagle Nebula star cluster. It contains the Pillars of Creation made famous by Hubble.' },
-        'ic5067':    { ra: 20.820, dec: 44.37, name: 'IC 5067 Pelican Nebula', explanation: 'The Pelican Nebula is separated from the North America Nebula by a dark molecular cloud. It is an active star-forming region with Herbig-Haro objects.' },
-        'ic5070':    { ra: 20.850, dec: 44.38, name: 'IC 5070 Pelican Nebula', explanation: 'IC 5070 is the main body of the Pelican Nebula complex. Ionization fronts from young stars create its distinctive shape.' },
-        'ic5146':    { ra: 21.892, dec: 47.27, name: 'IC 5146 Cocoon Nebula', explanation: 'The Cocoon Nebula is a compact star-forming region embedded in a long dark nebula called Barnard 168. A young cluster illuminates the surrounding gas.' },
+        'ic59':      { ra: 0.983, dec: 61.05, name: 'IC 59 Ghost Nebula', distance: 600, type: 'galactic', explanation: 'IC 59 and IC 63 are illuminated by the nearby star Gamma Cassiopeiae. IC 59 shows primarily reflection nebulosity from scattered starlight.' },
+        'ic63':      { ra: 0.993, dec: 60.90, name: 'IC 63 Ghost of Cassiopeia', distance: 600, type: 'galactic', explanation: 'IC 63 is being shaped and ionized by radiation from Gamma Cassiopeiae. Its ghostly blue and red colors show both reflection and emission components.' },
+        'ic342':     { ra: 3.780, dec: 68.10, name: 'IC 342 Hidden Galaxy', distance: 11000000, type: 'extragalactic', explanation: 'IC 342 is called the Hidden Galaxy because it lies behind the dusty Milky Way plane. It would be one of the brightest galaxies if not obscured.' },
+        'ic405':     { ra: 5.273, dec: 34.27, name: 'IC 405 Flaming Star Nebula', distance: 1500, type: 'galactic', explanation: 'The Flaming Star Nebula surrounds the runaway star AE Aurigae. The star is not related to the nebula but is passing through and illuminating it.' },
+        'ic410':     { ra: 5.440, dec: 33.42, name: 'IC 410 Tadpoles Nebula', distance: 12000, type: 'galactic', explanation: 'IC 410 contains the famous "Tadpoles"—two streams of gas and dust that point away from the central cluster like swimming tadpoles.' },
+        'ic417':     { ra: 5.473, dec: 34.42, name: 'IC 417 Spider Nebula', distance: 10000, type: 'galactic', explanation: 'The Spider Nebula is part of a larger star-forming complex in Auriga. Its shape comes from radiation pressure from embedded young stars.' },
+        'ic434':     { ra: 5.683, dec: -2.47, name: 'IC 434 Horsehead Nebula', distance: 1500, type: 'galactic', explanation: 'The Horsehead Nebula is the most famous dark nebula, its distinctive shape silhouetted against the emission nebula IC 434. It lies 1,500 light-years away.' },
+        'ic443':     { ra: 6.283, dec: 22.47, name: 'IC 443 Jellyfish Nebula', distance: 5000, type: 'galactic', explanation: 'The Jellyfish Nebula is a supernova remnant interacting with a dense molecular cloud. This interaction creates its distinctive curved shock fronts.' },
+        'ic1318':    { ra: 20.283, dec: 40.35, name: 'IC 1318 Butterfly Nebula', distance: 4000, type: 'galactic', explanation: 'IC 1318 is a large emission nebula complex surrounding the star Sadr in Cygnus. Its butterfly shape spans several degrees of sky.' },
+        'ic1396':    { ra: 21.640, dec: 57.50, name: 'IC 1396 Elephants Trunk', distance: 2400, type: 'galactic', explanation: 'IC 1396 contains the famous Elephant\'s Trunk—a dark column of gas and dust where new stars are forming, compressed by radiation from nearby massive stars.' },
+        'ic1805':    { ra: 2.545, dec: 61.47, name: 'IC 1805 Heart Nebula', distance: 7500, type: 'galactic', explanation: 'The Heart Nebula is a vast emission nebula with a cluster of stars at its center. Together with IC 1848, it forms the popular Heart and Soul complex.' },
+        'ic1848':    { ra: 2.855, dec: 60.42, name: 'IC 1848 Soul Nebula', distance: 7500, type: 'galactic', explanation: 'The Soul Nebula lies east of the Heart Nebula. It contains several small emission nebulae including the "Baby" nebula in its center.' },
+        'ic2118':    { ra: 5.068, dec: -7.23, name: 'IC 2118 Witch Head Nebula', distance: 900, type: 'galactic', explanation: 'The Witch Head Nebula is illuminated by the bright star Rigel. Its eerie bluish glow comes from fine dust particles scattering blue light.' },
+        'ic2177':    { ra: 7.065, dec: -10.42, name: 'IC 2177 Seagull Nebula', distance: 3800, type: 'galactic', explanation: 'The Seagull Nebula is a large emission nebula complex resembling a bird in flight. It lies at the border of Monoceros and Canis Major.' },
+        'ic4592':    { ra: 16.233, dec: -19.47, name: 'IC 4592 Blue Horsehead', distance: 420, type: 'galactic', explanation: 'IC 4592 is a faint reflection nebula that resembles a horse head in profile. It is illuminated by the bright star Nu Scorpii.' },
+        'ic4628':    { ra: 16.933, dec: -40.33, name: 'IC 4628 Prawn Nebula', distance: 6000, type: 'galactic', explanation: 'The Prawn Nebula (or Gum 56) is a large emission nebula in Scorpius. It contains many hot young stars ionizing hydrogen gas.' },
+        'ic4703':    { ra: 18.303, dec: -13.78, name: 'IC 4703 Eagle Nebula', distance: 7000, type: 'galactic', explanation: 'IC 4703 is the emission nebula surrounding the Eagle Nebula star cluster. It contains the Pillars of Creation made famous by Hubble.' },
+        'ic5067':    { ra: 20.820, dec: 44.37, name: 'IC 5067 Pelican Nebula', distance: 1800, type: 'galactic', explanation: 'The Pelican Nebula is separated from the North America Nebula by a dark molecular cloud. It is an active star-forming region with Herbig-Haro objects.' },
+        'ic5070':    { ra: 20.850, dec: 44.38, name: 'IC 5070 Pelican Nebula', distance: 1800, type: 'galactic', explanation: 'IC 5070 is the main body of the Pelican Nebula complex. Ionization fronts from young stars create its distinctive shape.' },
+        'ic5146':    { ra: 21.892, dec: 47.27, name: 'IC 5146 Cocoon Nebula', distance: 4000, type: 'galactic', explanation: 'The Cocoon Nebula is a compact star-forming region embedded in a long dark nebula called Barnard 168. A young cluster illuminates the surrounding gas.' },
         // Common Names (aliases)
-        'andromeda':     { ra: 0.712, dec: 41.27, name: 'Andromeda Galaxy (M31)', explanation: 'The Andromeda Galaxy is the nearest major galaxy to the Milky Way at 2.5 million light-years. It contains roughly one trillion stars and will merge with our galaxy in about 4.5 billion years.' },
-        'orion':         { ra: 5.588, dec: -5.39, name: 'Orion Nebula (M42)', explanation: 'The Orion Nebula is the closest massive star-forming region to Earth at 1,344 light-years. It is visible to the naked eye and contains thousands of young stars in various stages of formation.' },
-        'pleiades':      { ra: 3.783, dec: 24.12, name: 'Pleiades (M45)', explanation: 'The Pleiades or Seven Sisters is the most famous star cluster, known to virtually all ancient cultures. It contains over 1,000 stars wrapped in blue reflection nebulosity.' },
-        'whirlpool':     { ra: 13.498, dec: 47.19, name: 'Whirlpool Galaxy (M51)', explanation: 'The Whirlpool Galaxy was the first spiral galaxy ever identified. Its dramatic spiral arms are enhanced by interaction with its companion galaxy NGC 5195.' },
-        'pinwheel':      { ra: 14.053, dec: 54.35, name: 'Pinwheel Galaxy (M101)', explanation: 'The Pinwheel Galaxy is a face-on spiral with asymmetric arms caused by past interactions. It is nearly twice the diameter of the Milky Way.' },
-        'sombrero':      { ra: 12.667, dec: -11.62, name: 'Sombrero Galaxy (M104)', explanation: 'The Sombrero Galaxy is famous for its distinctive dust lane and large central bulge. It contains a supermassive black hole of 1 billion solar masses and thousands of globular clusters.' },
-        'ring':          { ra: 18.893, dec: 33.03, name: 'Ring Nebula (M57)', explanation: 'The Ring Nebula is a classic planetary nebula showing the expelled outer layers of a dying star. Its central white dwarf is about 200,000°C and illuminates the surrounding gas.' },
-        'dumbbell':      { ra: 19.993, dec: 22.72, name: 'Dumbbell Nebula (M27)', explanation: 'The Dumbbell Nebula was the first planetary nebula ever discovered. It represents the final stage of a Sun-like star, with glowing gas expelled as the star died.' },
-        'crab':          { ra: 5.575, dec: 22.01, name: 'Crab Nebula (M1)', explanation: 'The Crab Nebula is the remnant of a supernova explosion observed by Chinese astronomers in 1054 AD. It contains a rapidly spinning neutron star (pulsar) at its center that emits radiation 30 times per second.' },
-        'owl':           { ra: 11.248, dec: 55.02, name: 'Owl Nebula (M97)', explanation: 'The Owl Nebula gets its name from two dark "eyes" formed by viewing the inner shell from our angle. It is about 8,000 years old with a central star of 16th magnitude.' },
-        'eagle':         { ra: 18.314, dec: -13.79, name: 'Eagle Nebula (M16)', explanation: 'The Eagle Nebula is famous for the "Pillars of Creation" photographed by Hubble. These towering columns of gas and dust are active star-forming regions about 7,000 light-years away.' },
-        'lagoon':        { ra: 18.063, dec: -24.38, name: 'Lagoon Nebula (M8)', explanation: 'The Lagoon Nebula is a giant interstellar cloud and stellar nursery located 4,100 light-years away. Its distinctive dark lane of dust gives it the lagoon appearance.' },
-        'trifid':        { ra: 18.044, dec: -23.03, name: 'Trifid Nebula (M20)', explanation: 'The Trifid Nebula is divided into three lobes by dark dust lanes. It uniquely displays emission (red), reflection (blue), and dark nebulae all in one object.' },
-        'swan':          { ra: 18.347, dec: -16.18, name: 'Swan Nebula (M17)', explanation: 'Also called the Omega or Horseshoe Nebula, M17 is one of the brightest emission nebulae. It contains an open cluster of about 35 hot young stars illuminating the surrounding gas.' },
-        'omega':         { ra: 18.347, dec: -16.18, name: 'Omega Nebula (M17)', explanation: 'Also called the Swan or Horseshoe Nebula, M17 is one of the brightest emission nebulae. It contains an open cluster of about 35 hot young stars illuminating the surrounding gas.' },
-        'rosette':       { ra: 6.540, dec: 4.95, name: 'Rosette Nebula', explanation: 'The Rosette Nebula is a circular emission nebula shaped by winds from the central star cluster NGC 2244. It spans 130 light-years across.' },
-        'california':    { ra: 4.050, dec: 36.40, name: 'California Nebula', explanation: 'The California Nebula is named for its resemblance to the US state. It is illuminated by the bright star Xi Persei and spans 100 light-years.' },
-        'northamerica':  { ra: 20.983, dec: 44.33, name: 'North America Nebula', explanation: 'The North America Nebula resembles the continent in outline. The "Gulf of Mexico" is a dark nebula foreground dust cloud, not a real gap.' },
-        'pelican':       { ra: 20.850, dec: 44.38, name: 'Pelican Nebula', explanation: 'The Pelican Nebula is separated from the North America Nebula by a dark molecular cloud. It is an active star-forming region with Herbig-Haro objects.' },
-        'veil':          { ra: 20.760, dec: 30.70, name: 'Veil Nebula', explanation: 'The Veil Nebula is part of the Cygnus Loop supernova remnant. The shock wave passing through interstellar gas creates its delicate filaments. The supernova exploded 10,000-20,000 years ago.' },
-        'crescent':      { ra: 20.200, dec: 38.35, name: 'Crescent Nebula', explanation: 'The Crescent Nebula is a cosmic bubble blown by the Wolf-Rayet star WR 136. This massive star is shedding its outer layers before exploding as a supernova.' },
-        'bubble':        { ra: 23.346, dec: 61.20, name: 'Bubble Nebula', explanation: 'The Bubble Nebula is a nearly perfect sphere of gas blown by the stellar wind of the massive star BD+60°2522. The bubble is about 10 light-years across.' },
-        'horsehead':     { ra: 5.683, dec: -2.47, name: 'Horsehead Nebula', explanation: 'The Horsehead Nebula is the most famous dark nebula, its distinctive shape silhouetted against the emission nebula IC 434. It lies 1,500 light-years away.' },
-        'flame':         { ra: 5.683, dec: -1.85, name: 'Flame Nebula', explanation: 'The Flame Nebula lies near Alnitak in Orion\'s Belt. Its flame-like appearance is caused by dark lanes of dust against bright ionized hydrogen.' },
-        'helix':         { ra: 22.493, dec: -20.83, name: 'Helix Nebula', explanation: 'The Helix Nebula is the closest bright planetary nebula at 700 light-years. Its central star will become a white dwarf similar to Earth\'s Sun\'s fate.' },
-        'pacman':        { ra: 0.877, dec: 56.62, name: 'Pacman Nebula', explanation: 'The Pacman Nebula gets its name from its resemblance to the video game character. It contains Bok globules—dense dark clouds that may form new stars.' },
-        'wizard':        { ra: 22.790, dec: 58.13, name: 'Wizard Nebula', explanation: 'The Wizard Nebula contains a young star cluster whose radiation sculpts surrounding gas into dramatic shapes resembling a wizard\'s face.' },
-        'jellyfish':     { ra: 6.283, dec: 22.47, name: 'Jellyfish Nebula', explanation: 'The Jellyfish Nebula is a supernova remnant interacting with a dense molecular cloud. This interaction creates its distinctive curved shock fronts.' },
-        'cocoon':        { ra: 21.892, dec: 47.27, name: 'Cocoon Nebula', explanation: 'The Cocoon Nebula is a compact star-forming region embedded in a long dark nebula called Barnard 168. A young cluster illuminates the surrounding gas.' },
-        'iris':          { ra: 21.028, dec: 68.17, name: 'Iris Nebula', explanation: 'The Iris Nebula is a beautiful reflection nebula with a flower-like appearance. Its blue color comes from starlight scattered by surrounding dust.' },
-        'heart':         { ra: 2.545, dec: 61.47, name: 'Heart Nebula', explanation: 'The Heart Nebula is a vast emission nebula with a cluster of stars at its center. Together with IC 1848, it forms the popular Heart and Soul complex.' },
-        'soul':          { ra: 2.855, dec: 60.42, name: 'Soul Nebula', explanation: 'The Soul Nebula lies east of the Heart Nebula. It contains several small emission nebulae including the "Baby" nebula in its center.' },
-        'heartandsoul':  { ra: 2.700, dec: 60.95, name: 'Heart & Soul Nebulae', explanation: 'The Heart and Soul Nebulae are a pair of large emission nebulae in Cassiopeia. They form one of the most photographed deep sky complexes in the northern sky.' },
-        'heartsoul':     { ra: 2.700, dec: 60.95, name: 'Heart & Soul Nebulae', explanation: 'The Heart and Soul Nebulae are a pair of large emission nebulae in Cassiopeia. They form one of the most photographed deep sky complexes in the northern sky.' },
-        'trunk':         { ra: 21.640, dec: 57.50, name: 'Elephants Trunk Nebula', explanation: 'The Elephant\'s Trunk is a dark column of gas and dust where new stars are forming, compressed by radiation from nearby massive stars in IC 1396.' },
-        'elephantstrunk':{ ra: 21.640, dec: 57.50, name: 'Elephants Trunk Nebula', explanation: 'The Elephant\'s Trunk is a dark column of gas and dust where new stars are forming, compressed by radiation from nearby massive stars in IC 1396.' },
-        'carina':        { ra: 10.750, dec: -59.87, name: 'Carina Nebula', explanation: 'The Carina Nebula is one of the largest nebulae in the sky, containing the famous Eta Carinae—a massive unstable star that may explode as a supernova soon.' },
-        'tarantula':     { ra: 5.647, dec: -69.10, name: 'Tarantula Nebula', explanation: 'The Tarantula Nebula in the Large Magellanic Cloud is the most active star-forming region in the Local Group. If it were as close as Orion, it would cast shadows on Earth.' },
-        'runningman':    { ra: 5.585, dec: -4.84, name: 'Running Man Nebula', explanation: 'The Running Man Nebula is a reflection nebula just north of the Orion Nebula. Its blue color comes from starlight scattered by dust particles.' },
-        'flamestar':     { ra: 5.273, dec: 34.27, name: 'Flaming Star Nebula', explanation: 'The Flaming Star Nebula surrounds the runaway star AE Aurigae. The star is not related to the nebula but is passing through and illuminating it.' },
-        'flamingstar':   { ra: 5.273, dec: 34.27, name: 'Flaming Star Nebula', explanation: 'The Flaming Star Nebula surrounds the runaway star AE Aurigae. The star is not related to the nebula but is passing through and illuminating it.' },
-        'tadpoles':      { ra: 5.440, dec: 33.42, name: 'Tadpoles Nebula', explanation: 'IC 410 contains the famous "Tadpoles"—two streams of gas and dust that point away from the central cluster like swimming tadpoles.' },
-        'seagull':       { ra: 7.065, dec: -10.42, name: 'Seagull Nebula', explanation: 'The Seagull Nebula is a large emission nebula complex resembling a bird in flight. It lies at the border of Monoceros and Canis Major.' },
-        'thorshelmet':   { ra: 7.303, dec: -13.23, name: 'Thors Helmet Nebula', explanation: 'Thor\'s Helmet is a bubble of gas blown by a Wolf-Rayet star. The "wings" are formed by the interaction with surrounding interstellar medium.' },
-        'thor':          { ra: 7.303, dec: -13.23, name: 'Thors Helmet Nebula', explanation: 'Thor\'s Helmet is a bubble of gas blown by a Wolf-Rayet star. The "wings" are formed by the interaction with surrounding interstellar medium.' },
-        'catspaw':       { ra: 17.340, dec: -35.77, name: 'Cats Paw Nebula', explanation: 'The Cat\'s Paw Nebula is one of the most active stellar nurseries in our galaxy. Its paw-print shape contains several embedded star-forming regions.' },
-        'catseye':       { ra: 17.976, dec: 66.63, name: 'Cats Eye Nebula', explanation: 'The Cat\'s Eye is one of the most complex planetary nebulae known. Its intricate concentric shells and jets remain not fully explained.' },
-        'witchhead':     { ra: 5.068, dec: -7.23, name: 'Witch Head Nebula', explanation: 'The Witch Head Nebula is illuminated by the bright star Rigel. Its eerie bluish glow comes from fine dust particles scattering blue light.' },
-        'cone':          { ra: 6.680, dec: 9.90, name: 'Cone Nebula', explanation: 'The Cone Nebula is a pillar of dense gas and dust being eroded by nearby stars. It is part of the NGC 2264 star-forming complex.' },
-        'christmastree': { ra: 6.680, dec: 9.90, name: 'Christmas Tree Cluster', explanation: 'The Christmas Tree Cluster is part of NGC 2264, with stars arranged in a tree-like pattern. It is surrounded by the Cone Nebula and other emission nebulae.' },
-        'needle':        { ra: 12.603, dec: 25.99, name: 'Needle Galaxy', explanation: 'The Needle Galaxy is one of the most famous edge-on spirals. Its thin profile and prominent dust lane make it a classic example of spiral galaxy structure.' },
-        'whale':         { ra: 12.703, dec: 32.54, name: 'Whale Galaxy', explanation: 'The Whale Galaxy has a distorted shape from interaction with its companion NGC 4627. Active star formation creates its mottled, blue appearance.' },
-        'cigar':         { ra: 9.932, dec: 69.68, name: 'Cigar Galaxy (M82)', explanation: 'The Cigar Galaxy is a starburst galaxy producing stars 10 times faster than the Milky Way. Its dramatic appearance results from interaction with M81.' },
-        'bode':          { ra: 9.926, dec: 69.07, name: 'Bodes Galaxy (M81)', explanation: 'Bode\'s Galaxy is a grand-design spiral galaxy 12 million light-years away. Its gravitational interaction with M82 has enhanced star formation in both galaxies.' },
-        'bodes':         { ra: 9.926, dec: 69.07, name: 'Bodes Galaxy (M81)', explanation: 'Bode\'s Galaxy is a grand-design spiral galaxy 12 million light-years away. Its gravitational interaction with M82 has enhanced star formation in both galaxies.' },
-        'm81m82':        { ra: 9.929, dec: 69.37, name: 'M81 & M82 Galaxies', explanation: 'M81 and M82 are an interacting galaxy pair. Their gravitational encounter has triggered intense star formation in M82 and enhanced spiral structure in M81.' },
-        'leotriplet':    { ra: 11.327, dec: 13.04, name: 'Leo Triplet', explanation: 'The Leo Triplet consists of M65, M66, and NGC 3628. Gravitational interactions between these galaxies have created tidal tails and distorted spiral arms.' },
-        'sunflower':     { ra: 13.264, dec: 42.03, name: 'Sunflower Galaxy (M63)', explanation: 'The Sunflower Galaxy gets its name from its bright, patchy spiral arm pattern. It is part of the M51 galaxy group about 29 million light-years away.' },
-        'blackeye':      { ra: 12.945, dec: 21.68, name: 'Black Eye Galaxy (M64)', explanation: 'The Black Eye Galaxy has a spectacular dark band of absorbing dust in front of its bright nucleus. The outer regions rotate opposite to the inner regions due to a past collision.' },
-        'doublecluster': { ra: 2.345, dec: 57.14, name: 'Double Cluster', explanation: 'The Double Cluster (NGC 869 and NGC 884) is visible to the naked eye as a fuzzy patch. They are relatively young clusters about 13 million years old containing many hot blue stars.' },
-        'sh2':           { ra: 21.640, dec: 57.50, name: 'Sharpless 2 Region', explanation: 'Sharpless 2 objects are emission nebulae catalogued by Stewart Sharpless. IC 1396 (Sh2-131) is one of the largest, containing the Elephant\'s Trunk Nebula.' },
-        'sh2155':        { ra: 22.933, dec: 62.63, name: 'Sh2-155 Cave Nebula', explanation: 'The Cave Nebula is a diffuse emission nebula with a cave-like dark region. It lies at the edge of the Cepheus B molecular cloud.' },
-        'cave':          { ra: 22.933, dec: 62.63, name: 'Cave Nebula', explanation: 'The Cave Nebula is a diffuse emission nebula with a cave-like dark region. It lies at the edge of the Cepheus B molecular cloud.' },
-        'abell':         { ra: 19.798, dec: 50.53, name: 'Abell Planetary', explanation: 'Abell planetary nebulae are typically faint, large, and old. They are challenging targets that reveal structure only in long-exposure images.' }
+        'andromeda':     { ra: 0.712, dec: 41.27, name: 'Andromeda Galaxy (M31)', distance: 2537000, type: 'extragalactic', explanation: 'The Andromeda Galaxy is the nearest major galaxy to the Milky Way at 2.5 million light-years. It contains roughly one trillion stars and will merge with our galaxy in about 4.5 billion years.' },
+        'orion':         { ra: 5.588, dec: -5.39, name: 'Orion Nebula (M42)', distance: 1344, type: 'galactic', explanation: 'The Orion Nebula is the closest massive star-forming region to Earth at 1,344 light-years. It is visible to the naked eye and contains thousands of young stars in various stages of formation.' },
+        'pleiades':      { ra: 3.783, dec: 24.12, name: 'Pleiades (M45)', distance: 444, type: 'galactic', explanation: 'The Pleiades or Seven Sisters is the most famous star cluster, known to virtually all ancient cultures. It contains over 1,000 stars wrapped in blue reflection nebulosity.' },
+        'whirlpool':     { ra: 13.498, dec: 47.19, name: 'Whirlpool Galaxy (M51)', distance: 23000000, type: 'extragalactic', explanation: 'The Whirlpool Galaxy was the first spiral galaxy ever identified. Its dramatic spiral arms are enhanced by interaction with its companion galaxy NGC 5195.' },
+        'pinwheel':      { ra: 14.053, dec: 54.35, name: 'Pinwheel Galaxy (M101)', distance: 21000000, type: 'extragalactic', explanation: 'The Pinwheel Galaxy is a face-on spiral with asymmetric arms caused by past interactions. It is nearly twice the diameter of the Milky Way.' },
+        'sombrero':      { ra: 12.667, dec: -11.62, name: 'Sombrero Galaxy (M104)', distance: 29000000, type: 'extragalactic', explanation: 'The Sombrero Galaxy is famous for its distinctive dust lane and large central bulge. It contains a supermassive black hole of 1 billion solar masses and thousands of globular clusters.' },
+        'ring':          { ra: 18.893, dec: 33.03, name: 'Ring Nebula (M57)', distance: 2300, type: 'galactic', explanation: 'The Ring Nebula is a classic planetary nebula showing the expelled outer layers of a dying star. Its central white dwarf is about 200,000°C and illuminates the surrounding gas.' },
+        'dumbbell':      { ra: 19.993, dec: 22.72, name: 'Dumbbell Nebula (M27)', distance: 1360, type: 'galactic', explanation: 'The Dumbbell Nebula was the first planetary nebula ever discovered. It represents the final stage of a Sun-like star, with glowing gas expelled as the star died.' },
+        'crab':          { ra: 5.575, dec: 22.01, name: 'Crab Nebula (M1)', distance: 6500, type: 'galactic', explanation: 'The Crab Nebula is the remnant of a supernova explosion observed by Chinese astronomers in 1054 AD. It contains a rapidly spinning neutron star (pulsar) at its center that emits radiation 30 times per second.' },
+        'owl':           { ra: 11.248, dec: 55.02, name: 'Owl Nebula (M97)', distance: 2030, type: 'galactic', explanation: 'The Owl Nebula gets its name from two dark "eyes" formed by viewing the inner shell from our angle. It is about 8,000 years old with a central star of 16th magnitude.' },
+        'eagle':         { ra: 18.314, dec: -13.79, name: 'Eagle Nebula (M16)', distance: 7000, type: 'galactic', explanation: 'The Eagle Nebula is famous for the "Pillars of Creation" photographed by Hubble. These towering columns of gas and dust are active star-forming regions about 7,000 light-years away.' },
+        'lagoon':        { ra: 18.063, dec: -24.38, name: 'Lagoon Nebula (M8)', distance: 4100, type: 'galactic', explanation: 'The Lagoon Nebula is a giant interstellar cloud and stellar nursery located 4,100 light-years away. Its distinctive dark lane of dust gives it the lagoon appearance.' },
+        'trifid':        { ra: 18.044, dec: -23.03, name: 'Trifid Nebula (M20)', distance: 5200, type: 'galactic', explanation: 'The Trifid Nebula is divided into three lobes by dark dust lanes. It uniquely displays emission (red), reflection (blue), and dark nebulae all in one object.' },
+        'swan':          { ra: 18.347, dec: -16.18, name: 'Swan Nebula (M17)', distance: 5500, type: 'galactic', explanation: 'Also called the Omega or Horseshoe Nebula, M17 is one of the brightest emission nebulae. It contains an open cluster of about 35 hot young stars illuminating the surrounding gas.' },
+        'omega':         { ra: 18.347, dec: -16.18, name: 'Omega Nebula (M17)', distance: 5500, type: 'galactic', explanation: 'Also called the Swan or Horseshoe Nebula, M17 is one of the brightest emission nebulae. It contains an open cluster of about 35 hot young stars illuminating the surrounding gas.' },
+        'rosette':       { ra: 6.540, dec: 4.95, name: 'Rosette Nebula', distance: 5200, type: 'galactic', explanation: 'The Rosette Nebula is a circular emission nebula shaped by winds from the central star cluster NGC 2244. It spans 130 light-years across.' },
+        'california':    { ra: 4.050, dec: 36.40, name: 'California Nebula', distance: 1000, type: 'galactic', explanation: 'The California Nebula is named for its resemblance to the US state. It is illuminated by the bright star Xi Persei and spans 100 light-years.' },
+        'northamerica':  { ra: 20.983, dec: 44.33, name: 'North America Nebula', distance: 2200, type: 'galactic', explanation: 'The North America Nebula resembles the continent in outline. The "Gulf of Mexico" is a dark nebula foreground dust cloud, not a real gap.' },
+        'pelican':       { ra: 20.850, dec: 44.38, name: 'Pelican Nebula', distance: 1800, type: 'galactic', explanation: 'The Pelican Nebula is separated from the North America Nebula by a dark molecular cloud. It is an active star-forming region with Herbig-Haro objects.' },
+        'veil':          { ra: 20.760, dec: 30.70, name: 'Veil Nebula', distance: 2400, type: 'galactic', explanation: 'The Veil Nebula is part of the Cygnus Loop supernova remnant. The shock wave passing through interstellar gas creates its delicate filaments. The supernova exploded 10,000-20,000 years ago.' },
+        'crescent':      { ra: 20.200, dec: 38.35, name: 'Crescent Nebula', distance: 5000, type: 'galactic', explanation: 'The Crescent Nebula is a cosmic bubble blown by the Wolf-Rayet star WR 136. This massive star is shedding its outer layers before exploding as a supernova.' },
+        'bubble':        { ra: 23.346, dec: 61.20, name: 'Bubble Nebula', distance: 7100, type: 'galactic', explanation: 'The Bubble Nebula is a nearly perfect sphere of gas blown by the stellar wind of the massive star BD+60°2522. The bubble is about 10 light-years across.' },
+        'horsehead':     { ra: 5.683, dec: -2.47, name: 'Horsehead Nebula', distance: 1500, type: 'galactic', explanation: 'The Horsehead Nebula is the most famous dark nebula, its distinctive shape silhouetted against the emission nebula IC 434. It lies 1,500 light-years away.' },
+        'flame':         { ra: 5.683, dec: -1.85, name: 'Flame Nebula', distance: 1350, type: 'galactic', explanation: 'The Flame Nebula lies near Alnitak in Orion\'s Belt. Its flame-like appearance is caused by dark lanes of dust against bright ionized hydrogen.' },
+        'helix':         { ra: 22.493, dec: -20.83, name: 'Helix Nebula', distance: 700, type: 'galactic', explanation: 'The Helix Nebula is the closest bright planetary nebula at 700 light-years. Its central star will become a white dwarf similar to Earth\'s Sun\'s fate.' },
+        'pacman':        { ra: 0.877, dec: 56.62, name: 'Pacman Nebula', distance: 9500, type: 'galactic', explanation: 'The Pacman Nebula gets its name from its resemblance to the video game character. It contains Bok globules—dense dark clouds that may form new stars.' },
+        'wizard':        { ra: 22.790, dec: 58.13, name: 'Wizard Nebula', distance: 7200, type: 'galactic', explanation: 'The Wizard Nebula contains a young star cluster whose radiation sculpts surrounding gas into dramatic shapes resembling a wizard\'s face.' },
+        'jellyfish':     { ra: 6.283, dec: 22.47, name: 'Jellyfish Nebula', distance: 5000, type: 'galactic', explanation: 'The Jellyfish Nebula is a supernova remnant interacting with a dense molecular cloud. This interaction creates its distinctive curved shock fronts.' },
+        'cocoon':        { ra: 21.892, dec: 47.27, name: 'Cocoon Nebula', distance: 4000, type: 'galactic', explanation: 'The Cocoon Nebula is a compact star-forming region embedded in a long dark nebula called Barnard 168. A young cluster illuminates the surrounding gas.' },
+        'iris':          { ra: 21.028, dec: 68.17, name: 'Iris Nebula', distance: 1300, type: 'galactic', explanation: 'The Iris Nebula is a beautiful reflection nebula with a flower-like appearance. Its blue color comes from starlight scattered by surrounding dust.' },
+        'heart':         { ra: 2.545, dec: 61.47, name: 'Heart Nebula', distance: 7500, type: 'galactic', explanation: 'The Heart Nebula is a vast emission nebula with a cluster of stars at its center. Together with IC 1848, it forms the popular Heart and Soul complex.' },
+        'soul':          { ra: 2.855, dec: 60.42, name: 'Soul Nebula', distance: 7500, type: 'galactic', explanation: 'The Soul Nebula lies east of the Heart Nebula. It contains several small emission nebulae including the "Baby" nebula in its center.' },
+        'heartandsoul':  { ra: 2.700, dec: 60.95, name: 'Heart & Soul Nebulae', distance: 7500, type: 'galactic', explanation: 'The Heart and Soul Nebulae are a pair of large emission nebulae in Cassiopeia. They form one of the most photographed deep sky complexes in the northern sky.' },
+        'heartsoul':     { ra: 2.700, dec: 60.95, name: 'Heart & Soul Nebulae', distance: 7500, type: 'galactic', explanation: 'The Heart and Soul Nebulae are a pair of large emission nebulae in Cassiopeia. They form one of the most photographed deep sky complexes in the northern sky.' },
+        'trunk':         { ra: 21.640, dec: 57.50, name: 'Elephants Trunk Nebula', distance: 2400, type: 'galactic', explanation: 'The Elephant\'s Trunk is a dark column of gas and dust where new stars are forming, compressed by radiation from nearby massive stars in IC 1396.' },
+        'elephantstrunk':{ ra: 21.640, dec: 57.50, name: 'Elephants Trunk Nebula', distance: 2400, type: 'galactic', explanation: 'The Elephant\'s Trunk is a dark column of gas and dust where new stars are forming, compressed by radiation from nearby massive stars in IC 1396.' },
+        'carina':        { ra: 10.750, dec: -59.87, name: 'Carina Nebula', distance: 7500, type: 'galactic', explanation: 'The Carina Nebula is one of the largest nebulae in the sky, containing the famous Eta Carinae—a massive unstable star that may explode as a supernova soon.' },
+        'tarantula':     { ra: 5.647, dec: -69.10, name: 'Tarantula Nebula', distance: 160000, type: 'extragalactic', explanation: 'The Tarantula Nebula in the Large Magellanic Cloud is the most active star-forming region in the Local Group. If it were as close as Orion, it would cast shadows on Earth.' },
+        'runningman':    { ra: 5.585, dec: -4.84, name: 'Running Man Nebula', distance: 1500, type: 'galactic', explanation: 'The Running Man Nebula is a reflection nebula just north of the Orion Nebula. Its blue color comes from starlight scattered by dust particles.' },
+        'flamestar':     { ra: 5.273, dec: 34.27, name: 'Flaming Star Nebula', distance: 1500, type: 'galactic', explanation: 'The Flaming Star Nebula surrounds the runaway star AE Aurigae. The star is not related to the nebula but is passing through and illuminating it.' },
+        'flamingstar':   { ra: 5.273, dec: 34.27, name: 'Flaming Star Nebula', distance: 1500, type: 'galactic', explanation: 'The Flaming Star Nebula surrounds the runaway star AE Aurigae. The star is not related to the nebula but is passing through and illuminating it.' },
+        'tadpoles':      { ra: 5.440, dec: 33.42, name: 'Tadpoles Nebula', distance: 12000, type: 'galactic', explanation: 'IC 410 contains the famous "Tadpoles"—two streams of gas and dust that point away from the central cluster like swimming tadpoles.' },
+        'seagull':       { ra: 7.065, dec: -10.42, name: 'Seagull Nebula', distance: 3800, type: 'galactic', explanation: 'The Seagull Nebula is a large emission nebula complex resembling a bird in flight. It lies at the border of Monoceros and Canis Major.' },
+        'thorshelmet':   { ra: 7.303, dec: -13.23, name: 'Thors Helmet Nebula', distance: 15000, type: 'galactic', explanation: 'Thor\'s Helmet is a bubble of gas blown by a Wolf-Rayet star. The "wings" are formed by the interaction with surrounding interstellar medium.' },
+        'thor':          { ra: 7.303, dec: -13.23, name: 'Thors Helmet Nebula', distance: 15000, type: 'galactic', explanation: 'Thor\'s Helmet is a bubble of gas blown by a Wolf-Rayet star. The "wings" are formed by the interaction with surrounding interstellar medium.' },
+        'catspaw':       { ra: 17.340, dec: -35.77, name: 'Cats Paw Nebula', distance: 5500, type: 'galactic', explanation: 'The Cat\'s Paw Nebula is one of the most active stellar nurseries in our galaxy. Its paw-print shape contains several embedded star-forming regions.' },
+        'catseye':       { ra: 17.976, dec: 66.63, name: 'Cats Eye Nebula', distance: 3300, type: 'galactic', explanation: 'The Cat\'s Eye is one of the most complex planetary nebulae known. Its intricate concentric shells and jets remain not fully explained.' },
+        'witchhead':     { ra: 5.068, dec: -7.23, name: 'Witch Head Nebula', distance: 900, type: 'galactic', explanation: 'The Witch Head Nebula is illuminated by the bright star Rigel. Its eerie bluish glow comes from fine dust particles scattering blue light.' },
+        'cone':          { ra: 6.680, dec: 9.90, name: 'Cone Nebula', distance: 2700, type: 'galactic', explanation: 'The Cone Nebula is a pillar of dense gas and dust being eroded by nearby stars. It is part of the NGC 2264 star-forming complex.' },
+        'christmastree': { ra: 6.680, dec: 9.90, name: 'Christmas Tree Cluster', distance: 2700, type: 'galactic', explanation: 'The Christmas Tree Cluster is part of NGC 2264, with stars arranged in a tree-like pattern. It is surrounded by the Cone Nebula and other emission nebulae.' },
+        'needle':        { ra: 12.603, dec: 25.99, name: 'Needle Galaxy', distance: 43000000, type: 'extragalactic', explanation: 'The Needle Galaxy is one of the most famous edge-on spirals. Its thin profile and prominent dust lane make it a classic example of spiral galaxy structure.' },
+        'whale':         { ra: 12.703, dec: 32.54, name: 'Whale Galaxy', distance: 30000000, type: 'extragalactic', explanation: 'The Whale Galaxy has a distorted shape from interaction with its companion NGC 4627. Active star formation creates its mottled, blue appearance.' },
+        'cigar':         { ra: 9.932, dec: 69.68, name: 'Cigar Galaxy (M82)', distance: 11500000, type: 'extragalactic', explanation: 'The Cigar Galaxy is a starburst galaxy producing stars 10 times faster than the Milky Way. Its dramatic appearance results from interaction with M81.' },
+        'bode':          { ra: 9.926, dec: 69.07, name: 'Bodes Galaxy (M81)', distance: 11800000, type: 'extragalactic', explanation: 'Bode\'s Galaxy is a grand-design spiral galaxy 12 million light-years away. Its gravitational interaction with M82 has enhanced star formation in both galaxies.' },
+        'bodes':         { ra: 9.926, dec: 69.07, name: 'Bodes Galaxy (M81)', distance: 11800000, type: 'extragalactic', explanation: 'Bode\'s Galaxy is a grand-design spiral galaxy 12 million light-years away. Its gravitational interaction with M82 has enhanced star formation in both galaxies.' },
+        'm81m82':        { ra: 9.929, dec: 69.37, name: 'M81 & M82 Galaxies', distance: 11650000, type: 'extragalactic', explanation: 'M81 and M82 are an interacting galaxy pair. Their gravitational encounter has triggered intense star formation in M82 and enhanced spiral structure in M81.' },
+        'leotriplet':    { ra: 11.327, dec: 13.04, name: 'Leo Triplet', distance: 35000000, type: 'extragalactic', explanation: 'The Leo Triplet consists of M65, M66, and NGC 3628. Gravitational interactions between these galaxies have created tidal tails and distorted spiral arms.' },
+        'sunflower':     { ra: 13.264, dec: 42.03, name: 'Sunflower Galaxy (M63)', distance: 29000000, type: 'extragalactic', explanation: 'The Sunflower Galaxy gets its name from its bright, patchy spiral arm pattern. It is part of the M51 galaxy group about 29 million light-years away.' },
+        'blackeye':      { ra: 12.945, dec: 21.68, name: 'Black Eye Galaxy (M64)', distance: 17000000, type: 'extragalactic', explanation: 'The Black Eye Galaxy has a spectacular dark band of absorbing dust in front of its bright nucleus. The outer regions rotate opposite to the inner regions due to a past collision.' },
+        'doublecluster': { ra: 2.345, dec: 57.14, name: 'Double Cluster', distance: 7500, type: 'galactic', explanation: 'The Double Cluster (NGC 869 and NGC 884) is visible to the naked eye as a fuzzy patch. They are relatively young clusters about 13 million years old containing many hot blue stars.' },
+        'sh2':           { ra: 21.640, dec: 57.50, name: 'Sharpless 2 Region', distance: 2400, type: 'galactic', explanation: 'Sharpless 2 objects are emission nebulae catalogued by Stewart Sharpless. IC 1396 (Sh2-131) is one of the largest, containing the Elephant\'s Trunk Nebula.' },
+        'sh2155':        { ra: 22.933, dec: 62.63, name: 'Sh2-155 Cave Nebula', distance: 2400, type: 'galactic', explanation: 'The Cave Nebula is a diffuse emission nebula with a cave-like dark region. It lies at the edge of the Cepheus B molecular cloud.' },
+        'cave':          { ra: 22.933, dec: 62.63, name: 'Cave Nebula', distance: 2400, type: 'galactic', explanation: 'The Cave Nebula is a diffuse emission nebula with a cave-like dark region. It lies at the edge of the Cepheus B molecular cloud.' },
+        'abell':         { ra: 19.798, dec: 50.53, name: 'Abell Planetary', distance: 3500, type: 'galactic', explanation: 'Abell planetary nebulae are typically faint, large, and old. They are challenging targets that reveal structure only in long-exposure images.' }
     };
+
+    // Sphere radii for galactic and extragalactic objects
+    const GALACTIC_SPHERE_RADIUS = 400;
+    const EXTRAGALACTIC_SPHERE_RADIUS = 700;
 
     // --- Scene Setup ---
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(0x000005);
 
     const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 10000);
-    camera.position.set(0, 200, 800);
+    camera.position.set(0, 200, 1000);
 
     const renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setSize(window.innerWidth, window.innerHeight);
@@ -414,21 +456,29 @@
     starGeom.setAttribute('position', new THREE.Float32BufferAttribute(starVertices, 3));
     scene.add(new THREE.Points(starGeom, new THREE.PointsMaterial({ color: 0xffffff, size: 0.5 })));
 
-    // --- Celestial Sphere Wireframe ---
-    const sphereWire = new THREE.LineSegments(
-        new THREE.WireframeGeometry(new THREE.SphereGeometry(500, 24, 12)),
-        new THREE.LineBasicMaterial({ color: 0x222244, transparent: true, opacity: 0.3 })
+    // --- Celestial Sphere Wireframes (two spheres) ---
+    // Inner sphere (galactic)
+    const galacticSphereWire = new THREE.LineSegments(
+        new THREE.WireframeGeometry(new THREE.SphereGeometry(GALACTIC_SPHERE_RADIUS, 24, 12)),
+        new THREE.LineBasicMaterial({ color: 0x4488ff, transparent: true, opacity: 0.2 })
     );
-    scene.add(sphereWire);
+    scene.add(galacticSphereWire);
 
-    // --- Compass Labels ---
+    // Outer sphere (extragalactic)
+    const extragalacticSphereWire = new THREE.LineSegments(
+        new THREE.WireframeGeometry(new THREE.SphereGeometry(EXTRAGALACTIC_SPHERE_RADIUS, 24, 12)),
+        new THREE.LineBasicMaterial({ color: 0xff8844, transparent: true, opacity: 0.15 })
+    );
+    scene.add(extragalacticSphereWire);
+
+    // --- Compass Labels (on outer sphere) ---
     [{ n: 'NORTH (0h RA)', r: 0 }, { n: 'EAST (6h RA)', r: 6 }, { n: 'SOUTH (12h RA)', r: 12 }, { n: 'WEST (18h RA)', r: 18 }].forEach(pt => {
         const div = document.createElement('div');
         div.className = 'compass-label';
         div.textContent = pt.n;
         const raRad = (pt.r * 15) * (Math.PI / 180);
         const label = new CSS2DObject(div);
-        label.position.set(550 * Math.cos(raRad), 0, 550 * Math.sin(raRad));
+        label.position.set((EXTRAGALACTIC_SPHERE_RADIUS + 80) * Math.cos(raRad), 0, (EXTRAGALACTIC_SPHERE_RADIUS + 80) * Math.sin(raRad));
         scene.add(label);
     });
 
@@ -439,11 +489,24 @@
         return name;
     }
 
+    // --- Helper: Format distance ---
+    function formatDistance(distance) {
+        if (distance >= 1000000) {
+            return (distance / 1000000).toFixed(1) + ' million light-years';
+        } else if (distance >= 1000) {
+            return (distance / 1000).toFixed(1) + 'k light-years';
+        } else {
+            return distance + ' light-years';
+        }
+    }
+
     // --- Load DSO images from GitHub ---
-    const sphereRadius = 500;
     const textureLoader = new THREE.TextureLoader();
     const baseRawUrl = 'https://raw.githubusercontent.com/taylorhogan/taylorhogan.github.io/main/images/';
     const apiUrl = 'https://api.github.com/repos/taylorhogan/taylorhogan.github.io/contents/images';
+
+    // Store mapping of DSO key to image filename
+    const dsoImageMap = {};
 
     async function loadDSOImages() {
         try {
@@ -456,6 +519,9 @@
             document.getElementById('status').textContent = `Found ${jpgFiles.length} objects`;
 
             let loadedCount = 0;
+            let galacticCount = 0;
+            let extragalacticCount = 0;
+
             jpgFiles.forEach(file => {
                 const key = parseFilename(file.name);
                 const coords = dsoCatalog[key];
@@ -463,6 +529,19 @@
                 if (!coords) {
                     console.warn(`Unknown DSO: ${file.name} (key: ${key})`);
                     return;
+                }
+
+                // Store the image filename for this DSO
+                dsoImageMap[key] = file.name;
+
+                // Determine sphere radius based on type
+                const isExtragalactic = coords.type === 'extragalactic';
+                const sphereRadius = isExtragalactic ? EXTRAGALACTIC_SPHERE_RADIUS : GALACTIC_SPHERE_RADIUS;
+
+                if (isExtragalactic) {
+                    extragalacticCount++;
+                } else {
+                    galacticCount++;
                 }
 
                 const raRad = (coords.ra * 15) * (Math.PI / 180);
@@ -479,16 +558,16 @@
                     sprite.scale.set(40, 40, 1);
                     scene.add(sprite);
                     loadedCount++;
-                    document.getElementById('status').textContent = `Loaded ${loadedCount} / ${jpgFiles.length}`;
+                    document.getElementById('status').textContent = `Loaded ${loadedCount} / ${jpgFiles.length} (${galacticCount} galactic, ${extragalacticCount} extragalactic)`;
                 });
 
                 // Label
                 const labelDiv = document.createElement('div');
-                labelDiv.className = 'label-dso';
+                labelDiv.className = `label-dso ${isExtragalactic ? 'extragalactic' : 'galactic'}`;
                 labelDiv.innerHTML = `<img src="${baseRawUrl + file.name}" alt="${coords.name}"><span>${coords.name}</span>`;
                 labelDiv.addEventListener('dblclick', (event) => {
                     event.stopPropagation();
-                    showExplanation(coords.name, coords.explanation, event);
+                    showExplanation(coords.name, coords.explanation, baseRawUrl + file.name, coords.distance, coords.type, event);
                 });
                 const labelObj = new CSS2DObject(labelDiv);
                 labelObj.position.set(x, y - 30, z);
@@ -506,11 +585,16 @@
     // --- Explanation Popup ---
     const popup = document.getElementById('explanation-popup');
     const popupTitle = document.getElementById('popup-title');
+    const popupDistance = document.getElementById('popup-distance');
+    const popupImage = document.getElementById('popup-image');
     const popupText = document.getElementById('popup-text');
     let hideTimeout = null;
 
-    function showExplanation(name, explanation, event) {
+    function showExplanation(name, explanation, imageUrl, distance, type, event) {
         popupTitle.textContent = name;
+        popupDistance.innerHTML = `📍 ${formatDistance(distance)} ${type === 'extragalactic' ? '<span style="color:#ff8844">(Extragalactic)</span>' : '<span style="color:#4488ff">(Milky Way)</span>'}`;
+        popupImage.src = imageUrl;
+        popupImage.alt = name;
         popupText.textContent = explanation || 'No detailed information available for this object.';
 
         // Position popup near the click
@@ -519,18 +603,32 @@
 
         // Ensure popup stays within viewport
         popup.style.display = 'block';
-        const rect = popup.getBoundingClientRect();
-        const maxX = window.innerWidth - rect.width - 20;
-        const maxY = window.innerHeight - rect.height - 20;
 
-        popup.style.left = Math.min(x, maxX) + 'px';
-        popup.style.top = Math.min(y, maxY) + 'px';
+        // Wait for image to load to get accurate dimensions
+        popupImage.onload = () => {
+            const rect = popup.getBoundingClientRect();
+            const maxX = window.innerWidth - rect.width - 20;
+            const maxY = window.innerHeight - rect.height - 20;
 
-        // Auto-hide after 8 seconds
+            popup.style.left = Math.min(Math.max(10, x), maxX) + 'px';
+            popup.style.top = Math.min(Math.max(10, y), maxY) + 'px';
+        };
+
+        // Fallback positioning if image is cached
+        setTimeout(() => {
+            const rect = popup.getBoundingClientRect();
+            const maxX = window.innerWidth - rect.width - 20;
+            const maxY = window.innerHeight - rect.height - 20;
+
+            popup.style.left = Math.min(Math.max(10, x), maxX) + 'px';
+            popup.style.top = Math.min(Math.max(10, y), maxY) + 'px';
+        }, 50);
+
+        // Auto-hide after 12 seconds (longer to view image)
         if (hideTimeout) clearTimeout(hideTimeout);
         hideTimeout = setTimeout(() => {
             popup.style.display = 'none';
-        }, 8000);
+        }, 12000);
     }
 
     // Hide popup on click elsewhere
