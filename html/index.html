@@ -1,59 +1,64 @@
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <title>3D Deep Sky Objects Visualization</title>
     <style>
-        body { margin: 0; overflow: hidden; background: #000; }
+        body { margin: 0; overflow: hidden; background: #000; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
         #info {
             position: absolute;
             top: 10px;
             left: 10px;
             color: white;
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background: rgba(0,0,0,0.7);
+            background: rgba(0,0,0,0.75);
             padding: 15px;
             border-radius: 8px;
             pointer-events: none;
             border: 1px solid #444;
-            z-index: 100; /* Ensure info is above labels */
+            z-index: 100;
+            max-width: 300px;
         }
-        .label-sub {
-            color: #aaa;
-            font-size: 12px;
-            margin-top: 5px;
+        #info h2 { margin: 0 0 10px 0; font-size: 16px; }
+        #info .sub { color: #aaa; font-size: 12px; line-height: 1.5; }
+        #loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: #00ffcc;
+            font-size: 18px;
+            z-index: 200;
         }
         .compass-label {
             color: #00ffcc;
             font-family: 'Courier New', Courier, monospace;
             font-weight: bold;
-            font-size: 20px;
-            text-shadow: 2px 2px 4px #000;
+            font-size: 24px;
+            text-shadow: 0 0 10px #00ffcc, 2px 2px 4px #000;
             pointer-events: none;
-            white-space: nowrap;
         }
         .label-dso {
             display: flex;
             flex-direction: column;
             align-items: center;
-            color: #ffffff;
-            font-family: Arial, sans-serif;
-            font-size: 12px;
+            color: #fff;
+            font-size: 11px;
             text-shadow: 1px 1px 3px #000;
             pointer-events: none;
-            background: rgba(0, 0, 0, 0.6);
-            padding: 4px;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 5px;
             border-radius: 6px;
-            border: 1px solid rgba(255, 255, 255, 0.2);
+            border: 1px solid rgba(255, 255, 255, 0.25);
             white-space: nowrap;
         }
         .label-dso img {
-            width: 40px;
-            height: 40px;
-            border-radius: 3px;
+            width: 50px;
+            height: 50px;
+            border-radius: 4px;
             margin-bottom: 4px;
             object-fit: cover;
-            border: 1px solid #444;
+            border: 1px solid #666;
         }
     </style>
     <script type="importmap">
@@ -67,161 +72,405 @@
 </head>
 <body>
 <div id="info">
-    <strong>Deep Sky Object Navigator</strong><br>
-    <div class="label-sub">
-        Left Click: Rotate View • Scroll: Zoom<br>
-        Compass: N(0h), E(6h), S(12h), W(18h)<br>
-        Rich Labels: Thumbnail + Name
+    <h2>🔭 Deep Sky Navigator</h2>
+    <div class="sub">
+        <b>Controls:</b><br>
+        • Left Click + Drag: Rotate<br>
+        • Scroll Wheel: Zoom In/Out<br>
+        • Right Click + Drag: Pan<br><br>
+        <b>Compass:</b> N(0h RA), E(6h), S(12h), W(18h)<br>
+        <span id="status">Loading objects...</span>
     </div>
 </div>
+<div id="loading">⏳ Loading Deep Sky Objects...</div>
 
 <script type="module">
     import * as THREE from 'three';
     import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
     import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
 
-    // 1. Scene Setup
-    const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x010103);
+    // --- Comprehensive DSO Coordinate Catalog ---
+    // RA in decimal hours (0-24), Dec in decimal degrees (-90 to +90)
+    const dsoCatalog = {
+        // Messier Objects
+        'm1':    { ra: 5.575, dec: 22.01, name: 'M1 Crab Nebula' },
+        'm2':    { ra: 21.558, dec: -0.82, name: 'M2 Globular Cluster' },
+        'm3':    { ra: 13.703, dec: 28.38, name: 'M3 Globular Cluster' },
+        'm4':    { ra: 16.393, dec: -26.53, name: 'M4 Globular Cluster' },
+        'm5':    { ra: 15.310, dec: 2.08, name: 'M5 Globular Cluster' },
+        'm6':    { ra: 17.668, dec: -32.22, name: 'M6 Butterfly Cluster' },
+        'm7':    { ra: 17.898, dec: -34.82, name: 'M7 Ptolemy Cluster' },
+        'm8':    { ra: 18.063, dec: -24.38, name: 'M8 Lagoon Nebula' },
+        'm9':    { ra: 17.320, dec: -18.52, name: 'M9 Globular Cluster' },
+        'm10':   { ra: 16.952, dec: -4.10, name: 'M10 Globular Cluster' },
+        'm11':   { ra: 18.851, dec: -6.27, name: 'M11 Wild Duck Cluster' },
+        'm12':   { ra: 16.787, dec: -1.95, name: 'M12 Globular Cluster' },
+        'm13':   { ra: 16.695, dec: 36.46, name: 'M13 Hercules Cluster' },
+        'm14':   { ra: 17.626, dec: -3.25, name: 'M14 Globular Cluster' },
+        'm15':   { ra: 21.500, dec: 12.17, name: 'M15 Globular Cluster' },
+        'm16':   { ra: 18.314, dec: -13.79, name: 'M16 Eagle Nebula' },
+        'm17':   { ra: 18.347, dec: -16.18, name: 'M17 Swan Nebula' },
+        'm18':   { ra: 18.332, dec: -17.13, name: 'M18 Open Cluster' },
+        'm19':   { ra: 17.043, dec: -26.27, name: 'M19 Globular Cluster' },
+        'm20':   { ra: 18.044, dec: -23.03, name: 'M20 Trifid Nebula' },
+        'm21':   { ra: 18.073, dec: -22.50, name: 'M21 Open Cluster' },
+        'm22':   { ra: 18.606, dec: -23.90, name: 'M22 Globular Cluster' },
+        'm23':   { ra: 17.948, dec: -19.02, name: 'M23 Open Cluster' },
+        'm24':   { ra: 18.283, dec: -18.42, name: 'M24 Sagittarius Star Cloud' },
+        'm25':   { ra: 18.527, dec: -19.12, name: 'M25 Open Cluster' },
+        'm26':   { ra: 18.752, dec: -9.40, name: 'M26 Open Cluster' },
+        'm27':   { ra: 19.993, dec: 22.72, name: 'M27 Dumbbell Nebula' },
+        'm28':   { ra: 18.410, dec: -24.87, name: 'M28 Globular Cluster' },
+        'm29':   { ra: 20.398, dec: 38.53, name: 'M29 Open Cluster' },
+        'm30':   { ra: 21.673, dec: -23.18, name: 'M30 Globular Cluster' },
+        'm31':   { ra: 0.712, dec: 41.27, name: 'M31 Andromeda Galaxy' },
+        'm32':   { ra: 0.711, dec: 40.87, name: 'M32 Dwarf Galaxy' },
+        'm33':   { ra: 1.564, dec: 30.66, name: 'M33 Triangulum Galaxy' },
+        'm34':   { ra: 2.700, dec: 42.78, name: 'M34 Open Cluster' },
+        'm35':   { ra: 6.148, dec: 24.33, name: 'M35 Open Cluster' },
+        'm36':   { ra: 5.602, dec: 34.13, name: 'M36 Open Cluster' },
+        'm37':   { ra: 5.873, dec: 32.55, name: 'M37 Open Cluster' },
+        'm38':   { ra: 5.478, dec: 35.85, name: 'M38 Open Cluster' },
+        'm39':   { ra: 21.535, dec: 48.43, name: 'M39 Open Cluster' },
+        'm40':   { ra: 12.372, dec: 58.08, name: 'M40 Double Star' },
+        'm41':   { ra: 6.783, dec: -20.73, name: 'M41 Open Cluster' },
+        'm42':   { ra: 5.588, dec: -5.39, name: 'M42 Orion Nebula' },
+        'm43':   { ra: 5.593, dec: -5.27, name: 'M43 De Mairans Nebula' },
+        'm44':   { ra: 8.667, dec: 19.67, name: 'M44 Beehive Cluster' },
+        'm45':   { ra: 3.783, dec: 24.12, name: 'M45 Pleiades' },
+        'm46':   { ra: 7.697, dec: -14.82, name: 'M46 Open Cluster' },
+        'm47':   { ra: 7.610, dec: -14.50, name: 'M47 Open Cluster' },
+        'm48':   { ra: 8.228, dec: -5.75, name: 'M48 Open Cluster' },
+        'm49':   { ra: 12.496, dec: 8.00, name: 'M49 Elliptical Galaxy' },
+        'm50':   { ra: 7.050, dec: -8.33, name: 'M50 Open Cluster' },
+        'm51':   { ra: 13.498, dec: 47.19, name: 'M51 Whirlpool Galaxy' },
+        'm52':   { ra: 23.403, dec: 61.58, name: 'M52 Open Cluster' },
+        'm53':   { ra: 13.216, dec: 18.17, name: 'M53 Globular Cluster' },
+        'm54':   { ra: 18.918, dec: -30.48, name: 'M54 Globular Cluster' },
+        'm55':   { ra: 19.667, dec: -30.97, name: 'M55 Globular Cluster' },
+        'm56':   { ra: 19.277, dec: 30.18, name: 'M56 Globular Cluster' },
+        'm57':   { ra: 18.893, dec: 33.03, name: 'M57 Ring Nebula' },
+        'm58':   { ra: 12.626, dec: 11.82, name: 'M58 Spiral Galaxy' },
+        'm59':   { ra: 12.700, dec: 11.65, name: 'M59 Elliptical Galaxy' },
+        'm60':   { ra: 12.728, dec: 11.55, name: 'M60 Elliptical Galaxy' },
+        'm61':   { ra: 12.366, dec: 4.47, name: 'M61 Spiral Galaxy' },
+        'm62':   { ra: 17.022, dec: -30.12, name: 'M62 Globular Cluster' },
+        'm63':   { ra: 13.264, dec: 42.03, name: 'M63 Sunflower Galaxy' },
+        'm64':   { ra: 12.945, dec: 21.68, name: 'M64 Black Eye Galaxy' },
+        'm65':   { ra: 11.316, dec: 13.09, name: 'M65 Leo Triplet' },
+        'm66':   { ra: 11.337, dec: 12.99, name: 'M66 Leo Triplet' },
+        'm67':   { ra: 8.842, dec: 11.82, name: 'M67 Open Cluster' },
+        'm68':   { ra: 12.655, dec: -26.75, name: 'M68 Globular Cluster' },
+        'm69':   { ra: 18.522, dec: -32.35, name: 'M69 Globular Cluster' },
+        'm70':   { ra: 18.720, dec: -32.30, name: 'M70 Globular Cluster' },
+        'm71':   { ra: 19.895, dec: 18.78, name: 'M71 Globular Cluster' },
+        'm72':   { ra: 20.892, dec: -12.53, name: 'M72 Globular Cluster' },
+        'm73':   { ra: 20.982, dec: -12.63, name: 'M73 Asterism' },
+        'm74':   { ra: 1.612, dec: 15.78, name: 'M74 Phantom Galaxy' },
+        'm75':   { ra: 20.103, dec: -21.92, name: 'M75 Globular Cluster' },
+        'm76':   { ra: 1.707, dec: 51.57, name: 'M76 Little Dumbbell' },
+        'm77':   { ra: 2.711, dec: -0.01, name: 'M77 Cetus A Galaxy' },
+        'm78':   { ra: 5.779, dec: 0.08, name: 'M78 Reflection Nebula' },
+        'm79':   { ra: 5.408, dec: -24.52, name: 'M79 Globular Cluster' },
+        'm80':   { ra: 16.283, dec: -22.98, name: 'M80 Globular Cluster' },
+        'm81':   { ra: 9.926, dec: 69.07, name: 'M81 Bodes Galaxy' },
+        'm82':   { ra: 9.932, dec: 69.68, name: 'M82 Cigar Galaxy' },
+        'm83':   { ra: 13.617, dec: -29.87, name: 'M83 Southern Pinwheel' },
+        'm84':   { ra: 12.419, dec: 12.88, name: 'M84 Lenticular Galaxy' },
+        'm85':   { ra: 12.420, dec: 18.19, name: 'M85 Lenticular Galaxy' },
+        'm86':   { ra: 12.433, dec: 12.95, name: 'M86 Lenticular Galaxy' },
+        'm87':   { ra: 12.514, dec: 12.39, name: 'M87 Virgo A Galaxy' },
+        'm88':   { ra: 12.533, dec: 14.42, name: 'M88 Spiral Galaxy' },
+        'm89':   { ra: 12.593, dec: 12.55, name: 'M89 Elliptical Galaxy' },
+        'm90':   { ra: 12.613, dec: 13.16, name: 'M90 Spiral Galaxy' },
+        'm91':   { ra: 12.592, dec: 14.50, name: 'M91 Barred Spiral' },
+        'm92':   { ra: 17.286, dec: 43.14, name: 'M92 Globular Cluster' },
+        'm93':   { ra: 7.747, dec: -23.87, name: 'M93 Open Cluster' },
+        'm94':   { ra: 12.850, dec: 41.12, name: 'M94 Cats Eye Galaxy' },
+        'm95':   { ra: 10.733, dec: 11.70, name: 'M95 Barred Spiral' },
+        'm96':   { ra: 10.780, dec: 11.82, name: 'M96 Spiral Galaxy' },
+        'm97':   { ra: 11.248, dec: 55.02, name: 'M97 Owl Nebula' },
+        'm98':   { ra: 12.228, dec: 14.90, name: 'M98 Spiral Galaxy' },
+        'm99':   { ra: 12.313, dec: 14.42, name: 'M99 Coma Pinwheel' },
+        'm100':  { ra: 12.383, dec: 15.82, name: 'M100 Mirror Galaxy' },
+        'm101':  { ra: 14.053, dec: 54.35, name: 'M101 Pinwheel Galaxy' },
+        'm102':  { ra: 15.110, dec: 55.76, name: 'M102 Spindle Galaxy' },
+        'm103':  { ra: 1.555, dec: 60.70, name: 'M103 Open Cluster' },
+        'm104':  { ra: 12.667, dec: -11.62, name: 'M104 Sombrero Galaxy' },
+        'm105':  { ra: 10.797, dec: 12.58, name: 'M105 Elliptical Galaxy' },
+        'm106':  { ra: 12.316, dec: 47.30, name: 'M106 Spiral Galaxy' },
+        'm107':  { ra: 16.543, dec: -13.05, name: 'M107 Globular Cluster' },
+        'm108':  { ra: 11.187, dec: 55.67, name: 'M108 Surfboard Galaxy' },
+        'm109':  { ra: 11.962, dec: 53.37, name: 'M109 Barred Spiral' },
+        'm110':  { ra: 0.673, dec: 41.68, name: 'M110 Dwarf Elliptical' },
+        // NGC Objects (commonly photographed)
+        'ngc281':    { ra: 0.877, dec: 56.62, name: 'NGC 281 Pacman Nebula' },
+        'ngc457':    { ra: 1.327, dec: 58.28, name: 'NGC 457 Owl Cluster' },
+        'ngc869':    { ra: 2.317, dec: 57.13, name: 'NGC 869 Double Cluster' },
+        'ngc884':    { ra: 2.373, dec: 57.15, name: 'NGC 884 Double Cluster' },
+        'ngc891':    { ra: 2.378, dec: 42.35, name: 'NGC 891 Silver Sliver' },
+        'ngc1333':   { ra: 3.486, dec: 31.37, name: 'NGC 1333 Reflection Nebula' },
+        'ngc1499':   { ra: 4.050, dec: 36.40, name: 'NGC 1499 California Nebula' },
+        'ngc1977':   { ra: 5.585, dec: -4.84, name: 'NGC 1977 Running Man' },
+        'ngc2024':   { ra: 5.683, dec: -1.85, name: 'NGC 2024 Flame Nebula' },
+        'ngc2070':   { ra: 5.647, dec: -69.10, name: 'NGC 2070 Tarantula Nebula' },
+        'ngc2237':   { ra: 6.540, dec: 4.95, name: 'NGC 2237 Rosette Nebula' },
+        'ngc2244':   { ra: 6.540, dec: 4.87, name: 'NGC 2244 Rosette Cluster' },
+        'ngc2264':   { ra: 6.680, dec: 9.90, name: 'NGC 2264 Cone Nebula' },
+        'ngc2359':   { ra: 7.303, dec: -13.23, name: 'NGC 2359 Thors Helmet' },
+        'ngc2392':   { ra: 7.486, dec: 20.92, name: 'NGC 2392 Eskimo Nebula' },
+        'ngc2736':   { ra: 9.040, dec: -45.95, name: 'NGC 2736 Pencil Nebula' },
+        'ngc2903':   { ra: 9.538, dec: 21.50, name: 'NGC 2903 Spiral Galaxy' },
+        'ngc3132':   { ra: 10.117, dec: -40.43, name: 'NGC 3132 Eight Burst' },
+        'ngc3242':   { ra: 10.410, dec: -18.63, name: 'NGC 3242 Ghost of Jupiter' },
+        'ngc3372':   { ra: 10.750, dec: -59.87, name: 'NGC 3372 Carina Nebula' },
+        'ngc3628':   { ra: 11.338, dec: 13.59, name: 'NGC 3628 Hamburger Galaxy' },
+        'ngc4565':   { ra: 12.603, dec: 25.99, name: 'NGC 4565 Needle Galaxy' },
+        'ngc4631':   { ra: 12.703, dec: 32.54, name: 'NGC 4631 Whale Galaxy' },
+        'ngc4656':   { ra: 12.720, dec: 32.17, name: 'NGC 4656 Hockey Stick' },
+        'ngc4755':   { ra: 12.893, dec: -60.37, name: 'NGC 4755 Jewel Box' },
+        'ngc5128':   { ra: 13.423, dec: -43.02, name: 'NGC 5128 Centaurus A' },
+        'ngc5139':   { ra: 13.445, dec: -47.48, name: 'NGC 5139 Omega Centauri' },
+        'ngc5907':   { ra: 15.265, dec: 56.33, name: 'NGC 5907 Splinter Galaxy' },
+        'ngc6334':   { ra: 17.340, dec: -35.77, name: 'NGC 6334 Cats Paw Nebula' },
+        'ngc6357':   { ra: 17.410, dec: -34.35, name: 'NGC 6357 Lobster Nebula' },
+        'ngc6543':   { ra: 17.976, dec: 66.63, name: 'NGC 6543 Cats Eye Nebula' },
+        'ngc6572':   { ra: 18.203, dec: 6.85, name: 'NGC 6572 Emerald Nebula' },
+        'ngc6604':   { ra: 18.305, dec: -12.23, name: 'NGC 6604 Open Cluster' },
+        'ngc6611':   { ra: 18.313, dec: -13.80, name: 'NGC 6611 Eagle Cluster' },
+        'ngc6726':   { ra: 19.025, dec: -36.90, name: 'NGC 6726 Corona Australis' },
+        'ngc6820':   { ra: 19.720, dec: 23.07, name: 'NGC 6820 Emission Nebula' },
+        'ngc6822':   { ra: 19.748, dec: -14.80, name: 'NGC 6822 Barnards Galaxy' },
+        'ngc6826':   { ra: 19.748, dec: 50.53, name: 'NGC 6826 Blinking Nebula' },
+        'ngc6888':   { ra: 20.200, dec: 38.35, name: 'NGC 6888 Crescent Nebula' },
+        'ngc6960':   { ra: 20.760, dec: 30.70, name: 'NGC 6960 Western Veil' },
+        'ngc6979':   { ra: 20.918, dec: 32.15, name: 'NGC 6979 Pickerings Triangle' },
+        'ngc6992':   { ra: 20.940, dec: 31.72, name: 'NGC 6992 Eastern Veil' },
+        'ngc6995':   { ra: 20.960, dec: 31.03, name: 'NGC 6995 Network Nebula' },
+        'ngc7000':   { ra: 20.983, dec: 44.33, name: 'NGC 7000 North America Nebula' },
+        'ngc7009':   { ra: 21.070, dec: -11.37, name: 'NGC 7009 Saturn Nebula' },
+        'ngc7023':   { ra: 21.028, dec: 68.17, name: 'NGC 7023 Iris Nebula' },
+        'ngc7027':   { ra: 21.120, dec: 42.23, name: 'NGC 7027 Jewel Bug Nebula' },
+        'ngc7293':   { ra: 22.493, dec: -20.83, name: 'NGC 7293 Helix Nebula' },
+        'ngc7331':   { ra: 22.617, dec: 34.42, name: 'NGC 7331 Deer Lick Group' },
+        'ngc7380':   { ra: 22.790, dec: 58.13, name: 'NGC 7380 Wizard Nebula' },
+        'ngc7635':   { ra: 23.346, dec: 61.20, name: 'NGC 7635 Bubble Nebula' },
+        'ngc7662':   { ra: 23.433, dec: 42.55, name: 'NGC 7662 Blue Snowball' },
+        'ngc7822':   { ra: 0.053, dec: 67.42, name: 'NGC 7822 Cederblad 214' },
+        // IC Objects
+        'ic59':      { ra: 0.983, dec: 61.05, name: 'IC 59 Ghost Nebula' },
+        'ic63':      { ra: 0.993, dec: 60.90, name: 'IC 63 Ghost of Cassiopeia' },
+        'ic342':     { ra: 3.780, dec: 68.10, name: 'IC 342 Hidden Galaxy' },
+        'ic405':     { ra: 5.273, dec: 34.27, name: 'IC 405 Flaming Star Nebula' },
+        'ic410':     { ra: 5.440, dec: 33.42, name: 'IC 410 Tadpoles Nebula' },
+        'ic417':     { ra: 5.473, dec: 34.42, name: 'IC 417 Spider Nebula' },
+        'ic434':     { ra: 5.683, dec: -2.47, name: 'IC 434 Horsehead Nebula' },
+        'ic443':     { ra: 6.283, dec: 22.47, name: 'IC 443 Jellyfish Nebula' },
+        'ic1318':    { ra: 20.283, dec: 40.35, name: 'IC 1318 Butterfly Nebula' },
+        'ic1396':    { ra: 21.640, dec: 57.50, name: 'IC 1396 Elephants Trunk' },
+        'ic1805':    { ra: 2.545, dec: 61.47, name: 'IC 1805 Heart Nebula' },
+        'ic1848':    { ra: 2.855, dec: 60.42, name: 'IC 1848 Soul Nebula' },
+        'ic2118':    { ra: 5.068, dec: -7.23, name: 'IC 2118 Witch Head Nebula' },
+        'ic2177':    { ra: 7.065, dec: -10.42, name: 'IC 2177 Seagull Nebula' },
+        'ic4592':    { ra: 16.233, dec: -19.47, name: 'IC 4592 Blue Horsehead' },
+        'ic4628':    { ra: 16.933, dec: -40.33, name: 'IC 4628 Prawn Nebula' },
+        'ic4703':    { ra: 18.303, dec: -13.78, name: 'IC 4703 Eagle Nebula' },
+        'ic5067':    { ra: 20.820, dec: 44.37, name: 'IC 5067 Pelican Nebula' },
+        'ic5070':    { ra: 20.850, dec: 44.38, name: 'IC 5070 Pelican Nebula' },
+        'ic5146':    { ra: 21.892, dec: 47.27, name: 'IC 5146 Cocoon Nebula' },
+        // Common Names (aliases)
+        'andromeda':     { ra: 0.712, dec: 41.27, name: 'Andromeda Galaxy (M31)' },
+        'orion':         { ra: 5.588, dec: -5.39, name: 'Orion Nebula (M42)' },
+        'pleiades':      { ra: 3.783, dec: 24.12, name: 'Pleiades (M45)' },
+        'whirlpool':     { ra: 13.498, dec: 47.19, name: 'Whirlpool Galaxy (M51)' },
+        'pinwheel':      { ra: 14.053, dec: 54.35, name: 'Pinwheel Galaxy (M101)' },
+        'sombrero':      { ra: 12.667, dec: -11.62, name: 'Sombrero Galaxy (M104)' },
+        'ring':          { ra: 18.893, dec: 33.03, name: 'Ring Nebula (M57)' },
+        'dumbbell':      { ra: 19.993, dec: 22.72, name: 'Dumbbell Nebula (M27)' },
+        'crab':          { ra: 5.575, dec: 22.01, name: 'Crab Nebula (M1)' },
+        'owl':           { ra: 11.248, dec: 55.02, name: 'Owl Nebula (M97)' },
+        'eagle':         { ra: 18.314, dec: -13.79, name: 'Eagle Nebula (M16)' },
+        'lagoon':        { ra: 18.063, dec: -24.38, name: 'Lagoon Nebula (M8)' },
+        'trifid':        { ra: 18.044, dec: -23.03, name: 'Trifid Nebula (M20)' },
+        'swan':          { ra: 18.347, dec: -16.18, name: 'Swan Nebula (M17)' },
+        'omega':         { ra: 18.347, dec: -16.18, name: 'Omega Nebula (M17)' },
+        'rosette':       { ra: 6.540, dec: 4.95, name: 'Rosette Nebula' },
+        'california':    { ra: 4.050, dec: 36.40, name: 'California Nebula' },
+        'northamerica':  { ra: 20.983, dec: 44.33, name: 'North America Nebula' },
+        'pelican':       { ra: 20.850, dec: 44.38, name: 'Pelican Nebula' },
+        'veil':          { ra: 20.760, dec: 30.70, name: 'Veil Nebula' },
+        'crescent':      { ra: 20.200, dec: 38.35, name: 'Crescent Nebula' },
+        'bubble':        { ra: 23.346, dec: 61.20, name: 'Bubble Nebula' },
+        'horsehead':     { ra: 5.683, dec: -2.47, name: 'Horsehead Nebula' },
+        'flame':         { ra: 5.683, dec: -1.85, name: 'Flame Nebula' },
+        'helix':         { ra: 22.493, dec: -20.83, name: 'Helix Nebula' },
+        'pacman':        { ra: 0.877, dec: 56.62, name: 'Pacman Nebula' },
+        'wizard':        { ra: 22.790, dec: 58.13, name: 'Wizard Nebula' },
+        'jellyfish':     { ra: 6.283, dec: 22.47, name: 'Jellyfish Nebula' },
+        'cocoon':        { ra: 21.892, dec: 47.27, name: 'Cocoon Nebula' },
+        'iris':          { ra: 21.028, dec: 68.17, name: 'Iris Nebula' },
+        'heart':         { ra: 2.545, dec: 61.47, name: 'Heart Nebula' },
+        'soul':          { ra: 2.855, dec: 60.42, name: 'Soul Nebula' },
+        'heartandsoul':  { ra: 2.700, dec: 60.95, name: 'Heart & Soul Nebulae' },
+        'heartsoul':     { ra: 2.700, dec: 60.95, name: 'Heart & Soul Nebulae' },
+        'trunk':         { ra: 21.640, dec: 57.50, name: 'Elephants Trunk Nebula' },
+        'elephantstrunk':{ ra: 21.640, dec: 57.50, name: 'Elephants Trunk Nebula' },
+        'carina':        { ra: 10.750, dec: -59.87, name: 'Carina Nebula' },
+        'tarantula':     { ra: 5.647, dec: -69.10, name: 'Tarantula Nebula' },
+        'runningman':    { ra: 5.585, dec: -4.84, name: 'Running Man Nebula' },
+        'flamestar':     { ra: 5.273, dec: 34.27, name: 'Flaming Star Nebula' },
+        'flamingstar':   { ra: 5.273, dec: 34.27, name: 'Flaming Star Nebula' },
+        'tadpoles':      { ra: 5.440, dec: 33.42, name: 'Tadpoles Nebula' },
+        'seagull':       { ra: 7.065, dec: -10.42, name: 'Seagull Nebula' },
+        'thorshelmet':   { ra: 7.303, dec: -13.23, name: 'Thors Helmet Nebula' },
+        'thor':          { ra: 7.303, dec: -13.23, name: 'Thors Helmet Nebula' },
+        'catspaw':       { ra: 17.340, dec: -35.77, name: 'Cats Paw Nebula' },
+        'catseye':       { ra: 17.976, dec: 66.63, name: 'Cats Eye Nebula' },
+        'witchhead':     { ra: 5.068, dec: -7.23, name: 'Witch Head Nebula' },
+        'cone':          { ra: 6.680, dec: 9.90, name: 'Cone Nebula' },
+        'christmastree': { ra: 6.680, dec: 9.90, name: 'Christmas Tree Cluster' },
+        'needle':        { ra: 12.603, dec: 25.99, name: 'Needle Galaxy' },
+        'whale':         { ra: 12.703, dec: 32.54, name: 'Whale Galaxy' },
+        'cigar':         { ra: 9.932, dec: 69.68, name: 'Cigar Galaxy (M82)' },
+        'bode':          { ra: 9.926, dec: 69.07, name: 'Bodes Galaxy (M81)' },
+        'bodes':         { ra: 9.926, dec: 69.07, name: 'Bodes Galaxy (M81)' },
+        'm81m82':        { ra: 9.929, dec: 69.37, name: 'M81 & M82 Galaxies' },
+        'leotriplet':    { ra: 11.327, dec: 13.04, name: 'Leo Triplet' },
+        'sunflower':     { ra: 13.264, dec: 42.03, name: 'Sunflower Galaxy (M63)' },
+        'blackeye':      { ra: 12.945, dec: 21.68, name: 'Black Eye Galaxy (M64)' },
+        'doublecluster': { ra: 2.345, dec: 57.14, name: 'Double Cluster' },
+        'sh2':           { ra: 21.640, dec: 57.50, name: 'Sharpless 2 Region' },
+        'sh2155':        { ra: 22.933, dec: 62.63, name: 'Sh2-155 Cave Nebula' },
+        'cave':          { ra: 22.933, dec: 62.63, name: 'Cave Nebula' },
+        'abell':         { ra: 19.798, dec: 50.53, name: 'Abell Planetary' }
+    };
 
-    const camera = new THREE.PerspectiveCamera(65, window.innerWidth / window.innerHeight, 0.1, 5000);
-    // Start camera slightly off-center to allow rotation
-    camera.position.set(0, 0, 0.1); 
+    // --- Scene Setup ---
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x000005);
+
+    const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 10000);
+    camera.position.set(0, 200, 800);
 
     const renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.setPixelRatio(window.devicePixelRatio);
     document.body.appendChild(renderer.domElement);
 
-    // 2. CSS2D Renderer for labels
-    // Important: labelRenderer must have pointer-events: none so it doesn't steal the scroll wheel
     const labelRenderer = new CSS2DRenderer();
     labelRenderer.setSize(window.innerWidth, window.innerHeight);
     labelRenderer.domElement.style.position = 'absolute';
     labelRenderer.domElement.style.top = '0px';
-    labelRenderer.domElement.style.pointerEvents = 'none'; 
+    labelRenderer.domElement.style.pointerEvents = 'none';
     document.body.appendChild(labelRenderer.domElement);
 
-    // 3. Controls
-    // We attach controls to renderer.domElement
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
-    controls.rotateSpeed = -0.25; // Slow down rotation for sky viewing
+    controls.dampingFactor = 0.08;
+    controls.rotateSpeed = 0.4;
     controls.enableZoom = true;
-    controls.minDistance = 0.01;
-    controls.maxDistance = 1000;
-    // Set target to slightly ahead so rotation works correctly from inside
+    controls.minDistance = 10;
+    controls.maxDistance = 3000;
     controls.target.set(0, 0, 0);
 
-    // 4. Environment: Starfield
-    const starGeometry = new THREE.BufferGeometry();
-    const starMaterial = new THREE.PointsMaterial({ color: 0xFFFFFF, size: 0.7 });
+    // --- Starfield ---
     const starVertices = [];
-    for (let i = 0; i < 7000; i++) {
+    for (let i = 0; i < 10000; i++) {
         const theta = 2 * Math.PI * Math.random();
         const phi = Math.acos(2 * Math.random() - 1);
-        const r = 1200 + Math.random() * 400;
-        starVertices.push(
-            r * Math.sin(phi) * Math.cos(theta),
-            r * Math.sin(phi) * Math.sin(theta),
-            r * Math.cos(phi)
-        );
+        const r = 1500 + Math.random() * 500;
+        starVertices.push(r * Math.sin(phi) * Math.cos(theta), r * Math.sin(phi) * Math.sin(theta), r * Math.cos(phi));
     }
-    starGeometry.setAttribute('position', new THREE.Float32BufferAttribute(starVertices, 3));
-    scene.add(new THREE.Points(starGeometry, starMaterial));
+    const starGeom = new THREE.BufferGeometry();
+    starGeom.setAttribute('position', new THREE.Float32BufferAttribute(starVertices, 3));
+    scene.add(new THREE.Points(starGeom, new THREE.PointsMaterial({ color: 0xffffff, size: 0.5 })));
 
-    // 4. Horizon Helper
-    const gridHelper = new THREE.GridHelper(2000, 24, 0x222222, 0x111111);
-    scene.add(gridHelper);
+    // --- Celestial Sphere Wireframe ---
+    const sphereWire = new THREE.LineSegments(
+        new THREE.WireframeGeometry(new THREE.SphereGeometry(500, 24, 12)),
+        new THREE.LineBasicMaterial({ color: 0x222244, transparent: true, opacity: 0.3 })
+    );
+    scene.add(sphereWire);
 
-    // 5. Compass Directions
-    const compassPoints = [
-        { name: 'NORTH', ra: 0, dec: 0 },
-        { name: 'EAST', ra: 6, dec: 0 },
-        { name: 'SOUTH', ra: 12, dec: 0 },
-        { name: 'WEST', ra: 18, dec: 0 }
-    ];
-
-    compassPoints.forEach(pt => {
+    // --- Compass Labels ---
+    [{ n: 'NORTH (0h RA)', r: 0 }, { n: 'EAST (6h RA)', r: 6 }, { n: 'SOUTH (12h RA)', r: 12 }, { n: 'WEST (18h RA)', r: 18 }].forEach(pt => {
         const div = document.createElement('div');
         div.className = 'compass-label';
-        div.textContent = pt.name;
-
-        const raRad = (pt.ra * 15) * (Math.PI / 180);
-        const decRad = pt.dec * (Math.PI / 180);
-        const dist = 900;
-
-        const labelObj = new CSS2DObject(div);
-        labelObj.position.set(
-            dist * Math.cos(decRad) * Math.cos(raRad),
-            dist * Math.sin(decRad),
-            dist * Math.cos(decRad) * Math.sin(raRad)
-        );
-        scene.add(labelObj);
+        div.textContent = pt.n;
+        const raRad = (pt.r * 15) * (Math.PI / 180);
+        const label = new CSS2DObject(div);
+        label.position.set(550 * Math.cos(raRad), 0, 550 * Math.sin(raRad));
+        scene.add(label);
     });
 
-    // 6. Deep Sky Objects Data
-    const deepSkyObjects = [
-        { name: "M31 Andromeda", filename: "m31.jpg", ra: 0.712, dec: 41.27, size: 45 },
-        { name: "M42 Orion", filename: "m42.jpg", ra: 5.588, dec: -5.39, size: 55 },
-        { name: "M45 Pleiades", filename: "m45.jpg", ra: 3.783, dec: 24.11, size: 65 },
-        { name: "M51 Whirlpool", filename: "m51.jpg", ra: 13.498, dec: 47.19, size: 40 },
-        { name: "M101 Pinwheel", filename: "m101.jpg", ra: 14.053, dec: 54.35, size: 40 },
-        { name: "M81 Bode's", filename: "m81.jpg", ra: 9.926, dec: 69.06, size: 35 },
-        { name: "M16 Eagle", filename: "m16.jpg", ra: 18.314, dec: -13.81, size: 50 },
-        { name: "M20 Trifid", filename: "m20.jpg", ra: 18.044, dec: -23.03, size: 45 },
-        { name: "M8 Lagoon", filename: "m8.jpg", ra: 18.061, dec: -24.38, size: 55 },
-        { name: "M17 Swan", filename: "m17.jpg", ra: 18.347, dec: -16.18, size: 45 },
-        { name: "M27 Dumbbell", filename: "m27.jpg", ra: 19.993, dec: 22.72, size: 30 },
-        { name: "M57 Ring", filename: "m57.jpg", ra: 18.893, dec: 33.03, size: 20 },
-        { name: "M13 Hercules", filename: "m13.jpg", ra: 16.695, dec: 36.46, size: 30 },
-        { name: "M33 Triangulum", filename: "m33.jpg", ra: 1.564, dec: 30.66, size: 45 }
-    ];
+    // --- Helper: Parse filename to DSO key ---
+    function parseFilename(filename) {
+        let name = filename.toLowerCase().replace(/\.(jpg|jpeg|png|gif|webp)$/i, '');
+        name = name.replace(/[_\-\s]+/g, '').replace(/[^a-z0-9]/g, '');
+        return name;
+    }
 
-    const sphereRadius = 800;
+    // --- Load DSO images from GitHub ---
+    const sphereRadius = 500;
     const textureLoader = new THREE.TextureLoader();
-    const baseUrl = "https://raw.githubusercontent.com/taylorhogan/taylorhogan.github.io/main/images/";
+    const baseRawUrl = 'https://raw.githubusercontent.com/taylorhogan/taylorhogan.github.io/main/images/';
+    const apiUrl = 'https://api.github.com/repos/taylorhogan/taylorhogan.github.io/contents/images';
 
-    deepSkyObjects.forEach(obj => {
-        const raRad = (obj.ra * 15) * (Math.PI / 180);
-        const decRad = obj.dec * (Math.PI / 180);
+    async function loadDSOImages() {
+        try {
+            const response = await fetch(apiUrl);
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            const files = await response.json();
 
-        const x = sphereRadius * Math.cos(decRad) * Math.cos(raRad);
-        const y = sphereRadius * Math.sin(decRad);
-        const z = sphereRadius * Math.cos(decRad) * Math.sin(raRad);
+            const jpgFiles = files.filter(f => /\.(jpg|jpeg|png)$/i.test(f.name));
+            document.getElementById('loading').style.display = 'none';
+            document.getElementById('status').textContent = `Found ${jpgFiles.length} objects`;
 
-        // Image Sprite (Background texture)
-        const map = textureLoader.load(baseUrl + obj.filename);
-        const material = new THREE.SpriteMaterial({
-            map: map,
-            transparent: true,
-            opacity: 0.95,
-            depthTest: false
-        });
-        const sprite = new THREE.Sprite(material);
-        sprite.position.set(x, y, z);
-        sprite.scale.set(obj.size, obj.size, 1);
-        scene.add(sprite);
+            let loadedCount = 0;
+            jpgFiles.forEach(file => {
+                const key = parseFilename(file.name);
+                const coords = dsoCatalog[key];
 
-        // Text + Thumbnail Label
-        const labelDiv = document.createElement('div');
-        labelDiv.className = 'label-dso';
+                if (!coords) {
+                    console.warn(`Unknown DSO: ${file.name} (key: ${key})`);
+                    return;
+                }
 
-        const img = document.createElement('img');
-        img.src = baseUrl + obj.filename;
-        labelDiv.appendChild(img);
+                const raRad = (coords.ra * 15) * (Math.PI / 180);
+                const decRad = coords.dec * (Math.PI / 180);
+                const x = sphereRadius * Math.cos(decRad) * Math.cos(raRad);
+                const y = sphereRadius * Math.sin(decRad);
+                const z = sphereRadius * Math.cos(decRad) * Math.sin(raRad);
 
-        const text = document.createElement('span');
-        text.textContent = obj.name;
-        labelDiv.appendChild(text);
+                // Sprite
+                textureLoader.load(baseRawUrl + file.name, (tex) => {
+                    const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, opacity: 0.9, depthTest: false });
+                    const sprite = new THREE.Sprite(mat);
+                    sprite.position.set(x, y, z);
+                    sprite.scale.set(40, 40, 1);
+                    scene.add(sprite);
+                    loadedCount++;
+                    document.getElementById('status').textContent = `Loaded ${loadedCount} / ${jpgFiles.length}`;
+                });
 
-        const labelObj = new CSS2DObject(labelDiv);
-        // Positioned below the sprite
-        labelObj.position.set(x, y - (obj.size / 2) - 30, z);
-        scene.add(labelObj);
-    });
+                // Label
+                const labelDiv = document.createElement('div');
+                labelDiv.className = 'label-dso';
+                labelDiv.innerHTML = `<img src="${baseRawUrl + file.name}" alt="${coords.name}"><span>${coords.name}</span>`;
+                const labelObj = new CSS2DObject(labelDiv);
+                labelObj.position.set(x, y - 30, z);
+                scene.add(labelObj);
+            });
 
-    // 7. Render Loop
+        } catch (err) {
+            console.error('Failed to load DSO list:', err);
+            document.getElementById('loading').textContent = '❌ Failed to load objects. Check console.';
+        }
+    }
+
+    loadDSOImages();
+
+    // --- Animation Loop ---
     function animate() {
         requestAnimationFrame(animate);
         controls.update();
