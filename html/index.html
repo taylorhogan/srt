@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>3D Deep Sky Objects Visualization</title>
+    <style>
+        body { margin: 0; overflow: hidden; background: #000; }
+        #info {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            color: white;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: rgba(0,0,0,0.7);
+            padding: 15px;
+            border-radius: 8px;
+            pointer-events: none;
+            border: 1px solid #444;
+            z-index: 100; /* Ensure info is above labels */
+        }
+        .label-sub {
+            color: #aaa;
+            font-size: 12px;
+            margin-top: 5px;
+        }
+        .compass-label {
+            color: #00ffcc;
+            font-family: 'Courier New', Courier, monospace;
+            font-weight: bold;
+            font-size: 20px;
+            text-shadow: 2px 2px 4px #000;
+            pointer-events: none;
+            white-space: nowrap;
+        }
+        .label-dso {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            color: #ffffff;
+            font-family: Arial, sans-serif;
+            font-size: 12px;
+            text-shadow: 1px 1px 3px #000;
+            pointer-events: none;
+            background: rgba(0, 0, 0, 0.6);
+            padding: 4px;
+            border-radius: 6px;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            white-space: nowrap;
+        }
+        .label-dso img {
+            width: 40px;
+            height: 40px;
+            border-radius: 3px;
+            margin-bottom: 4px;
+            object-fit: cover;
+            border: 1px solid #444;
+        }
+    </style>
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://cdn.jsdelivr.net/npm/three@0.167.1/build/three.module.js",
+                "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.167.1/examples/jsm/"
+            }
+        }
+    </script>
+</head>
+<body>
+<div id="info">
+    <strong>Deep Sky Object Navigator</strong><br>
+    <div class="label-sub">
+        Left Click: Rotate View • Scroll: Zoom<br>
+        Compass: N(0h), E(6h), S(12h), W(18h)<br>
+        Rich Labels: Thumbnail + Name
+    </div>
+</div>
+
+<script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+    import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
+
+    // 1. Scene Setup
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x010103);
+
+    const camera = new THREE.PerspectiveCamera(65, window.innerWidth / window.innerHeight, 0.1, 5000);
+    // Start camera slightly off-center to allow rotation
+    camera.position.set(0, 0, 0.1); 
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(window.devicePixelRatio);
+    document.body.appendChild(renderer.domElement);
+
+    // 2. CSS2D Renderer for labels
+    // Important: labelRenderer must have pointer-events: none so it doesn't steal the scroll wheel
+    const labelRenderer = new CSS2DRenderer();
+    labelRenderer.setSize(window.innerWidth, window.innerHeight);
+    labelRenderer.domElement.style.position = 'absolute';
+    labelRenderer.domElement.style.top = '0px';
+    labelRenderer.domElement.style.pointerEvents = 'none'; 
+    document.body.appendChild(labelRenderer.domElement);
+
+    // 3. Controls
+    // We attach controls to renderer.domElement
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.rotateSpeed = -0.25; // Slow down rotation for sky viewing
+    controls.enableZoom = true;
+    controls.minDistance = 0.01;
+    controls.maxDistance = 1000;
+    // Set target to slightly ahead so rotation works correctly from inside
+    controls.target.set(0, 0, 0);
+
+    // 4. Environment: Starfield
+    const starGeometry = new THREE.BufferGeometry();
+    const starMaterial = new THREE.PointsMaterial({ color: 0xFFFFFF, size: 0.7 });
+    const starVertices = [];
+    for (let i = 0; i < 7000; i++) {
+        const theta = 2 * Math.PI * Math.random();
+        const phi = Math.acos(2 * Math.random() - 1);
+        const r = 1200 + Math.random() * 400;
+        starVertices.push(
+            r * Math.sin(phi) * Math.cos(theta),
+            r * Math.sin(phi) * Math.sin(theta),
+            r * Math.cos(phi)
+        );
+    }
+    starGeometry.setAttribute('position', new THREE.Float32BufferAttribute(starVertices, 3));
+    scene.add(new THREE.Points(starGeometry, starMaterial));
+
+    // 4. Horizon Helper
+    const gridHelper = new THREE.GridHelper(2000, 24, 0x222222, 0x111111);
+    scene.add(gridHelper);
+
+    // 5. Compass Directions
+    const compassPoints = [
+        { name: 'NORTH', ra: 0, dec: 0 },
+        { name: 'EAST', ra: 6, dec: 0 },
+        { name: 'SOUTH', ra: 12, dec: 0 },
+        { name: 'WEST', ra: 18, dec: 0 }
+    ];
+
+    compassPoints.forEach(pt => {
+        const div = document.createElement('div');
+        div.className = 'compass-label';
+        div.textContent = pt.name;
+
+        const raRad = (pt.ra * 15) * (Math.PI / 180);
+        const decRad = pt.dec * (Math.PI / 180);
+        const dist = 900;
+
+        const labelObj = new CSS2DObject(div);
+        labelObj.position.set(
+            dist * Math.cos(decRad) * Math.cos(raRad),
+            dist * Math.sin(decRad),
+            dist * Math.cos(decRad) * Math.sin(raRad)
+        );
+        scene.add(labelObj);
+    });
+
+    // 6. Deep Sky Objects Data
+    const deepSkyObjects = [
+        { name: "M31 Andromeda", filename: "m31.jpg", ra: 0.712, dec: 41.27, size: 45 },
+        { name: "M42 Orion", filename: "m42.jpg", ra: 5.588, dec: -5.39, size: 55 },
+        { name: "M45 Pleiades", filename: "m45.jpg", ra: 3.783, dec: 24.11, size: 65 },
+        { name: "M51 Whirlpool", filename: "m51.jpg", ra: 13.498, dec: 47.19, size: 40 },
+        { name: "M101 Pinwheel", filename: "m101.jpg", ra: 14.053, dec: 54.35, size: 40 },
+        { name: "M81 Bode's", filename: "m81.jpg", ra: 9.926, dec: 69.06, size: 35 },
+        { name: "M16 Eagle", filename: "m16.jpg", ra: 18.314, dec: -13.81, size: 50 },
+        { name: "M20 Trifid", filename: "m20.jpg", ra: 18.044, dec: -23.03, size: 45 },
+        { name: "M8 Lagoon", filename: "m8.jpg", ra: 18.061, dec: -24.38, size: 55 },
+        { name: "M17 Swan", filename: "m17.jpg", ra: 18.347, dec: -16.18, size: 45 },
+        { name: "M27 Dumbbell", filename: "m27.jpg", ra: 19.993, dec: 22.72, size: 30 },
+        { name: "M57 Ring", filename: "m57.jpg", ra: 18.893, dec: 33.03, size: 20 },
+        { name: "M13 Hercules", filename: "m13.jpg", ra: 16.695, dec: 36.46, size: 30 },
+        { name: "M33 Triangulum", filename: "m33.jpg", ra: 1.564, dec: 30.66, size: 45 }
+    ];
+
+    const sphereRadius = 800;
+    const textureLoader = new THREE.TextureLoader();
+    const baseUrl = "https://raw.githubusercontent.com/taylorhogan/taylorhogan.github.io/main/images/";
+
+    deepSkyObjects.forEach(obj => {
+        const raRad = (obj.ra * 15) * (Math.PI / 180);
+        const decRad = obj.dec * (Math.PI / 180);
+
+        const x = sphereRadius * Math.cos(decRad) * Math.cos(raRad);
+        const y = sphereRadius * Math.sin(decRad);
+        const z = sphereRadius * Math.cos(decRad) * Math.sin(raRad);
+
+        // Image Sprite (Background texture)
+        const map = textureLoader.load(baseUrl + obj.filename);
+        const material = new THREE.SpriteMaterial({
+            map: map,
+            transparent: true,
+            opacity: 0.95,
+            depthTest: false
+        });
+        const sprite = new THREE.Sprite(material);
+        sprite.position.set(x, y, z);
+        sprite.scale.set(obj.size, obj.size, 1);
+        scene.add(sprite);
+
+        // Text + Thumbnail Label
+        const labelDiv = document.createElement('div');
+        labelDiv.className = 'label-dso';
+
+        const img = document.createElement('img');
+        img.src = baseUrl + obj.filename;
+        labelDiv.appendChild(img);
+
+        const text = document.createElement('span');
+        text.textContent = obj.name;
+        labelDiv.appendChild(text);
+
+        const labelObj = new CSS2DObject(labelDiv);
+        // Positioned below the sprite
+        labelObj.position.set(x, y - (obj.size / 2) - 30, z);
+        scene.add(labelObj);
+    });
+
+    // 7. Render Loop
+    function animate() {
+        requestAnimationFrame(animate);
+        controls.update();
+        renderer.render(scene, camera);
+        labelRenderer.render(scene, camera);
+    }
+
+    window.addEventListener('resize', () => {
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        labelRenderer.setSize(window.innerWidth, window.innerHeight);
+    });
+
+    animate();
+</script>
+</body>
+</html>
