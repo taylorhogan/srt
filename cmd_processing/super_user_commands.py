@@ -373,7 +373,7 @@ def doit_cmd(words, account):
         return
 
 
-    pushover.push_message_("roof is open, starting imaging in 1 min", inside_view)
+    pushover.push_message("roof is open, starting imaging in 1 min", inside_view)
     time.sleep(wait_time)
 
     if not is_safe():
