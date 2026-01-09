@@ -121,6 +121,7 @@ def set_today_stat(state, dso):
     this_year = str(2026)
     this_month = str(today.month)
     this_day = str(today.day)
+    print(this_year, this_month, this_day)
 
     years = cal['years']
     year = years.get(this_year)

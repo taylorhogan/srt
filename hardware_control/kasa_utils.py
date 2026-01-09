@@ -3,12 +3,14 @@ import asyncio
 from kasa import Discover
 async def make_discovery_map():
     map_from_name_to_ip = dict()
+    try:
+        devices = await Discover.discover()
+        for host, device in devices.items():
+            print(f"Device found at {host}: {device.alias} ({device.model})")
+            map_from_name_to_ip.update({device.alias: host})
 
-    devices = await Discover.discover()
-    for host, device in devices.items():
-        print(f"Device found at {host}: {device.alias} ({device.model})")
-        map_from_name_to_ip.update({device.alias: host})
-
+    except Exception as e:
+        return map_from_name_to_ip
 
     return map_from_name_to_ip
 
