@@ -21,10 +21,12 @@
         #info h2 { margin: 0 0 10px 0; font-size: 16px; }
         #info .sub { color: #aaa; font-size: 12px; line-height: 1.5; }
         #info .legend { margin-top: 10px; padding-top: 10px; border-top: 1px solid #444; }
-        #info .legend-item { display: flex; align-items: center; margin: 4px 0; }
-        #info .legend-dot { width: 12px; height: 12px; border-radius: 50%; margin-right: 8px; border: 1px solid #fff; }
-        #info .legend-dot.galactic { background: #4488ff; }
-        #info .legend-dot.extragalactic { background: #ff8844; }
+        #info .legend-item { display: flex; align-items: center; margin: 4px 0; font-size: 11px; }
+        #info .legend-dot { width: 10px; height: 10px; border-radius: 50%; margin-right: 8px; }
+        #info .legend-dot.nearby { background: #44ff88; }
+        #info .legend-dot.mid { background: #ffcc44; }
+        #info .legend-dot.far { background: #ff6644; }
+        #info .legend-dot.distant { background: #cc44ff; }
         #loading {
             position: absolute;
             top: 50%;
@@ -56,12 +58,6 @@
             white-space: nowrap;
             pointer-events: auto;
             cursor: pointer;
-        }
-        .label-dso.galactic {
-            border-color: rgba(68, 136, 255, 0.5);
-        }
-        .label-dso.extragalactic {
-            border-color: rgba(255, 136, 68, 0.5);
         }
         .label-dso:hover {
             border-color: #00ffcc;
@@ -137,8 +133,11 @@
         <b>Compass:</b> N(0h RA), E(6h), S(12h), W(18h)<br>
         <span id="status">Loading objects...</span>
         <div class="legend">
-            <div class="legend-item"><div class="legend-dot galactic"></div>Milky Way (inner sphere)</div>
-            <div class="legend-item"><div class="legend-dot extragalactic"></div>Extragalactic (outer sphere)</div>
+            <b>Distance (log scale):</b>
+            <div class="legend-item"><div class="legend-dot nearby"></div>&lt; 1,000 ly (nearby)</div>
+            <div class="legend-item"><div class="legend-dot mid"></div>1,000 - 100,000 ly</div>
+            <div class="legend-item"><div class="legend-dot far"></div>100,000 - 10M ly</div>
+            <div class="legend-item"><div class="legend-dot distant"></div>&gt; 10M ly (distant galaxies)</div>
         </div>
     </div>
 </div>
@@ -412,16 +411,35 @@
         'abell':         { ra: 19.798, dec: 50.53, name: 'Abell Planetary', distance: 3500, type: 'galactic', explanation: 'Abell planetary nebulae are typically faint, large, and old. They are challenging targets that reveal structure only in long-exposure images.' }
     };
 
-    // Sphere radii for galactic and extragalactic objects
-    const GALACTIC_SPHERE_RADIUS = 400;
-    const EXTRAGALACTIC_SPHERE_RADIUS = 700;
+    // Distance mapping parameters for log scale
+    // Maps log10(distance) to radius: ~2.6 (400 ly) to ~7.9 (80M ly)
+    const MIN_LOG_DISTANCE = 2.5;  // ~300 light-years
+    const MAX_LOG_DISTANCE = 8.0;  // ~100 million light-years
+    const MIN_RADIUS = 150;
+    const MAX_RADIUS = 800;
+
+    // Convert distance to sphere radius using log scale
+    function distanceToRadius(distanceLY) {
+        const logDist = Math.log10(distanceLY);
+        const clampedLog = Math.max(MIN_LOG_DISTANCE, Math.min(MAX_LOG_DISTANCE, logDist));
+        const normalized = (clampedLog - MIN_LOG_DISTANCE) / (MAX_LOG_DISTANCE - MIN_LOG_DISTANCE);
+        return MIN_RADIUS + normalized * (MAX_RADIUS - MIN_RADIUS);
+    }
+
+    // Get color based on distance
+    function getDistanceColor(distanceLY) {
+        if (distanceLY < 1000) return 0x44ff88;           // Green - nearby
+        if (distanceLY < 100000) return 0xffcc44;         // Yellow - mid-range
+        if (distanceLY < 10000000) return 0xff6644;       // Orange - far
+        return 0xcc44ff;                                   // Purple - distant galaxies
+    }
 
     // --- Scene Setup ---
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(0x000005);
 
     const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 10000);
-    camera.position.set(0, 200, 1000);
+    camera.position.set(0, 300, 1200);
 
     const renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setSize(window.innerWidth, window.innerHeight);
@@ -456,29 +474,32 @@
     starGeom.setAttribute('position', new THREE.Float32BufferAttribute(starVertices, 3));
     scene.add(new THREE.Points(starGeom, new THREE.PointsMaterial({ color: 0xffffff, size: 0.5 })));
 
-    // --- Celestial Sphere Wireframes (two spheres) ---
-    // Inner sphere (galactic)
-    const galacticSphereWire = new THREE.LineSegments(
-        new THREE.WireframeGeometry(new THREE.SphereGeometry(GALACTIC_SPHERE_RADIUS, 24, 12)),
-        new THREE.LineBasicMaterial({ color: 0x4488ff, transparent: true, opacity: 0.2 })
-    );
-    scene.add(galacticSphereWire);
+    // --- Reference Spheres (showing distance scale) ---
+    const distanceMarkers = [
+        { dist: 1000, label: '1,000 ly', color: 0x44ff88 },
+        { dist: 10000, label: '10,000 ly', color: 0xffcc44 },
+        { dist: 100000, label: '100,000 ly', color: 0xff6644 },
+        { dist: 10000000, label: '10M ly', color: 0xcc44ff },
+    ];
 
-    // Outer sphere (extragalactic)
-    const extragalacticSphereWire = new THREE.LineSegments(
-        new THREE.WireframeGeometry(new THREE.SphereGeometry(EXTRAGALACTIC_SPHERE_RADIUS, 24, 12)),
-        new THREE.LineBasicMaterial({ color: 0xff8844, transparent: true, opacity: 0.15 })
-    );
-    scene.add(extragalacticSphereWire);
+    distanceMarkers.forEach(marker => {
+        const radius = distanceToRadius(marker.dist);
+        const sphereWire = new THREE.LineSegments(
+            new THREE.WireframeGeometry(new THREE.SphereGeometry(radius, 24, 12)),
+            new THREE.LineBasicMaterial({ color: marker.color, transparent: true, opacity: 0.15 })
+        );
+        scene.add(sphereWire);
+    });
 
-    // --- Compass Labels (on outer sphere) ---
+    // --- Compass Labels (on outer edge) ---
+    const compassRadius = MAX_RADIUS + 100;
     [{ n: 'NORTH (0h RA)', r: 0 }, { n: 'EAST (6h RA)', r: 6 }, { n: 'SOUTH (12h RA)', r: 12 }, { n: 'WEST (18h RA)', r: 18 }].forEach(pt => {
         const div = document.createElement('div');
         div.className = 'compass-label';
         div.textContent = pt.n;
         const raRad = (pt.r * 15) * (Math.PI / 180);
         const label = new CSS2DObject(div);
-        label.position.set((EXTRAGALACTIC_SPHERE_RADIUS + 80) * Math.cos(raRad), 0, (EXTRAGALACTIC_SPHERE_RADIUS + 80) * Math.sin(raRad));
+        label.position.set(compassRadius * Math.cos(raRad), 0, compassRadius * Math.sin(raRad));
         scene.add(label);
     });
 
@@ -505,9 +526,6 @@
     const baseRawUrl = 'https://raw.githubusercontent.com/taylorhogan/taylorhogan.github.io/main/images/';
     const apiUrl = 'https://api.github.com/repos/taylorhogan/taylorhogan.github.io/contents/images';
 
-    // Store mapping of DSO key to image filename
-    const dsoImageMap = {};
-
     async function loadDSOImages() {
         try {
             const response = await fetch(apiUrl);
@@ -519,8 +537,6 @@
             document.getElementById('status').textContent = `Found ${jpgFiles.length} objects`;
 
             let loadedCount = 0;
-            let galacticCount = 0;
-            let extragalacticCount = 0;
 
             jpgFiles.forEach(file => {
                 const key = parseFilename(file.name);
@@ -531,18 +547,9 @@
                     return;
                 }
 
-                // Store the image filename for this DSO
-                dsoImageMap[key] = file.name;
-
-                // Determine sphere radius based on type
-                const isExtragalactic = coords.type === 'extragalactic';
-                const sphereRadius = isExtragalactic ? EXTRAGALACTIC_SPHERE_RADIUS : GALACTIC_SPHERE_RADIUS;
-
-                if (isExtragalactic) {
-                    extragalacticCount++;
-                } else {
-                    galacticCount++;
-                }
+                // Calculate radius based on log distance
+                const sphereRadius = distanceToRadius(coords.distance);
+                const distanceColor = getDistanceColor(coords.distance);
 
                 const raRad = (coords.ra * 15) * (Math.PI / 180);
                 const decRad = coords.dec * (Math.PI / 180);
@@ -558,12 +565,13 @@
                     sprite.scale.set(40, 40, 1);
                     scene.add(sprite);
                     loadedCount++;
-                    document.getElementById('status').textContent = `Loaded ${loadedCount} / ${jpgFiles.length} (${galacticCount} galactic, ${extragalacticCount} extragalactic)`;
+                    document.getElementById('status').textContent = `Loaded ${loadedCount} / ${jpgFiles.length}`;
                 });
 
-                // Label
+                // Label with distance-based border color
                 const labelDiv = document.createElement('div');
-                labelDiv.className = `label-dso ${isExtragalactic ? 'extragalactic' : 'galactic'}`;
+                labelDiv.className = 'label-dso';
+                labelDiv.style.borderColor = '#' + distanceColor.toString(16).padStart(6, '0');
                 labelDiv.innerHTML = `<img src="${baseRawUrl + file.name}" alt="${coords.name}"><span>${coords.name}</span>`;
                 labelDiv.addEventListener('dblclick', (event) => {
                     event.stopPropagation();
@@ -592,7 +600,8 @@
 
     function showExplanation(name, explanation, imageUrl, distance, type, event) {
         popupTitle.textContent = name;
-        popupDistance.innerHTML = `📍 ${formatDistance(distance)} ${type === 'extragalactic' ? '<span style="color:#ff8844">(Extragalactic)</span>' : '<span style="color:#4488ff">(Milky Way)</span>'}`;
+        const typeLabel = type === 'extragalactic' ? '🌌 Extragalactic' : '⭐ Milky Way';
+        popupDistance.innerHTML = `📍 ${formatDistance(distance)} — ${typeLabel}`;
         popupImage.src = imageUrl;
         popupImage.alt = name;
         popupText.textContent = explanation || 'No detailed information available for this object.';
@@ -624,7 +633,7 @@
             popup.style.top = Math.min(Math.max(10, y), maxY) + 'px';
         }, 50);
 
-        // Auto-hide after 12 seconds (longer to view image)
+        // Auto-hide after 12 seconds
         if (hideTimeout) clearTimeout(hideTimeout);
         hideTimeout = setTimeout(() => {
             popup.style.display = 'none';

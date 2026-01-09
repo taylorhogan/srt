@@ -386,6 +386,7 @@ def doit_cmd(words, account):
         return
 
     ok = open_roof_with_option(True)
+    print ("ok=", str(ok))
     if not ok:
         pushover.push_message("problem opening roof, stopping", inside_view)
         return
@@ -397,7 +398,9 @@ def doit_cmd(words, account):
     if not is_safe():
         pushover.push_message("not safe 3, stopping", inside_view)
         return
+
     if operand == 2 or operand == 1:
+        print ("starting Nina")
 
         on_nina(None, None)
 
@@ -429,6 +432,7 @@ def doit_cmd(words, account):
 
         pushover.push_message("imaging!")
     else:
+        print ("end started")
         pushover.push_message("just closing up, no imaging")
         time.sleep(60)
         end.do_main()

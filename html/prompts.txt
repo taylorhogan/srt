@@ -1,7 +1,9 @@
 i would like to be able to visualize a 3D model of deep sky objects.
-In the directory https://github.com/taylorhogan/taylorhogan.github.io/tree/main/images you will find a collection of .jpg images.
+In the directory https://github.com/taylorhogan/taylorhogan.github.io/tree/main/images
+you will find a collection of .jpg images.
 Each image is of deep sky object. The name of the file is the name of the object.
-write the html and three.js code to show the positions of these objects in the night sky, you will have to look up the r.a. and dec of each object
+write the html and three.js code to show the positions of these objects in the night sky,
+you will have to look up the r.a. and dec of each object
 
 add in compass directions
 
@@ -11,6 +13,7 @@ in addition to the explanation, show a larger view of the dso, that is the githu
 
 make the distance from the center of the celestial sphere a function of its distance from earth.
 
-For all those objects in the milkyway put at the same distance, for all the objects outside the milkyway put on another bigger sphere
+For all those objects in the milkyway put at the same distance, for all the objects outside the milkyway put
+on another bigger sphere
 
 instead of spheres, put the object log distance from the earth
