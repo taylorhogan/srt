@@ -79,27 +79,8 @@ def toggle_roof(dev_map):
 
 
 def get_status_with_lights():
-    dev_map = asyncio.run(ku.make_discovery_map())
 
-    instructions = (dict
-        (
-        {
-            "Observatory strip": 'on'
-        }
-    ))
-
-    #asyncio.run(ku.kasa_do(dev_map, instructions))
-    #time.sleep(10)
     parked, closed, open, mod_date = vision_safety.visual_status()
-    time.sleep(10)
-    instructions = (dict
-        (
-        {
-            "Observatory strip": 'off'
-        }
-    ))
-
-    asyncio.run(ku.kasa_do(dev_map, instructions))
 
     return parked, closed, open, mod_date
 
