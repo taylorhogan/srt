@@ -24,8 +24,7 @@ if __name__ == "__main__":
     logger.info('Start Start Sequence')
 
 
-    super_user_commands.safe_cmd (None, None)
-    super_user_commands.imaging_state(False)
+
     logger.info('Setting safety to safe and not imaging')
 
     dev_map = asyncio.run(ku.make_discovery_map())

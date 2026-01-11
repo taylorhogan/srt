@@ -5,6 +5,7 @@ import os,sys
 import time
 from datetime import datetime
 
+
 if __package__ is None or __package__ == "":
     project_root = os.path.abspath(os.path.join(os.path.dirname(__file__),  '..'))
     if project_root not in sys.path:
@@ -16,6 +17,7 @@ from control import instructions
 from cmd_processing import social_server
 from utils import utils, pushover
 from iris_astronomy.astro_dso_visibility import show_plots
+from cmd_processing import super_user_commands
 
 client = None
 observatory_state = {
@@ -173,7 +175,8 @@ def main():
     print("Starting Scheduler Server")
     cfg = config.data()
 
-
+    super_user_commands.safe_cmd (None, None)
+    super_user_commands.imaging_state(False)
     logger = utils.set_logger()
 
     cfg["logger"]["logging"] = logger
