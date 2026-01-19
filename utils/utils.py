@@ -6,12 +6,21 @@ import paho.mqtt.client as paho
 import logging
 from configs import config
 from pathlib import Path
+from datetime import datetime
 
 
 
 topic_to_sched = "iris/to_sched"
 topic_from_sched = "iris/from_sched"
 __logger = None
+
+
+def create_timestamped_filename(base_name, extension=""):
+    """Create a filename with base name plus current date and time."""
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    if extension and not extension.startswith("."):
+        extension = "." + extension
+    return f"{base_name}_{timestamp}{extension}"
 
 def set_logger ():
     global __logger

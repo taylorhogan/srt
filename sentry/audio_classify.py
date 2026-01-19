@@ -22,7 +22,7 @@ FORMAT = pyaudio.paFloat32      # Easier for RMS calculation
 CHANNELS = 1
 RATE = 44100                    # Common sample rate
 CHUNK = 1024                    # Audio chunk size
-THRESHOLD = 0.006               # RMS threshold – tune this based on your mic/environment (0.01–0.05 typical)
+THRESHOLD = 0.06              # RMS threshold – tune this based on your mic/environment (0.01–0.05 typical)
 RECORD_SECONDS = 10             # Length of audio clip to capture when sound is detected
 LIBRARY_DIR = "library_spectrograms/"   # Folder with your pre-saved spectrogram PNGs
 DETECTED_DIR = "detected_spectrograms/" # Where detected spectrograms will be saved (optional, for review)
@@ -66,7 +66,11 @@ def compare_to_library(new_img_path):
             lib_img = lib_img.resize(new_img.size, Image.LANCZOS)
             lib_array = img_as_float(np.array(lib_img))
 
-        score = ssim(new_array, lib_array, multichannel=True, channel_axis=-1,data_range=1.0)
+        #score = ssim(new_array, lib_array, multichannel=True, channel_axis=-1,data_range=1.0)
+        # Calculate MSE and convert to similarity score
+        mse = np.mean((new_array - lib_array) ** 2)
+        score = 1 / (1 + mse * 100)
+
         results.append((os.path.basename(lib_path), score))
         if score > best_score:
             best_score = score
