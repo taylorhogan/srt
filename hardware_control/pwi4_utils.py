@@ -9,6 +9,7 @@ if __package__ is None or __package__ == "":
 
 from hardware_control.pwi4_client import PWI4
 from utils import utils
+from configs import config
 
 
 def park_scope ():
@@ -40,7 +41,7 @@ def park_scope ():
 def get_is_parked ():
 
     try:
-        cfg = configs.data()
+        cfg = config.data()
 
 
         pwi4 = PWI4()
