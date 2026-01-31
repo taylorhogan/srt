@@ -5,6 +5,10 @@ import pytz
 import requests
 import sys
 import os
+from astral import LocationInfo
+from astral.sun import sun
+from datetime import datetime
+
 
 if __package__ is None or __package__ == "":
     project_root = os.path.abspath(os.path.join(os.path.dirname(__file__),  '..'))
@@ -15,23 +19,20 @@ from configs import config
 cfg = config.data()
 
 
-async def get_sunrise_sunset_internal() -> [datetime, datetime]:
-    async with python_weather.Client(unit=python_weather.IMPERIAL) as client:
-        # fetch a weather forecast from a city
-
-        city = cfg["location"]["city"]
-        forecast = await client.get(city)
-        today = forecast.daily_forecasts[0]
-        tomorrow = forecast.daily_forecasts[1]
-
-        sunset = today.sunset
-        sunrise = today.sunrise
-
-        return sunrise, sunset
 
 
 def get_sunrise_sunset() -> [datetime, datetime]:
-    return asyncio.run(get_sunrise_sunset_internal())
+    longitude = cfg["location"]["longitude"]
+    latitude = cfg["location"]["latitude"]
+    name = cfg["location"]["city"]
+    timezone = cfg["location"]["timezone"]
+    city = LocationInfo(name, "USA", timezone, latitude, longitude)
+    s = sun(city.observer, date=datetime.now())
+
+    sunrise = s["sunrise"]  # datetime with timezone
+    sunset = s["sunset"]  # datetime with timezone
+    print(sunrise, sunset)
+    return sunrise, sunset
 
 
 def get_weather_by_hour(lat, lon, hours):

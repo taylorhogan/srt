@@ -14,11 +14,12 @@ class PublicConfig():
             "logging": ""
         },
         "location": {
-            "city": "Hartford",
+            "city": "Boston",
             "latitude": 41.8096,
             "longitude": -72.8305,
             "elevation": 100,
-            "observatory_name": "Iris"
+            "observatory_name": "Iris",
+            "timezone": "America/New_York"
         },
 
         "nina": {
