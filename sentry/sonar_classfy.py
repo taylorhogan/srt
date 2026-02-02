@@ -2,7 +2,7 @@
 import statistics
 from gpiozero import DistanceSensor
 import os,sys
-
+import requests
 import time
 if __package__ is None or __package__ == "":
     project_root = os.path.abspath(os.path.join(os.path.dirname(__file__),  '..'))
@@ -10,6 +10,9 @@ if __package__ is None or __package__ == "":
         sys.path.insert(0, project_root)
 
 from utils import pushover
+from configs import config
+
+cfg = config.data()
 
 # ========================= CONFIGURATION =========================
 
@@ -31,7 +34,66 @@ SAMPLES_PER_READING = 5  # take 5 measurements and median filter
 READ_INTERVAL_SECONDS = 2  # how often we check the sensor
 DEBOUNCE_READINGS = 3  # need this many consecutive same state before we accept change
 
+# --- Temperature compensation ---
+DEFAULT_SPEED_OF_SOUND = 343.21  # m/s at ~20°C (gpiozero default assumption)
+TEMPERATURE_CACHE_SECONDS = 300  # refresh temperature every 5 minutes
+
 # ================================================================
+
+# Temperature caching
+_cached_temperature = None
+_temperature_last_fetched = 0
+
+
+def get_current_temperature():
+    """Fetch current temperature from Open-Meteo API. Returns temperature in Celsius or None on failure."""
+    global _cached_temperature, _temperature_last_fetched
+
+    current_time = time.time()
+    if _cached_temperature is not None and (current_time - _temperature_last_fetched) < TEMPERATURE_CACHE_SECONDS:
+        return _cached_temperature
+
+    try:
+        lat = cfg["location"]["latitude"]
+        lon = cfg["location"]["longitude"]
+        url = "https://api.open-meteo.com/v1/forecast"
+        params = {
+            "latitude": lat,
+            "longitude": lon,
+            "current_weather": True,
+            "timezone": "auto"
+        }
+        response = requests.get(url, params=params, timeout=10)
+        response.raise_for_status()
+        data = response.json()
+        _cached_temperature = data["current_weather"]["temperature"]
+        _temperature_last_fetched = current_time
+        print(f"Temperature updated: {_cached_temperature}°C")
+        return _cached_temperature
+    except Exception as e:
+        print(f"Failed to fetch temperature: {e}")
+        return _cached_temperature  # return cached value if available
+
+
+def calculate_speed_of_sound(temperature_celsius):
+    """Calculate speed of sound in air based on temperature.
+
+    Formula: v = 331.3 + 0.606 * T (m/s)
+    where T is temperature in Celsius.
+    """
+    if temperature_celsius is None:
+        return DEFAULT_SPEED_OF_SOUND
+    return 331.3 + 0.606 * temperature_celsius
+
+
+def get_temperature_correction_factor(temperature_celsius):
+    """Get the correction factor to apply to distance measurements.
+
+    gpiozero assumes speed of sound is ~343.21 m/s (20°C).
+    We correct by: actual_speed / assumed_speed
+    """
+    actual_speed = calculate_speed_of_sound(temperature_celsius)
+    return actual_speed / DEFAULT_SPEED_OF_SOUND
 
 # Initialize components
 
@@ -43,15 +105,30 @@ echo = DistanceSensor(echo=ECHO_PIN, trigger=TRIGGER_PIN, max_distance=4)  # 4 m
 
 
 
-def get_distance_cm():
-    """Return median distance in cm from several samples, or None on failure"""
+def get_distance_cm(temperature_celsius=None):
+    """Return median distance in cm from several samples, with temperature compensation.
+
+    Args:
+        temperature_celsius: Current temperature for speed of sound correction.
+                            If None, will attempt to fetch from weather API.
+
+    Returns:
+        Temperature-corrected distance in cm, or None on failure.
+    """
+    if temperature_celsius is None:
+        temperature_celsius = get_current_temperature()
+
+    correction_factor = get_temperature_correction_factor(temperature_celsius)
+
     distances = []
     for _ in range(SAMPLES_PER_READING):
         try:
             # gpiozero sometimes throws ValueError on bad readings
             dist = echo.distance * 100  # meters → cm
             if dist < 400:  # sanity check, HC-SR04 max ~400cm
-                distances.append(dist)
+                # Apply temperature correction
+                corrected_dist = dist * correction_factor
+                distances.append(corrected_dist)
         except Exception:
             pass
         time.sleep(0.06)
@@ -109,10 +186,12 @@ def roof_state ():
         try:
             dist = get_distance_cm()
 
+            temp = get_current_temperature()
             if dist is None:
-                print("No echo received")
+                print(f"No echo received (temp: {temp}°C)" if temp else "No echo received")
             else:
-                print(f"Distance: {dist:.1f} cm")
+                correction = get_temperature_correction_factor(temp)
+                print(f"Distance: {dist:.1f} cm (temp: {temp}°C, correction: {correction:.4f})")
 
             test_state = determine_roof_state(dist)
 

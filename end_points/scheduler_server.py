@@ -124,11 +124,11 @@ async def wait_a_bit():
 def waiting_for_sunset():
     set_state("Waiting For Sunset")
     sunrise, sunset = weather.get_sunrise_sunset()
-    now = datetime.now().time()
+    now = datetime.now(sunset.tzinfo)
     pushover.push_message("waiting for sunset at " + str (sunset))
 
     while now < sunset:
-        now = datetime.now().time()
+        now = datetime.now(sunset.tzinfo)
         asyncio.run(wait_a_bit())
 
     waiting_for_imaging()
@@ -138,10 +138,10 @@ def waiting_for_sunrise():
     wait_for_tomorrow()
     set_state("Waiting For Sunrise")
     sunrise, sunset = weather.get_sunrise_sunset()
-    now = datetime.now().time()
+    now = datetime.now(sunset.tzinfo)
 
     while now < sunrise:
-        now = datetime.now().time()
+        now = datetime.now(sunset.tzinfo)
         asyncio.run(wait_a_bit())
 
     waiting_for_noon()
