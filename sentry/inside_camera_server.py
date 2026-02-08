@@ -4,6 +4,7 @@ import cv2 as cv
 import numpy as np
 import os, sys
 import asyncio
+import time
 
 
 
@@ -80,7 +81,7 @@ def take_snapshot(test_path=None):
     vid.set(cv.CAP_PROP_AUTOFOCUS, 1)
 
     # --- Set manual exposure here ---
-    exposure_value = -6  # Try values from -1 (bright) to -11 (dark/short)
+    exposure_value = -1  # Try values from -1 (bright) to -11 (dark/short)
     vid.set(cv.CAP_PROP_EXPOSURE, exposure_value)
 
     # Sometimes helps to also explicitly disable auto exposure (0.25 or 0.75 works on MSMF)
@@ -89,16 +90,18 @@ def take_snapshot(test_path=None):
     dev_map = asyncio.run(ku.make_discovery_map())
     incoming_inside_light_status = super_user_commands.is_inside_light_on(dev_map)
 
-    for attempt in range (2):
+    for attempt in range (1):
         if attempt == 0:
             super_user_commands.turn_inside_light_on (dev_map)
+            time.sleep(5)
+
         else:
             super_user_commands.turn_inside_light_off(dev_map)
 
 
         pictures = []
         scores = []
-        for exposure_value in range(-1, -11, -1):
+        for exposure_value in range(-1, -2, -1):
             ret, frame = vid.read()
             if not ret:
                 return False
@@ -122,15 +125,15 @@ def take_snapshot(test_path=None):
 
     picture = []
     scores = []
-    for gamma_val in np.arange(0.1, 4.5, 0.1):
-        print(f"gamma: {gamma_val}")
-        result = gamma_correction(best_picture, gamma=gamma_val)
-        scores.append(best_exposure_score(result))
-        picture.append(result)
-
-    best_score = max(scores)
-    best_index = scores.index(best_score)
-    best_picture = picture[best_index]
+    # for gamma_val in np.arange(0.1, 4.5, 0.1):
+    #     print(f"gamma: {gamma_val}")
+    #     result = gamma_correction(best_picture, gamma=gamma_val)
+    #     scores.append(best_exposure_score(result))
+    #     picture.append(result)
+    #
+    # best_score = max(scores)
+    # best_index = scores.index(best_score)
+    # best_picture = picture[best_index]
     cv.imwrite(to_path, best_picture)
     #cv.imshow('Image Window Title', best_picture)
     #cv.waitKey(0)
