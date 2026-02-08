@@ -72,7 +72,7 @@ def take_snapshot(test_path=None):
     shutil.copyfile(no_image, to_path)
 
     # Open camera with DirectShow backend (best for exposure on Windows)
-    vid = cv.VideoCapture(0, cv.CAP_DSHOW)  # Change 0 if you have multiple cameras
+     # Change 0 if you have multiple cameras
 
     # Optional: set resolution/FPS first (helps some cameras)
     #vid.set(cv.CAP_PROP_FRAME_WIDTH, 3840)
@@ -102,6 +102,7 @@ def take_snapshot(test_path=None):
         pictures = []
         scores = []
         for exposure_value in range(-1, -2, -1):
+            vid = cv.VideoCapture(0, cv.CAP_DSHOW)
             ret, frame = vid.read()
             if not ret:
                 return False
