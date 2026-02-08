@@ -75,14 +75,14 @@ def take_snapshot(test_path=None):
     vid = cv.VideoCapture(0, cv.CAP_DSHOW)  # Change 0 if you have multiple cameras
 
     # Optional: set resolution/FPS first (helps some cameras)
-    vid.set(cv.CAP_PROP_FRAME_WIDTH, 3840)
-    vid.set(cv.CAP_PROP_FRAME_HEIGHT, 2160)
-    vid.set(cv.CAP_PROP_FPS, 30)
-    vid.set(cv.CAP_PROP_AUTOFOCUS, 1)
-
-    # --- Set manual exposure here ---
-    exposure_value = -1  # Try values from -1 (bright) to -11 (dark/short)
-    vid.set(cv.CAP_PROP_EXPOSURE, exposure_value)
+    #vid.set(cv.CAP_PROP_FRAME_WIDTH, 3840)
+    #vid.set(cv.CAP_PROP_FRAME_HEIGHT, 2160)
+    # vid.set(cv.CAP_PROP_FPS, 30)
+    # vid.set(cv.CAP_PROP_AUTOFOCUS, 1)
+    #
+    # # --- Set manual exposure here ---
+    # exposure_value = -1  # Try values from -1 (bright) to -11 (dark/short)
+    # vid.set(cv.CAP_PROP_EXPOSURE, exposure_value)
 
     # Sometimes helps to also explicitly disable auto exposure (0.25 or 0.75 works on MSMF)
     # cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 0.25)
@@ -105,7 +105,7 @@ def take_snapshot(test_path=None):
             ret, frame = vid.read()
             if not ret:
                 return False
-            vid.set(cv.CAP_PROP_EXPOSURE, exposure_value)
+            #vid.set(cv.CAP_PROP_EXPOSURE, exposure_value)
             # cv2.imshow('Camera - Manual Exposure', frame)
             score = best_exposure_score(frame)
             print(f"Exposure: {exposure_value} Score: {score}")
