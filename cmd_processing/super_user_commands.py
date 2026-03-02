@@ -3,6 +3,8 @@ import logging
 import os, sys
 import subprocess
 import time
+from collections.abc import Callable
+from typing import Any, Optional
 
 import requests
 
@@ -22,63 +24,41 @@ from end_points import end
 
 _logger = utils.set_logger()
 
-def is_inside_light_on(dev_map):
-    instructions = (dict
-        (
-        {
-            "Iris inside light": "ison"
-        }
-    ))
-
-    inside_light_on = asyncio.run(ku.kasa_check(dev_map, instructions))
+def is_inside_light_on(dev_map: dict) -> bool:
+    inst = {"Iris inside light": "ison"}
+    inside_light_on = asyncio.run(ku.kasa_check(dev_map, inst))
     return inside_light_on
 
 
-def turn_inside_light_on(dev_map):
-    instructions = (dict
-        (
-        {
-            "Iris inside light": 'on',
-        }
-    ))
-    asyncio.run(ku.kasa_do(dev_map, instructions))
+def turn_inside_light_on(dev_map: dict) -> None:
+    inst = {"Iris inside light": 'on'}
+    asyncio.run(ku.kasa_do(dev_map, inst))
     time.sleep(2)
 
 
-def turn_inside_light_off(dev_map):
-    instructions = (dict
-        (
-        {
-            "Iris inside light": 'off',
-        }
-    ))
-    asyncio.run(ku.kasa_do(dev_map, instructions))
+def turn_inside_light_off(dev_map: dict) -> None:
+    inst = {"Iris inside light": 'off'}
+    asyncio.run(ku.kasa_do(dev_map, inst))
     time.sleep(2)
 
 
-def toggle_roof(dev_map):
-    instructions = (dict
-        (
-        {
-            "Roof motor": 'on',
-        }
-    ))
-
-    asyncio.run(ku.kasa_do(dev_map, instructions))
+def toggle_roof(dev_map: dict) -> None:
+    inst = {"Roof motor": 'on'}
+    asyncio.run(ku.kasa_do(dev_map, inst))
     time.sleep(10)
-    r = requests.get('http://192.168.87.41/relay/0?turn=on')
+    try:
+        r = requests.get('http://192.168.87.41/relay/0?turn=on', timeout=10)
+        r.raise_for_status()
+    except requests.RequestException as e:
+        _logger.error("Failed to trigger relay in toggle_roof: %s", e)
+        raise
     time.sleep(45)
-    instructions = (dict
-        (
-        {
-            "Roof motor": 'off',
-        }
-    ))
-    asyncio.run(ku.kasa_do(dev_map, instructions))
+    inst = {"Roof motor": 'off'}
+    asyncio.run(ku.kasa_do(dev_map, inst))
 
 
 
-def get_status_with_lights():
+def get_status_with_lights() -> tuple[bool, bool, bool, Any]:
 
     parked, closed, open, mod_date = vision_safety.visual_status()
 
@@ -108,28 +88,28 @@ def open_roof_with_option(check: bool) -> bool:
         return False
 
 
-def open_roof_cmd_no_check(words, account):
+def open_roof_cmd_no_check(words: list[str], account: str) -> None:
     open_roof_with_option(False)
 
 
-def open_roof_cmd(words, account):
+def open_roof_cmd(words: list[str], account: str) -> None:
     open_roof_with_option(True)
 
 
-def unsafe_cmd(words, account):
+def unsafe_cmd(words: list[str], account: str) -> None:
     social_server.post_social_message("User has stopped imaging")
     utils.set_install_dir()
     with open("safety.txt", "w") as file:
         file.write("USER UNSAFE")
 
 
-def safe_cmd(words, account):
+def safe_cmd(words: list[str], account: str) -> None:
     social_server.post_social_message("User has said imaging is safe")
     utils.set_install_dir()
     with open("safety.txt", "w") as file:
         file.write("USER SAFE")
 
-def imaging_state(state):
+def imaging_state(state: bool) -> None:
 
     utils.set_install_dir()
     with open("imaging.txt", "w") as file:
@@ -138,41 +118,25 @@ def imaging_state(state):
         else:
             file.write("IMAGING FALSE")
 
-def open_if_mount_off_cmd(words, account):
+def open_if_mount_off_cmd(words: list[str], account: str) -> None:
     dev_map = asyncio.run(ku.make_discovery_map())
-    instructions = (dict
-        (
-        {
-            "Telescope mount": 'isoff',
-        }
-    ))
+    inst = {"Telescope mount": 'isoff'}
 
-
-
-    check_ok = asyncio.run(ku.kasa_check(dev_map, instructions))
+    check_ok = asyncio.run(ku.kasa_check(dev_map, inst))
     if check_ok:
         social_server.post_social_message("Mount is Off")
 
-        instructions = (dict
-            (
-            {
-                "Roof motor": 'on',
-                "Iris inside light": 'off'
-            }
-        ))
-
-        asyncio.run(ku.kasa_do(dev_map, instructions))
-        r = requests.get('http://192.168.87.41/relay/0?turn=on')
+        inst = {"Roof motor": 'on', "Iris inside light": 'off'}
+        asyncio.run(ku.kasa_do(dev_map, inst))
+        try:
+            r = requests.get('http://192.168.87.41/relay/0?turn=on', timeout=10)
+            r.raise_for_status()
+        except requests.RequestException as e:
+            _logger.error("Failed to trigger relay in open_if_mount_off_cmd: %s", e)
+            return
         time.sleep(30)
-        instructions = (dict
-            (
-            {
-                "Roof motor": 'off',
-                "Telescope mount": 'on',
-            }
-        ))
-
-        asyncio.run(ku.kasa_do(dev_map, instructions))
+        inst = {"Roof motor": 'off', "Telescope mount": 'on'}
+        asyncio.run(ku.kasa_do(dev_map, inst))
 
 
 
@@ -183,7 +147,7 @@ def open_if_mount_off_cmd(words, account):
     return
 
 
-def on_nina(words, account):
+def on_nina(words: Optional[list[str]], account: Optional[str]) -> None:
     print("Starting Nina")
     path = utils.set_install_dir()
     os.chdir(path)
@@ -193,21 +157,21 @@ def on_nina(words, account):
     print("Done with Nina")
 
 
-def image_nina1(words, account):
+def image_nina1(words: Optional[list[str]], account: Optional[str]) -> None:
     print("Starting Nina")
     path = utils.set_install_dir()
     print(path)
     subprocess.Popen(["image_nina1.bat"], shell=True)
     print("Done with Nina")
 
-def image_nina2(words, account):
+def image_nina2(words: Optional[list[str]], account: Optional[str]) -> None:
     print("Starting Nina")
     path = utils.set_install_dir()
     print(path)
     subprocess.Popen(["image_nina2.bat"], shell=True)
     print("Done with Nina")
 
-def image_nina_a(words, account):
+def image_nina_a(words: Optional[list[str]], account: Optional[str]) -> None:
     print("Starting Nina")
     path = utils.set_install_dir()
     print(path)
@@ -215,11 +179,11 @@ def image_nina_a(words, account):
     print("Done with Nina")
 
 
-def shutdown(words, account):
+def shutdown(words: list[str], account: str) -> None:
     return
 
 
-def print_help(account):
+def print_help(account: str) -> None:
     if not is_super_user(account):
         return
     reply = "Available SU commands are\n"
@@ -229,12 +193,12 @@ def print_help(account):
     social_server.post_social_message(reply)
 
 
-def dbb_cmd(words, account):
+def dbb_cmd(words: list[str], account: str) -> None:
     instructions.rehash_db()
     instructions.create_instructions_table(True)
 
 
-def dbr_cmd(words, account):
+def dbr_cmd(words: list[str], account: str) -> None:
     """
     rehash db, example dbr
     """
@@ -242,7 +206,7 @@ def dbr_cmd(words, account):
     instructions.create_instructions_table()
 
 
-def dbd_cmd(words, account):
+def dbd_cmd(words: list[str], account: str) -> None:
     """
        delete a db entry, example dbd 12
     """
@@ -251,17 +215,17 @@ def dbd_cmd(words, account):
     instructions.create_instructions_table()
 
 
-def dbc_cmd(words, account):
+def dbc_cmd(words: list[str], account: str) -> None:
     """
        mark db entry as complete, example dbc 1
         """
     logger = logging.getLogger(__name__)
-    logger.info("db_cmd", words)
+    logger.info("db_cmd %s", words)
     instructions.set_completed_instruction_db(words[2])
     instructions.create_instructions_table()
 
 
-def get_super_user_commands():
+def get_super_user_commands() -> dict[str, Callable]:
     return {
         "dbr": dbr_cmd,
         "dbd": dbd_cmd,
@@ -278,7 +242,7 @@ def get_super_user_commands():
     }
 
 
-def is_super_user(account):
+def is_super_user(account: str) -> bool:
     cfg = config.data()
 
     super_users = cfg["Super Users"]
@@ -288,7 +252,7 @@ def is_super_user(account):
         return False
 
 
-def do_super_user_command(words, account):
+def do_super_user_command(words: list[str], account: str) -> bool:
     if not is_super_user(account):
         print("no auth")
         return False
@@ -303,38 +267,36 @@ def do_super_user_command(words, account):
         return False
 
 
-def is_safe():
+def is_safe() -> bool:
     utils.set_install_dir()
-    with open("safety.txt", "r") as file:
-        first_line = file.readline()
-    if first_line == "USER SAFE":
-        return True
-    else:
+    try:
+        with open("safety.txt", "r") as file:
+            first_line = file.readline()
+    except FileNotFoundError:
         return False
+    return first_line == "USER SAFE"
 
-def is_imaging ():
-
-
+def is_imaging() -> bool:
     utils.set_install_dir()
-    with open("imaging.txt", "r") as file:
-        first_line = file.readline()
-    print (first_line)
-    if first_line == "IMAGING TRUE":
-        return True
-    else:
+    try:
+        with open("imaging.txt", "r") as file:
+            first_line = file.readline()
+    except FileNotFoundError:
         return False
+    print(first_line)
+    return first_line == "IMAGING TRUE"
 
-def image_cmd(words, account):
+def image_cmd(words: list[str], account: str) -> None:
     if is_imaging():
         pushover.push_message("Already imaging, cannot restart")
     else:
         imaging_state(True)
         doit_cmd(words, account)
-    imaging_state(False)
+        imaging_state(False)
 
 
 
-def doit_cmd(words, account):
+def doit_cmd(words: list[str], account: str) -> None:
 
     _logger.info("doit_cmd")
     cfg = config.data()
@@ -343,7 +305,7 @@ def doit_cmd(words, account):
 
 
     operand = 1
-    if len(words) > 1:
+    if len(words) > 2:
         operand = int(words[2])
 
     pushover.push_message(f"imaging! in mode {operand}")

@@ -6,6 +6,7 @@ from datetime import date
 import json
 import time
 import sys
+from typing import Any, Optional
 from bs4 import BeautifulSoup
 from mastodon import Mastodon, StreamListener
 from mastodon.streaming import CallbackStreamListener
@@ -26,11 +27,10 @@ from utils import utils
 
 
 
-
 _json_payload = None
 
 
-def get_dso_object_name(words, index):
+def get_dso_object_name(words: list[str], index: int) -> Optional[str]:
     if len(words) > index + 1:
         dso = words[index + 1]
     else:
@@ -40,7 +40,7 @@ def get_dso_object_name(words, index):
     return dso
 
 
-def image_cmd(words, index, m, account):
+def image_cmd(words: list[str], index: int, m: Mastodon, account: str) -> None:
     """
     example image m 13
     """
@@ -56,7 +56,7 @@ def image_cmd(words, index, m, account):
             post_social_message(dso_name + " Not a known object\n")
 
 
-def best_cmd(words, index, m, account):
+def best_cmd(words: list[str], index: int, m: Mastodon, account: str) -> None:
     """
        example best m 13
     """
@@ -79,7 +79,7 @@ def best_cmd(words, index, m, account):
             post_social_message(dso_name + " Not a known object\n")
 
 
-def tonight_cmd(words, index, m, account):
+def tonight_cmd(words: list[str], index: int, m: Mastodon, account: str) -> bool:
     print ("in tonight cmd", words, index)
     if len(words) == 2:
         best_instruction = instructions.get_dso_object_tonight()
@@ -109,7 +109,7 @@ def tonight_cmd(words, index, m, account):
 
 
 
-def version_cmd(words, index, m, account):
+def version_cmd(words: list[str], index: int, m: Mastodon, account: str) -> None:
     # Observatory State
     cfg = config.data()
 
@@ -117,7 +117,7 @@ def version_cmd(words, index, m, account):
     reply += "Observatory Status: " + cfg["Globals"]["Observatory State"]
     post_social_message(reply)
 
-def wait_for_mqtt_message (client, userdata, msg):
+def wait_for_mqtt_message(client: Any, userdata: Any, msg: Any) -> None:
     global _json_payload
     print ("setting payload to ")
     _json_payload = json.loads(msg.payload.decode("utf-8"))
@@ -129,7 +129,7 @@ def wait_for_mqtt_message (client, userdata, msg):
 
 
 
-def status_cmd(words, index, m, account):
+def status_cmd(words: list[str], index: int, m: Mastodon, account: str) -> None:
     # Observatory State
     cfg = config.data()
 
@@ -152,14 +152,13 @@ def status_cmd(words, index, m, account):
 
 
 
-def db_cmd(words, index, m, account):
+def db_cmd(words: list[str], index: int, m: Mastodon, account: str) -> None:
     instructions.create_instructions_table()
 
 
 
 
-
-def calendar_cmd(words, index, m, account):
+def calendar_cmd(words: list[str], index: int, m: Mastodon, account: str) -> None:
     # Observatory State
     cfg = config.data()
     today = date.today()
@@ -168,7 +167,7 @@ def calendar_cmd(words, index, m, account):
     post_social_message("", "cal.png")
 
 
-def help_cmd(words, index, m, account):
+def help_cmd(words: list[str], index: int, m: Mastodon, account: str) -> None:
     reply = "Available commands are\n"
     for word in keywords:
         action = keywords.get(word.strip(), "no_key")
@@ -182,7 +181,7 @@ def help_cmd(words, index, m, account):
     su.print_help(account)
 
 
-def latest_cmd(words, index, m, account):
+def latest_cmd(words: list[str], index: int, m: Mastodon, account: str) -> None:
     cfg = config.data()
 
     logger = logging.getLogger(__name__)
@@ -208,7 +207,7 @@ keywords = {
 }
 
 
-def do_command(sentence, m, account):
+def do_command(sentence: str, m: Mastodon, account: str) -> None:
 
     if not su.is_super_user(account):
         return
@@ -216,10 +215,16 @@ def do_command(sentence, m, account):
     cmd = sentence.lower()
     words = cmd.split(" ")
     seen_base_command = False
+    seen_super_user_commands = False
     #todo does not seem to remove leading blanks
 
     logger = logging.getLogger(__name__)
     logger.info("Got Command: " + sentence)
+
+    if len(words) < 2:
+        post_social_message("Command not recognized, ? for help")
+        return
+
     action = keywords.get(words[1].strip(), "no_key")
     logger.info("Action: " + str(action))
 
@@ -233,7 +238,8 @@ def do_command(sentence, m, account):
         post_social_message("Command not recognized, ? for help")
 
 
-def do_notification(notification, m):
+def do_notification(notification: Any, m: Mastodon) -> None:
+    cmd = ""
     try:
         print(notification['type'])
         account = notification.account.acct
@@ -242,7 +248,7 @@ def do_notification(notification, m):
         if note_type == 'mention' or note_type == 'reblog':
             cmd = BeautifulSoup(html, 'html.parser').get_text()
             do_command(cmd, m, account)
-    except:
+    except Exception:
         logger = logging.getLogger(__name__)
         logger.info('Problem')
         logger.exception("Exception")
@@ -251,17 +257,17 @@ def do_notification(notification, m):
 
 class TheStreamListener(StreamListener):
 
-    def on_update(self, status):
+    def on_update(self, status: dict) -> None:
         print(f"Got update: {status['content']}")
 
-    def on_notification(self, notification):
+    def on_notification(self, notification: Any) -> None:
         cfg = config.data()
         logger = logging.getLogger(__name__)
         mastodon = cfg["globals"]["mastodon instance"]
         do_notification(notification, mastodon)
 
 
-def get_mastodon_instance():
+def get_mastodon_instance() -> Mastodon:
     cfg = config.data()
     logger = logging.getLogger(__name__)
     access_token = cfg["mastodon"]["access_token"]
@@ -270,13 +276,14 @@ def get_mastodon_instance():
     return mastodon
 
 
-def post_social_message(message, image=None, vis=None):
+def post_social_message(message: str, image: Optional[str] = None, vis: Optional[str] = None) -> None:
     cfg = config.data()
     logger = logging.getLogger(__name__)
     mastodon = cfg["globals"]["mastodon instance"]
 
     if mastodon is None:
         mastodon = get_mastodon_instance()
+        cfg["globals"]["mastodon instance"] = mastodon
 
 
     if image is None:
@@ -290,7 +297,7 @@ def post_social_message(message, image=None, vis=None):
         mastodon.status_post(message, media_ids=media, visibility=vis)
 
 
-def handle_mention(notification):
+def handle_mention(notification: Any) -> None:
     cfg = config.data()
     if notification.type == "mention":
         print(notification.status.content)
@@ -298,7 +305,7 @@ def handle_mention(notification):
         do_notification(notification, mastodon)
 
 
-def start_interface():
+def start_interface() -> None:
     print("Starting Social Server")
     cfg = config.data()
     post_social_message("Starting Version " + cfg["version"]["date"])
@@ -313,11 +320,11 @@ def start_interface():
 
 
 
-async def wait_a_bit ():
+async def wait_a_bit() -> None:
     await asyncio.sleep(10)
 
 
-def main():
+def main() -> None:
     utils.set_install_dir()
     cfg = config.data()
     logger = logging.getLogger(__name__)
@@ -331,9 +338,7 @@ def main():
     logger.info('Started Social Server')
 
 
-    mastodon = get_mastodon_instance()
-
-    mastodon = cfg["globals"]["mastodon instance"]
+    cfg["globals"]["mastodon instance"] = get_mastodon_instance()
 
     mqtt_client = utils.connect_mqtt()
     cfg["globals"]["mqtt_client"] = mqtt_client
@@ -344,7 +349,7 @@ def main():
 
     try:
         start_interface()
-    except:
+    except Exception:
         logger.info('Problem')
         logger.exception("Exception")
         get_mastodon_instance().status_post("Oops I had a problem with Social server")
@@ -355,4 +360,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-

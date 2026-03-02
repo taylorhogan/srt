@@ -8,6 +8,8 @@ import math
 import operator
 import os
 import sys
+from collections.abc import Generator
+from typing import Any, Optional
 
 import astropy.units as u
 import matplotlib.pyplot as plt
@@ -37,7 +39,7 @@ cfg = config.data()
 _logger = utils.set_logger()
 
 
-def is_a_dso_object(name):
+def is_a_dso_object(name: str) -> Optional[FixedTarget]:
     try:
         dso = FixedTarget.from_name(name)
         return dso
@@ -45,14 +47,14 @@ def is_a_dso_object(name):
         return None
 
 
-def get_horizon_from_azimuth(this_az, az, al):
+def get_horizon_from_azimuth(this_az: float, az: list[float], al: list[float]) -> float:
     for idx in range(len(az) - 1):
         if this_az >= az[idx] and this_az <= az[idx + 1]:
             return al[idx]
     return al[-1]
 
 
-def get_dark_times (my_observatory, observe_time):
+def get_dark_times(my_observatory: Observer, observe_time: Time) -> tuple[datetime.datetime, datetime.datetime]:
 
     start = observe_time[0]
     local_tz = pytz.timezone('America/New_York')
@@ -68,7 +70,11 @@ def get_dark_times (my_observatory, observe_time):
 
     return start_of_dark_local, end_of_dark_local
 
-def find_alt_az_horizon_times(dso, my_observatory, observe_time):
+def find_alt_az_horizon_times(
+    dso: FixedTarget,
+    my_observatory: Observer,
+    observe_time: Time,
+) -> tuple[Any, Any, list[float], Optional[datetime.datetime], Optional[datetime.datetime], Optional[datetime.timedelta], float]:
     altitude = (my_observatory.altaz(observe_time, dso).alt) * (1 / u.deg)
 
     # Azimuth MUST be given to plot() in radians.
@@ -117,7 +123,7 @@ def find_alt_az_horizon_times(dso, my_observatory, observe_time):
     return altitude, azimuth, horizon, start_time, finish_time, elapsed_time, max_altitude
 
 
-def plot_my_dso_and_horizon(dso, my_observatory, observe_time):
+def plot_my_dso_and_horizon(dso: FixedTarget, my_observatory: Observer, observe_time: Time) -> bool:
     altitude, azimuth, horizon, start_time, finish_time, elapsed_time, max_altitude = find_alt_az_horizon_times(dso, my_observatory,
                                                                                                   observe_time)
 
@@ -244,7 +250,7 @@ def plot_my_dso_and_horizon(dso, my_observatory, observe_time):
     return weather_ok
 
 
-def show_plots(dso):
+def show_plots(dso: FixedTarget) -> tuple[Optional[str], Optional[str], Optional[str], bool]:
 
 
     longitude = cfg["location"]["longitude"]
@@ -310,7 +316,7 @@ def show_plots(dso):
     return altitude_path, image_path, sky_path, weather_ok
 
 
-def get_above_horizon_time(dso, time):
+def get_above_horizon_time(dso: FixedTarget, time: Time) -> tuple[Optional[datetime.timedelta], float]:
     longitude = cfg["location"]["longitude"]
     latitude = cfg["location"]["latitude"]
     elevation = cfg["location"]["elevation"]
@@ -329,14 +335,14 @@ def get_above_horizon_time(dso, time):
     return elapsed_time, max_altitude
 
 
-def air_mass (altitude):
+def air_mass(altitude: float) -> float:
     h = math.sin(math.radians(altitude))
     if h == 0:
         return 100
     else:
         return 1.0 / math.sin(math.radians(altitude))
 
-def map_az_to_horizon():
+def map_az_to_horizon() -> tuple[list[float], list[float]]:
     ax = plt.gca()
     data = []
     az = []
@@ -365,7 +371,7 @@ def map_az_to_horizon():
     return az, al
 
 
-def enumerate_days_of_year():
+def enumerate_days_of_year() -> Generator[datetime.date, None, None]:
 
     now = datetime.datetime.now()
 
@@ -377,31 +383,89 @@ def enumerate_days_of_year():
         yield current_day
 
 
-def best_day_for_dso(dso):
-    # Example usage for the year 2025
+def best_day_for_dso(dso: FixedTarget) -> tuple[Optional[datetime.datetime], Optional[datetime.timedelta], float]:
+    longitude = cfg["location"]["longitude"]
+    latitude = cfg["location"]["latitude"]
+    elevation = cfg["location"]["elevation"]
+    observatory_name = cfg["location"]["observatory_name"]
+
+    location = EarthLocation.from_geodetic(longitude * u.deg, latitude * u.deg, elevation * u.m)
+    my_observatory = Observer(location=location, name=observatory_name, timezone="US/Eastern")
+
+    days = list(enumerate_days_of_year())
+    n_days = len(days)
+    n_pts = 55
+
+    # Batch all 365 sunset lookups in a single call
+    day_times = Time([datetime.datetime(d.year, d.month, d.day, 14, 0, 0) for d in days])
+    sunsets = my_observatory.sun_set_time(day_times, which='nearest')
+
+    # Build a flat (n_days * n_pts,) Time array via JD arithmetic — no loop needed
+    offsets_hours = np.linspace(-1, 14, n_pts)
+    all_jd = sunsets.jd[:, np.newaxis] + offsets_hours[np.newaxis, :] / 24.0  # (n_days, n_pts)
+    all_times_flat = Time(all_jd.ravel(), format='jd')
+
+    # Single altaz call for all days and time points combined
+    altaz_all = my_observatory.altaz(all_times_flat, dso)
+    altitude_all = altaz_all.alt.deg.reshape(n_days, n_pts)
+    azimuth_all = altaz_all.az.deg.reshape(n_days, n_pts)
+
+    # Load the custom horizon profile once
+    az_horizon, al_horizon = map_az_to_horizon()
+
     best_time = None
     best_date = None
-    max_altitude = 0
-    for  day in enumerate_days_of_year():
-        try:
-            this_day = datetime.datetime(day.year, day.month, day.day, 14, 0, 0)
-            this_time = Time(this_day)
-            above_time, max_altitude = get_above_horizon_time(dso, this_time)
+    best_max_altitude = 0.0
 
-            if above_time is not None:
-                print(day.year, day.month, day.day, above_time / 3600, "{:.2f}".format((air_mass(max_altitude))))
-                if best_time is None or above_time > best_time:
-                    best_date = this_day
-                    best_time = above_time
-        except:
-            return None, None, None
+    for i, day in enumerate(days):
+        try:
+            observe_time_day = Time(all_jd[i], format='jd')
+            altitude = altitude_all[i]
+            azimuth = azimuth_all[i]
+
+            local_datetime = my_observatory.astropy_time_to_datetime(observe_time_day)
+            start_of_dark_local, end_of_dark_local = get_dark_times(my_observatory, observe_time_day)
+
+            start_time_day = None
+            finish_time_day = None
+            max_altitude_day = 0.0
+
+            for idx in range(n_pts):
+                h = get_horizon_from_azimuth(azimuth[idx], az_horizon, al_horizon)
+
+                if local_datetime[idx] > end_of_dark_local:
+                    if finish_time_day is None:
+                        finish_time_day = local_datetime[idx]
+                else:
+                    if local_datetime[idx] > start_of_dark_local:
+                        if altitude[idx] >= h:
+                            finish_time_day = None
+                            if start_time_day is None:
+                                start_time_day = local_datetime[idx]
+                        if altitude[idx] < h:
+                            if finish_time_day is None:
+                                finish_time_day = local_datetime[idx]
+                        if altitude[idx] > max_altitude_day:
+                            max_altitude_day = altitude[idx]
+
+            if start_time_day is not None:
+                elapsed_time = finish_time_day - start_time_day
+                print(day.year, day.month, day.day,
+                      elapsed_time.total_seconds() / 3600,
+                      "{:.2f}".format(air_mass(max_altitude_day)))
+                if best_time is None or elapsed_time > best_time:
+                    best_date = datetime.datetime(day.year, day.month, day.day, 14, 0, 0)
+                    best_time = elapsed_time
+                    best_max_altitude = max_altitude_day  # only update alongside best_date
+        except Exception:
+            continue  # skip bad days, don't abort the entire search
+
     if best_date is None:
         return None, None, None
-    else:
-        return best_date, best_time, max_altitude
+    return best_date, best_time, best_max_altitude
 
 
-def test_me():
+def test_me() -> None:
     obj = is_a_dso_object("m74")
     #d, t, max_altitude = best_day_for_dso(obj)
     #hours = t.seconds/3600
