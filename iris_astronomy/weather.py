@@ -1,13 +1,10 @@
-import asyncio
 from datetime import datetime
-import python_weather
 import pytz
 import requests
 import sys
 import os
 from astral import LocationInfo
 from astral.sun import sun
-from datetime import datetime
 
 
 if __package__ is None or __package__ == "":
@@ -21,7 +18,7 @@ cfg = config.data()
 
 
 
-def get_sunrise_sunset() -> [datetime, datetime]:
+def get_sunrise_sunset() -> tuple[datetime, datetime]:
     longitude = cfg["location"]["longitude"]
     latitude = cfg["location"]["latitude"]
     name = cfg["location"]["city"]
@@ -35,23 +32,28 @@ def get_sunrise_sunset() -> [datetime, datetime]:
     return sunrise, sunset
 
 
-def get_weather_by_hour(lat, lon, hours):
+def get_weather_by_hour(lat: float, lon: float, hours: int) -> tuple[list, list, list, list, list]:
     # Open-Meteo Forecast API (no key needed)
     forecast_url = "https://api.open-meteo.com/v1/forecast"
+    forecast_days = max(1, (hours + 23) // 24)
     params = {
         "latitude": lat,
         "longitude": lon,
         "hourly": ["cloud_cover", "precipitation_probability", "wind_speed_80m", "relative_humidity_2m"],
-        "forecast_days": 2,  # Ensure enough days
+        "forecast_days": forecast_days,
         "timezone": "auto"
     }
+
+    local_cloud_times: list = []
+    local_cloud_covers: list = []
+    local_precipitation_probability: list = []
+    local_wind_speed: list = []
+    local_humidity: list = []
 
     try:
         response = requests.get(forecast_url, params=params)
         response.raise_for_status()
         data = response.json()
-
-
 
         cloud_times = data["hourly"]["time"]
         cloud_covers = data["hourly"]["cloud_cover"]
@@ -60,12 +62,6 @@ def get_weather_by_hour(lat, lon, hours):
         humidity = data["hourly"]["relative_humidity_2m"]
 
         local_tz = pytz.timezone('America/New_York')
-        utc_timezone = pytz.utc
-        local_cloud_times = []
-        local_cloud_covers = []
-        local_precipitation_probability = []
-        local_wind_speed = []
-        local_humidity = []
 
         now = datetime.now(local_tz)
 

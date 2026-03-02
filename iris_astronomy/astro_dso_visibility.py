@@ -3,6 +3,7 @@
 #   how many hours will it be visible > some altitude
 # https://astroplan.readthedocs.io/en/stable/
 import datetime
+import json
 import math
 
 import operator
@@ -19,6 +20,7 @@ import astroplan.plots
 from astroplan import FixedTarget
 from astroplan import Observer
 from astroplan import moon_illumination
+from astroquery.simbad import Simbad
 from astropy.coordinates import EarthLocation, AltAz, get_body
 from astropy.time import Time
 from matplotlib import dates
@@ -37,6 +39,35 @@ from utils import utils
 
 cfg = config.data()
 _logger = utils.set_logger()
+
+
+_GALAXY_TYPES = {
+    'G', 'GiC', 'GiG', 'GiP', 'SyG', 'Sy1', 'Sy2', 'rG', 'HzG',
+    'AGN', 'EmG', 'BiC', 'BCD', 'dSph', 'LSB', 'cD', 'LIN',
+}
+_CLUSTER_TYPES = {'ClG', 'GrG', 'PCG', 'SCG'}
+_NEBULA_TYPES  = {'PN', 'HII', 'SNR', 'RNe', 'MoC', 'Neb', 'HH', 'DNeb', 'GNeb', 'RfN'}
+
+_simbad = Simbad()
+_simbad.add_votable_fields('otype')
+
+
+def get_dso_type(name: str) -> str:
+    try:
+        result = _simbad.query_object(name)
+        if result is None:
+            return "?"
+        col = 'OTYPE' if 'OTYPE' in result.colnames else 'otype'
+        otype = str(result[col][0])
+        if otype in _GALAXY_TYPES:
+            return "G"
+        if otype in _CLUSTER_TYPES:
+            return "C"
+        if otype in _NEBULA_TYPES:
+            return "N"
+        return "?"
+    except Exception:
+        return "?"
 
 
 def is_a_dso_object(name: str) -> Optional[FixedTarget]:
@@ -184,13 +215,8 @@ def plot_my_dso_and_horizon(dso: FixedTarget, my_observatory: Observer, observe_
                 clipped_pp.append(pp[j]/100*90)
                 clipped_wsp.append(wsp[j]/40*90)
                 clipped_hum.append(hum[j]/100*90)
-                if cloud_covers[j] > 80:
+                if not is_weather_ok(cloud_covers[j], pp[j], wsp[j]):
                     weather_ok = False
-                    print ("bad cloud cover", cloud_time_hour, cloud_covers[j])
-
-                if pp[j] > 20:
-                    weather_ok = False
-                    print ("bad prob of precip", cloud_time_hour, pp[j])
 
 
 
@@ -342,6 +368,17 @@ def air_mass(altitude: float) -> float:
     else:
         return 1.0 / math.sin(math.radians(altitude))
 
+def is_weather_ok(cloud_cover: float, precipitation_probability: float, wind_speed: float) -> bool:
+    ok = True
+    if cloud_cover > 80:
+        print("bad cloud cover", cloud_cover)
+        ok = False
+    if precipitation_probability > 20:
+        print("bad prob of precip", precipitation_probability)
+        ok = False
+    return ok
+
+
 def map_az_to_horizon() -> tuple[list[float], list[float]]:
     ax = plt.gca()
     data = []
@@ -465,6 +502,168 @@ def best_day_for_dso(dso: FixedTarget) -> tuple[Optional[datetime.datetime], Opt
     return best_date, best_time, best_max_altitude
 
 
+def best_object_tonight(instructions_path: Path | str) -> None:
+    """
+    Read a list of DSO objects from a JSON file, compute how many hours of
+    good-weather imaging time each 'waiting' object has tonight, and print
+    the results sorted best-first.
+    """
+    with open(instructions_path, "r") as f:
+        objects = json.load(f)
+
+    waiting = [obj for obj in objects if obj.get("status") == "waiting"]
+    if not waiting:
+        print("No waiting objects found.")
+        return
+
+    longitude = cfg["location"]["longitude"]
+    latitude = cfg["location"]["latitude"]
+    elevation = cfg["location"]["elevation"]
+    observatory_name = cfg["location"]["observatory_name"]
+
+    location = EarthLocation.from_geodetic(longitude * u.deg, latitude * u.deg, elevation * u.m)
+    my_observatory = Observer(location=location, name=observatory_name, timezone="US/Eastern")
+
+    sunset_tonight = my_observatory.sun_set_time(Time.now(), which="nearest")
+    observe_time = sunset_tonight + np.linspace(-1, 14, 55) * u.hour
+
+    start_of_dark, end_of_dark = get_dark_times(my_observatory, observe_time)
+    az_horizon, al_horizon = map_az_to_horizon()
+
+    cloud_times, cloud_covers, pp, wsp, hum = weather.get_weather_by_hour(latitude, longitude, 24)
+    weather_by_hour: dict[int, bool] = {
+        cloud_times[j]: is_weather_ok(cloud_covers[j], pp[j], wsp[j])
+        for j in range(len(cloud_times))
+    }
+
+    # Build the list of full hours within the dark window
+    t = start_of_dark.replace(minute=0, second=0, microsecond=0)
+    if t < start_of_dark:
+        t += datetime.timedelta(hours=1)
+    dark_hours: list[datetime.datetime] = []
+    while t <= end_of_dark:
+        dark_hours.append(t)
+        t += datetime.timedelta(hours=1)
+
+    if not dark_hours:
+        print("No dark hours found tonight.")
+        return
+
+    # Convert to astropy Time (UTC) for altaz calculations
+    hour_times = Time(
+        [h.astimezone(pytz.utc).replace(tzinfo=None) for h in dark_hours],
+        scale="utc"
+    )
+
+    # Build one row per object: (name, good_hour_count, max_altitude, dso_type, horizon_symbols)
+    rows: list[tuple[str, int, float, str, list[str]]] = []
+    for obj in waiting:
+        dso_name = obj["dso"]
+        dso = is_a_dso_object(dso_name)
+        if dso is None:
+            continue
+        try:
+            altaz = my_observatory.altaz(hour_times, dso)
+            altitude = altaz.alt.deg
+            azimuth = altaz.az.deg
+        except Exception:
+            continue
+
+        symbols: list[str] = []
+        good_count = 0
+        max_alt = 0.0
+        for i, dt in enumerate(dark_hours):
+            h_limit = get_horizon_from_azimuth(azimuth[i], az_horizon, al_horizon)
+            above = altitude[i] >= h_limit
+            symbols.append("+" if above else "-")
+            if above and weather_by_hour.get(dt.hour, False):
+                good_count += 1
+            if altitude[i] > max_alt:
+                max_alt = float(altitude[i])
+        rows.append((dso_name, good_count, max_alt, get_dso_type(dso_name), symbols))
+
+    rows.sort(key=lambda x: (x[1], x[2]), reverse=True)
+
+    # Build table data shared by both the console print and the PNG
+    col = 3
+    label_width = max((len(r[0]) for r in rows), default=7)
+    label_width = max(label_width, len("weather")) + 2
+
+    hour_header   = [f"{dt.hour:02d}" for dt in dark_hours]
+    weather_syms  = ["$" if weather_by_hour.get(dt.hour, False) else "*" for dt in dark_hours]
+    object_lines  = [
+        (name, symbols, f"{max_alt:5.1f}°", f"{good_count}h", dso_type)
+        for name, good_count, max_alt, dso_type, symbols in rows
+    ]
+
+    # --- Console print ---
+    print("\n--- Tonight's Imaging Grid ---")
+    print(" " * label_width + "".join(f"{h:>{col}s}" for h in hour_header))
+    print(f"{'weather':<{label_width}}" + "".join(f"{s:>{col}s}" for s in weather_syms))
+    for name, symbols, alt_str, hrs_str, dso_type in object_lines:
+        print(f"{name:<{label_width}}" + "".join(f"{s:>{col}s}" for s in symbols) + f"  {alt_str}  {hrs_str}  {dso_type}")
+
+    # --- PNG ---
+    n_obj  = len(object_lines)
+    n_cols = len(dark_hours)
+
+    # Colour maps for symbols
+    ABOVE_COLOR   = "#d4f4d4"   # light green  — above horizon
+    BELOW_COLOR   = "#f4d4d4"   # light red    — below horizon
+    GOOD_WEATHER  = "#d4ecd4"   # light green  — good weather
+    BAD_WEATHER   = "#f0d0d0"   # light red    — bad weather
+    HEADER_COLOR  = "#dde8f0"   # blue-grey    — header row
+
+    fig_w = max(10, 2 + n_cols * 0.45)
+    fig_h = max(3,  1 + (n_obj + 2) * 0.35)
+    fig, ax = plt.subplots(figsize=(fig_w, fig_h))
+    ax.axis("off")
+
+    # Build cell text and colours row by row
+    col_labels = ["object"] + hour_header + ["alt", "hrs", "type"]
+    cell_text: list[list[str]] = []
+    cell_colors: list[list[str]] = []
+
+    # Weather row
+    cell_text.append(["weather"] + weather_syms + ["", "", ""])
+    cell_colors.append(
+        [HEADER_COLOR]
+        + [GOOD_WEATHER if s == "$" else BAD_WEATHER for s in weather_syms]
+        + [HEADER_COLOR, HEADER_COLOR, HEADER_COLOR]
+    )
+
+    # Object rows
+    for name, symbols, alt_str, hrs_str, dso_type in object_lines:
+        cell_text.append([name] + symbols + [alt_str.strip(), hrs_str, dso_type])
+        cell_colors.append(
+            [HEADER_COLOR]
+            + [ABOVE_COLOR if s == "+" else BELOW_COLOR for s in symbols]
+            + [HEADER_COLOR, HEADER_COLOR, HEADER_COLOR]
+        )
+
+    table = ax.table(
+        cellText=cell_text,
+        colLabels=col_labels,
+        cellColours=cell_colors,
+        cellLoc="center",
+        loc="center",
+    )
+    table.auto_set_font_size(False)
+    table.set_fontsize(9)
+    table.auto_set_column_width(list(range(len(col_labels))))
+
+    ax.set_title("Tonight's Imaging Grid", fontsize=12, fontweight="bold", pad=10)
+
+    dir_name = os.path.dirname(__file__)
+    scratch_dir = os.path.join(dir_name, "scratch")
+    if not os.path.exists(scratch_dir):
+        os.mkdir(scratch_dir)
+    png_path = os.path.join(scratch_dir, "imaging_grid.png")
+    plt.savefig(png_path, bbox_inches="tight", dpi=150)
+    plt.clf()
+    print(f"Grid saved to {png_path}")
+
+
 def test_me() -> None:
     obj = is_a_dso_object("m74")
     #d, t, max_altitude = best_day_for_dso(obj)
@@ -477,4 +676,4 @@ def test_me() -> None:
 
 
 if __name__ == '__main__':
-    test_me()
+    best_object_tonight("/home/taylor/Documents/srt/local/my_instructions.json")

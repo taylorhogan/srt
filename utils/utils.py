@@ -2,7 +2,7 @@ import os
 import random
 from hardware_control import kasa_utils as ku
 import asyncio
-import paho.mqtt.client as paho
+
 import logging
 from configs import config
 from pathlib import Path
@@ -57,6 +57,7 @@ def get_device_map ():
     return dev_map
 
 def connect_mqtt():
+    import paho.mqtt.client as paho
     def on_connect(client, userdata, flags, rc, properties):
         if rc == 0:
             print("Connected to MQTT Broker!")
