@@ -1,5 +1,5 @@
 @ECHO off
-CLS
-C:\Users\iriso\Documents\development\srt\venv\Scripts\python C:\Users\iriso\Documents\development\srt\end_points\start.py
+cd /d C:\Users\iriso\Documents\development\srt
+uv run C:\Users\iriso\Documents\development\srt\end_points\start.py
 EXIT /b 0
 
