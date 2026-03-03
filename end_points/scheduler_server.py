@@ -28,22 +28,22 @@ observatory_state = {
 
 
 def message_handling(client, userdata, msg):
-    message = msg.payload.decode("utf-8")
+    # Bug 2 fixed: only publish a response when the message is on the expected topic
     if msg.topic == utils.topic_to_sched:
         print("incoming message", msg)
-    json_payload = json.dumps(observatory_state)
+        json_payload = json.dumps(observatory_state)
 
-    topic = "iris/from_sched"
-    cfg = config.data()
-    logger = cfg["logger"]["logging"]
-    logger.info(f"Send `{json_payload}` to topic `{topic}`")
+        topic = "iris/from_sched"
+        cfg = config.data()
+        logger = cfg["logger"]["logging"]
+        logger.info(f"Send `{json_payload}` to topic `{topic}`")
 
-    result = client.publish(topic, json_payload)
-    status = result[0]
-    if status == 0:
-        print(f"Send `{msg}` to topic `{topic}`")
-    else:
-        print(f"Failed to send message to topic {topic}")
+        result = client.publish(topic, json_payload)
+        status = result[0]
+        if status == 0:
+            print(f"Send `{json_payload}` to topic `{topic}`")
+        else:
+            print(f"Failed to send message to topic {topic}")
 
 
 def set_state(state, dso=None, will_image_tonight=None):
@@ -66,8 +66,7 @@ def waiting_for_boot():
 
 def waiting_for_noon():
     set_state("Waiting For Noon")
-    instructions.calc_and_store_hours_above_horizon()
-
+    # Bug 7 fixed: only calculate after noon, not redundantly before the wait loop
     now = datetime.now().time()
 
     while now.hour < 12:
@@ -75,31 +74,37 @@ def waiting_for_noon():
         asyncio.run(wait_a_bit())
 
     instructions.calc_and_store_hours_above_horizon()
-    print ("announcing plans before sunset")
+    print("announcing plans before sunset")
     image, dso = announce_plans_before_sunset()
-    print ("announced")
+    print("announced")
 
-    set_state(observatory_state["state"], dso)
+    # Bug 8 fixed: removed redundant set_state call; announce_plans_before_sunset already sets it
     if image:
-        print ("imaging, waiting for sunset")
+        print("imaging, waiting for sunset")
         waiting_for_sunset()
     else:
-        print ("not imaging, waiting for sunrise")
+        print("not imaging, waiting for sunrise")
         waiting_for_sunrise()
 
 
 def imaging():
     set_state("Imaging")
     asyncio.run(wait_a_bit())
-    #super_user_commands.image_cmd("", "iris")
+    # Bug 3 fixed: uncommented the actual imaging command
+    super_user_commands.image_cmd("", "iris")
     waiting_for_sunrise()
 
 
 def wait_for_tomorrow():
-    now = datetime.now().time()
+    # Bug 4 fixed: wait until midnight using a target datetime comparison instead
+    # of checking hour > 0, which would loop for ~24h if called after midnight.
+    now = datetime.now()
+    midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    if now >= midnight:
+        from datetime import timedelta
+        midnight = midnight + timedelta(days=1)
 
-    while now.hour > 0:
-        now = datetime.now().time()
+    while datetime.now() < midnight:
         asyncio.run(wait_a_bit())
 
 
@@ -108,7 +113,8 @@ def waiting_for_imaging():
     best_instruction = instructions.get_dso_object_tonight()
     dso = best_instruction["dso"]
     obj = astro_dso_visibility.is_a_dso_object(dso)
-    weather_ok = show_plots(obj)
+    # Bug 1 fixed: show_plots returns 4 values; capture the bool from the 4th
+    _, _, _, weather_ok = show_plots(obj)
 
     if weather_ok:
         imaging()
@@ -125,7 +131,7 @@ def waiting_for_sunset():
     set_state("Waiting For Sunset")
     sunrise, sunset = weather.get_sunrise_sunset()
     now = datetime.now(sunset.tzinfo)
-    pushover.push_message("waiting for sunset at " + str (sunset))
+    pushover.push_message("waiting for sunset at " + str(sunset))
 
     while now < sunset:
         now = datetime.now(sunset.tzinfo)
@@ -138,10 +144,10 @@ def waiting_for_sunrise():
     wait_for_tomorrow()
     set_state("Waiting For Sunrise")
     sunrise, sunset = weather.get_sunrise_sunset()
-    now = datetime.now(sunset.tzinfo)
+    now = datetime.now(sunrise.tzinfo)
 
     while now < sunrise:
-        now = datetime.now(sunset.tzinfo)
+        now = datetime.now(sunrise.tzinfo)
         asyncio.run(wait_a_bit())
 
     waiting_for_noon()
@@ -157,12 +163,10 @@ def announce_plans_before_sunset():
     requestor = best_instruction["requestor"]
 
     if weather_ok:
-
         social_server.post_social_message("Will image " + dso + " requested by " + requestor + " tonight")
         obs_calendar.set_today_stat('image', dso)
         set_state(observatory_state["state"], dso, True)
         return True, dso
-
     else:
         social_server.post_social_message(
             "Will NOT image " + dso + " requested by " + requestor + " tonight because of weather")
@@ -175,7 +179,7 @@ def main():
     print("Starting Scheduler Server")
     cfg = config.data()
 
-    super_user_commands.safe_cmd (None, None)
+    super_user_commands.safe_cmd(None, None)
     super_user_commands.imaging_state(False)
     logger = utils.set_logger()
 
@@ -187,14 +191,19 @@ def main():
     client.on_message = message_handling
     client.loop_start()
 
+    # Bug 5 fixed: bare except -> except Exception
     try:
         asyncio.run(wait_a_bit())
         waiting_for_noon()
-    except:
-
+    except Exception:
         logger.info('Problem')
         logger.exception("Exception")
-        social_server.get_mastodon_instance().status_post("Oops I had a problem with Scheduler server")
+        # Bug 6 fixed: wrap Mastodon post in its own try so a Mastodon failure
+        # doesn't hide the original exception already logged above
+        try:
+            social_server.get_mastodon_instance().status_post("Oops I had a problem with Scheduler server")
+        except Exception:
+            logger.exception("Also failed to post exception notice to Mastodon")
         waiting_for_boot()
 
 

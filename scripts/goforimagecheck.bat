@@ -2,7 +2,7 @@
 CLS
 pushd
 cd %~dp0
-C:\Users\iriso\Documents\development\srt\venv\Scripts\python C:\Users\iriso\Documents\development\srt\end_points\goforimagecheck.py %cd%
+uv run C:\Users\iriso\Documents\development\srt\end_points\goforimagecheck.py %cd%
 popd
 set myvar=12345
 setx NINAESRC %myvar%
