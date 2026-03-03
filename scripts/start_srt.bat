@@ -1,4 +1,4 @@
-@ECHO off
-CLS
-uv run C:\Users\iriso\Documents\development\srt\end_points\start_srt.py >>C:\Users\iriso\Documents\development\srt\cron.log
-EXIT /b 0
+  @ECHO off
+  cd /d C:\Users\iriso\Documents\development\srt
+  uv run end_points\start_srt.py >>cron.log 2>&1
+  EXIT /b 0
