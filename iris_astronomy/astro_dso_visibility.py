@@ -502,7 +502,7 @@ def best_day_for_dso(dso: FixedTarget) -> tuple[Optional[datetime.datetime], Opt
     return best_date, best_time, best_max_altitude
 
 
-def best_object_tonight(instructions_path: Path | str) -> None:
+def best_object_tonight(instructions_path: Path | str) -> tuple[str, Optional[datetime.datetime], int]:
     """
     Read a list of DSO objects from a JSON file, compute how many hours of
     good-weather imaging time each 'waiting' object has tonight, and print
@@ -514,7 +514,7 @@ def best_object_tonight(instructions_path: Path | str) -> None:
     waiting = [obj for obj in objects if obj.get("status") == "waiting"]
     if not waiting:
         print("No waiting objects found.")
-        return
+        return "", None, 0
 
     longitude = cfg["location"]["longitude"]
     latitude = cfg["location"]["latitude"]
@@ -547,7 +547,7 @@ def best_object_tonight(instructions_path: Path | str) -> None:
 
     if not dark_hours:
         print("No dark hours found tonight.")
-        return
+        return "", None, 0
 
     # Convert to astropy Time (UTC) for altaz calculations
     hour_times = Time(
@@ -555,8 +555,8 @@ def best_object_tonight(instructions_path: Path | str) -> None:
         scale="utc"
     )
 
-    # Build one row per object: (name, good_hour_count, max_altitude, dso_type, horizon_symbols)
-    rows: list[tuple[str, int, float, str, list[str]]] = []
+    # Build one row per object: (name, good_hour_count, max_altitude, dso_type, start_time, horizon_symbols)
+    rows: list[tuple[str, int, float, str, Optional[datetime.datetime], list[str]]] = []
     for obj in waiting:
         dso_name = obj["dso"]
         dso = is_a_dso_object(dso_name)
@@ -572,15 +572,18 @@ def best_object_tonight(instructions_path: Path | str) -> None:
         symbols: list[str] = []
         good_count = 0
         max_alt = 0.0
+        start_time: Optional[datetime.datetime] = None
         for i, dt in enumerate(dark_hours):
             h_limit = get_horizon_from_azimuth(azimuth[i], az_horizon, al_horizon)
             above = altitude[i] >= h_limit
             symbols.append("+" if above else "-")
             if above and weather_by_hour.get(dt.hour, False):
                 good_count += 1
+                if start_time is None:
+                    start_time = dt
             if altitude[i] > max_alt:
                 max_alt = float(altitude[i])
-        rows.append((dso_name, good_count, max_alt, get_dso_type(dso_name), symbols))
+        rows.append((dso_name, good_count, max_alt, get_dso_type(dso_name), start_time, symbols))
 
     rows.sort(key=lambda x: (x[1], x[2]), reverse=True)
 
@@ -593,7 +596,7 @@ def best_object_tonight(instructions_path: Path | str) -> None:
     weather_syms  = ["$" if weather_by_hour.get(dt.hour, False) else "*" for dt in dark_hours]
     object_lines  = [
         (name, symbols, f"{max_alt:5.1f}°", f"{good_count}h", dso_type)
-        for name, good_count, max_alt, dso_type, symbols in rows
+        for name, good_count, max_alt, dso_type, _start, symbols in rows
     ]
 
     # --- Console print ---
@@ -662,6 +665,11 @@ def best_object_tonight(instructions_path: Path | str) -> None:
     plt.savefig(png_path, bbox_inches="tight", dpi=150)
     plt.clf()
     print(f"Grid saved to {png_path}")
+
+    if not rows:
+        return "", None, 0
+    best_name, best_good_count, _, _, best_start, _ = rows[0]
+    return best_name, best_start, best_good_count
 
 
 def test_me() -> None:

@@ -23,7 +23,8 @@ class PublicConfig():
         },
 
         "nina": {
-            "image_dir": "C:/Users/iriso/Documents/N.I.N.A/Targets"
+            "image_dir": "C:/Users/iriso/Documents/N.I.N.A/Targets",
+            "sequence_main1" :"C:/Users/iriso/Documents/N.I.N.A/Sequences/cdk_fill_sequence.json"
         },
 
         "camera safety": {
