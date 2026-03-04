@@ -19,13 +19,17 @@ class PublicConfig():
             "longitude": -72.8305,
             "elevation": 100,
             "observatory_name": "Iris",
-            "timezone": "America/New_York"
-        },
+            "timezone": "America/New_York",
+            "instructions":"/home/taylor/Documents/srt/local/my_instructions.json",
+            "image_grid":"/home/taylor/Documents/srt/local/imaging_grid.png"
+    },
 
         "nina": {
             "image_dir": "C:/Users/iriso/Documents/N.I.N.A/Targets",
-            "sequence_main1" :"C:/Users/iriso/Documents/N.I.N.A/Sequences/cdk_fill_sequence.json"
-        },
+            "sequence_output": "C:/Users/iriso/Documents/N.I.N.A/Sequences/full_for_tonight",
+            "sequence_input":"C:/Users/home/taylor/Documents/srt/local/sequence_template.json"
+
+    },
 
         "camera safety": {
             "parked azimuth deg": 56,

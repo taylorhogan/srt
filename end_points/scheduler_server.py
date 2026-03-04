@@ -19,6 +19,10 @@ from utils import utils, pushover
 from iris_astronomy.astro_dso_visibility import show_plots
 from cmd_processing import super_user_commands
 
+CFG = config.data()
+LOGGER = utils.set_logger()
+CFG["logger"]["logging"] = LOGGER
+
 client = None
 observatory_state = {
     "state": "Unknown",
@@ -34,9 +38,7 @@ def message_handling(client, userdata, msg):
         json_payload = json.dumps(observatory_state)
 
         topic = "iris/from_sched"
-        cfg = config.data()
-        logger = cfg["logger"]["logging"]
-        logger.info(f"Send `{json_payload}` to topic `{topic}`")
+        LOGGER.info(f"Send `{json_payload}` to topic `{topic}`")
 
         result = client.publish(topic, json_payload)
         status = result[0]
@@ -157,11 +159,11 @@ def announce_plans_before_sunset():
     global observatory_state
 
     weather_ok = social_server.tonight_cmd(["me", "tonight"], 1, "", "")
-
+    best_name, best_start, best_good_hours = astro_dso_visibility.best_object_tonight(CFG["location"]["instructions"])
     best_instruction = instructions.get_dso_object_tonight()
-    dso = best_instruction["dso"]
-    requestor = best_instruction["requestor"]
-
+    dso = best_name
+    requestor = "taylor"
+    social_server.post_social_message("Tonight's imaging grid", image=CFG["location"]["image_grid"])
     if weather_ok:
         social_server.post_social_message("Will image " + dso + " requested by " + requestor + " tonight")
         obs_calendar.set_today_stat('image', dso)
@@ -177,14 +179,9 @@ def announce_plans_before_sunset():
 
 def main():
     print("Starting Scheduler Server")
-    cfg = config.data()
-
     super_user_commands.safe_cmd(None, None)
     super_user_commands.imaging_state(False)
-    logger = utils.set_logger()
-
-    cfg["logger"]["logging"] = logger
-    logger.info('Start Scheduler')
+    LOGGER.info('Start Scheduler')
     utils.set_install_dir()
     client = utils.connect_mqtt()
     client.subscribe(utils.topic_to_sched)
@@ -196,14 +193,14 @@ def main():
         asyncio.run(wait_a_bit())
         waiting_for_noon()
     except Exception:
-        logger.info('Problem')
-        logger.exception("Exception")
+        LOGGER.info('Problem')
+        LOGGER.exception("Exception")
         # Bug 6 fixed: wrap Mastodon post in its own try so a Mastodon failure
         # doesn't hide the original exception already logged above
         try:
             social_server.get_mastodon_instance().status_post("Oops I had a problem with Scheduler server")
         except Exception:
-            logger.exception("Also failed to post exception notice to Mastodon")
+            LOGGER.exception("Also failed to post exception notice to Mastodon")
         waiting_for_boot()
 
 

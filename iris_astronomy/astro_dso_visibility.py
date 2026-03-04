@@ -37,8 +37,9 @@ from iris_astronomy import weather
 from utils import utils
 
 
-cfg = config.data()
-_logger = utils.set_logger()
+CFG = config.data()
+LOGGER = utils.set_logger()
+CFG["logger"]["logging"] = LOGGER
 
 
 _GALAXY_TYPES = {
@@ -166,11 +167,11 @@ def plot_my_dso_and_horizon(dso: FixedTarget, my_observatory: Observer, observe_
 
 
 
-    longitude = cfg["location"]["longitude"]
-    latitude = cfg["location"]["latitude"]
-    elevation = cfg["location"]["elevation"]
-    observatory_name = cfg["location"]["observatory_name"]
-    city = cfg["location"]["city"]
+    longitude = CFG["location"]["longitude"]
+    latitude = CFG["location"]["latitude"]
+    elevation = CFG["location"]["elevation"]
+    observatory_name = CFG["location"]["observatory_name"]
+    city = CFG["location"]["city"]
 
     location = EarthLocation.from_geodetic(longitude * u.deg, latitude * u.deg, elevation * u.m)
     my_observatory = Observer(location=location, name=observatory_name, timezone="US/Eastern")
@@ -279,10 +280,10 @@ def plot_my_dso_and_horizon(dso: FixedTarget, my_observatory: Observer, observe_
 def show_plots(dso: FixedTarget) -> tuple[Optional[str], Optional[str], Optional[str], bool]:
 
 
-    longitude = cfg["location"]["longitude"]
-    latitude = cfg["location"]["latitude"]
-    elevation = cfg["location"]["elevation"]
-    observatory_name = cfg["location"]["observatory_name"]
+    longitude = CFG["location"]["longitude"]
+    latitude = CFG["location"]["latitude"]
+    elevation = CFG["location"]["elevation"]
+    observatory_name = CFG["location"]["observatory_name"]
 
     location = EarthLocation.from_geodetic(longitude * u.deg, latitude * u.deg, elevation * u.m)
     my_observatory = Observer(location=location, name=observatory_name, timezone="US/Eastern")
@@ -323,8 +324,8 @@ def show_plots(dso: FixedTarget) -> tuple[Optional[str], Optional[str], Optional
         plt.clf()
     except:
 
-        _logger.info('Problem')
-        _logger.exception("Exception")
+        LOGGER.info('Problem')
+        LOGGER.exception("Exception")
 
     try:
         print("a")
@@ -335,18 +336,18 @@ def show_plots(dso: FixedTarget) -> tuple[Optional[str], Optional[str], Optional
         plt.clf()
     except:
 
-        _logger.info('Problem')
-        _logger.exception("Exception")
+        LOGGER.info('Problem')
+        LOGGER.exception("Exception")
 
 
     return altitude_path, image_path, sky_path, weather_ok
 
 
 def get_above_horizon_time(dso: FixedTarget, time: Time) -> tuple[Optional[datetime.timedelta], float]:
-    longitude = cfg["location"]["longitude"]
-    latitude = cfg["location"]["latitude"]
-    elevation = cfg["location"]["elevation"]
-    observatory_name = cfg["location"]["observatory_name"]
+    longitude = CFG["location"]["longitude"]
+    latitude = CFG["location"]["latitude"]
+    elevation = CFG["location"]["elevation"]
+    observatory_name = CFG["location"]["observatory_name"]
 
     location = EarthLocation.from_geodetic(longitude * u.deg, latitude * u.deg, elevation * u.m)
     my_observatory = Observer(location=location, name=observatory_name, timezone="US/Eastern")
@@ -421,10 +422,10 @@ def enumerate_days_of_year() -> Generator[datetime.date, None, None]:
 
 
 def best_day_for_dso(dso: FixedTarget) -> tuple[Optional[datetime.datetime], Optional[datetime.timedelta], float]:
-    longitude = cfg["location"]["longitude"]
-    latitude = cfg["location"]["latitude"]
-    elevation = cfg["location"]["elevation"]
-    observatory_name = cfg["location"]["observatory_name"]
+    longitude = CFG["location"]["longitude"]
+    latitude = CFG["location"]["latitude"]
+    elevation = CFG["location"]["elevation"]
+    observatory_name = CFG["location"]["observatory_name"]
 
     location = EarthLocation.from_geodetic(longitude * u.deg, latitude * u.deg, elevation * u.m)
     my_observatory = Observer(location=location, name=observatory_name, timezone="US/Eastern")
@@ -516,10 +517,10 @@ def best_object_tonight(instructions_path: Path | str) -> tuple[str, Optional[da
         print("No waiting objects found.")
         return "", None, 0
 
-    longitude = cfg["location"]["longitude"]
-    latitude = cfg["location"]["latitude"]
-    elevation = cfg["location"]["elevation"]
-    observatory_name = cfg["location"]["observatory_name"]
+    longitude = CFG["location"]["longitude"]
+    latitude = CFG["location"]["latitude"]
+    elevation = CFG["location"]["elevation"]
+    observatory_name = CFG["location"]["observatory_name"]
 
     location = EarthLocation.from_geodetic(longitude * u.deg, latitude * u.deg, elevation * u.m)
     my_observatory = Observer(location=location, name=observatory_name, timezone="US/Eastern")
@@ -657,11 +658,8 @@ def best_object_tonight(instructions_path: Path | str) -> tuple[str, Optional[da
 
     ax.set_title("Tonight's Imaging Grid", fontsize=12, fontweight="bold", pad=10)
 
-    dir_name = os.path.dirname(__file__)
-    scratch_dir = os.path.join(dir_name, "scratch")
-    if not os.path.exists(scratch_dir):
-        os.mkdir(scratch_dir)
-    png_path = os.path.join(scratch_dir, "imaging_grid.png")
+    png_path = CFG["location"]["image_grid"]
+    os.makedirs(os.path.dirname(png_path), exist_ok=True)
     plt.savefig(png_path, bbox_inches="tight", dpi=150)
     plt.clf()
     print(f"Grid saved to {png_path}")
