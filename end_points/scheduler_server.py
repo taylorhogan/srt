@@ -165,7 +165,7 @@ def announce_plans_before_sunset():
     best_instruction = instructions.get_dso_object_tonight()
     dso = best_name
     requestor = "taylor"
-    social_server.post_social_message("Tonight's imaging grid", image=CFG["location"]["image_grid"])
+    social_server.post_social_message("Tonight's imaging grid", image=os.path.join(_project_root, CFG["location"]["image_grid"]))
     if weather_ok:
         social_server.post_social_message("Will image " + dso + " requested by " + requestor + " tonight")
         obs_calendar.set_today_stat('image', dso)

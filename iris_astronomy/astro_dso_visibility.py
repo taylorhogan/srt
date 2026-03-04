@@ -658,7 +658,8 @@ def best_object_tonight(instructions_path: Path | str) -> tuple[str, Optional[da
 
     ax.set_title("Tonight's Imaging Grid", fontsize=12, fontweight="bold", pad=10)
 
-    png_path = CFG["location"]["image_grid"]
+    _project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+    png_path = os.path.join(_project_root, CFG["location"]["image_grid"])
     os.makedirs(os.path.dirname(png_path), exist_ok=True)
     plt.savefig(png_path, bbox_inches="tight", dpi=150)
     plt.clf()

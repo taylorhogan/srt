@@ -21,13 +21,13 @@ class PublicConfig():
             "observatory_name": "Iris",
             "timezone": "America/New_York",
             "instructions":"local/my_instructions.json",
-            "image_grid":"/home/taylor/Documents/srt/local/imaging_grid.png"
+            "image_grid":"local/imaging_grid.png"
     },
 
         "nina": {
             "image_dir": "C:/Users/iriso/Documents/N.I.N.A/Targets",
             "sequence_output": "C:/Users/iriso/Documents/N.I.N.A/Sequences/full_for_tonight",
-            "sequence_input":"C:/Users/home/taylor/Documents/srt/local/sequence_template.json"
+            "sequence_input":"local/sequence_template.json"
 
     },
 

@@ -10,19 +10,21 @@ from astropy.time import Time
 
 from iris_astronomy import astro_dso_visibility
 from cmd_processing import social_server
-from utils import utils
+from configs import config
+
+_PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+_INSTRUCTIONS_PATH = os.path.join(_PROJECT_ROOT, config.data()["location"]["instructions"])
 
 status_dict = {"in process": 3, "waiting": 2, "completed": 1}
 
 
 def delete_instruction_db(hash_value):
-    utils.set_install_dir()
-    with open('my_instructions.json', 'r') as f:
+    with open(_INSTRUCTIONS_PATH, 'r') as f:
         instructions = json.load(f)
     for instruction in instructions:
         if instruction["hash"] == hash_value:
             instructions.remove(instruction)
-    with open('my_instructions.json', 'w') as f:
+    with open(_INSTRUCTIONS_PATH, 'w') as f:
         f.writelines(json.dumps(instructions, indent=4))
 
 
@@ -30,24 +32,23 @@ def set_completed_instruction_db(hash_value):
     logger = logging.getLogger(__name__)
     logger.info("completing", hash_value)
 
-    utils.set_install_dir()
-    with open('my_instructions.json', 'r') as f:
+    with open(_INSTRUCTIONS_PATH, 'r') as f:
         instructions = json.load(f)
     for instruction in instructions:
         if instruction["hash"] == hash_value:
             instruction["status"] = "completed"
-    with open('my_instructions.json', 'w') as f:
+    with open(_INSTRUCTIONS_PATH, 'w') as f:
         f.writelines(json.dumps(instructions, indent=4))
 
 
 def remove_hash():
-    with open('my_instructions.json', 'r') as f:
+    with open(_INSTRUCTIONS_PATH, 'r') as f:
         instructions = json.load(f)
     for instruction in instructions:
         if 'hash' in instruction.keys():
             del instruction["hash"]
 
-    with open('my_instructions.json', 'w') as f:
+    with open(_INSTRUCTIONS_PATH, 'w') as f:
         f.writelines(json.dumps(instructions, indent=4))
 
 
@@ -55,20 +56,18 @@ def rehash_db():
     remove_hash()
     next_hash = 0
     hash_set = {-1}
-    utils.set_install_dir()
     instructions = get_sorted_instructions()
 
     for instruction in instructions:
         instruction["hash"] = str(next_hash)
         next_hash = next_hash + 1
 
-    with open('my_instructions.json', 'w') as f:
+    with open(_INSTRUCTIONS_PATH, 'w') as f:
         f.writelines(json.dumps(instructions, indent=4))
 
 
 def calc_and_store_hours_above_horizon(force=False):
-    utils.set_install_dir()
-    with open('my_instructions.json', 'r') as f:
+    with open(_INSTRUCTIONS_PATH, 'r') as f:
         instructions = json.load(f)
     for instruction in instructions:
         dso = text = instruction["dso"]
@@ -92,7 +91,7 @@ def calc_and_store_hours_above_horizon(force=False):
                 instruction['best']=formatted_date + "\n"+str(best_time)
 
 
-    with open('my_instructions.json', 'w') as f:
+    with open(_INSTRUCTIONS_PATH, 'w') as f:
         f.writelines(json.dumps(instructions, indent=4))
 
 
@@ -228,7 +227,7 @@ def create_instructions_table(force = False):
 def add_dso_object_instruction(dso_name, recipe, requestor, priority=0):
     now = datetime.now()
     formatted_date = now.strftime("%Y-%m-%d")
-    with open('my_instructions.json', 'r') as f:
+    with open(_INSTRUCTIONS_PATH, 'r') as f:
         instructions = json.load(f)
     new_instruction = {
         "dso": dso_name,
@@ -239,16 +238,13 @@ def add_dso_object_instruction(dso_name, recipe, requestor, priority=0):
         "status": "waiting",
         "priority": priority
     }
-    utils.set_install_dir()
     instructions.append(new_instruction)
-    with open('my_instructions.json', 'w') as f:
+    with open(_INSTRUCTIONS_PATH, 'w') as f:
         f.writelines(json.dumps(instructions, indent=4))
 
 
 def get_sorted_instructions():
-    utils.set_install_dir()
-
-    with open('my_instructions.json', 'r') as f:
+    with open(_INSTRUCTIONS_PATH, 'r') as f:
         instructions = json.load(f)
 
     sorted_l = sorted(instructions, key=functools.cmp_to_key(compare))
