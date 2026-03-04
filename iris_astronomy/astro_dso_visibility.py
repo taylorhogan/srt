@@ -683,5 +683,9 @@ def test_me() -> None:
 
 
 if __name__ == '__main__':
+    import time
+    print("Waiting 10 minutes before starting...")
+    time.sleep(600)
+
     _project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
     best_object_tonight(os.path.join(_project_root, config.data()["location"]["instructions"]))
