@@ -20,7 +20,7 @@ class PublicConfig():
             "elevation": 100,
             "observatory_name": "Iris",
             "timezone": "America/New_York",
-            "instructions":"/home/taylor/Documents/srt/local/my_instructions.json",
+            "instructions":"local/my_instructions.json",
             "image_grid":"/home/taylor/Documents/srt/local/imaging_grid.png"
     },
 

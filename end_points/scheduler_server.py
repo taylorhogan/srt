@@ -159,7 +159,9 @@ def announce_plans_before_sunset():
     global observatory_state
 
     weather_ok = social_server.tonight_cmd(["me", "tonight"], 1, "", "")
-    best_name, best_start, best_good_hours = astro_dso_visibility.best_object_tonight(CFG["location"]["instructions"])
+    _project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+    _instructions_path = os.path.join(_project_root, CFG["location"]["instructions"])
+    best_name, best_start, best_good_hours = astro_dso_visibility.best_object_tonight(_instructions_path)
     best_instruction = instructions.get_dso_object_tonight()
     dso = best_name
     requestor = "taylor"
