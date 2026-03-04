@@ -12,9 +12,12 @@ dependencies = [
     "mastodon-py>=2.1.4",
     "matplotlib>=3.10.8",
     "photutils>=2.3.0",
-    "python-kasa>=0.10.2",
+    "python-kasa",
     "pytz>=2025.2",
     "requests>=2.32.5",
     "opencv-python>=4.11.0",
     "paho-mqtt>=2.1.0",
 ]
+
+[tool.uv.sources]
+python-kasa = { path = "kasa_local", editable = true }

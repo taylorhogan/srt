@@ -1,0 +1,10 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "python-kasa"
+version = "0.10.2"
+
+[tool.hatch.build.targets.wheel]
+packages = ["kasa"]
