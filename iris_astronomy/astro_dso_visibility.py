@@ -683,4 +683,5 @@ def test_me() -> None:
 
 
 if __name__ == '__main__':
-    best_object_tonight("/home/taylor/Documents/srt/local/my_instructions.json")
+    _project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+    best_object_tonight(os.path.join(_project_root, config.data()["location"]["instructions"]))
