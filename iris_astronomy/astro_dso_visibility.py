@@ -568,12 +568,14 @@ def best_object_tonight(instructions_path: Path | str) -> tuple[str, Optional[da
         dso_name = obj["dso"]
         dso = is_a_dso_object(dso_name)
         if dso is None:
+            print(f"DEBUG: could not resolve DSO: {dso_name}")
             continue
         try:
             altaz = my_observatory.altaz(hour_times, dso)
             altitude = altaz.alt.deg
             azimuth = altaz.az.deg
-        except Exception:
+        except Exception as e:
+            print(f"DEBUG: altaz failed for {dso_name}: {e}")
             continue
 
         symbols: list[str] = []
