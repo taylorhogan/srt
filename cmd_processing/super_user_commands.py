@@ -2,6 +2,7 @@ import asyncio
 import logging
 import os, sys
 import subprocess
+import threading
 import time
 from collections.abc import Callable
 from typing import Any, Optional
@@ -16,6 +17,7 @@ if __package__ is None or __package__ == "":
 from configs import config
 from control import instructions
 from hardware_control import kasa_utils as ku
+from hardware_control import sonos_utils
 from cmd_processing import social_server
 from utils import utils, pushover
 from sentry import vision_safety
@@ -56,6 +58,46 @@ def toggle_roof(dev_map: dict) -> None:
     inst = {"Roof motor": 'off'}
     asyncio.run(ku.kasa_do(dev_map, inst))
 
+
+
+def announce_roof_movement(text: str, speaker_name: str = "Observatory", volume: int = 40) -> None:
+    """Blink observatory lights for 30 sec and say text on Sonos."""
+    light_names = ["Iris inside light", "Iris landscape lights", "Observatory strip", "Iris door light"]
+
+    dev_map = asyncio.run(ku.make_discovery_map())
+    original_states = asyncio.run(ku.kasa_get_states(dev_map, light_names))
+
+    async def _blink_async():
+        end_time = asyncio.get_event_loop().time() + 30
+        state = True
+        while asyncio.get_event_loop().time() < end_time:
+            inst = {k: ("on" if state else "off") for k in light_names}
+            try:
+                await ku.kasa_do(dev_map, inst)
+            except Exception as e:
+                _logger.warning("Blink step failed: %s", e)
+            state = not state
+            await asyncio.sleep(3)
+        try:
+            await ku.kasa_do(dev_map, original_states)
+        except Exception as e:
+            _logger.warning("Blink restore failed: %s", e)
+
+    def blink():
+        asyncio.run(_blink_async())
+
+    def announce():
+        try:
+            sonos_utils.sonos_say(text, speaker_name, volume)
+        except Exception as e:
+            _logger.error("Sonos announcement failed: %s", e)
+
+    blink_thread = threading.Thread(target=blink, daemon=True)
+    sonos_thread = threading.Thread(target=announce, daemon=True)
+    blink_thread.start()
+    sonos_thread.start()
+    blink_thread.join()
+    sonos_thread.join()
 
 
 def get_status_with_lights() -> tuple[bool, bool, bool, Any]:
@@ -147,35 +189,28 @@ def open_if_mount_off_cmd(words: list[str], account: str) -> None:
     return
 
 
+_SCRIPTS_DIR = os.path.join(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')), "scripts")
+
+
 def on_nina(words: Optional[list[str]], account: Optional[str]) -> None:
     print("Starting Nina")
-    path = utils.set_install_dir()
-    os.chdir(path)
-    # os.startfile("on_nina.bat")
-    print(path)
-    subprocess.run(["on_nina.bat"], shell=True)
+    subprocess.run([os.path.join(_SCRIPTS_DIR, "on_nina.bat")], shell=True)
     print("Done with Nina")
 
 
 def image_nina1(words: Optional[list[str]], account: Optional[str]) -> None:
     print("Starting Nina")
-    path = utils.set_install_dir()
-    print(path)
-    subprocess.Popen(["image_nina1.bat"], shell=True)
+    subprocess.Popen([os.path.join(_SCRIPTS_DIR, "image_nina1.bat")], shell=True)
     print("Done with Nina")
 
 def image_nina2(words: Optional[list[str]], account: Optional[str]) -> None:
     print("Starting Nina")
-    path = utils.set_install_dir()
-    print(path)
-    subprocess.Popen(["image_nina2.bat"], shell=True)
+    subprocess.Popen([os.path.join(_SCRIPTS_DIR, "image_nina2.bat")], shell=True)
     print("Done with Nina")
 
 def image_nina_a(words: Optional[list[str]], account: Optional[str]) -> None:
     print("Starting Nina")
-    path = utils.set_install_dir()
-    print(path)
-    subprocess.Popen(["image_ninaA.bat"])
+    subprocess.Popen([os.path.join(_SCRIPTS_DIR, "image_ninaA.bat")])
     print("Done with Nina")
 
 
@@ -225,6 +260,19 @@ def dbc_cmd(words: list[str], account: str) -> None:
     instructions.create_instructions_table()
 
 
+def announce_cmd(words: list[str], account: str) -> None:
+    """Say text on a Sonos speaker. Usage: announce <speaker_name> <text...>"""
+    if len(words) < 4:
+        social_server.post_social_message("Usage: announce <speaker_name> <text>")
+        return
+    speaker_name = words[2]
+    text = " ".join(words[3:])
+    try:
+        sonos_utils.sonos_say(text, speaker_name)
+    except Exception as e:
+        social_server.post_social_message(f"Announce failed: {e}")
+
+
 def get_super_user_commands() -> dict[str, Callable]:
     return {
         "dbr": dbr_cmd,
@@ -238,7 +286,8 @@ def get_super_user_commands() -> dict[str, Callable]:
         "nina2!": image_nina1,
         "nina2A!": image_nina_a,
         "open!": open_roof_cmd,
-        "open!!": open_roof_cmd_no_check
+        "open!!": open_roof_cmd_no_check,
+        "announce": announce_cmd,
     }
 
 
@@ -383,10 +432,4 @@ def doit_cmd(words: list[str], account: str) -> None:
 
 
 if __name__ == "__main__":
-    print("Starting Nina")
-    path = utils.set_install_dir()
-    os.chdir(path)
-    # os.startfile("on_nina.bat")
-    print(path)
-    subprocess.run(["on_nina.bat"])
-    print("Done with Nina")
+    announce_roof_movement("The roof will be opening in 5 Minutes")

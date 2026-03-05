@@ -33,6 +33,20 @@ async def kasa_do(cfg, instructions):
             print("Key " + key + " not found")
 
 
+async def kasa_get_states(cfg, device_names):
+    """Return a dict of device_name -> 'on'/'off' for each named device."""
+    states = {}
+    for name in device_names:
+        try:
+            ip = cfg[name]
+            dev = await Discover.discover_single(ip)
+            await dev.update()
+            states[name] = "on" if dev.is_on else "off"
+        except KeyError:
+            print("Key " + name + " not found")
+    return states
+
+
 async def kasa_check(cfg, instructions):
     for key in instructions.keys():
         try:

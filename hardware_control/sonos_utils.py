@@ -1,0 +1,87 @@
+import os
+import socket
+import tempfile
+import threading
+import time
+from http.server import HTTPServer, SimpleHTTPRequestHandler
+
+import soco
+from gtts import gTTS
+
+
+def _get_local_ip() -> str:
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        s.connect(("8.8.8.8", 80))
+        return s.getsockname()[0]
+    finally:
+        s.close()
+
+
+def _serve_file(path: str, port: int, ready_event: threading.Event, stop_event: threading.Event):
+    directory = os.path.dirname(path)
+    filename = os.path.basename(path)
+
+    class Handler(SimpleHTTPRequestHandler):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, directory=directory, **kwargs)
+
+        def log_message(self, format, *args):
+            pass
+
+    server = HTTPServer(("", port), Handler)
+    server.timeout = 1
+    ready_event.set()
+    while not stop_event.is_set():
+        server.handle_request()
+    server.server_close()
+
+
+def sonos_say(text: str, speaker_name: str, volume: int = 50):
+    devices = list(soco.discover() or [])
+    if not devices:
+        raise RuntimeError("No Sonos devices found on the network")
+
+    speaker = next((d for d in devices if d.player_name.lower() == speaker_name.lower()), None)
+    if speaker is None:
+        available = [d.player_name for d in devices]
+        raise RuntimeError(f"Speaker '{speaker_name}' not found. Available: {available}")
+
+    with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as f:
+        tmp_path = f.name
+
+    try:
+        gTTS(text=text, lang="en").save(tmp_path)
+
+        port = 54321
+        local_ip = _get_local_ip()
+        url = f"http://{local_ip}:{port}/{os.path.basename(tmp_path)}"
+
+        ready = threading.Event()
+        stop = threading.Event()
+        server_thread = threading.Thread(
+            target=_serve_file, args=(tmp_path, port, ready, stop), daemon=True
+        )
+        server_thread.start()
+        ready.wait(timeout=5)
+
+        previous_volume = speaker.volume
+        speaker.volume = volume
+        speaker.play_uri(url)
+
+        # Wait for playback to finish
+        for _ in range(60):
+            time.sleep(1)
+            info = speaker.get_current_transport_info()
+            if info["current_transport_state"] not in ("PLAYING", "TRANSITIONING"):
+                break
+
+        speaker.volume = previous_volume
+        stop.set()
+
+    finally:
+        os.unlink(tmp_path)
+
+
+if __name__ == "__main__":
+    sonos_say("Hello from the observatory. The telescope is ready for tonight.", "Office", volume=10)

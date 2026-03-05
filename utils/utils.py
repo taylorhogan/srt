@@ -72,7 +72,11 @@ def connect_mqtt():
 
     # client.username_pw_set(username, password)
     client.on_connect = on_connect
-    client.connect('localhost', 1883)
+    try:
+        client.connect('localhost', 1883)
+    except ConnectionRefusedError:
+        print("ERROR: MQTT broker is not running. Start it with: sudo systemctl start mosquitto")
+        raise
     return client
 
 if __name__ == '__main__':
