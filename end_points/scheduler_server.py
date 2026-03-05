@@ -122,8 +122,34 @@ def _generate_nina_sequence(dso_name: str):
     LOGGER.info("Generated Nina sequence for %s", dso_name)
 
 
+def _initial_state() -> State:
+    now = datetime.now()
+    noon = now.replace(hour=12, minute=0, second=0, microsecond=0)
+
+    if now < noon:
+        LOGGER.info("Starting before noon — entering WAITING_FOR_NOON")
+        return State.WAITING_FOR_NOON
+
+    try:
+        pre_sunset = _one_hour_before_sunset()
+        # pre_sunset may be tz-aware; normalise for comparison
+        if pre_sunset.tzinfo is not None:
+            now_cmp = datetime.now(pre_sunset.tzinfo)
+        else:
+            now_cmp = now
+
+        if now_cmp < pre_sunset:
+            LOGGER.info("Starting after noon but before 1h before sunset — entering NOON_CHECK")
+            return State.NOON_CHECK
+    except Exception:
+        LOGGER.warning("Could not determine sunset time at startup, defaulting to WAITING_FOR_NOON")
+
+    LOGGER.info("Starting after 1h before sunset — waiting for next day")
+    return State.WAITING_FOR_NOON
+
+
 def _run_state_machine():
-    state = State.WAITING_FOR_NOON
+    state = _initial_state()
 
     while True:
         try:
