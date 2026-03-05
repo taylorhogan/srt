@@ -509,10 +509,16 @@ def best_object_tonight(instructions_path: Path | str) -> tuple[str, Optional[da
     good-weather imaging time each 'waiting' object has tonight, and print
     the results sorted best-first.
     """
+    print(f"DEBUG: loading instructions from: {instructions_path}")
     with open(instructions_path, "r") as f:
         objects = json.load(f)
 
+    print(f"DEBUG: total objects in file: {len(objects)}")
+    for obj in objects:
+        print(f"DEBUG:   {obj.get('dso', '?')} — status={obj.get('status', '?')}")
+
     waiting = [obj for obj in objects if obj.get("status") == "waiting"]
+    print(f"DEBUG: waiting objects: {len(waiting)}")
     if not waiting:
         print("No waiting objects found.")
         return "", None, 0
