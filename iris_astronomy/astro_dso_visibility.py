@@ -32,6 +32,9 @@ if __package__ is None or __package__ == "":
     project_root = os.path.abspath(os.path.join(os.path.dirname(__file__),  '..'))
     if project_root not in sys.path:
         sys.path.insert(0, project_root)
+from astropy.utils import iers
+iers.conf.auto_download = False
+
 from configs import config
 from iris_astronomy import weather
 from utils import utils
@@ -75,7 +78,8 @@ def is_a_dso_object(name: str) -> Optional[FixedTarget]:
     try:
         dso = FixedTarget.from_name(name)
         return dso
-    except :
+    except Exception as e:
+        print(f"DEBUG is_a_dso_object({name}): {type(e).__name__}: {e}")
         return None
 
 
