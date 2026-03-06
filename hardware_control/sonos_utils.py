@@ -71,7 +71,7 @@ def sonos_say(text: str, speaker_name: str, volume: int = 50):
         server_thread.start()
         ready.wait(timeout=5)
 
-        print(f"DEBUG: coordinator={speaker.player_name}, url={url}")
+        print(f"DEBUG: coordinator={speaker.player_name} ip={speaker.ip_address}, local_ip={local_ip}, url={url}")
         print(f"DEBUG: volume={speaker.volume}, mute={speaker.mute}")
         previous_volume = speaker.volume
         speaker.volume = volume
