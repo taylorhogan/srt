@@ -229,6 +229,11 @@ def plot_my_dso_and_horizon(dso: FixedTarget, my_observatory: Observer, observe_
             if found_hour:
                 break
 
+        if not found_hour:
+            clipped_cloud.append(float('nan'))
+            clipped_pp.append(float('nan'))
+            clipped_wsp.append(float('nan'))
+            clipped_hum.append(float('nan'))
 
     ax.plot(local_datetime, clipped_cloud, color='red', label = 'Cloud Cover',linewidth=2)
     ax.plot(local_datetime, clipped_pp, color='pink', label='Prob. Precip.',linewidth=2)
