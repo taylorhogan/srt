@@ -1,6 +1,6 @@
 import os
 import socket
-import tempfile
+import tempfile  # used for gettempdir()
 import threading
 import time
 from http.server import HTTPServer, SimpleHTTPRequestHandler
@@ -50,8 +50,7 @@ def sonos_say(text: str, speaker_name: str, volume: int = 50):
     # play_uri must be called on the group coordinator
     speaker = speaker.group.coordinator
 
-    with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as f:
-        tmp_path = f.name
+    tmp_path = os.path.join(tempfile.gettempdir(), "sonos_tts.mp3")
 
     try:
         gTTS(text=text, lang="en").save(tmp_path)
@@ -62,7 +61,7 @@ def sonos_say(text: str, speaker_name: str, volume: int = 50):
 
         port = 54321
         local_ip = _get_local_ip()
-        url = f"http://{local_ip}:{port}/{os.path.basename(tmp_path)}"
+        url = f"http://{local_ip}:{port}/sonos_tts.mp3"
 
         ready = threading.Event()
         stop = threading.Event()
