@@ -68,6 +68,7 @@ def sonos_say(text: str, speaker_name: str, volume: int = 50):
         server_thread.start()
         ready.wait(timeout=5)
 
+        print(f"DEBUG: coordinator={speaker.player_name}, url={url}")
         previous_volume = speaker.volume
         speaker.volume = volume
         speaker.play_uri(url)
@@ -76,7 +77,9 @@ def sonos_say(text: str, speaker_name: str, volume: int = 50):
         for _ in range(60):
             time.sleep(1)
             info = speaker.get_current_transport_info()
-            if info["current_transport_state"] not in ("PLAYING", "TRANSITIONING"):
+            state = info["current_transport_state"]
+            print(f"DEBUG: transport state={state}")
+            if state not in ("PLAYING", "TRANSITIONING"):
                 break
 
         speaker.volume = previous_volume
