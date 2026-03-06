@@ -202,7 +202,7 @@ def plot_my_dso_and_horizon(dso: FixedTarget, my_observatory: Observer, observe_
     ax.plot(local_datetime, moon_alt, color='blue', label = 'Moon(' + str(illumination) + "%)",linewidth=2)
 
     #plot the cloud cover
-    cloud_times,cloud_covers,pp,wsp,hum = weather.get_weather_by_hour(latitude, longitude, 24)
+    cloud_times,cloud_covers,pp,wsp,hum = weather.get_weather_by_hour(latitude, longitude, 48)
     time_format = "%Y-%m-%d %H:%M"
     clipped_cloud = []
     clipped_pp = []
@@ -546,7 +546,7 @@ def best_object_tonight(instructions_path: Path | str) -> tuple[str, Optional[da
     start_of_dark, end_of_dark = get_dark_times(my_observatory, observe_time)
     az_horizon, al_horizon = map_az_to_horizon()
 
-    cloud_times, cloud_covers, pp, wsp, hum = weather.get_weather_by_hour(latitude, longitude, 24)
+    cloud_times, cloud_covers, pp, wsp, hum = weather.get_weather_by_hour(latitude, longitude, 48)
     weather_by_hour: dict[int, bool] = {
         cloud_times[j]: is_weather_ok(cloud_covers[j], pp[j], wsp[j])
         for j in range(len(cloud_times))
