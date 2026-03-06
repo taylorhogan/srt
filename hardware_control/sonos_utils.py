@@ -55,6 +55,10 @@ def sonos_say(text: str, speaker_name: str, volume: int = 50):
 
     try:
         gTTS(text=text, lang="en").save(tmp_path)
+        file_size = os.path.getsize(tmp_path)
+        print(f"DEBUG: mp3 path={tmp_path}, size={file_size} bytes")
+        if file_size == 0:
+            raise RuntimeError("gTTS generated an empty file — check internet access")
 
         port = 54321
         local_ip = _get_local_ip()
