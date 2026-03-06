@@ -47,6 +47,9 @@ def sonos_say(text: str, speaker_name: str, volume: int = 50):
         available = [d.player_name for d in devices]
         raise RuntimeError(f"Speaker '{speaker_name}' not found. Available: {available}")
 
+    # play_uri must be called on the group coordinator
+    speaker = speaker.group.coordinator
+
     with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as f:
         tmp_path = f.name
 
