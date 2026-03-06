@@ -73,6 +73,7 @@ def sonos_say(text: str, speaker_name: str, volume: int = 50):
         ready.wait(timeout=5)
 
         print(f"DEBUG: coordinator={speaker.player_name}, url={url}")
+        print(f"DEBUG: volume={speaker.volume}, mute={speaker.mute}")
         previous_volume = speaker.volume
         speaker.volume = volume
         speaker.play_uri(url)
@@ -94,4 +95,4 @@ def sonos_say(text: str, speaker_name: str, volume: int = 50):
 
 
 if __name__ == "__main__":
-    sonos_say("Hello from the observatory. The telescope is ready for tonight.", "Office", volume=10)
+    sonos_say("Hello from the observatory. The telescope is ready for tonight.", "Office", volume=100)
