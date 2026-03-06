@@ -24,6 +24,11 @@ class PublicConfig():
             "image_grid":"local/imaging_grid.png"
     },
 
+        "scratch": {
+            "directory": "iris_astronomy/scratch",
+            "latest_jpg": "latest_annotated.jpg"
+        },
+
         "nina": {
             "image_dir": "C:/Users/iriso/Documents/N.I.N.A/Targets",
             "sequence_output": "C:/Users/iriso/Documents/N.I.N.A/Sequences/full_for_tonight",

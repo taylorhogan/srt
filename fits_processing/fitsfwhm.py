@@ -2,6 +2,8 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
+from astropy.utils import iers
+iers.conf.auto_download = False
 from astropy.io import fits
 from astropy.modeling import fitting, models
 from astropy.stats import sigma_clipped_stats
@@ -198,6 +200,59 @@ def display_fwhm(
 
     plt.tight_layout()
     plt.show()
+
+
+def save_fwhm(
+    fits_path: Path,
+    output_path: Path,
+    arcsec_per_pixel: float = 1.0,
+    threshold_sigma: float = _DETECTION_THRESHOLD_SIGMA,
+    min_snr: float = _MIN_SNR,
+    max_ellipticity: float = _MAX_ELLIPTICITY,
+) -> Path:
+    """
+    Annotate a FITS image with detected stars and save it as a JPG.
+
+    Returns the output_path written.
+    """
+    data, stars = _fit_stars(fits_path, threshold_sigma, min_snr, max_ellipticity)
+
+    mean_px = float(np.mean([s[2] for s in stars])) if stars else 0.0
+
+    vmin, vmax = ZScaleInterval().get_limits(data)
+
+    fig, ax = plt.subplots(figsize=(12, 12))
+    ax.imshow(data, origin="lower", cmap="gray", vmin=vmin, vmax=vmax, interpolation="nearest")
+
+    for x, y, fwhm in stars:
+        if fwhm > mean_px * 1.1:
+            color = "red"
+        elif fwhm < mean_px * 0.9:
+            color = "green"
+        else:
+            color = "yellow"
+        ax.add_patch(Circle((x, y), radius=fwhm * 2.5, color=color, fill=False, linewidth=1.5))
+
+    title = (
+        f"{fits_path.name}  |  {len(stars)} stars  |  "
+        f"mean FWHM {mean_px:.2f} px  ({mean_px * arcsec_per_pixel:.2f}\")"
+        if stars else f"{fits_path.name}  |  no stars detected"
+    )
+    ax.set_title(title)
+    ax.set_xlabel("X (pixels)")
+    ax.set_ylabel("Y (pixels)")
+    if stars:
+        ax.legend(handles=[
+            Patch(facecolor="none", edgecolor="green",  label=f"Good  (< {mean_px * 0.9:.1f} px)"),
+            Patch(facecolor="none", edgecolor="yellow", label=f"OK    ({mean_px * 0.9:.1f} – {mean_px * 1.1:.1f} px)"),
+            Patch(facecolor="none", edgecolor="red",    label=f"Soft  (> {mean_px * 1.1:.1f} px)"),
+        ], loc="upper right")
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    plt.tight_layout()
+    plt.savefig(output_path, format="jpeg", dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    return output_path
 
 
 if __name__ == "__main__":

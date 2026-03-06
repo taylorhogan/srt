@@ -1,4 +1,5 @@
 import asyncio
+from pathlib import Path
 import datetime
 import logging
 import os
@@ -18,7 +19,7 @@ if __package__ is None or __package__ == "":
 from iris_astronomy import astro_dso_visibility, obs_calendar
 from configs import config
 from end_points import end
-from fits_processing import fitstojpg
+from fits_processing import fitstojpg, fitsfwhm
 from control import instructions
 from cmd_processing import super_user_commands as su
 from utils.utils import topic_to_sched
@@ -80,31 +81,34 @@ def best_cmd(words: list[str], index: int, m: Mastodon, account: str) -> None:
 
 
 def tonight_cmd(words: list[str], index: int, m: Mastodon, account: str) -> bool:
-    print ("in tonight cmd", words, index)
-    if len(words) == 2:
-        best_instruction = instructions.get_dso_object_tonight()
-        dso_name = best_instruction["dso"]
-    else:
-        dso_name = get_dso_object_name(words, index)
-    print (dso_name)
-    if dso_name is not None:
-        obj = astro_dso_visibility.is_a_dso_object(dso_name)
+    print("in tonight cmd", words, index)
+    cfg = config.data()
+    _project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+    instructions_path = os.path.join(_project_root, cfg["location"]["instructions"])
+
+    best_name, best_start, best_good_hours = astro_dso_visibility.best_object_tonight(instructions_path)
+    image_grid_path = os.path.join(_project_root, cfg["location"]["image_grid"])
+    post_social_message(
+        f"Tonight's best object: {best_name} ({best_good_hours}h good imaging)",
+        image_grid_path
+    )
+
+    if best_name:
+        obj = astro_dso_visibility.is_a_dso_object(best_name)
         if obj is not None:
             horizon, image, sky, weather_ok = astro_dso_visibility.show_plots(obj)
 
             if horizon is not None:
-                post_social_message("altitude \n", horizon)
-            if image is not None:
-                post_social_message("image\n", image)
+                post_social_message(f"{best_name} — altitude & conditions", horizon)
             if sky is not None:
-                post_social_message("sky\n", sky)
+                post_social_message(f"{best_name} — sky chart", sky)
             if weather_ok:
                 post_social_message("Weather ok tonight")
             else:
                 post_social_message("Weather not ok tonight")
             return weather_ok
         else:
-            post_social_message(dso_name + " Not a known object\n")
+            post_social_message(f"{best_name} not a known object")
     return False
 
 
@@ -183,14 +187,17 @@ def help_cmd(words: list[str], index: int, m: Mastodon, account: str) -> None:
 
 def latest_cmd(words: list[str], index: int, m: Mastodon, account: str) -> None:
     cfg = config.data()
+    _project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 
-    logger = logging.getLogger(__name__)
     image_dir = cfg["nina"]["image_dir"]
     latest_fits = fitstojpg.get_latest_file(image_dir, "fits")
 
-    latest_jpg = fitstojpg.convert_to_jpg(str(latest_fits))
+    scratch_dir = os.path.join(_project_root, cfg["scratch"]["directory"])
+    output_path = Path(os.path.join(scratch_dir, cfg["scratch"]["latest_jpg"]))
 
-    post_social_message("Latest", latest_jpg)
+    latest_jpg = fitsfwhm.save_fwhm(Path(str(latest_fits)), output_path)
+
+    post_social_message("Latest", str(latest_jpg))
 
 
 keywords = {

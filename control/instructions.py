@@ -6,6 +6,8 @@ from datetime import datetime
 
 import matplotlib.patches as mpatches
 import matplotlib.pyplot as plt
+from astropy.utils import iers
+iers.conf.auto_download = False
 from astropy.time import Time
 
 from iris_astronomy import astro_dso_visibility
