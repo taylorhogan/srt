@@ -27,7 +27,7 @@ def _serve_file(path: str, port: int, ready_event: threading.Event, stop_event: 
             super().__init__(*args, directory=directory, **kwargs)
 
         def log_message(self, format, *args):
-            pass
+            print(f"HTTP: {format % args}")
 
     server = HTTPServer(("", port), Handler)
     server.timeout = 1
