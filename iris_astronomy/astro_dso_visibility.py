@@ -557,10 +557,13 @@ def best_object_tonight(instructions_path: Path | str) -> tuple[str, Optional[da
     az_horizon, al_horizon = map_az_to_horizon()
 
     cloud_times, cloud_covers, pp, wsp, hum = weather.get_weather_by_hour(latitude, longitude, 48)
-    weather_by_hour: dict[int, bool] = {
-        cloud_times[j]: is_weather_ok(cloud_covers[j], pp[j], wsp[j])
-        for j in range(len(cloud_times))
-    }
+    # Use the first occurrence of each hour (today's data) — the API returns hours
+    # in chronological order so duplicate hours (same hour tomorrow) must not overwrite.
+    weather_by_hour: dict[int, bool] = {}
+    for j in range(len(cloud_times)):
+        hour = cloud_times[j]
+        if hour not in weather_by_hour:
+            weather_by_hour[hour] = is_weather_ok(cloud_covers[j], pp[j], wsp[j])
 
     # Build the list of full hours within the dark window
     t = start_of_dark.replace(minute=0, second=0, microsecond=0)

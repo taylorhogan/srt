@@ -164,13 +164,17 @@ def imaging_state(state: bool) -> None:
             file.write("IMAGING FALSE")
 
 
+def set_mode(mode: str) -> None:
+    utils.set_install_dir()
+    with open("mode.txt", "w") as file:
+        file.write(f"MODE {mode.upper()}")
+
+
 def mode_cmd(words: list[str], account: str) -> None:
     if len(words) < 3 or words[2] not in ("auto", "manual"):
         social_server.post_social_message("Usage: mode auto|manual")
         return
-    utils.set_install_dir()
-    with open("mode.txt", "w") as file:
-        file.write(f"MODE {words[2].upper()}")
+    set_mode(words[2])
     social_server.post_social_message(f"Mode set to {words[2]}")
 
 

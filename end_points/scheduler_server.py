@@ -244,6 +244,7 @@ def main():
     print("Starting Scheduler Server")
     super_user_commands.safe_cmd(None, None)
     super_user_commands.imaging_state(False)
+    super_user_commands.set_mode("manual")
     LOGGER.info('Start Scheduler')
     try:
         client = utils.connect_mqtt()
