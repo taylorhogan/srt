@@ -16,6 +16,7 @@ configs/config_private.py
 *.log
 safety.txt
 imaging.txt
+mode.txt
 iris.log
 local/
 scratch/

@@ -163,6 +163,28 @@ def imaging_state(state: bool) -> None:
         else:
             file.write("IMAGING FALSE")
 
+
+def mode_cmd(words: list[str], account: str) -> None:
+    if len(words) < 3 or words[2] not in ("auto", "manual"):
+        social_server.post_social_message("Usage: mode auto|manual")
+        return
+    utils.set_install_dir()
+    with open("mode.txt", "w") as file:
+        file.write(f"MODE {words[2].upper()}")
+    social_server.post_social_message(f"Mode set to {words[2]}")
+
+
+def get_mode() -> str:
+    utils.set_install_dir()
+    try:
+        with open("mode.txt", "r") as file:
+            line = file.readline().strip()
+        if line == "MODE AUTO":
+            return "auto"
+    except FileNotFoundError:
+        pass
+    return "manual"
+
 def open_if_mount_off_cmd(words: list[str], account: str) -> None:
     dev_map = asyncio.run(ku.make_discovery_map())
     inst = {"Telescope mount": 'isoff'}
@@ -337,6 +359,7 @@ def get_super_user_commands() -> dict[str, Callable]:
         "open!!": open_roof_cmd_no_check,
         "announce": announce_cmd,
         "sequence": sequence_cmd,
+        "mode": mode_cmd,
     }
 
 

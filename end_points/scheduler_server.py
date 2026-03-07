@@ -172,6 +172,8 @@ def _run_state_machine():
                 _send_grid_to_mastodon()
                 LOGGER.info("Noon check: best=%s good_hours=%d", best_name, best_good_hours)
 
+                mode = super_user_commands.get_mode()
+                social_server.post_social_message(f"Imaging mode: {mode}")
                 if best_good_hours >= _MIN_GOOD_HOURS:
                     social_server.tonight_cmd(["me", "tonight", best_name], 2, "", "")
                     social_server.post_social_message(
@@ -201,6 +203,8 @@ def _run_state_machine():
                 _send_grid_to_mastodon()
                 LOGGER.info("Pre-sunset check: best=%s good_hours=%d", best_name, best_good_hours)
 
+                mode = super_user_commands.get_mode()
+                social_server.post_social_message(f"Imaging mode: {mode}")
                 if best_good_hours >= _MIN_GOOD_HOURS:
                     social_server.post_social_message(
                         f"Imaging {best_name} tonight ({best_good_hours}h good imaging) — generating sequence"
@@ -218,7 +222,10 @@ def _run_state_machine():
             elif state == State.IMAGING:
                 set_state(state)
                 LOGGER.info("Starting imaging run")
-                # super_user_commands.image_cmd("", "iris")
+                if super_user_commands.get_mode() == "auto":
+                    super_user_commands.image_cmd(["", "image!!", "1"], "iris")
+                else:
+                    social_server.post_social_message("Mode is manual — skipping auto imaging")
                 LOGGER.info("Imaging run complete")
                 state = State.WAITING_FOR_NOON
 
