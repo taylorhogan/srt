@@ -73,13 +73,6 @@ def sonos_say(text: str, speaker_name: str, volume: int = 50):
         server_thread.start()
         ready.wait(timeout=5)
 
-        import urllib.request
-        try:
-            urllib.request.urlopen(f"http://127.0.0.1:{port}/sonos_tts.mp3", timeout=3)
-            print(f"DEBUG: HTTP self-test PASSED — server is accepting connections on port {port}")
-        except Exception as e:
-            print(f"DEBUG: HTTP self-test FAILED — {e}")
-
         print(f"DEBUG: coordinator={speaker.player_name} ip={speaker.ip_address}, local_ip={local_ip}, url={url}")
         print(f"DEBUG: volume={speaker.volume}, mute={speaker.mute}")
         previous_volume = speaker.volume
