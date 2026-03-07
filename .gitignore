@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+
+# Virtual environment
+venv/
+
+# Private config
+configs/config_private.py
+
+# IDE
+.idea/
+.vscode/
+
+# Runtime / data files
+*.log
+safety.txt
+imaging.txt
+iris.log
+local/
+scratch/
+
+# macOS
+.DS_Store
