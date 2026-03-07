@@ -14,7 +14,7 @@ def _decompose_ra(ra_hours: float) -> tuple[int, int, float]:
 
 def _decompose_dec(dec_degrees: float) -> tuple[bool, int, int, float]:
     """Decompose decimal Dec degrees into (negative, degrees, minutes, seconds)."""
-    negative = dec_degrees < 0
+    negative = bool(dec_degrees < 0)
     abs_dec = abs(dec_degrees)
     d = int(abs_dec)
     remainder = (abs_dec - d) * 60
