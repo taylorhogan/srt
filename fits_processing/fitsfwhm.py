@@ -257,14 +257,23 @@ def save_fwhm(
 
 if __name__ == "__main__":
     import sys
+    import os
+    if __package__ is None or __package__ == "":
+        project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+        if project_root not in sys.path:
+            sys.path.insert(0, project_root)
+    from configs import config
+
+    cfg = config.data()
+    arcsec_per_pixel = cfg["nina"]["arc_sec_per_pixel"]
 
     path = Path(sys.argv[1]) if len(sys.argv) > 1 else Path("/home/taylor/Documents/srt/local/2026-03-02_01-13-02_R_116_300.00s_0040.fits")
     threshold_sigma = 8.0
     min_snr = 10.0
     max_ellipticity = 4.0
     mean_pixels, mean_arcsec, count = calculate_fwhm(
-        path, arcsec_per_pixel=0.26, threshold_sigma=threshold_sigma, min_snr=min_snr, max_ellipticity=max_ellipticity
+        path, arcsec_per_pixel=arcsec_per_pixel, threshold_sigma=threshold_sigma, min_snr=min_snr, max_ellipticity=max_ellipticity
     )
     print(f"Stars found : {count}")
     print(f"Mean FWHM   : {mean_pixels:.2f} px  ({mean_arcsec:.2f}\")")
-    display_fwhm(path, arcsec_per_pixel=0.26, threshold_sigma=threshold_sigma, min_snr=min_snr, max_ellipticity=max_ellipticity)
+    display_fwhm(path, arcsec_per_pixel=arcsec_per_pixel, threshold_sigma=threshold_sigma, min_snr=min_snr, max_ellipticity=max_ellipticity)

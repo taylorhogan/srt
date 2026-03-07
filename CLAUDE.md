@@ -1,0 +1,102 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## What This Is
+
+**SRT (Social Robotic Telescope)** — an autonomous observatory controller for "Iris". Users request deep-sky object (DSO) images via Mastodon; the system optimizes nightly imaging, controls hardware, monitors safety, and posts results. The goal is fully unattended operation.
+
+## Setup
+
+```bash
+# Install uv (once)
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Create and activate virtualenv
+uv venv venv
+source venv/bin/activate
+
+# Install dependencies
+uv pip install -r requirements.txt
+
+# Create private config (required before running anything)
+cp configs/config_blank_private.py configs/config_private.py
+# Then fill in API keys/tokens in config_private.py
+```
+
+## Running
+
+```bash
+# Start both Social Server and Scheduler together
+python end_points/start_srt.py
+
+# Or run individually:
+python end_points/scheduler_server.py   # Nightly state machine
+python cmd_processing/social_server.py  # Mastodon listener
+
+# Observatory startup/shutdown sequences
+python end_points/start.py   # Power on mount, lights off
+python end_points/end.py     # Park scope, close roof, dehumidifier on
+
+# Safety check before imaging
+python end_points/goforimagecheck.py
+
+# Audio anomaly detection (run in observatory)
+python sentry/audio_classify.py
+```
+
+## Architecture
+
+The system has two long-running processes launched by `end_points/start_srt.py`:
+
+1. **Social Server** (`cmd_processing/social_server.py`) — Listens to Mastodon mentions via streaming API. Parses commands (`image`, `best`, `tonight`, `status`, `calendar`, `latest`, etc.) and dispatches them. Only responds to users listed in `Super Users` config. Posts status/images back to Mastodon.
+
+2. **Scheduler Server** (`end_points/scheduler_server.py`) — State machine that runs daily: waits for noon → checks best DSO for tonight → waits for pre-sunset → generates NINA sequence → triggers imaging. States: `WAITING_FOR_NOON → NOON_CHECK → WAITING_FOR_PRE_SUNSET → PRE_SUNSET_CHECK → IMAGING`.
+
+They communicate via **MQTT** (`paho-mqtt`). Admin push notifications go via **Pushover** (`utils/pushover.py`, rate-limited to 6/min).
+
+### Key Subsystems
+
+- **`configs/config.py`** — Merges `PublicConfig` + `PrivateConfig`. Every module calls `config.data()` to get a flat dict. Private credentials live in `configs/config_private.py` (gitignored).
+
+- **`iris_astronomy/`** — Astronomy logic: DSO visibility windows, air mass, best imaging night, weather (Open-Meteo API, no key needed), sunrise/sunset via `astral`.
+
+- **`control/instructions.py`** — JSON-backed queue of DSO image requests (`my_instructions.json`). Sorted by status → priority → hours above horizon. Each instruction has: `dso`, `requestor`, `status` (waiting/in process/completed), `above_horizon`, `air_mass`, `best` (best date).
+
+- **`hardware_control/`** — TP-Link Kasa smart plug control (`kasa_utils.py` wraps `kasa_local/`), Shelly HTTP relay control, PWI4 mount control (`pwi4_client.py` + `pwi4_utils.py`). Device discovery via Kasa UDP.
+
+- **`sentry/`** — Safety systems: `vision_safety.py` uses OpenCV template matching on an indoor camera snapshot to detect scope parked/roof open/closed. `audio_classify.py` records audio, generates mel spectrograms, compares via MSE to library spectrograms in `sentry/library_spectrograms/`.
+
+- **`nina_gen/nina_sequence_gen.py`** — Generates N.I.N.A imaging sequences by recursively patching a JSON template with target name and RA/Dec coordinates.
+
+- **`fits_processing/`** — FITS to JPEG conversion, FWHM analysis, header editing.
+
+- **`kasa_local/`** — Local copy of python-kasa library (used instead of the pip package for local modifications).
+
+### Config Structure
+
+Config keys commonly used across modules:
+- `cfg["location"]` — lat/lon, timezone, city, file paths for instructions/image grid
+- `cfg["camera safety"]` — camera image paths, template paths, parked/open/closed positions and tolerances
+- `cfg["nina"]` — NINA image directory, sequence template/output paths
+- `cfg["globals"]` — runtime objects (mastodon instance, mqtt client, logger)
+- `cfg["pushover"]` — token/user for push notifications
+- `cfg["mastodon"]` — access token, API base URL, super users
+
+### Path Convention
+
+Every module that can be run directly adds the project root to `sys.path` with this pattern:
+```python
+if __package__ is None or __package__ == "":
+    project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+    if project_root not in sys.path:
+        sys.path.insert(0, project_root)
+```
+
+### Data Files (gitignored)
+
+- `my_instructions.json` — DSO imaging queue
+- `my_calendar.json` — per-day imaging history (state + DSO)
+- `iris.log` — application log
+- `safety.txt` — written by end sequence to record observatory state
+- `sentry/library_spectrograms/` — reference audio spectrograms for anomaly detection
