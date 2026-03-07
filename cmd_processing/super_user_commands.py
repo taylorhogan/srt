@@ -5,6 +5,7 @@ import subprocess
 import threading
 import time
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any, Optional
 
 import requests
@@ -22,6 +23,8 @@ from cmd_processing import social_server
 from utils import utils, pushover
 from sentry import vision_safety
 from end_points import end
+from iris_astronomy import astro_dso_visibility
+from nina_gen import nina_sequence_gen
 
 
 _logger = utils.set_logger()
@@ -273,6 +276,51 @@ def announce_cmd(words: list[str], account: str) -> None:
         social_server.post_social_message(f"Announce failed: {e}")
 
 
+def sequence_cmd(words: list[str], account: str) -> None:
+    """
+    Generate a NINA sequence for a DSO. Usage: sequence <dso>  e.g. sequence m 31
+    """
+    cfg = config.data()
+
+    # Accept one- or two-word DSO names: "sequence m 31" or "sequence ngc6888"
+    if len(words) < 3:
+        social_server.post_social_message("Usage: sequence <dso name>  e.g. sequence m 31")
+        return
+
+    dso_name = words[2]
+    if len(words) > 3:
+        dso_name = dso_name + " " + words[3]
+
+    dso = astro_dso_visibility.is_a_dso_object(dso_name)
+    if dso is None:
+        social_server.post_social_message(f"{dso_name} is not a known object")
+        return
+
+    ra_hours = dso.coord.ra.hour
+    dec_degrees = dso.coord.dec.deg
+
+    _project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+    template_path = Path(os.path.join(_project_root, cfg["nina"]["sequence_input"]))
+    output_path = Path(cfg["nina"]["sequence_output"])
+
+    try:
+        nina_sequence_gen.generate_sequence(
+            template_path=template_path,
+            dso_name=dso_name,
+            ra_hours=ra_hours,
+            dec_degrees=dec_degrees,
+            output_path=output_path,
+        )
+        social_server.post_social_message(
+            f"Sequence generated for {dso_name} "
+            f"(RA {ra_hours:.4f}h  Dec {dec_degrees:+.4f}°) → {output_path.name}"
+        )
+        _logger.info("sequence_cmd: generated sequence for %s", dso_name)
+    except Exception as e:
+        _logger.exception("sequence_cmd: failed for %s", dso_name)
+        social_server.post_social_message(f"Failed to generate sequence for {dso_name}: {e}")
+
+
 def get_super_user_commands() -> dict[str, Callable]:
     return {
         "dbr": dbr_cmd,
@@ -288,6 +336,7 @@ def get_super_user_commands() -> dict[str, Callable]:
         "open!": open_roof_cmd,
         "open!!": open_roof_cmd_no_check,
         "announce": announce_cmd,
+        "sequence": sequence_cmd,
     }
 
 
