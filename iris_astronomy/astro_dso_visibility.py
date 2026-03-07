@@ -2,6 +2,15 @@
 #   remove those that have been imaged, done
 #   how many hours will it be visible > some altitude
 # https://astroplan.readthedocs.io/en/stable/
+import os as _os
+import pathlib as _pathlib
+# Redirect astropy cache to a project-local directory before any astropy import.
+# This prevents PermissionErrors when the default cache dir (~/.astropy) is not
+# writable for the process context (e.g. launched via bat file vs Task Manager).
+_cache_dir = str(_pathlib.Path(__file__).resolve().parent.parent / "local" / "astropy_cache")
+_os.makedirs(_cache_dir, exist_ok=True)
+_os.environ.setdefault("ASTROPY_CACHE_DIR", _cache_dir)
+
 import datetime
 import json
 import math
