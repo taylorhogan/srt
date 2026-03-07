@@ -31,7 +31,7 @@ class PublicConfig():
 
         "nina": {
             "image_dir": "C:/Users/iriso/Documents/N.I.N.A/Targets",
-            "sequence_output": "C:/Users/iriso/Documents/N.I.N.A/Sequences/full_for_tonight",
+            "sequence_output": "C:/Users/iriso/Documents/N.I.N.A/Sequences/full_for_tonight.json",
             "sequence_input":"local/sequence_template.json",
             "arc_sec_per_pixel": 0.26
     },
