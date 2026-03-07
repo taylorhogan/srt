@@ -85,8 +85,9 @@ def get_dso_type(name: str) -> str:
 
 def is_a_dso_object(name: str) -> Optional[FixedTarget]:
     try:
-        dso = FixedTarget.from_name(name)
-        return dso
+        from astropy.coordinates import SkyCoord
+        coord = SkyCoord.from_name(name, cache=False)
+        return FixedTarget(coord=coord, name=name)
     except Exception as e:
         print(f"DEBUG is_a_dso_object({name}): {type(e).__name__}: {e}")
         return None
