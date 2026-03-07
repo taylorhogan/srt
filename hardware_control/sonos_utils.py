@@ -23,6 +23,8 @@ def _serve_file(path: str, port: int, ready_event: threading.Event, stop_event: 
     filename = os.path.basename(path)
 
     class Handler(SimpleHTTPRequestHandler):
+        extensions_map = {**SimpleHTTPRequestHandler.extensions_map, ".mp3": "audio/mpeg"}
+
         def __init__(self, *args, **kwargs):
             super().__init__(*args, directory=directory, **kwargs)
 
@@ -94,4 +96,4 @@ def sonos_say(text: str, speaker_name: str, volume: int = 50):
 
 
 if __name__ == "__main__":
-    sonos_say("Hello from the observatory. The telescope is ready for tonight.", "Office", volume=100)
+    sonos_say("Hello from the observatory. The telescope is ready for tonight.", "Office", volume=20)
