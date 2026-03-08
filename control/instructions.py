@@ -226,6 +226,23 @@ def create_instructions_table(force = False):
     social_server.post_social_message("", "instructions.png")
 
 
+def set_priority_instruction_db(dso_name: str, priority: int) -> bool:
+    """Set the priority of the first waiting instruction matching dso_name.
+    Returns True if a match was found and updated, False otherwise."""
+    with open(_INSTRUCTIONS_PATH, 'r') as f:
+        instructions = json.load(f)
+    matched = False
+    for instruction in instructions:
+        if instruction["dso"].lower() == dso_name.lower() and instruction["status"] == "waiting":
+            instruction["priority"] = priority
+            matched = True
+            break
+    if matched:
+        with open(_INSTRUCTIONS_PATH, 'w') as f:
+            f.writelines(json.dumps(instructions, indent=4))
+    return matched
+
+
 def add_dso_object_instruction(dso_name, recipe, requestor, priority=0):
     now = datetime.now()
     formatted_date = now.strftime("%Y-%m-%d")

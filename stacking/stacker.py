@@ -50,6 +50,13 @@ except Exception:
     _FWHM_AVAILABLE = False
     _logger.warning("photutils not available — FWHM measurement disabled; FWHM_WEIGHTED will use equal weights")
 
+try:
+    import astroalign as _astroalign
+    _REGISTER_AVAILABLE = True
+except Exception:
+    _REGISTER_AVAILABLE = False
+    _logger.warning("astroalign not available — frame registration disabled")
+
 
 # ---------------------------------------------------------------------------
 # Stacking method
@@ -165,6 +172,26 @@ def _get_arcsec_per_pixel() -> float:
         return 1.0
 
 
+def _register_frames(frames: list[np.ndarray]) -> list[np.ndarray]:
+    """
+    Register all frames to the first (reference) frame using an affine transform.
+    Frames that fail to register are dropped with a warning.
+    Returns a list containing the reference frame plus successfully aligned frames.
+    """
+    if not _REGISTER_AVAILABLE or len(frames) < 2:
+        return frames
+
+    reference = frames[0]
+    registered = [reference]
+    for i, frame in enumerate(frames[1:], start=1):
+        try:
+            aligned, _ = _astroalign.register(frame, reference)
+            registered.append(aligned.astype(frame.dtype))
+        except Exception as exc:
+            _logger.warning("Registration failed for frame %d, dropping it: %s", i, exc)
+    return registered
+
+
 def _measure_fwhm(path: Path) -> float:
     """Return mean FWHM in pixels, or 0.0 if measurement fails / no stars found."""
     if not _FWHM_AVAILABLE:
@@ -190,6 +217,7 @@ def stack(
     flat_paths: Optional[list[Path]] = None,
     sigma: float = 3.0,
     max_fwhm: Optional[float] = None,
+    register: bool = True,
 ) -> tuple[np.ndarray, dict]:
     """
     Stack a list of FITS light frames with optional calibration and FWHM weighting.
@@ -250,11 +278,15 @@ def stack(
     _logger.info(
         "Loading and calibrating %d frames (rejected %d)…", len(accepted), len(rejected)
     )
-    cube = np.stack(
-        [_calibrate(_load_fits_2d(p), master_bias, master_dark, master_flat)
-         for p in accepted],
-        axis=0,
-    )
+    calibrated = [_calibrate(_load_fits_2d(p), master_bias, master_dark, master_flat)
+                  for p in accepted]
+
+    if register:
+        _logger.info("Registering %d frames to reference…", len(calibrated))
+        calibrated = _register_frames(calibrated)
+        _logger.info("%d frames remain after registration", len(calibrated))
+
+    cube = np.stack(calibrated, axis=0)
 
     _logger.info("Stacking %d frames with method %s…", len(accepted), method.name)
 
@@ -309,7 +341,7 @@ _UNKNOWN_FILTER = "UNKNOWN"
 def _collect_fits(directory: Optional[Path]) -> list[Path]:
     if directory is None:
         return []
-    return sorted(directory.glob("*.fits")) + sorted(directory.glob("*.fit"))
+    return sorted(directory.rglob("*.fits")) + sorted(directory.rglob("*.fit"))
 
 
 def read_filter(path: Path) -> str:
@@ -368,6 +400,91 @@ def _write_stack(
     fits.writeto(str(output_path), result, header, overwrite=True)
 
 
+def _save_jpg(data: np.ndarray, output_path: Path, title: str = "") -> Path:
+    """Save a ZScale-stretched JPEG preview alongside the stacked FITS."""
+    from astropy.visualization import ZScaleInterval
+    import matplotlib.pyplot as plt
+
+    jpg_path = output_path.with_suffix(".jpg")
+    vmin, vmax = ZScaleInterval().get_limits(data)
+    fig, ax = plt.subplots(figsize=(10, 10))
+    ax.imshow(data, origin="lower", cmap="gray", vmin=vmin, vmax=vmax, interpolation="nearest")
+    ax.axis("off")
+    if title:
+        ax.set_title(title, fontsize=10)
+    fig.tight_layout(pad=0.5)
+    fig.savefig(jpg_path, format="jpeg", dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    return jpg_path
+
+
+# ---------------------------------------------------------------------------
+# SNR curve
+# ---------------------------------------------------------------------------
+
+def snr_curve(
+    frames: list[np.ndarray],
+    filter_name: str = "",
+    output_path: Optional[Path] = None,
+) -> tuple[list[int], list[float]]:
+    """
+    Stack frames incrementally and measure SNR at each step.
+
+    SNR is estimated as median / sigma_clipped_std of the stacked image.
+    The background noise should fall as 1/√N; this function plots both the
+    measured curve and the theoretical expectation so you can see how close
+    reality is.
+
+    Args:
+        frames:      Calibrated (and registered) 2-D arrays in stacking order.
+        filter_name: Label used in the plot title.
+        output_path: If given, save the plot as a JPEG to this path.
+
+    Returns:
+        (counts, snr_values) — lists of frame counts and corresponding SNR.
+    """
+    from astropy.stats import sigma_clipped_stats
+    import matplotlib.pyplot as plt
+
+    counts: list[int] = []
+    snr_values: list[float] = []
+
+    for n in range(1, len(frames) + 1):
+        stack = np.mean(np.stack(frames[:n], axis=0), axis=0)
+        _, median, std = sigma_clipped_stats(stack, sigma=3.0)
+        snr = float(median / std) if std > 0 else 0.0
+        counts.append(n)
+        snr_values.append(snr)
+
+    if not snr_values:
+        return counts, snr_values
+
+    # Theoretical curve: SNR ∝ √N, normalised to the first measured point
+    snr0 = snr_values[0]
+    theoretical = [snr0 * (n ** 0.5) for n in counts]
+
+    fig, ax = plt.subplots(figsize=(10, 5))
+    ax.plot(counts, snr_values, "o-", color="steelblue", label="Measured SNR")
+    ax.plot(counts, theoretical, "--", color="orange", label="Theoretical √N")
+    ax.set_xlabel("Frames stacked")
+    ax.set_ylabel("SNR  (median / background σ)")
+    title = f"SNR vs frames stacked"
+    if filter_name:
+        title += f"  [{filter_name}]"
+    ax.set_title(title)
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+    fig.tight_layout()
+
+    if output_path is not None:
+        fig.savefig(output_path, format="jpeg", dpi=150, bbox_inches="tight")
+        plt.close(fig)
+    else:
+        plt.show()
+
+    return counts, snr_values
+
+
 # ---------------------------------------------------------------------------
 # Convenience: stack a directory
 # ---------------------------------------------------------------------------
@@ -382,6 +499,9 @@ def stack_directory(
     flat_dirs: Optional[dict[str, Path]] = None,
     sigma: float = 3.0,
     max_fwhm: Optional[float] = None,
+    register: bool = True,
+    filters: Optional[list[str]] = None,
+    snr_demo: bool = False,
 ) -> dict[str, tuple[Path, dict]]:
     """
     Stack all .fits/.fit files in *directory*, grouped by FILTER header.
@@ -418,7 +538,14 @@ def stack_directory(
     dark_paths = _collect_fits(dark_dir)
     results: dict[str, tuple[Path, dict]] = {}
 
-    for filter_name, group_paths in groups.items():
+    active_groups = {
+        f: p for f, p in groups.items()
+        if filters is None or f in filters
+    }
+    if not active_groups:
+        raise ValueError(f"No frames match the requested filter(s): {filters}")
+
+    for filter_name, group_paths in active_groups.items():
         flat_paths = _resolve_flat_paths(filter_name, flat_dir, flat_dirs)
         _logger.info("Stacking filter %s: %d frames", filter_name, len(group_paths))
 
@@ -430,15 +557,30 @@ def stack_directory(
             flat_paths=flat_paths,
             sigma=sigma,
             max_fwhm=max_fwhm,
+            register=register,
         )
 
         with fits.open(group_paths[0]) as hdul:
             header = hdul[0].header.copy()
 
-        out = output_path if len(groups) == 1 else _filter_output_path(output_path, filter_name)
+        out = output_path if len(active_groups) == 1 else _filter_output_path(output_path, filter_name)
         _write_stack(result, header, out, info, max_fwhm)
-        _logger.info("Wrote %s stack → %s", filter_name, out)
+        jpg = _save_jpg(result, out, title=f"{filter_name}  {info['n_frames']} frames  ({info['method']})")
+        _logger.info("Wrote %s stack → %s  preview → %s", filter_name, out, jpg)
         results[filter_name] = (out, info)
+
+        if snr_demo:
+            snr_jpg = out.with_name(out.stem + "_snr.jpg")
+            # Reload calibrated frames for incremental SNR measurement
+            master_bias = build_master_bias(bias_paths)
+            master_dark = build_master_dark(dark_paths, master_bias)
+            master_flat = build_master_flat(flat_paths, master_bias, master_dark)
+            calibrated = [_calibrate(_load_fits_2d(p), master_bias, master_dark, master_flat)
+                          for p in group_paths]
+            if register:
+                calibrated = _register_frames(calibrated)
+            snr_curve(calibrated, filter_name=filter_name, output_path=snr_jpg)
+            _logger.info("SNR curve → %s", snr_jpg)
 
     return results
 
@@ -598,6 +740,7 @@ class LiveStacker:
                 header = hdul[0].header.copy()
             header.add_history(f"Live-stacked {info['n_frames']} frames")
             _write_stack(result, header, out, info, self.max_fwhm)
+            _save_jpg(result, out, title=f"{filter_name}  {info['n_frames']} frames  ({info['method']})")
 
             _logger.info(
                 "LiveStacker [%s]: wrote %s (%d frames, %d rejected)",
@@ -639,8 +782,11 @@ if __name__ == "__main__":
         "--flat-dirs", nargs="+", metavar="FILTER=DIR", default=[],
         help="Per-filter flat directories, e.g. Ha=/flats/Ha R=/flats/R",
     )
-    parser.add_argument("--sigma",     type=float, default=3.0,  help="Sigma for SIGMA_CLIP")
-    parser.add_argument("--max-fwhm",  type=float, default=None, help="Reject frames above this FWHM (pixels)")
+    parser.add_argument("--sigma",       type=float, default=3.0,  help="Sigma for SIGMA_CLIP")
+    parser.add_argument("--max-fwhm",   type=float, default=None, help="Reject frames above this FWHM (pixels)")
+    parser.add_argument("--no-register", action="store_true",     help="Disable star-based frame registration")
+    parser.add_argument("--filters",    nargs="+",  default=None, help="Only process these filter(s), e.g. --filters Ha R")
+    parser.add_argument("--snr-demo",   action="store_true",      help="Plot SNR vs frame count for each filter")
     parser.add_argument(
         "--live", action="store_true",
         help="Watch directory for new frames and restack on each arrival",
@@ -696,6 +842,9 @@ if __name__ == "__main__":
             flat_dirs=flat_dirs,
             sigma=args.sigma,
             max_fwhm=args.max_fwhm,
+            register=not args.no_register,
+            filters=args.filters,
+            snr_demo=args.snr_demo,
         )
         for filt, (out, info) in results.items():
             print(f"[{filt}] Stacked {info['n_frames']} frames → {out}")

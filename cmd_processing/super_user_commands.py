@@ -133,13 +133,6 @@ def open_roof_with_option(check: bool) -> bool:
         return False
 
 
-def open_roof_cmd_no_check(words: list[str], account: str) -> None:
-    open_roof_with_option(False)
-
-
-def open_roof_cmd(words: list[str], account: str) -> None:
-    open_roof_with_option(True)
-
 
 def unsafe_cmd(words: list[str], account: str) -> None:
     social_server.post_social_message("User has stopped imaging")
@@ -237,11 +230,6 @@ def image_nina2(words: Optional[list[str]], account: Optional[str]) -> None:
     subprocess.Popen([os.path.join(_SCRIPTS_DIR, "image_nina2.bat")], shell=True)
     print("Done with Nina")
 
-def image_nina_a(words: Optional[list[str]], account: Optional[str]) -> None:
-    print("Starting Nina")
-    subprocess.Popen([os.path.join(_SCRIPTS_DIR, "image_ninaA.bat")])
-    print("Done with Nina")
-
 
 def shutdown(words: list[str], account: str) -> None:
     return
@@ -302,6 +290,23 @@ def announce_cmd(words: list[str], account: str) -> None:
         social_server.post_social_message(f"Announce failed: {e}")
 
 
+def prioritize_cmd(words: list[str], account: str) -> None:
+    """
+    Give a DSO top scheduling priority. Usage: prioritize <dso>  e.g. prioritize m 31
+    """
+    if len(words) < 3:
+        social_server.post_social_message("Usage: prioritize <dso name>  e.g. prioritize m 31")
+        return
+    dso_name = words[2]
+    if len(words) > 3:
+        dso_name = dso_name + " " + words[3]
+    matched = instructions.set_priority_instruction_db(dso_name, priority=100)
+    if matched:
+        social_server.post_social_message(f"{dso_name} set to top priority")
+    else:
+        social_server.post_social_message(f"{dso_name} not found in waiting instructions")
+
+
 def sequence_cmd(words: list[str], account: str) -> None:
     """
     Generate a NINA sequence for a DSO. Usage: sequence <dso>  e.g. sequence m 31
@@ -356,14 +361,10 @@ def get_super_user_commands() -> dict[str, Callable]:
         "image!!": image_cmd,
         "stop!": unsafe_cmd,
         "safe!": safe_cmd,
-        "nina1!": on_nina,
-        "nina2!": image_nina1,
-        "nina2A!": image_nina_a,
-        "open!": open_roof_cmd,
-        "open!!": open_roof_cmd_no_check,
         "announce": announce_cmd,
         "sequence": sequence_cmd,
         "mode": mode_cmd,
+        "prioritize": prioritize_cmd,
     }
 
 

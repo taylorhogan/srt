@@ -21,6 +21,8 @@ import sys
 from collections.abc import Generator
 from typing import Any, Optional
 
+import matplotlib
+matplotlib.use("Agg")  # non-GUI backend — required when running in a subprocess
 import astropy.units as u
 import matplotlib.pyplot as plt
 import numpy as np
