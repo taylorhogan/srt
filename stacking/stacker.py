@@ -25,6 +25,7 @@ biases are filter-agnostic.
 
 import logging
 import os
+import random
 import sys
 import threading
 import time
@@ -172,23 +173,65 @@ def _get_arcsec_per_pixel() -> float:
         return 1.0
 
 
+def _count_sources(frame: np.ndarray) -> int:
+    """Count detected stars in a frame using sep (astroalign dependency)."""
+    try:
+        import sep
+        data = frame.astype(float)
+        bkg = sep.Background(data)
+        sources = sep.extract(data - bkg.back(), thresh=3.0, err=bkg.rms())
+        return len(sources)
+    except Exception:
+        return 0
+
+
+def _best_reference_idx(frames: list[np.ndarray]) -> int:
+    """
+    Sample up to 10 evenly-spaced frames and return the index of the one
+    with the most detected sources — this gives astroalign the best chance
+    of successfully aligning all other frames.
+    """
+    step = max(1, len(frames) // 10)
+    candidates = list(range(0, len(frames), step))[:10]
+    best_idx = candidates[0]
+    best_count = -1
+    for i in candidates:
+        count = _count_sources(frames[i])
+        _logger.debug("Reference candidate frame %d: %d sources", i, count)
+        if count > best_count:
+            best_count = count
+            best_idx = i
+    _logger.info("Selected frame %d as registration reference (%d sources)", best_idx, best_count)
+    return best_idx
+
+
 def _register_frames(frames: list[np.ndarray]) -> list[np.ndarray]:
     """
-    Register all frames to the first (reference) frame using an affine transform.
+    Register all frames to the best reference frame using an affine transform.
+    The reference is chosen as the frame with the most detected stars.
     Frames that fail to register are dropped with a warning.
-    Returns a list containing the reference frame plus successfully aligned frames.
     """
     if not _REGISTER_AVAILABLE or len(frames) < 2:
         return frames
 
-    reference = frames[0]
+    ref_idx = _best_reference_idx(frames)
+    reference = frames[ref_idx]
     registered = [reference]
-    for i, frame in enumerate(frames[1:], start=1):
+    failed = 0
+    for i, frame in enumerate(frames):
+        if i == ref_idx:
+            continue
         try:
             aligned, _ = _astroalign.register(frame, reference)
             registered.append(aligned.astype(frame.dtype))
         except Exception as exc:
-            _logger.warning("Registration failed for frame %d, dropping it: %s", i, exc)
+            failed += 1
+            _logger.warning("Registration failed for frame %d, dropping: %s", i, exc)
+
+    _logger.info(
+        "Registration: %d/%d frames aligned, %d dropped",
+        len(registered), len(frames), failed,
+    )
     return registered
 
 
@@ -275,6 +318,7 @@ def stack(
             f"All {len(light_paths)} frames were rejected by max_fwhm={max_fwhm}"
         )
 
+    random.shuffle(accepted)
     _logger.info(
         "Loading and calibrating %d frames (rejected %d)…", len(accepted), len(rejected)
     )

@@ -82,6 +82,7 @@ def do_main():
                 if parked:
                     logger.info("step 3")
                     social_server.post_social_message("Vision Safety says Scope is parked, closing roof")
+                    super_user_commands.announce_roof_movement("The roof will be closing in one minute")
                     super_user_commands.toggle_roof(dev_map)
                     # wait for roof to close
                     time.sleep(30)

@@ -153,6 +153,11 @@ def status_cmd(words: list[str], index: int, m: Mastodon, account: str) -> None:
     else:
         post_social_message(_json_payload)
 
+    mode = su.get_mode()
+    safe = "safe" if su.is_safe() else "unsafe"
+    imaging = "imaging" if su.is_imaging() else "not imaging"
+    post_social_message(f"Mode: {mode} | Safety: {safe} | Imaging: {imaging}")
+
 
 
 

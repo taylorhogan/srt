@@ -454,6 +454,7 @@ def doit_cmd(words: list[str], account: str) -> None:
         pushover.push_message("not safe 2, stopping")
         return
 
+    announce_roof_movement("The roof will be opening in one minute")
     ok = open_roof_with_option(True)
     print ("ok=", str(ok))
     if not ok:
