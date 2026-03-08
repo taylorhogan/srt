@@ -200,9 +200,10 @@ def latest_cmd(words: list[str], index: int, m: Mastodon, account: str) -> None:
     scratch_dir = os.path.join(_project_root, cfg["scratch"]["directory"])
     output_path = Path(os.path.join(scratch_dir, cfg["scratch"]["latest_jpg"]))
 
-    latest_jpg = fitsfwhm.save_fwhm(Path(str(latest_fits)), output_path, arcsec_per_pixel=cfg["nina"]["arc_sec_per_pixel"])
-
-    post_social_message("Latest", str(latest_jpg))
+    latest_jpg, mean_px, mean_ecc = fitsfwhm.save_fwhm(Path(str(latest_fits)), output_path, arcsec_per_pixel=cfg["nina"]["arc_sec_per_pixel"])
+    arcsec = mean_px * cfg["nina"]["arc_sec_per_pixel"]
+    caption = f"Latest  |  FWHM {mean_px:.2f} px ({arcsec:.2f}\")  |  ecc {mean_ecc:.3f}"
+    post_social_message(caption, str(latest_jpg))
 
 
 keywords = {

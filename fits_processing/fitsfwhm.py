@@ -46,7 +46,8 @@ def _fit_stars(
       - Post-fit ellipticity (long_axis / short_axis) <= max_ellipticity
 
     Returns:
-        (image_data, [(x, y, fwhm_pixels), ...])
+        (image_data, [(x, y, fwhm_pixels, eccentricity), ...])
+        Eccentricity is sqrt(1 - (short_axis/long_axis)^2); 0 = perfect circle, 1 = line.
     """
     with fits.open(fits_path) as hdul:
         raw = hdul[0].data.astype(float)
@@ -66,7 +67,7 @@ def _fit_stars(
 
     height, width = data.shape
     fitter = fitting.LevMarLSQFitter()
-    stars: list[tuple[float, float, float]] = []
+    stars: list[tuple[float, float, float, float]] = []
 
     for source in sources:
         xc = int(round(source["xcentroid"]))
@@ -107,7 +108,8 @@ def _fit_stars(
             if short_ax > 0 and long_ax / short_ax > max_ellipticity:
                 continue
 
-            stars.append((float(xc), float(yc), fwhm))
+            ecc = float(np.sqrt(1.0 - (short_ax / long_ax) ** 2)) if long_ax > 0 else 0.0
+            stars.append((float(xc), float(yc), fwhm, ecc))
         except Exception:
             continue
 
@@ -133,14 +135,15 @@ def calculate_fwhm(
         max_ellipticity:   Maximum long/short axis ratio; rejects non-round sources (default 2).
 
     Returns:
-        (mean_fwhm_pixels, mean_fwhm_arcsec, star_count)
+        (mean_fwhm_pixels, mean_fwhm_arcsec, star_count, mean_eccentricity)
         Values are 0.0 / 0 if no stars are found.
     """
     _, stars = _fit_stars(fits_path, threshold_sigma, min_snr, max_ellipticity)
     if not stars:
-        return 0.0, 0.0, 0
+        return 0.0, 0.0, 0, 0.0
     mean_px = float(np.mean([s[2] for s in stars]))
-    return mean_px, mean_px * arcsec_per_pixel, len(stars)
+    mean_ecc = float(np.mean([s[3] for s in stars]))
+    return mean_px, mean_px * arcsec_per_pixel, len(stars), mean_ecc
 
 
 def display_fwhm(
@@ -171,13 +174,14 @@ def display_fwhm(
         return
 
     mean_px = float(np.mean([s[2] for s in stars]))
+    mean_ecc = float(np.mean([s[3] for s in stars]))
 
     vmin, vmax = ZScaleInterval().get_limits(data)
 
     fig, ax = plt.subplots(figsize=(12, 12))
     ax.imshow(data, origin="lower", cmap="gray", vmin=vmin, vmax=vmax, interpolation="nearest")
 
-    for x, y, fwhm in stars:
+    for x, y, fwhm, _ in stars:
         if fwhm > mean_px * 1.1:
             color = "red"
         elif fwhm < mean_px * 0.9:
@@ -188,7 +192,8 @@ def display_fwhm(
 
     ax.set_title(
         f"{fits_path.name}  |  {len(stars)} stars  |  "
-        f"mean FWHM {mean_px:.2f} px  ({mean_px * arcsec_per_pixel:.2f}\")"
+        f"mean FWHM {mean_px:.2f} px  ({mean_px * arcsec_per_pixel:.2f}\")  |  "
+        f"mean ecc {mean_ecc:.3f}"
     )
     ax.set_xlabel("X (pixels)")
     ax.set_ylabel("Y (pixels)")
@@ -218,13 +223,14 @@ def save_fwhm(
     data, stars = _fit_stars(fits_path, threshold_sigma, min_snr, max_ellipticity)
 
     mean_px = float(np.mean([s[2] for s in stars])) if stars else 0.0
+    mean_ecc = float(np.mean([s[3] for s in stars])) if stars else 0.0
 
     vmin, vmax = ZScaleInterval().get_limits(data)
 
     fig, ax = plt.subplots(figsize=(12, 12))
     ax.imshow(data, origin="lower", cmap="gray", vmin=vmin, vmax=vmax, interpolation="nearest")
 
-    for x, y, fwhm in stars:
+    for x, y, fwhm, _ in stars:
         if fwhm > mean_px * 1.1:
             color = "red"
         elif fwhm < mean_px * 0.9:
@@ -235,7 +241,8 @@ def save_fwhm(
 
     title = (
         f"{fits_path.name}  |  {len(stars)} stars  |  "
-        f"mean FWHM {mean_px:.2f} px  ({mean_px * arcsec_per_pixel:.2f}\")"
+        f"mean FWHM {mean_px:.2f} px  ({mean_px * arcsec_per_pixel:.2f}\")  |  "
+        f"mean ecc {mean_ecc:.3f}"
         if stars else f"{fits_path.name}  |  no stars detected"
     )
     ax.set_title(title)
@@ -252,7 +259,7 @@ def save_fwhm(
     plt.tight_layout()
     plt.savefig(output_path, format="jpeg", dpi=150, bbox_inches="tight")
     plt.close(fig)
-    return output_path
+    return output_path, mean_px, mean_ecc
 
 
 if __name__ == "__main__":
@@ -271,9 +278,10 @@ if __name__ == "__main__":
     threshold_sigma = 8.0
     min_snr = 10.0
     max_ellipticity = 4.0
-    mean_pixels, mean_arcsec, count = calculate_fwhm(
+    mean_pixels, mean_arcsec, count, mean_ecc = calculate_fwhm(
         path, arcsec_per_pixel=arcsec_per_pixel, threshold_sigma=threshold_sigma, min_snr=min_snr, max_ellipticity=max_ellipticity
     )
-    print(f"Stars found : {count}")
-    print(f"Mean FWHM   : {mean_pixels:.2f} px  ({mean_arcsec:.2f}\")")
+    print(f"Stars found      : {count}")
+    print(f"Mean FWHM        : {mean_pixels:.2f} px  ({mean_arcsec:.2f}\")")
+    print(f"Mean eccentricity: {mean_ecc:.3f}")
     display_fwhm(path, arcsec_per_pixel=arcsec_per_pixel, threshold_sigma=threshold_sigma, min_snr=min_snr, max_ellipticity=max_ellipticity)
