@@ -80,7 +80,7 @@ def announce_roof_movement(text: str, speaker_name: str = "Observatory", volume:
             except Exception as e:
                 _logger.warning("Blink step failed: %s", e)
             state = not state
-            await asyncio.sleep(3)
+            await asyncio.sleep(5)
         try:
             await ku.kasa_do(dev_map, original_states)
         except Exception as e:
@@ -330,23 +330,30 @@ def sequence_cmd(words: list[str], account: str) -> None:
     ra_hours = dso.coord.ra.hour
     dec_degrees = dso.coord.dec.deg
 
+    from astropy.time import Time
+    above_horizon, _ = astro_dso_visibility.get_above_horizon_time(dso, Time.now())
+    above_horizon_seconds = above_horizon.total_seconds() if above_horizon is not None else None
+
     _project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
     template_path = Path(os.path.join(_project_root, cfg["nina"]["sequence_input"]))
     output_path = Path(cfg["nina"]["sequence_output"])
 
     try:
-        nina_sequence_gen.generate_sequence(
+        filter_plan = nina_sequence_gen.generate_sequence(
             template_path=template_path,
             dso_name=dso_name,
             ra_hours=ra_hours,
             dec_degrees=dec_degrees,
             output_path=output_path,
+            above_horizon_seconds=above_horizon_seconds,
         )
+        plan_str = "  ".join(f"{f}×{n}" for f, n in filter_plan.items()) if filter_plan else "no filter plan"
         social_server.post_social_message(
             f"Sequence generated for {dso_name} "
-            f"(RA {ra_hours:.4f}h  Dec {dec_degrees:+.4f}°) → {output_path.name}"
+            f"(RA {ra_hours:.4f}h  Dec {dec_degrees:+.4f}°) → {output_path.name}\n"
+            f"{plan_str}"
         )
-        _logger.info("sequence_cmd: generated sequence for %s", dso_name)
+        _logger.info("sequence_cmd: generated sequence for %s  plan=%s", dso_name, filter_plan)
     except Exception as e:
         _logger.exception("sequence_cmd: failed for %s", dso_name)
         social_server.post_social_message(f"Failed to generate sequence for {dso_name}: {e}")

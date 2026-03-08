@@ -22,6 +22,7 @@ from end_points import end
 from fits_processing import fitstojpg, fitsfwhm
 from control import instructions
 from cmd_processing import super_user_commands as su
+from nina_gen import nina_sequence_gen
 from utils.utils import topic_to_sched
 from utils import utils
 
@@ -206,6 +207,49 @@ def latest_cmd(words: list[str], index: int, m: Mastodon, account: str) -> None:
     post_social_message(caption, str(latest_jpg))
 
 
+def schedule_cmd(words: list[str], index: int, m: Mastodon, account: str) -> None:
+    """
+    Generate a NINA sequence for tonight's best object. example: schedule
+    """
+    cfg = config.data()
+    _project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+    instructions_path = os.path.join(_project_root, cfg["location"]["instructions"])
+
+    best_name, best_start, best_good_hours = astro_dso_visibility.best_object_tonight(instructions_path)
+    if not best_name:
+        post_social_message("No suitable object found for tonight")
+        return
+
+    dso = astro_dso_visibility.is_a_dso_object(best_name)
+    if dso is None:
+        post_social_message(f"{best_name} is not a known object")
+        return
+
+    from astropy.time import Time
+    above_horizon, _ = astro_dso_visibility.get_above_horizon_time(dso, Time.now())
+    above_horizon_seconds = above_horizon.total_seconds() if above_horizon is not None else None
+
+    template_path = Path(os.path.join(_project_root, cfg["nina"]["sequence_input"]))
+    output_path = Path(cfg["nina"]["sequence_output"])
+
+    try:
+        filter_plan = nina_sequence_gen.generate_sequence(
+            template_path=template_path,
+            dso_name=best_name,
+            ra_hours=dso.coord.ra.hour,
+            dec_degrees=dso.coord.dec.deg,
+            output_path=output_path,
+            above_horizon_seconds=above_horizon_seconds,
+        )
+        plan_str = "  ".join(f"{f}×{n}" for f, n in filter_plan.items()) if filter_plan else "no filter plan"
+        post_social_message(
+            f"Schedule generated for {best_name} ({best_good_hours:.1f}h above horizon)\n"
+            f"{plan_str}\n→ {output_path.name}"
+        )
+    except Exception as e:
+        post_social_message(f"Failed to generate schedule for {best_name}: {e}")
+
+
 keywords = {
     "tonight": tonight_cmd,
     "best": best_cmd,
@@ -214,6 +258,7 @@ keywords = {
     "version": version_cmd,
     "status": status_cmd,
     "latest": latest_cmd,
+    "schedule": schedule_cmd,
     "calendar": calendar_cmd,
     "help": help_cmd,
     "?": help_cmd
