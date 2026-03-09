@@ -105,12 +105,15 @@ def _send_grid_to_mastodon():
 
 
 def _imaging_plan_message(dso_name: str, best_good_hours: float) -> str:
-    """Build a human-readable summary of tonight's imaging plan."""
+    """Build a human-readable summary of tonight's imaging plan in observatory local time."""
     try:
+        from zoneinfo import ZoneInfo  # stdlib, Python 3.9+
+        tz = ZoneInfo(CFG["location"]["timezone"])
         _, sunset = get_sunrise_sunset()
-        imaging_start = sunset - timedelta(hours=1)
-        sunset_str = sunset.strftime("%H:%M %Z")
-        start_str = imaging_start.strftime("%H:%M %Z")
+        sunset_local = sunset.astimezone(tz)
+        imaging_start_local = sunset_local - timedelta(hours=1)
+        sunset_str = sunset_local.strftime("%H:%M %Z")
+        start_str = imaging_start_local.strftime("%H:%M %Z")
     except Exception:
         sunset_str = "unknown"
         start_str = "unknown"
@@ -242,9 +245,14 @@ def _run_state_machine():
                 LOGGER.info("Starting imaging run")
                 if super_user_commands.get_mode() == "auto":
                     super_user_commands.image_cmd(["", "image!!", "1"], "iris")
+                    # image_cmd launches NINA via Popen (non-blocking); wait here
+                    # until end.py or the NINA bat resets the state to NONE.
+                    LOGGER.info("Waiting for imaging state to return to NONE")
+                    while super_user_commands.get_imaging_state() != super_user_commands.ImagingState.NONE:
+                        time.sleep(60)
+                    LOGGER.info("Imaging state is NONE — run complete")
                 else:
                     social_server.post_social_message("Mode is manual — skipping auto imaging")
-                LOGGER.info("Imaging run complete")
                 state = State.WAITING_FOR_NOON
 
         except Exception:

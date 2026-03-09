@@ -133,6 +133,7 @@ def do_main():
         logger.info('Problem')
         logger.exception("Exception")
 
+    super_user_commands.set_imaging_state(super_user_commands.ImagingState.NONE)
     logger.info('End End Sequence')
 
 
