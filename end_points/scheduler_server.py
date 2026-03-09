@@ -1,3 +1,74 @@
+"""
+scheduler_server.py — Nightly imaging state machine for the Iris observatory.
+
+Overview
+--------
+This module is one of the two long-running processes that make up SRT
+(started together by ``end_points/start_srt.py``).  Its sole job is to
+drive the observatory through a repeating daily cycle:
+
+    WAITING_FOR_NOON
+        → NOON_CHECK
+        → WAITING_FOR_PRE_SUNSET
+        → PRE_SUNSET_CHECK
+        → IMAGING
+        → WAITING_FOR_NOON  (next day)
+
+At each gate the scheduler decides whether conditions justify imaging
+tonight, posts a status update to Mastodon, and advances (or retreats)
+to the next state.
+
+State descriptions
+------------------
+WAITING_FOR_NOON
+    Sleeps in 30-second increments until the next calendar noon.
+
+NOON_CHECK
+    Recalculates DSO visibility for all queued targets, picks the best
+    one for tonight, posts the imaging grid and plan to Mastodon, and
+    decides whether tonight is worth imaging (≥ _MIN_GOOD_HOURS).
+
+WAITING_FOR_PRE_SUNSET
+    Sleeps until one hour before today's sunset.
+
+PRE_SUNSET_CHECK
+    Re-evaluates conditions closer to showtime.  If good, generates the
+    N.I.N.A sequence and moves to IMAGING; otherwise waits for noon.
+
+IMAGING
+    Fires ``super_user_commands.image_cmd`` (which is non-blocking —
+    it calls ``subprocess.Popen``).  Then polls ``get_imaging_state()``
+    every 60 seconds until ``end.py`` resets the state to
+    ``ImagingState.NONE``, signalling that the hardware has shut down.
+
+WAITING_FOR_BOOT
+    A one-minute recovery pause entered after any unhandled exception
+    before falling back to WAITING_FOR_NOON.
+
+Inter-process communication
+---------------------------
+- **MQTT** (``paho-mqtt``): the social server can query the current
+  observatory state by publishing to ``utils.topic_to_sched``; this
+  module replies with a JSON payload on ``iris/from_sched``.
+- **imaging.txt** (file on disk, written by ``super_user_commands``):
+  shared state between this process, ``doit_cmd`` / ``end.py``, and the
+  N.I.N.A Windows batch scripts.  The scheduler polls this file while
+  waiting for an imaging run to complete.
+- **Mastodon**: all human-readable status updates are posted via
+  ``social_server.post_social_message``.
+- **Pushover**: not used directly here; called downstream by
+  ``super_user_commands.doit_cmd`` during the actual imaging run.
+
+Dependencies (non-stdlib)
+-------------------------
+- ``iris_astronomy`` — DSO visibility, calendar, weather / sunset times.
+- ``control.instructions`` — JSON-backed DSO request queue.
+- ``cmd_processing.social_server`` — Mastodon posting.
+- ``cmd_processing.super_user_commands`` — imaging state enum + image_cmd.
+- ``nina_gen.nina_sequence_gen`` — N.I.N.A sequence generator.
+- ``utils`` — MQTT helpers, logging.
+"""
+
 import json
 import logging
 import os
@@ -27,9 +98,17 @@ LOGGER = utils.set_logger()
 CFG["logger"]["logging"] = LOGGER
 
 _PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+
+# Minimum number of "good" imaging hours required for the scheduler to
+# commit to imaging tonight.  A night with fewer than this many hours
+# above the horizon (at acceptable air mass) is skipped.
 _MIN_GOOD_HOURS = 3
 
+# MQTT client reference; assigned in main() after connection.
 client = None
+
+# Mutable dict broadcast over MQTT when the social server polls us.
+# Keys are kept stable so callers can parse the JSON reliably.
 observatory_state = {
     "state": "Unknown",
     "dso": "Unknown",
@@ -38,6 +117,20 @@ observatory_state = {
 
 
 class State(Enum):
+    """States of the nightly scheduling state machine.
+
+    Transitions::
+
+        WAITING_FOR_BOOT  ──► WAITING_FOR_NOON
+        WAITING_FOR_NOON  ──► NOON_CHECK
+        NOON_CHECK        ──► WAITING_FOR_PRE_SUNSET  (good night)
+        NOON_CHECK        ──► WAITING_FOR_NOON        (bad night)
+        WAITING_FOR_PRE_SUNSET ──► PRE_SUNSET_CHECK
+        PRE_SUNSET_CHECK  ──► IMAGING                 (still good)
+        PRE_SUNSET_CHECK  ──► WAITING_FOR_NOON        (conditions degraded)
+        IMAGING           ──► WAITING_FOR_NOON        (always, after run ends)
+        * any state       ──► WAITING_FOR_BOOT        (on unhandled exception)
+    """
     WAITING_FOR_NOON = auto()
     NOON_CHECK = auto()
     WAITING_FOR_PRE_SUNSET = auto()
@@ -46,7 +139,24 @@ class State(Enum):
     WAITING_FOR_BOOT = auto()
 
 
+# ---------------------------------------------------------------------------
+# MQTT message handler
+# ---------------------------------------------------------------------------
+
 def message_handling(client, userdata, msg):
+    """Respond to MQTT status queries from the social server.
+
+    The social server publishes a message to ``utils.topic_to_sched``
+    whenever it needs the current observatory state (e.g. to reply to a
+    Mastodon ``status`` command).  This handler serialises
+    ``observatory_state`` to JSON and publishes it back on
+    ``iris/from_sched``.
+
+    Args:
+        client: The paho-mqtt client instance.
+        userdata: Unused; required by the paho callback signature.
+        msg: The incoming paho ``MQTTMessage``.
+    """
     if msg.topic == utils.topic_to_sched:
         print("incoming message", msg)
         json_payload = json.dumps(observatory_state)
@@ -59,7 +169,23 @@ def message_handling(client, userdata, msg):
             print(f"Failed to send message to topic {topic}")
 
 
+# ---------------------------------------------------------------------------
+# State helpers
+# ---------------------------------------------------------------------------
+
 def set_state(state: State, dso=None, will_image_tonight=None):
+    """Update the in-memory ``observatory_state`` dict and log the transition.
+
+    The dict is serialised to JSON and broadcast over MQTT on the next
+    query from the social server (see ``message_handling``).
+
+    Args:
+        state: The new ``State`` enum value.
+        dso: Optional DSO name to record (e.g. ``"NGC 891"``).
+            If ``None``, the existing value is preserved.
+        will_image_tonight: Optional bool indicating whether Iris will
+            image tonight.  If ``None``, the existing value is preserved.
+    """
     global observatory_state
     observatory_state["state"] = state.name
     if dso is not None:
@@ -71,7 +197,16 @@ def set_state(state: State, dso=None, will_image_tonight=None):
 
 
 def _wait_until(target: datetime):
-    """Sleep in 30-second increments until target time (handles tz-aware or naive)."""
+    """Block the calling thread until *target* is reached.
+
+    Sleeps in 30-second increments to remain responsive to OS signals
+    and to avoid busy-waiting.  Handles both tz-aware and tz-naive
+    datetimes: if *target* carries timezone info, ``now`` is computed in
+    the same timezone so the comparison is always apples-to-apples.
+
+    Args:
+        target: The datetime at which to stop waiting.
+    """
     if target.tzinfo is not None:
         now = lambda: datetime.now(target.tzinfo)
     else:
@@ -81,6 +216,14 @@ def _wait_until(target: datetime):
 
 
 def _next_noon() -> datetime:
+    """Return a tz-naive datetime for the next upcoming noon.
+
+    If the current time is already past noon today, returns noon
+    tomorrow; otherwise returns noon today.
+
+    Returns:
+        A tz-naive ``datetime`` set to 12:00:00 local time.
+    """
     now = datetime.now()
     noon = now.replace(hour=12, minute=0, second=0, microsecond=0)
     if now >= noon:
@@ -89,23 +232,63 @@ def _next_noon() -> datetime:
 
 
 def _one_hour_before_sunset() -> datetime:
+    """Return the datetime that is one hour before today's sunset.
+
+    Delegates to ``weather.get_sunrise_sunset()`` which calls the
+    Open-Meteo API.  The returned datetime may be tz-aware (UTC or
+    local, depending on the weather module implementation).
+
+    Returns:
+        A ``datetime`` one hour before today's sunset.
+    """
     _, sunset = weather.get_sunrise_sunset()
     return sunset - timedelta(hours=1)
 
 
 def _get_best_object() -> tuple[str, int]:
+    """Query the instruction queue for the best DSO to image tonight.
+
+    Reads ``my_instructions.json`` (path from config) and delegates to
+    ``best_object_tonight``, which scores targets by visibility window,
+    air mass, and priority.
+
+    Returns:
+        A ``(dso_name, good_hours)`` tuple where *good_hours* is the
+        number of hours the target is above the horizon at acceptable
+        air mass tonight.
+    """
     instructions_path = os.path.join(_PROJECT_ROOT, CFG["location"]["instructions"])
     best_name, best_start, best_good_hours = best_object_tonight(instructions_path)
     return best_name, best_good_hours
 
 
 def _send_grid_to_mastodon():
+    """Post the nightly imaging grid image to Mastodon.
+
+    Reads the pre-generated grid PNG from the path in config
+    (``cfg["location"]["image_grid"]``) and posts it with a caption.
+    Called at both NOON_CHECK and PRE_SUNSET_CHECK.
+    """
     image_grid_path = os.path.join(_PROJECT_ROOT, CFG["location"]["image_grid"])
     social_server.post_social_message("Tonight's imaging grid", image=image_grid_path)
 
 
 def _imaging_plan_message(dso_name: str, best_good_hours: float) -> str:
-    """Build a human-readable summary of tonight's imaging plan in observatory local time."""
+    """Build a human-readable summary of tonight's imaging plan in observatory local time.
+
+    Fetches today's sunset time, converts it to the observatory's
+    configured timezone (``cfg["location"]["timezone"]``), and formats a
+    three-line summary suitable for posting to Mastodon.
+
+    Args:
+        dso_name: The name of the target DSO (e.g. ``"M 31"``).
+        best_good_hours: Estimated good imaging hours for this target.
+
+    Returns:
+        A multi-line string with target name, imaging duration,
+        sunset time, and estimated imaging start time.  Falls back to
+        ``"unknown"`` for times if the weather API call fails.
+    """
     try:
         from zoneinfo import ZoneInfo  # stdlib, Python 3.9+
         tz = ZoneInfo(CFG["location"]["timezone"])
@@ -125,6 +308,27 @@ def _imaging_plan_message(dso_name: str, best_good_hours: float) -> str:
 
 
 def _generate_nina_sequence(dso_name: str):
+    """Resolve DSO coordinates and write a N.I.N.A sequence file to disk.
+
+    Looks up *dso_name* in the astropy/Simbad catalogue via
+    ``is_a_dso_object``, extracts RA/Dec, then calls
+    ``nina_sequence_gen.generate_sequence`` to patch the JSON template
+    (``cfg["nina"]["sequence_input"]``) and write the output sequence
+    (``cfg["nina"]["sequence_output"]``).
+
+    The output path is a Windows path consumed by N.I.N.A running on the
+    imaging PC; it must be accessible from the scheduler host (e.g.
+    via a network share or the observatory's cross-OS file system mount).
+
+    Args:
+        dso_name: The target name, e.g. ``"NGC 891"`` or ``"M 42"``.
+
+    Side effects:
+        Writes a JSON file to ``cfg["nina"]["sequence_output"]``.
+        Logs an error if *dso_name* cannot be resolved; in that case
+        no file is written and N.I.N.A will use whatever sequence was
+        there previously.
+    """
     dso = is_a_dso_object(dso_name)
     if dso is None:
         LOGGER.error("Could not resolve coordinates for %s", dso_name)
@@ -143,7 +347,26 @@ def _generate_nina_sequence(dso_name: str):
     LOGGER.info("Generated Nina sequence for %s", dso_name)
 
 
+# ---------------------------------------------------------------------------
+# Start-up state selection
+# ---------------------------------------------------------------------------
+
 def _initial_state() -> State:
+    """Choose the correct starting state based on the current time of day.
+
+    Prevents the scheduler from always starting at WAITING_FOR_NOON when
+    it is restarted mid-afternoon or at other points in the day.
+
+    Logic:
+        - Before noon → ``WAITING_FOR_NOON`` (wait for noon today).
+        - Between noon and one hour before sunset → ``NOON_CHECK``
+          (noon has already passed; run the noon logic immediately).
+        - After one hour before sunset → ``WAITING_FOR_NOON``
+          (too late to start tonight; wait for noon tomorrow).
+
+    Returns:
+        The appropriate ``State`` to start the machine in.
+    """
     now = datetime.now()
     noon = now.replace(hour=12, minute=0, second=0, microsecond=0)
 
@@ -169,7 +392,63 @@ def _initial_state() -> State:
     return State.WAITING_FOR_NOON
 
 
+# ---------------------------------------------------------------------------
+# State machine
+# ---------------------------------------------------------------------------
+
 def _run_state_machine():
+    """Drive the scheduler through its nightly cycle indefinitely.
+
+    This function never returns under normal operation.  Each iteration
+    of the ``while True`` loop handles exactly one state transition.
+    Unhandled exceptions are caught, reported to Mastodon, and the
+    machine falls back to ``WAITING_FOR_BOOT`` (a one-minute recovery
+    pause) before resuming.
+
+    State details
+    ~~~~~~~~~~~~~
+
+    **WAITING_FOR_BOOT**
+        One-minute sleep used as a recovery buffer after an exception.
+        Gives external services (MQTT broker, Mastodon) time to
+        stabilise before the machine tries again.
+
+    **WAITING_FOR_NOON**
+        Calls ``_next_noon()`` and sleeps via ``_wait_until``.  After
+        waking, advances to ``NOON_CHECK``.
+
+    **NOON_CHECK**
+        - Recalculates hours-above-horizon for every queued target.
+        - Picks the best DSO via ``_get_best_object()``.
+        - Posts the imaging grid to Mastodon.
+        - Posts the current mode (``auto`` / ``manual``) to Mastodon.
+        - If ``best_good_hours >= _MIN_GOOD_HOURS``: posts a plan
+          message, updates the calendar, and advances to
+          ``WAITING_FOR_PRE_SUNSET``.
+        - Otherwise: posts a skip notice, records a weather-block in the
+          calendar, and loops back to ``WAITING_FOR_NOON``.
+
+    **WAITING_FOR_PRE_SUNSET**
+        Sleeps until one hour before today's sunset, then advances to
+        ``PRE_SUNSET_CHECK``.
+
+    **PRE_SUNSET_CHECK**
+        Re-evaluates best object and good hours.  If still adequate,
+        generates the N.I.N.A sequence file and advances to ``IMAGING``.
+        Otherwise skips tonight and loops back to ``WAITING_FOR_NOON``.
+
+    **IMAGING**
+        - In ``auto`` mode: calls ``image_cmd(["", "image!!", "1"],
+          "iris")`` which launches the full observatory run
+          (safety checks → roof open → NINA prelude → NINA main).
+          ``image_cmd`` uses ``subprocess.Popen`` internally so this
+          call returns quickly; the scheduler then **polls
+          ``get_imaging_state()`` every 60 seconds** until ``end.py``
+          resets the state to ``ImagingState.NONE``, confirming the run
+          has truly finished before cycling back to ``WAITING_FOR_NOON``.
+        - In ``manual`` mode: posts a skip notice and immediately
+          advances to ``WAITING_FOR_NOON``.
+    """
     state = _initial_state()
 
     while True:
@@ -188,6 +467,7 @@ def _run_state_machine():
 
             elif state == State.NOON_CHECK:
                 set_state(state)
+                # Refresh visibility metrics for all queued targets.
                 instructions.calc_and_store_hours_above_horizon()
                 best_name, best_good_hours = _get_best_object()
                 _send_grid_to_mastodon()
@@ -196,6 +476,7 @@ def _run_state_machine():
                 mode = super_user_commands.get_mode()
                 social_server.post_social_message(f"Imaging mode: {mode}")
                 if best_good_hours >= _MIN_GOOD_HOURS:
+                    # Good night — announce the plan and proceed.
                     social_server.tonight_cmd(["me", "tonight", best_name], 2, "", "")
                     social_server.post_social_message(
                         f"Planning to image tonight\n{_imaging_plan_message(best_name, best_good_hours)}"
@@ -204,6 +485,7 @@ def _run_state_machine():
                     set_state(state, best_name, True)
                     state = State.WAITING_FOR_PRE_SUNSET
                 else:
+                    # Not enough imaging time — skip tonight.
                     social_server.post_social_message(
                         f"Not enough good imaging hours tonight ({best_good_hours}h), skipping"
                     )
@@ -220,6 +502,7 @@ def _run_state_machine():
 
             elif state == State.PRE_SUNSET_CHECK:
                 set_state(state)
+                # Re-check conditions now that we are closer to imaging time.
                 best_name, best_good_hours = _get_best_object()
                 _send_grid_to_mastodon()
                 LOGGER.info("Pre-sunset check: best=%s good_hours=%d", best_name, best_good_hours)
@@ -231,6 +514,7 @@ def _run_state_machine():
                         f"Confirmed — generating sequence\n{_imaging_plan_message(best_name, best_good_hours)}"
                     )
                     set_state(state, best_name, True)
+                    # Write the N.I.N.A sequence to disk before NINA starts.
                     _generate_nina_sequence(best_name)
                     state = State.IMAGING
                 else:
@@ -266,7 +550,27 @@ def _run_state_machine():
             state = State.WAITING_FOR_BOOT
 
 
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
+
 def main():
+    """Initialise subsystems and start the scheduling loop.
+
+    Startup sequence:
+        1. Write ``safety.txt`` as ``USER SAFE`` so the run can proceed
+           if mode is ``auto`` (``safe_cmd`` does this).
+        2. Reset imaging state to ``NONE`` (clears any stale ``imaging.txt``
+           left by a previous crash).
+        3. Force mode to ``manual`` — the operator must explicitly switch
+           to ``auto`` mode via Mastodon before any unattended imaging
+           will be triggered.
+        4. Connect to the MQTT broker and subscribe to the inbound topic.
+           If the broker is unavailable (e.g. running in development),
+           the scheduler continues without MQTT — it simply won't respond
+           to status queries.
+        5. Enter ``_run_state_machine()``, which never returns.
+    """
     print("Starting Scheduler Server")
     super_user_commands.safe_cmd(None, None)
     super_user_commands.ImagingState(super_user_commands.ImagingState.NONE)
