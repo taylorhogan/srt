@@ -5,6 +5,7 @@ import subprocess
 import threading
 import time
 from collections.abc import Callable
+from enum import Enum
 from pathlib import Path
 from typing import Any, Optional
 
@@ -147,14 +148,19 @@ def safe_cmd(words: list[str], account: str) -> None:
     with open("safety.txt", "w") as file:
         file.write("USER SAFE")
 
-def imaging_state(state: bool) -> None:
+class ImagingState(Enum):
+    NONE         = "NONE"
+    ACTIVE       = "ACTIVE"
+    IN_PRELUDE   = "IN_PRELUDE"
+    DONE_PRELUDE = "DONE_PRELUDE"
+    IN_MAIN      = "IN_MAIN"
+    DONE_MAIN    = "DONE_MAIN"
 
+
+def set_imaging_state(state: ImagingState) -> None:
     utils.set_install_dir()
     with open("imaging.txt", "w") as file:
-        if state is True:
-            file.write("IMAGING TRUE")
-        else:
-            file.write("IMAGING FALSE")
+        file.write(f"IMAGING_STATE {state.value}")
 
 
 def set_mode(mode: str) -> None:
@@ -409,28 +415,44 @@ def is_safe() -> bool:
         return False
     return first_line == "USER SAFE"
 
-def is_imaging() -> bool:
+def get_imaging_state() -> ImagingState:
     utils.set_install_dir()
     try:
         with open("imaging.txt", "r") as file:
-            first_line = file.readline()
+            line = file.readline().strip()
+        parts = line.split()
+        if len(parts) == 2 and parts[0] == "IMAGING_STATE":
+            try:
+                return ImagingState(parts[1])
+            except ValueError:
+                pass
     except FileNotFoundError:
-        return False
-    print(first_line)
-    return first_line == "IMAGING TRUE"
+        pass
+    return ImagingState.NONE
+
+
+def is_imaging() -> bool:
+    return get_imaging_state() != ImagingState.NONE
 
 def image_cmd(words: list[str], account: str) -> None:
     if is_imaging():
         pushover.push_message("Already imaging, cannot restart")
     else:
-        imaging_state(True)
         doit_cmd(words, account)
-        imaging_state(False)
+        set_imaging_state(ImagingState.NONE)
 
 
 
 def doit_cmd(words: list[str], account: str) -> None:
 
+    current = get_imaging_state()
+    if current != ImagingState.NONE:
+        msg = f"Imaging already in progress (state: {current.value}), aborting"
+        _logger.warning(msg)
+        social_server.post_social_message(msg)
+        return
+
+    set_imaging_state(ImagingState.ACTIVE)
     _logger.info("doit_cmd")
     cfg = config.data()
 
@@ -479,11 +501,20 @@ def doit_cmd(words: list[str], account: str) -> None:
     if operand == 2 or operand == 1:
         print ("starting Nina")
 
+        set_imaging_state(ImagingState.IN_PRELUDE)
         on_nina(None, None)
 
-        # need to add a method to know if Nina is finished
-        # write to file that prelude has finished
-        time.sleep(5*60)
+        # Wait for NINA prelude to signal completion via set_imaging_state.bat DONE_PRELUDE
+        _logger.info("Waiting for prelude to complete (state = DONE_PRELUDE)")
+        prelude_timeout = 3 * 3600  # 3 hours max
+        prelude_start = time.time()
+        while get_imaging_state() != ImagingState.DONE_PRELUDE:
+            if time.time() - prelude_start > prelude_timeout:
+                pushover.push_message("Prelude timed out, stopping", inside_view)
+                set_imaging_state(ImagingState.NONE)
+                return
+            time.sleep(30)
+
         pushover.push_message("prelude has finished", inside_view)
 
         if not is_safe():
@@ -501,13 +532,10 @@ def doit_cmd(words: list[str], account: str) -> None:
         if not open:
             pushover.push_message("roof is not open, stopping", inside_view)
             return
+        set_imaging_state(ImagingState.IN_MAIN)
         if operand == 1:
             image_nina1(None, None)
-        else:
-            image_nina2(None, None)
 
-
-        pushover.push_message("imaging!")
     else:
         print ("end started")
         pushover.push_message("just closing up, no imaging")
