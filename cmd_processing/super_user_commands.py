@@ -161,12 +161,14 @@ def set_imaging_state(state: ImagingState) -> None:
     utils.set_install_dir()
     with open("imaging.txt", "w") as file:
         file.write(f"IMAGING_STATE {state.value}")
+    social_server.post_social_message(f"Imaging state: {state.value}")
 
 
 def set_mode(mode: str) -> None:
     utils.set_install_dir()
     with open("mode.txt", "w") as file:
         file.write(f"MODE {mode.upper()}")
+    social_server.post_social_message(f"Mode: {mode}")
 
 
 def mode_cmd(words: list[str], account: str) -> None:
@@ -174,7 +176,6 @@ def mode_cmd(words: list[str], account: str) -> None:
         social_server.post_social_message("Usage: mode auto|manual")
         return
     set_mode(words[2])
-    social_server.post_social_message(f"Mode set to {words[2]}")
 
 
 def get_mode() -> str:

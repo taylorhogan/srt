@@ -245,7 +245,7 @@ def _one_hour_before_sunset() -> datetime:
     return sunset - timedelta(hours=1)
 
 
-def _get_best_object() -> tuple[str, int]:
+def _get_best_object() -> tuple[str, int, datetime]:
     """Query the instruction queue for the best DSO to image tonight.
 
     Reads ``my_instructions.json`` (path from config) and delegates to
@@ -253,13 +253,15 @@ def _get_best_object() -> tuple[str, int]:
     air mass, and priority.
 
     Returns:
-        A ``(dso_name, good_hours)`` tuple where *good_hours* is the
-        number of hours the target is above the horizon at acceptable
-        air mass tonight.
+        A ``(dso_name, good_hours, best_start)`` tuple where *good_hours*
+        is the number of hours the target is above the horizon at
+        acceptable air mass tonight, and *best_start* is the datetime
+        when the target first clears the horizon with good conditions
+        (may be ``None`` if no good hours exist).
     """
     instructions_path = os.path.join(_PROJECT_ROOT, CFG["location"]["instructions"])
     best_name, best_start, best_good_hours = best_object_tonight(instructions_path)
-    return best_name, best_good_hours
+    return best_name, best_good_hours, best_start
 
 
 def _send_grid_to_mastodon():
@@ -273,37 +275,46 @@ def _send_grid_to_mastodon():
     social_server.post_social_message("Tonight's imaging grid", image=image_grid_path)
 
 
-def _imaging_plan_message(dso_name: str, best_good_hours: float) -> str:
+def _imaging_plan_message(dso_name: str, best_good_hours: float, best_start: datetime) -> str:
     """Build a human-readable summary of tonight's imaging plan in observatory local time.
 
-    Fetches today's sunset time, converts it to the observatory's
-    configured timezone (``cfg["location"]["timezone"]``), and formats a
-    three-line summary suitable for posting to Mastodon.
+    Fetches today's sunset time and converts it (and *best_start*) to the
+    observatory's configured timezone, then formats a three-line summary
+    suitable for posting to Mastodon.
 
     Args:
         dso_name: The name of the target DSO (e.g. ``"M 31"``).
         best_good_hours: Estimated good imaging hours for this target.
+        best_start: Datetime when the DSO first clears the horizon with
+            good conditions tonight (from ``best_object_tonight``).
+            May be ``None``; falls back to ``"unknown"`` in that case.
 
     Returns:
         A multi-line string with target name, imaging duration,
-        sunset time, and estimated imaging start time.  Falls back to
-        ``"unknown"`` for times if the weather API call fails.
+        sunset time, and DSO rise time.  Falls back to ``"unknown"``
+        for times if the weather API call or best_start is unavailable.
     """
     try:
         from zoneinfo import ZoneInfo  # stdlib, Python 3.9+
         tz = ZoneInfo(CFG["location"]["timezone"])
         _, sunset = get_sunrise_sunset()
         sunset_local = sunset.astimezone(tz)
-        imaging_start_local = sunset_local - timedelta(hours=1)
         sunset_str = sunset_local.strftime("%H:%M %Z")
-        start_str = imaging_start_local.strftime("%H:%M %Z")
+        if best_start is not None:
+            if best_start.tzinfo is not None:
+                start_local = best_start.astimezone(tz)
+            else:
+                start_local = best_start.replace(tzinfo=tz)
+            start_str = start_local.strftime("%H:%M %Z")
+        else:
+            start_str = "unknown"
     except Exception:
         sunset_str = "unknown"
         start_str = "unknown"
     return (
         f"Target: {dso_name}\n"
         f"Imaging time: {best_good_hours:.1f}h\n"
-        f"Sunset: {sunset_str}  |  Imaging starts: ~{start_str}"
+        f"Sunset: {sunset_str}  |  DSO rises: ~{start_str}"
     )
 
 
@@ -469,7 +480,7 @@ def _run_state_machine():
                 set_state(state)
                 # Refresh visibility metrics for all queued targets.
                 instructions.calc_and_store_hours_above_horizon()
-                best_name, best_good_hours = _get_best_object()
+                best_name, best_good_hours, best_start = _get_best_object()
                 _send_grid_to_mastodon()
                 LOGGER.info("Noon check: best=%s good_hours=%d", best_name, best_good_hours)
 
@@ -479,7 +490,7 @@ def _run_state_machine():
                     # Good night — announce the plan and proceed.
                     social_server.tonight_cmd(["me", "tonight", best_name], 2, "", "")
                     social_server.post_social_message(
-                        f"Planning to image tonight\n{_imaging_plan_message(best_name, best_good_hours)}"
+                        f"Planning to image tonight\n{_imaging_plan_message(best_name, best_good_hours, best_start)}"
                     )
                     obs_calendar.set_today_stat('image', best_name)
                     set_state(state, best_name, True)
@@ -503,7 +514,7 @@ def _run_state_machine():
             elif state == State.PRE_SUNSET_CHECK:
                 set_state(state)
                 # Re-check conditions now that we are closer to imaging time.
-                best_name, best_good_hours = _get_best_object()
+                best_name, best_good_hours, best_start = _get_best_object()
                 _send_grid_to_mastodon()
                 LOGGER.info("Pre-sunset check: best=%s good_hours=%d", best_name, best_good_hours)
 
@@ -511,7 +522,7 @@ def _run_state_machine():
                 social_server.post_social_message(f"Imaging mode: {mode}")
                 if best_good_hours >= _MIN_GOOD_HOURS:
                     social_server.post_social_message(
-                        f"Confirmed — generating sequence\n{_imaging_plan_message(best_name, best_good_hours)}"
+                        f"Confirmed — generating sequence\n{_imaging_plan_message(best_name, best_good_hours, best_start)}"
                     )
                     set_state(state, best_name, True)
                     # Write the N.I.N.A sequence to disk before NINA starts.
