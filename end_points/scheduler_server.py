@@ -14,6 +14,7 @@ if __package__ is None or __package__ == "":
 
 from iris_astronomy import astro_dso_visibility, obs_calendar, weather
 from iris_astronomy.astro_dso_visibility import best_object_tonight, is_a_dso_object
+from iris_astronomy.weather import get_sunrise_sunset
 from configs import config
 from control import instructions
 from cmd_processing import social_server
@@ -103,6 +104,23 @@ def _send_grid_to_mastodon():
     social_server.post_social_message("Tonight's imaging grid", image=image_grid_path)
 
 
+def _imaging_plan_message(dso_name: str, best_good_hours: float) -> str:
+    """Build a human-readable summary of tonight's imaging plan."""
+    try:
+        _, sunset = get_sunrise_sunset()
+        imaging_start = sunset - timedelta(hours=1)
+        sunset_str = sunset.strftime("%H:%M %Z")
+        start_str = imaging_start.strftime("%H:%M %Z")
+    except Exception:
+        sunset_str = "unknown"
+        start_str = "unknown"
+    return (
+        f"Target: {dso_name}\n"
+        f"Imaging time: {best_good_hours:.1f}h\n"
+        f"Sunset: {sunset_str}  |  Imaging starts: ~{start_str}"
+    )
+
+
 def _generate_nina_sequence(dso_name: str):
     dso = is_a_dso_object(dso_name)
     if dso is None:
@@ -177,7 +195,7 @@ def _run_state_machine():
                 if best_good_hours >= _MIN_GOOD_HOURS:
                     social_server.tonight_cmd(["me", "tonight", best_name], 2, "", "")
                     social_server.post_social_message(
-                        f"Planning to image {best_name} tonight ({best_good_hours}h good imaging)"
+                        f"Planning to image tonight\n{_imaging_plan_message(best_name, best_good_hours)}"
                     )
                     obs_calendar.set_today_stat('image', best_name)
                     set_state(state, best_name, True)
@@ -207,7 +225,7 @@ def _run_state_machine():
                 social_server.post_social_message(f"Imaging mode: {mode}")
                 if best_good_hours >= _MIN_GOOD_HOURS:
                     social_server.post_social_message(
-                        f"Imaging {best_name} tonight ({best_good_hours}h good imaging) — generating sequence"
+                        f"Confirmed — generating sequence\n{_imaging_plan_message(best_name, best_good_hours)}"
                     )
                     set_state(state, best_name, True)
                     _generate_nina_sequence(best_name)

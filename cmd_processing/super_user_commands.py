@@ -444,7 +444,33 @@ def image_cmd(words: list[str], account: str) -> None:
 
 
 def doit_cmd(words: list[str], account: str) -> None:
+    """
+    Full observatory imaging run. Called by image_cmd (manual trigger) or the
+    scheduler (auto mode). Manages the entire night: safety checks → roof open
+    → NINA prelude → NINA main imaging.
 
+    operand meanings:
+        1 = full run (prelude + image_nina1)
+        2 = full run (prelude + image_nina2)
+        3 = close-up only (no imaging, just run end sequence)
+
+    State machine transitions written to imaging.txt during this function:
+        NONE → ACTIVE   (immediately, guards against concurrent calls)
+        ACTIVE → IN_PRELUDE   (just before on_nina.bat launches)
+        IN_PRELUDE → DONE_PRELUDE   (written externally by NINA/bat when prelude ends)
+        DONE_PRELUDE → IN_MAIN   (just before image_nina bat launches)
+        IN_MAIN → NONE   (written by image_cmd when doit_cmd returns, or by NINA bat)
+
+    Safety checks ("safe!" / "unsafe!") are read from safety.txt and must be
+    explicitly set by a super-user before and during the run. Any failed check
+    aborts immediately without closing the roof (that is handled by end.py).
+    """
+
+    # ------------------------------------------------------------------ #
+    # Guard: refuse to run if another imaging session is already active.  #
+    # This can happen if the scheduler fires while a manual run is live,  #
+    # or if a previous crash left the state file in a non-NONE state.     #
+    # ------------------------------------------------------------------ #
     current = get_imaging_state()
     if current != ImagingState.NONE:
         msg = f"Imaging already in progress (state: {current.value}), aborting"
@@ -452,45 +478,66 @@ def doit_cmd(words: list[str], account: str) -> None:
         social_server.post_social_message(msg)
         return
 
+    # Claim the run immediately so no concurrent caller can slip through.
     set_imaging_state(ImagingState.ACTIVE)
     _logger.info("doit_cmd")
     cfg = config.data()
 
+    # Path used for camera snapshots shown in Pushover notifications.
     inside_view = cfg["camera safety"]["scope_view"]
 
-
+    # operand selects which NINA script to run for the main imaging session.
     operand = 1
     if len(words) > 2:
         operand = int(words[2])
 
     pushover.push_message(f"imaging! in mode {operand}")
+
+    # Wait time reused in several places: 1 minute between state transitions.
     wait_time = 1 * 60
     utils.set_install_dir()
+
+    # ------------------------------------------------------------------ #
+    # Pre-flight: confirm the roof is physically closed before proceeding. #
+    # Opening a roof that is already open would break the motor sequence.  #
+    # ------------------------------------------------------------------ #
     parked, closed, open, mod_date = get_status_with_lights()
     if not closed:
         pushover.push_message("roof is not closed, stopping", inside_view)
         return
 
-    # the roof is closed, so we can start imaging
+    # ------------------------------------------------------------------ #
+    # Safety gate 1: check before the initial wait.                        #
+    # The user must have previously issued "safe!" on Mastodon.            #
+    # ------------------------------------------------------------------ #
     pushover.push_message("Roof is closed, starting run in 1 min", inside_view)
     if not is_safe():
         pushover.push_message("not safe 1, stopping")
         return
 
+    # One-minute pause gives the operator a last chance to abort via "unsafe!".
     time.sleep(wait_time)
 
+    # ------------------------------------------------------------------ #
+    # Safety gate 2: re-check after the wait in case conditions changed.   #
+    # ------------------------------------------------------------------ #
     if not is_safe():
         pushover.push_message("not safe 2, stopping")
         return
 
+    # Announce via Sonos + blinking lights so anyone in the observatory   #
+    # knows the roof is about to move, then physically open it.           #
     announce_roof_movement("The roof will be opening in one minute")
     ok = open_roof_with_option(True)
-    print ("ok=", str(ok))
+    print("ok=", str(ok))
     if not ok:
+        # Vision safety confirmed the roof did not open successfully.
         pushover.push_message("problem opening roof, stopping", inside_view)
         return
 
-
+    # ------------------------------------------------------------------ #
+    # Safety gate 3: check after roof is open, before starting NINA.      #
+    # ------------------------------------------------------------------ #
     pushover.push_message("roof is open, starting imaging in 1 min", inside_view)
     time.sleep(wait_time)
 
@@ -499,12 +546,22 @@ def doit_cmd(words: list[str], account: str) -> None:
         return
 
     if operand == 2 or operand == 1:
-        print ("starting Nina")
+        print("starting Nina")
 
+        # ------------------------------------------------------------------ #
+        # Prelude phase: on_nina.bat connects the mount, runs a meridian       #
+        # flip if needed, performs an autofocus run, and slews to the target.  #
+        # State is set to IN_PRELUDE so external observers / the bat file      #
+        # know what phase we are in. The bat file signals completion by        #
+        # calling: set_imaging_state.bat DONE_PRELUDE                          #
+        # ------------------------------------------------------------------ #
         set_imaging_state(ImagingState.IN_PRELUDE)
         on_nina(None, None)
 
-        # Wait for NINA prelude to signal completion via set_imaging_state.bat DONE_PRELUDE
+        # Poll until NINA signals that the prelude is done (via bat file).
+        # on_nina uses subprocess.run so it blocks until the bat exits, but
+        # the bat may exit before NINA finishes its internal sequence. Polling
+        # here decouples us from that timing with a generous 3-hour timeout.
         _logger.info("Waiting for prelude to complete (state = DONE_PRELUDE)")
         prelude_timeout = 3 * 3600  # 3 hours max
         prelude_start = time.time()
@@ -517,27 +574,44 @@ def doit_cmd(words: list[str], account: str) -> None:
 
         pushover.push_message("prelude has finished", inside_view)
 
+        # ------------------------------------------------------------------ #
+        # Safety gate 4: check after prelude — conditions may have changed     #
+        # during the (potentially long) prelude sequence.                      #
+        # ------------------------------------------------------------------ #
         if not is_safe():
             pushover.push_message("not safe 4, stopping")
             return
-        # add in check to make sure mount is on
 
+        # Vision safety confirms scope is in the correct physical state before
+        # we commit to launching the main imaging session.
         parked, closed, open, mod_date = get_status_with_lights()
         if not parked:
+            # Mount did not park during prelude — something is wrong.
             pushover.push_message("scope is not parked, stopping", inside_view)
             return
         if closed:
+            # Roof closed unexpectedly during prelude (wind? end sequence ran?).
             pushover.push_message("roof is closed, stopping", inside_view)
             return
         if not open:
+            # Roof is neither fully closed nor fully open — ambiguous state.
             pushover.push_message("roof is not open, stopping", inside_view)
             return
+
+        # ------------------------------------------------------------------ #
+        # Main imaging phase: launch the NINA main sequence (non-blocking      #
+        # Popen). image_cmd will reset state to NONE when doit_cmd returns.    #
+        # For finer tracking, image_nina*.bat can call                         #
+        # set_imaging_state.bat DONE_MAIN when the NINA sequence finishes.     #
+        # ------------------------------------------------------------------ #
         set_imaging_state(ImagingState.IN_MAIN)
         if operand == 1:
             image_nina1(None, None)
 
     else:
-        print ("end started")
+        # operand == 3: skip imaging entirely, just run the shutdown sequence.
+        # Useful for testing the close-up path or ending a manual session.
+        print("end started")
         pushover.push_message("just closing up, no imaging")
         time.sleep(60)
         end.do_main()
