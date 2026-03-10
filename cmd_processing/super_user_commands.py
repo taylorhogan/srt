@@ -562,9 +562,9 @@ def doit_cmd(words: list[str], account: str) -> None:
         # Poll until NINA signals that the prelude is done (via bat file).
         # on_nina uses subprocess.run so it blocks until the bat exits, but
         # the bat may exit before NINA finishes its internal sequence. Polling
-        # here decouples us from that timing with a generous 3-hour timeout.
+        # here decouples us from that timing with a generous 10 minute timeout.
         _logger.info("Waiting for prelude to complete (state = DONE_PRELUDE)")
-        prelude_timeout = 3 * 3600  # 3 hours max
+        prelude_timeout = 10 * 60  # 3 hours max
         prelude_start = time.time()
         while get_imaging_state() != ImagingState.DONE_PRELUDE:
             if time.time() - prelude_start > prelude_timeout:
@@ -608,6 +608,13 @@ def doit_cmd(words: list[str], account: str) -> None:
         set_imaging_state(ImagingState.IN_MAIN)
         if operand == 1:
             image_nina1(None, None)
+            # image_nina1 uses Popen (non-blocking); poll here until end.py
+            # or the NINA bat resets the state to NONE, signalling the run
+            # is truly complete before doit_cmd returns.
+            _logger.info("Waiting for imaging state to return to NONE")
+            while get_imaging_state() != ImagingState.NONE:
+                time.sleep(60)
+            _logger.info("Imaging state is NONE — main imaging complete")
 
     else:
         # operand == 3: skip imaging entirely, just run the shutdown sequence.
