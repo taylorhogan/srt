@@ -226,6 +226,21 @@ def create_instructions_table(force = False):
     social_server.post_social_message("", "instructions.png")
 
 
+def reset_all_priorities_db() -> int:
+    """Reset every waiting instruction's priority to 5 (the natural default).
+    Returns the number of instructions updated."""
+    with open(_INSTRUCTIONS_PATH, 'r') as f:
+        instructions = json.load(f)
+    count = 0
+    for instruction in instructions:
+        if instruction.get("status") == "waiting":
+            instruction["priority"] = 5
+            count += 1
+    with open(_INSTRUCTIONS_PATH, 'w') as f:
+        f.writelines(json.dumps(instructions, indent=4))
+    return count
+
+
 def set_priority_instruction_db(dso_name: str, priority: int) -> bool:
     """Set the priority of the first waiting instruction matching dso_name.
     Returns True if a match was found and updated, False otherwise."""

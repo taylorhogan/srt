@@ -299,10 +299,13 @@ def announce_cmd(words: list[str], account: str) -> None:
 
 def prioritize_cmd(words: list[str], account: str) -> None:
     """
-    Give a DSO top scheduling priority. Usage: prioritize <dso>  e.g. prioritize m 31
+    Give a DSO top scheduling priority, or reset all priorities.
+    Usage: prioritize <dso>  e.g. prioritize m 31
+           prioritize        (no args — resets all waiting objects to equal priority)
     """
     if len(words) < 3:
-        social_server.post_social_message("Usage: prioritize <dso name>  e.g. prioritize m 31")
+        count = instructions.reset_all_priorities_db()
+        social_server.post_social_message(f"All priorities reset ({count} objects)")
         return
     dso_name = words[2]
     if len(words) > 3:
@@ -564,7 +567,7 @@ def doit_cmd(words: list[str], account: str) -> None:
         # the bat may exit before NINA finishes its internal sequence. Polling
         # here decouples us from that timing with a generous 10 minute timeout.
         _logger.info("Waiting for prelude to complete (state = DONE_PRELUDE)")
-        prelude_timeout = 10 * 60  # 3 hours max
+        prelude_timeout = 10 * 60  # 10 minutes max
         prelude_start = time.time()
         while get_imaging_state() != ImagingState.DONE_PRELUDE:
             if time.time() - prelude_start > prelude_timeout:

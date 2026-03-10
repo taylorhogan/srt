@@ -616,9 +616,11 @@ def best_object_tonight(instructions_path: Path | str) -> tuple[str, Optional[da
                     start_time = dt
             if altitude[i] > max_alt:
                 max_alt = float(altitude[i])
-        rows.append((dso_name, good_count, max_alt, get_dso_type(dso_name), start_time, symbols))
+        priority = obj.get("priority", 5)
+        rows.append((dso_name, good_count, max_alt, get_dso_type(dso_name), start_time, symbols, priority))
 
-    rows.sort(key=lambda x: (x[1], x[2]), reverse=True)
+    # Sort by priority first (higher = better), then good hours, then max altitude.
+    rows.sort(key=lambda x: (x[6], x[1], x[2]), reverse=True)
 
     # Build table data shared by both the console print and the PNG
     col = 3
@@ -628,16 +630,17 @@ def best_object_tonight(instructions_path: Path | str) -> tuple[str, Optional[da
     hour_header   = [f"{dt.hour:02d}" for dt in dark_hours]
     weather_syms  = ["$" if weather_by_hour.get(dt.hour, False) else "*" for dt in dark_hours]
     object_lines  = [
-        (name, symbols, f"{max_alt:5.1f}°", f"{good_count}h", dso_type)
-        for name, good_count, max_alt, dso_type, _start, symbols in rows
+        (name, symbols, f"{max_alt:5.1f}°", f"{good_count}h", dso_type, priority)
+        for name, good_count, max_alt, dso_type, _start, symbols, priority in rows
     ]
 
     # --- Console print ---
     print("\n--- Tonight's Imaging Grid ---")
     print(" " * label_width + "".join(f"{h:>{col}s}" for h in hour_header))
     print(f"{'weather':<{label_width}}" + "".join(f"{s:>{col}s}" for s in weather_syms))
-    for name, symbols, alt_str, hrs_str, dso_type in object_lines:
-        print(f"{name:<{label_width}}" + "".join(f"{s:>{col}s}" for s in symbols) + f"  {alt_str}  {hrs_str}  {dso_type}")
+    for name, symbols, alt_str, hrs_str, dso_type, priority in object_lines:
+        marker = "* " if priority > 5 else ""
+        print(f"{marker}{name:<{label_width}}" + "".join(f"{s:>{col}s}" for s in symbols) + f"  {alt_str}  {hrs_str}  {dso_type}")
 
     # --- PNG ---
     n_obj  = len(object_lines)
@@ -669,10 +672,13 @@ def best_object_tonight(instructions_path: Path | str) -> tuple[str, Optional[da
     )
 
     # Object rows
-    for name, symbols, alt_str, hrs_str, dso_type in object_lines:
-        cell_text.append([name] + symbols + [alt_str.strip(), hrs_str, dso_type])
+    PRIORITY_COLOR = "#fff3cd"   # amber — prioritized target
+    for name, symbols, alt_str, hrs_str, dso_type, priority in object_lines:
+        display_name = f"★ {name}" if priority > 5 else name
+        name_color = PRIORITY_COLOR if priority > 5 else HEADER_COLOR
+        cell_text.append([display_name] + symbols + [alt_str.strip(), hrs_str, dso_type])
         cell_colors.append(
-            [HEADER_COLOR]
+            [name_color]
             + [ABOVE_COLOR if s == "+" else BELOW_COLOR for s in symbols]
             + [HEADER_COLOR, HEADER_COLOR, HEADER_COLOR]
         )
@@ -699,7 +705,7 @@ def best_object_tonight(instructions_path: Path | str) -> tuple[str, Optional[da
 
     if not rows:
         return "", None, 0
-    best_name, best_good_count, _, _, best_start, _ = rows[0]
+    best_name, best_good_count, _, _, best_start, _, _ = rows[0]
     return best_name, best_start, best_good_count
 
 
