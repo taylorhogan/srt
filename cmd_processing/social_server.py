@@ -135,29 +135,25 @@ def wait_for_mqtt_message(client: Any, userdata: Any, msg: Any) -> None:
 
 
 def status_cmd(words: list[str], index: int, m: Mastodon, account: str) -> None:
-    # Observatory State
     cfg = config.data()
 
-    global _json_payload
-    mqtt_client = cfg["globals"]["mqtt_client"]
-    timeout = 60  # Timeout in seconds
-    start_time = time.time()
-    _json_payload = None
-    print ("setting state to None")
     end.determine_roof_state_visually(account)
-    print ("asking for status")
-    mqtt_client.publish(topic_to_sched, "status?")
-    while _json_payload is None and (time.time() - start_time < timeout) :
-        asyncio.run(wait_a_bit())
-    if _json_payload is None:
-        post_social_message("Status could not be determined")
-    else:
-        post_social_message(_json_payload)
 
     mode = su.get_mode()
     safe = "safe" if su.is_safe() else "unsafe"
     imaging = su.get_imaging_state().value
-    post_social_message(f"Mode: {mode} | Safety: {safe} | Imaging: {imaging}")
+
+    sched = su.get_scheduler_state()
+    sched_str = (
+        f"Scheduler: {sched['state']} | "
+        f"DSO: {sched['dso']} | "
+        f"Tonight: {sched['will image tonight']}"
+    )
+
+    post_social_message(
+        f"{sched_str}\n"
+        f"Mode: {mode} | Safety: {safe} | Imaging: {imaging}"
+    )
 
 
 

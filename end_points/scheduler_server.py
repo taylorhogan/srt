@@ -78,6 +78,8 @@ from datetime import datetime, timedelta
 from enum import Enum, auto
 from pathlib import Path
 
+import numpy as np
+
 if __package__ is None or __package__ == "":
     project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
     if project_root not in sys.path:
@@ -92,6 +94,7 @@ from cmd_processing import social_server
 from utils import utils, pushover
 from cmd_processing import super_user_commands
 from nina_gen import nina_sequence_gen
+from fits_processing import fitsfwhm
 
 CFG = config.data()
 LOGGER = utils.set_logger()
@@ -194,6 +197,13 @@ def set_state(state: State, dso=None, will_image_tonight=None):
         observatory_state["will image tonight"] = will_image_tonight
     LOGGER.info("State: %s", state.name)
     print(f"State: {state.name}")
+    # Persist so social_server can read it without MQTT.
+    try:
+        utils.set_install_dir()
+        with open("scheduler_state.json", "w") as f:
+            json.dump(observatory_state, f)
+    except Exception:
+        LOGGER.warning("Could not write scheduler_state.json")
 
 
 def _wait_until(target: datetime):
@@ -356,6 +366,85 @@ def _generate_nina_sequence(dso_name: str):
         output_path=output_path,
     )
     LOGGER.info("Generated Nina sequence for %s", dso_name)
+
+
+# ---------------------------------------------------------------------------
+# Post-imaging quality summary
+# ---------------------------------------------------------------------------
+
+def _post_imaging_summary(imaging_start: datetime) -> None:
+    """Find all FITS files captured since *imaging_start*, compute median
+    quality metrics across them, and post a summary to Mastodon.
+
+    Walks ``cfg["nina"]["image_dir"]`` recursively for ``*.fits`` files
+    whose modification time is >= *imaging_start*.  For each file,
+    ``fitsfwhm.calculate_fwhm`` is called to get per-frame star count,
+    FWHM (pixels and arcsec), and eccentricity.  The median of each
+    metric across all frames is then posted.
+
+    Args:
+        imaging_start: The datetime just before imaging was launched,
+            used as the cutoff for which FITS files belong to this run.
+    """
+    image_dir = Path(CFG["nina"]["image_dir"])
+    arcsec_per_pixel = CFG["nina"]["arc_sec_per_pixel"]
+    start_ts = imaging_start.timestamp()
+
+    try:
+        fits_files = sorted(
+            (f for f in image_dir.rglob("*.fits") if f.stat().st_mtime >= start_ts),
+            key=lambda f: f.stat().st_mtime,
+        )
+    except Exception:
+        LOGGER.exception("Failed to scan image directory %s", image_dir)
+        social_server.post_social_message("Imaging complete — could not scan image directory")
+        return
+
+    if not fits_files:
+        social_server.post_social_message("Imaging complete — no new FITS files found")
+        return
+
+    LOGGER.info("Found %d FITS files since imaging start", len(fits_files))
+
+    fwhm_px_list: list[float] = []
+    fwhm_arcsec_list: list[float] = []
+    star_count_list: list[int] = []
+    ecc_list: list[float] = []
+
+    for fits_file in fits_files:
+        try:
+            mean_px, mean_arcsec, star_count, mean_ecc = fitsfwhm.calculate_fwhm(
+                fits_file, arcsec_per_pixel=arcsec_per_pixel
+            )
+            if star_count > 0:
+                fwhm_px_list.append(mean_px)
+                fwhm_arcsec_list.append(mean_arcsec)
+                star_count_list.append(star_count)
+                ecc_list.append(mean_ecc)
+        except Exception:
+            LOGGER.exception("FWHM analysis failed for %s", fits_file)
+
+    if not fwhm_px_list:
+        social_server.post_social_message(
+            f"Imaging complete — {len(fits_files)} frames, no stars detected in any frame"
+        )
+        return
+
+    median_fwhm_px = float(np.median(fwhm_px_list))
+    median_fwhm_arcsec = float(np.median(fwhm_arcsec_list))
+    median_stars = float(np.median(star_count_list))
+    median_ecc = float(np.median(ecc_list))
+
+    social_server.post_social_message(
+        f"Imaging complete — {len(fits_files)} frames ({len(fwhm_px_list)} with stars)\n"
+        f"Median FWHM: {median_fwhm_px:.2f} px ({median_fwhm_arcsec:.2f}\")\n"
+        f"Median stars/frame: {median_stars:.0f}\n"
+        f"Median eccentricity: {median_ecc:.3f}"
+    )
+    LOGGER.info(
+        "Imaging summary: %d frames, median FWHM=%.2f px (%.2f\"), stars=%.0f, ecc=%.3f",
+        len(fits_files), median_fwhm_px, median_fwhm_arcsec, median_stars, median_ecc,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -539,6 +628,7 @@ def _run_state_machine():
                 set_state(state)
                 LOGGER.info("Starting imaging run")
                 if super_user_commands.get_mode() == "auto":
+                    imaging_start = datetime.now()
                     super_user_commands.image_cmd(["", "image!!", "1"], "iris")
                     # image_cmd launches NINA via Popen (non-blocking); wait here
                     # until end.py or the NINA bat resets the state to NONE.
@@ -546,6 +636,7 @@ def _run_state_machine():
                     while super_user_commands.get_imaging_state() != super_user_commands.ImagingState.NONE:
                         time.sleep(60)
                     LOGGER.info("Imaging state is NONE — run complete")
+                    _post_imaging_summary(imaging_start)
                 else:
                     social_server.post_social_message("Mode is manual — skipping auto imaging")
                 state = State.WAITING_FOR_NOON

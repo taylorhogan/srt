@@ -90,7 +90,7 @@ def _apply_filter_plan(sequence: Any, above_horizon_seconds: float, obj_type: st
     Compute per-filter iteration counts, patch all SmartExposure blocks in the
     sequence in-place, and return the plan as {filter_name: iterations}.
     """
-    actual_seconds = above_horizon_seconds * 0.9
+    actual_seconds = above_horizon_seconds * 0.8
     smart_exposures = _collect_smart_exposures(sequence)
 
     # Template order is L, R, G, B (4 blocks)

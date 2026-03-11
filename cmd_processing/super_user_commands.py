@@ -158,6 +158,7 @@ class ImagingState(Enum):
 
 
 def set_imaging_state(state: ImagingState) -> None:
+    print (f"IMAGING_STATE {state.value}")
     utils.set_install_dir()
     with open("imaging.txt", "w") as file:
         file.write(f"IMAGING_STATE {state.value}")
@@ -418,6 +419,21 @@ def is_safe() -> bool:
     except FileNotFoundError:
         return False
     return first_line == "USER SAFE"
+
+def get_scheduler_state() -> dict:
+    """Read the scheduler's current state from scheduler_state.json.
+
+    Returns a dict with keys ``state``, ``dso``, and ``will image tonight``.
+    Falls back to default unknown values if the file is missing or unreadable.
+    """
+    utils.set_install_dir()
+    try:
+        import json as _json
+        with open("scheduler_state.json", "r") as f:
+            return _json.load(f)
+    except Exception:
+        return {"state": "unknown", "dso": "unknown", "will image tonight": "unknown"}
+
 
 def get_imaging_state() -> ImagingState:
     utils.set_install_dir()
