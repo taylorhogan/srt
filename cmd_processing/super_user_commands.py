@@ -155,6 +155,8 @@ class ImagingState(Enum):
     DONE_PRELUDE = "DONE_PRELUDE"
     IN_MAIN      = "IN_MAIN"
     DONE_MAIN    = "DONE_MAIN"
+    IN_FLATS     = "IN_FLATS"
+    DONE_FLATS   = "DONE_FLATS"
 
 
 def set_imaging_state(state: ImagingState) -> None:

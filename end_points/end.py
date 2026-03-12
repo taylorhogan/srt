@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+import subprocess
 import sys
 import time
 
@@ -42,6 +43,43 @@ def determine_roof_state_visually(account):
         social_server.post_social_message(reply, cfg["camera safety"]["scope_view"])
     else:
         social_server.post_social_message(reply)
+
+
+_SCRIPTS_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'scripts'))
+
+
+def do_flats() -> None:
+    """Run a flats sequence via NINA.
+
+    Sequence:
+        1. Power on the telescope mount.
+        2. Set imaging state to IN_FLATS.
+        3. Launch nina_flats.bat (non-blocking Popen).
+        4. Poll imaging state every 30 seconds until DONE_FLATS.
+        5. Power off the mount and return.
+    """
+    logger = utils.set_logger()
+    logger.info("Begin flats sequence")
+    social_server.post_social_message("Starting flats sequence")
+
+    dev_map = asyncio.run(ku.make_discovery_map())
+    asyncio.run(ku.kasa_do(dev_map, {"Telescope mount": 'on'}))
+    logger.info("Mount powered on")
+
+    super_user_commands.set_imaging_state(super_user_commands.ImagingState.IN_FLATS)
+
+    bat_path = os.path.join(_SCRIPTS_DIR, "nina_flats.bat")
+    subprocess.Popen([bat_path], shell=True)
+    logger.info("nina_flats.bat launched")
+
+    logger.info("Waiting for flats to complete (state = DONE_FLATS)")
+    while super_user_commands.get_imaging_state() != super_user_commands.ImagingState.DONE_FLATS:
+        time.sleep(30)
+
+    logger.info("Flats complete")
+    asyncio.run(ku.kasa_do(dev_map, {"Telescope mount": 'off'}))
+    logger.info("Mount powered off")
+    social_server.post_social_message("Flats sequence complete")
 
 
 def do_main():
@@ -123,6 +161,7 @@ def do_main():
                 logger.info("step 7")
                 asyncio.run(ku.kasa_do(dev_map, instructions))
                 logger.info("step 8")
+                do_flats()
 
         except:
             logger.info('Problem')
@@ -135,6 +174,7 @@ def do_main():
 
     super_user_commands.set_imaging_state(super_user_commands.ImagingState.NONE)
     logger.info('End End Sequence')
+
 
 
 if __name__ == "__main__":

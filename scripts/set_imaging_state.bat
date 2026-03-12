@@ -1,11 +1,11 @@
 @echo off
 REM Set the imaging state from outside Python.
 REM Usage: set_imaging_state.bat <STATE>
-REM Valid states: NONE  ACTIVE  IN_PRELUDE  DONE_PRELUDE  IN_MAIN  DONE_MAIN
+REM Valid states: NONE  ACTIVE  IN_PRELUDE  DONE_PRELUDE  IN_MAIN  DONE_MAIN  IN_FLATS  DONE_FLATS
 
 if "%1"=="" (
     echo Usage: set_imaging_state.bat ^<STATE^>
-    echo Valid states: NONE  ACTIVE  IN_PRELUDE  DONE_PRELUDE  IN_MAIN  DONE_MAIN
+    echo Valid states: NONE  ACTIVE  IN_PRELUDE  DONE_PRELUDE  IN_MAIN  DONE_MAIN  IN_FLATS  DONE_FLATS
     exit /b 1
 )
 
@@ -18,10 +18,12 @@ if /I "%STATE%"=="IN_PRELUDE"   goto valid
 if /I "%STATE%"=="DONE_PRELUDE" goto valid
 if /I "%STATE%"=="IN_MAIN"      goto valid
 if /I "%STATE%"=="DONE_MAIN"    goto valid
+if /I "%STATE%"=="IN_FLATS"     goto valid
+if /I "%STATE%"=="DONE_FLATS"   goto valid
 
 echo Unknown state: %STATE%
 echo %DATE% %TIME% ERROR: Unknown state: %STATE%>>%LOG%
-echo Valid states: NONE  ACTIVE  IN_PRELUDE  DONE_PRELUDE  IN_MAIN  DONE_MAIN
+echo Valid states: NONE  ACTIVE  IN_PRELUDE  DONE_PRELUDE  IN_MAIN  DONE_MAIN  IN_FLATS  DONE_FLATS
 exit /b 1
 
 :valid
