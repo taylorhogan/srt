@@ -145,14 +145,14 @@ def status_cmd(words: list[str], index: int, m: Mastodon, account: str) -> None:
 
     sched = su.get_scheduler_state()
     sched_str = (
-        f"Scheduler: {sched['state']} | "
-        f"DSO: {sched['dso']} | "
-        f"Tonight: {sched['will image tonight']}"
+        f"Scheduler: {sched['state']} \n "
+        f"DSO: {sched['dso']} \n"
+        f"Image Tonight: {sched['will image tonight']}"
     )
 
     post_social_message(
         f"{sched_str}\n"
-        f"Mode: {mode} | Safety: {safe} | Imaging: {imaging}"
+        f"Mode: {mode} \n Safety: {safe} \n  Imaging: {imaging}"
     )
 
 
