@@ -16,7 +16,12 @@ if __package__ is None or __package__ == "":
     if project_root not in sys.path:
         sys.path.insert(0, project_root)
 
-from iris_astronomy import astro_dso_visibility, obs_calendar
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+from astropy.visualization import ZScaleInterval, ImageNormalize
+
+from iris_astronomy import astro_dso_visibility, obs_calendar, show_dso
 from configs import config
 from end_points import end
 from fits_processing import fitstojpg, fitsfwhm
@@ -246,6 +251,48 @@ def schedule_cmd(words: list[str], index: int, m: Mastodon, account: str) -> Non
         post_social_message(f"Failed to generate schedule for {best_name}: {e}")
 
 
+def show_cmd(words: list[str], index: int, m: Mastodon, account: str) -> None:
+    """
+    Fetch and post a survey image of a DSO. example: show ngc 891
+    """
+    dso_name = get_dso_object_name(words, index)
+    if dso_name is None:
+        post_social_message("Usage: show <dso name>  e.g. show ngc 891")
+        return
+
+    cfg = config.data()
+    _project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+    scratch_dir = os.path.join(_project_root, cfg["scratch"]["directory"])
+
+    try:
+        post_social_message(f"Fetching survey image for {dso_name.upper()} …")
+        data, header = show_dso.get_dso_image(dso_name, show=False)
+
+        fov_w, fov_h = show_dso.field_of_view(
+            show_dso.FOCAL_LENGTH_MM,
+            show_dso.SENSOR_WIDTH_MM,
+            show_dso.SENSOR_HEIGHT_MM,
+        )
+        norm = ImageNormalize(data, interval=ZScaleInterval())
+        fig, ax = plt.subplots(figsize=(12, 8), facecolor="black")
+        ax.imshow(data, origin="lower", cmap="gray", norm=norm, aspect="equal")
+        ax.set_title(
+            f"{dso_name.upper()}  |  DSS2 Red\n"
+            f"FOV {fov_w * 60:.1f}' × {fov_h * 60:.1f}'",
+            color="white", pad=10,
+        )
+        ax.axis("off")
+        plt.tight_layout()
+
+        out_path = os.path.join(scratch_dir, f"show_{dso_name.replace(' ', '_')}.jpg")
+        fig.savefig(out_path, dpi=100, bbox_inches="tight", facecolor="black")
+        plt.close(fig)
+
+        post_social_message(dso_name.upper(), out_path)
+    except Exception as e:
+        post_social_message(f"Could not fetch image for {dso_name}: {e}")
+
+
 keywords = {
     "tonight": tonight_cmd,
     "best": best_cmd,
@@ -256,6 +303,7 @@ keywords = {
     "latest": latest_cmd,
     "schedule": schedule_cmd,
     "calendar": calendar_cmd,
+    "show": show_cmd,
     "help": help_cmd,
     "?": help_cmd
 }
