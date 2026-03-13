@@ -291,7 +291,16 @@ def post_dso_preview(dso_name: str) -> None:
         except Exception as e:
             post_social_message(f"Could not fetch preview for {dso_name}: {e}")
 
-    threading.Thread(target=_fetch_and_post, daemon=True).start()
+    _TIMEOUT_SEC = 120
+
+    def _run_with_timeout():
+        t = threading.Thread(target=_fetch_and_post, daemon=True)
+        t.start()
+        t.join(timeout=_TIMEOUT_SEC)
+        if t.is_alive():
+            post_social_message(f"Preview for {dso_name} timed out after {_TIMEOUT_SEC}s — SkyView/SIMBAD did not respond")
+
+    threading.Thread(target=_run_with_timeout, daemon=True).start()
 
 
 def show_cmd(words: list[str], index: int, m: Mastodon, account: str) -> None:
