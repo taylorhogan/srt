@@ -613,6 +613,7 @@ def _run_state_machine():
                     social_server.post_social_message(
                         f"Confirmed — generating sequence\n{_imaging_plan_message(best_name, best_good_hours, best_start)}"
                     )
+                    social_server.post_dso_preview(best_name)
                     set_state(state, best_name, True)
                     # Write the N.I.N.A sequence to disk before NINA starts.
                     _generate_nina_sequence(best_name)

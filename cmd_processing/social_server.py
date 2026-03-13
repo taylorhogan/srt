@@ -112,6 +112,7 @@ def tonight_cmd(words: list[str], index: int, m: Mastodon, account: str) -> bool
                 post_social_message("Weather ok tonight")
             else:
                 post_social_message("Weather not ok tonight")
+            post_dso_preview(best_name)
             return weather_ok
         else:
             post_social_message(f"{best_name} not a known object")
@@ -251,21 +252,13 @@ def schedule_cmd(words: list[str], index: int, m: Mastodon, account: str) -> Non
         post_social_message(f"Failed to generate schedule for {best_name}: {e}")
 
 
-def show_cmd(words: list[str], index: int, m: Mastodon, account: str) -> None:
-    """
-    Fetch and post a survey image of a DSO. example: show ngc 891
-    """
-    dso_name = get_dso_object_name(words, index)
-    if dso_name is None:
-        post_social_message("Usage: show <dso name>  e.g. show ngc 891")
-        return
-
+def post_dso_preview(dso_name: str) -> None:
+    """Fetch a DSS2 survey image for *dso_name* and post it to Mastodon."""
     cfg = config.data()
     _project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
     scratch_dir = os.path.join(_project_root, cfg["scratch"]["directory"])
 
     try:
-        post_social_message(f"Fetching survey image for {dso_name.upper()} …")
         data, header = show_dso.get_dso_image(dso_name, show=False)
 
         fov_w, fov_h = show_dso.field_of_view(
@@ -290,7 +283,19 @@ def show_cmd(words: list[str], index: int, m: Mastodon, account: str) -> None:
 
         post_social_message(dso_name.upper(), out_path)
     except Exception as e:
-        post_social_message(f"Could not fetch image for {dso_name}: {e}")
+        post_social_message(f"Could not fetch preview for {dso_name}: {e}")
+
+
+def show_cmd(words: list[str], index: int, m: Mastodon, account: str) -> None:
+    """
+    Fetch and post a survey image of a DSO. example: show ngc 891
+    """
+    dso_name = get_dso_object_name(words, index)
+    if dso_name is None:
+        post_social_message("Usage: show <dso name>  e.g. show ngc 891")
+        return
+    post_social_message(f"Fetching survey image for {dso_name.upper()} …")
+    post_dso_preview(dso_name)
 
 
 keywords = {
