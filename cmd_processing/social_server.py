@@ -1,4 +1,5 @@
 import asyncio
+import multiprocessing
 import threading
 from pathlib import Path
 import datetime
@@ -17,11 +18,6 @@ if __package__ is None or __package__ == "":
     if project_root not in sys.path:
         sys.path.insert(0, project_root)
 
-import matplotlib
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
-from astropy.visualization import ZScaleInterval, ImageNormalize
-
 from iris_astronomy import astro_dso_visibility, obs_calendar, show_dso
 from configs import config
 from end_points import end
@@ -31,6 +27,8 @@ from cmd_processing import super_user_commands as su
 from nina_gen import nina_sequence_gen
 from utils.utils import topic_to_sched
 from utils import utils
+
+_PREVIEW_MP_CONTEXT = multiprocessing.get_context("spawn")
 
 
 
@@ -253,54 +251,81 @@ def schedule_cmd(words: list[str], index: int, m: Mastodon, account: str) -> Non
         post_social_message(f"Failed to generate schedule for {best_name}: {e}")
 
 
+def _preview_worker(dso_name: str, scratch_dir: str, access_token: str, api_base_url: str) -> None:
+    """Runs in a spawned child process — fetches DSO survey image and posts to Mastodon."""
+    import os, sys
+    _root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+    if _root not in sys.path:
+        sys.path.insert(0, _root)
+
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from astropy.visualization import ZScaleInterval, ImageNormalize
+    from mastodon import Mastodon
+    from iris_astronomy import show_dso
+
+    def _post(msg, image_path=None):
+        m = Mastodon(access_token=access_token, api_base_url=api_base_url)
+        if image_path:
+            media = m.media_post(image_path, "image/jpeg")
+            m.status_post(msg, media_ids=media)
+        else:
+            m.status_post(msg)
+
+    try:
+        data, _ = show_dso.get_dso_image(dso_name, show=False)
+        fov_w, fov_h = show_dso.field_of_view(
+            show_dso.FOCAL_LENGTH_MM, show_dso.SENSOR_WIDTH_MM, show_dso.SENSOR_HEIGHT_MM,
+        )
+        norm = ImageNormalize(data, interval=ZScaleInterval())
+        fig, ax = plt.subplots(figsize=(12, 8), facecolor="black")
+        ax.imshow(data, origin="lower", cmap="gray", norm=norm, aspect="equal")
+        ax.set_title(
+            f"{dso_name.upper()}  |  DSS2 Red\n"
+            f"FOV {fov_w * 60:.1f}' × {fov_h * 60:.1f}'",
+            color="white", pad=10,
+        )
+        ax.axis("off")
+        plt.tight_layout()
+        out_path = os.path.join(scratch_dir, f"show_{dso_name.replace(' ', '_')}.jpg")
+        fig.savefig(out_path, dpi=100, bbox_inches="tight", facecolor="black")
+        plt.close(fig)
+        _post(dso_name.upper(), out_path)
+    except Exception as e:
+        _post(f"Could not fetch preview for {dso_name}: {e}")
+
+
 def post_dso_preview(dso_name: str) -> None:
-    """Fetch a DSS2 survey image for *dso_name* and post it to Mastodon.
+    """Fetch a DSS2 survey image in a child process and post it to Mastodon.
 
-    Runs in a background daemon thread so the caller is not blocked while
-    SkyView/SIMBAD fetches the image.
+    Uses multiprocessing (spawn) so a hung SkyView/SIMBAD call can be
+    forcefully terminated after the timeout rather than leaking a thread.
     """
-    def _fetch_and_post():
-        cfg = config.data()
-        _project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
-        scratch_dir = os.path.join(_project_root, cfg["scratch"]["directory"])
-
-        try:
-            data, header = show_dso.get_dso_image(dso_name, show=False)
-
-            fov_w, fov_h = show_dso.field_of_view(
-                show_dso.FOCAL_LENGTH_MM,
-                show_dso.SENSOR_WIDTH_MM,
-                show_dso.SENSOR_HEIGHT_MM,
-            )
-            norm = ImageNormalize(data, interval=ZScaleInterval())
-            fig, ax = plt.subplots(figsize=(12, 8), facecolor="black")
-            ax.imshow(data, origin="lower", cmap="gray", norm=norm, aspect="equal")
-            ax.set_title(
-                f"{dso_name.upper()}  |  DSS2 Red\n"
-                f"FOV {fov_w * 60:.1f}' × {fov_h * 60:.1f}'",
-                color="white", pad=10,
-            )
-            ax.axis("off")
-            plt.tight_layout()
-
-            out_path = os.path.join(scratch_dir, f"show_{dso_name.replace(' ', '_')}.jpg")
-            fig.savefig(out_path, dpi=100, bbox_inches="tight", facecolor="black")
-            plt.close(fig)
-
-            post_social_message(dso_name.upper(), out_path)
-        except Exception as e:
-            post_social_message(f"Could not fetch preview for {dso_name}: {e}")
-
     _TIMEOUT_SEC = 120
 
-    def _run_with_timeout():
-        t = threading.Thread(target=_fetch_and_post, daemon=True)
-        t.start()
-        t.join(timeout=_TIMEOUT_SEC)
-        if t.is_alive():
-            post_social_message(f"Preview for {dso_name} timed out after {_TIMEOUT_SEC}s — SkyView/SIMBAD did not respond")
+    cfg = config.data()
+    _project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+    scratch_dir = os.path.join(_project_root, cfg["scratch"]["directory"])
+    access_token = cfg["mastodon"]["access_token"]
+    api_base_url = cfg["mastodon"]["api_base_url"]
 
-    threading.Thread(target=_run_with_timeout, daemon=True).start()
+    def _watchdog():
+        p = _PREVIEW_MP_CONTEXT.Process(
+            target=_preview_worker,
+            args=(dso_name, scratch_dir, access_token, api_base_url),
+            daemon=True,
+        )
+        p.start()
+        p.join(timeout=_TIMEOUT_SEC)
+        if p.is_alive():
+            p.terminate()
+            p.join()
+            post_social_message(
+                f"Preview for {dso_name} timed out after {_TIMEOUT_SEC}s — SkyView/SIMBAD did not respond"
+            )
+
+    threading.Thread(target=_watchdog, daemon=True).start()
 
 
 def show_cmd(words: list[str], index: int, m: Mastodon, account: str) -> None:
