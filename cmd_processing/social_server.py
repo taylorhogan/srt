@@ -1,4 +1,5 @@
 import asyncio
+import threading
 from pathlib import Path
 import datetime
 import logging
@@ -253,37 +254,44 @@ def schedule_cmd(words: list[str], index: int, m: Mastodon, account: str) -> Non
 
 
 def post_dso_preview(dso_name: str) -> None:
-    """Fetch a DSS2 survey image for *dso_name* and post it to Mastodon."""
-    cfg = config.data()
-    _project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
-    scratch_dir = os.path.join(_project_root, cfg["scratch"]["directory"])
+    """Fetch a DSS2 survey image for *dso_name* and post it to Mastodon.
 
-    try:
-        data, header = show_dso.get_dso_image(dso_name, show=False)
+    Runs in a background daemon thread so the caller is not blocked while
+    SkyView/SIMBAD fetches the image.
+    """
+    def _fetch_and_post():
+        cfg = config.data()
+        _project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+        scratch_dir = os.path.join(_project_root, cfg["scratch"]["directory"])
 
-        fov_w, fov_h = show_dso.field_of_view(
-            show_dso.FOCAL_LENGTH_MM,
-            show_dso.SENSOR_WIDTH_MM,
-            show_dso.SENSOR_HEIGHT_MM,
-        )
-        norm = ImageNormalize(data, interval=ZScaleInterval())
-        fig, ax = plt.subplots(figsize=(12, 8), facecolor="black")
-        ax.imshow(data, origin="lower", cmap="gray", norm=norm, aspect="equal")
-        ax.set_title(
-            f"{dso_name.upper()}  |  DSS2 Red\n"
-            f"FOV {fov_w * 60:.1f}' × {fov_h * 60:.1f}'",
-            color="white", pad=10,
-        )
-        ax.axis("off")
-        plt.tight_layout()
+        try:
+            data, header = show_dso.get_dso_image(dso_name, show=False)
 
-        out_path = os.path.join(scratch_dir, f"show_{dso_name.replace(' ', '_')}.jpg")
-        fig.savefig(out_path, dpi=100, bbox_inches="tight", facecolor="black")
-        plt.close(fig)
+            fov_w, fov_h = show_dso.field_of_view(
+                show_dso.FOCAL_LENGTH_MM,
+                show_dso.SENSOR_WIDTH_MM,
+                show_dso.SENSOR_HEIGHT_MM,
+            )
+            norm = ImageNormalize(data, interval=ZScaleInterval())
+            fig, ax = plt.subplots(figsize=(12, 8), facecolor="black")
+            ax.imshow(data, origin="lower", cmap="gray", norm=norm, aspect="equal")
+            ax.set_title(
+                f"{dso_name.upper()}  |  DSS2 Red\n"
+                f"FOV {fov_w * 60:.1f}' × {fov_h * 60:.1f}'",
+                color="white", pad=10,
+            )
+            ax.axis("off")
+            plt.tight_layout()
 
-        post_social_message(dso_name.upper(), out_path)
-    except Exception as e:
-        post_social_message(f"Could not fetch preview for {dso_name}: {e}")
+            out_path = os.path.join(scratch_dir, f"show_{dso_name.replace(' ', '_')}.jpg")
+            fig.savefig(out_path, dpi=100, bbox_inches="tight", facecolor="black")
+            plt.close(fig)
+
+            post_social_message(dso_name.upper(), out_path)
+        except Exception as e:
+            post_social_message(f"Could not fetch preview for {dso_name}: {e}")
+
+    threading.Thread(target=_fetch_and_post, daemon=True).start()
 
 
 def show_cmd(words: list[str], index: int, m: Mastodon, account: str) -> None:
