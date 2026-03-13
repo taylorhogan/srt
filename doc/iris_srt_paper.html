@@ -1,0 +1,1013 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Iris SRT — A Social Robotic Telescope for Autonomous Deep-Sky Imaging</title>
+<style>
+  /* ── Page layout ─────────────────────────────────────────────────── */
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: "Georgia", "Times New Roman", serif;
+    font-size: 10.5pt;
+    line-height: 1.55;
+    color: #111;
+    background: #fff;
+    padding: 0 1rem;
+  }
+
+  .page {
+    max-width: 900px;
+    margin: 2rem auto 4rem;
+  }
+
+  /* ── Header ──────────────────────────────────────────────────────── */
+  header {
+    text-align: center;
+    margin-bottom: 2rem;
+    padding-bottom: 1.2rem;
+    border-bottom: 2px solid #333;
+  }
+
+  header .journal-name {
+    font-size: 8pt;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: #555;
+    margin-bottom: 0.9rem;
+  }
+
+  header h1 {
+    font-size: 17pt;
+    font-weight: bold;
+    line-height: 1.25;
+    margin-bottom: 0.7rem;
+  }
+
+  header .subtitle {
+    font-size: 11pt;
+    font-style: italic;
+    color: #333;
+    margin-bottom: 1rem;
+  }
+
+  .authors {
+    font-size: 10pt;
+    margin-bottom: 0.4rem;
+  }
+
+  .authors a { color: #111; text-decoration: none; }
+
+  .affiliations {
+    font-size: 8.5pt;
+    color: #555;
+    margin-bottom: 0.7rem;
+  }
+
+  .dates {
+    font-size: 8pt;
+    color: #777;
+    font-style: italic;
+  }
+
+  /* ── Two-column body ─────────────────────────────────────────────── */
+  .two-col {
+    column-count: 2;
+    column-gap: 2rem;
+    column-rule: 1px solid #ddd;
+    text-align: justify;
+    hyphens: auto;
+  }
+
+  /* ── Sections ────────────────────────────────────────────────────── */
+  .abstract-box {
+    background: #f7f7f7;
+    border-left: 3px solid #555;
+    padding: 0.9rem 1.1rem;
+    margin-bottom: 1.8rem;
+    font-size: 9.5pt;
+  }
+
+  .abstract-box h2 {
+    font-size: 9pt;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    font-weight: bold;
+    margin-bottom: 0.4rem;
+  }
+
+  .keywords {
+    margin-top: 0.5rem;
+    font-style: italic;
+    font-size: 9pt;
+  }
+
+  h2.section-head {
+    font-size: 11pt;
+    font-weight: bold;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin: 1.4rem 0 0.5rem;
+    color: #222;
+    border-bottom: 1px solid #bbb;
+    padding-bottom: 2px;
+    column-span: none;
+    break-after: avoid;
+  }
+
+  h3.subsection-head {
+    font-size: 10pt;
+    font-weight: bold;
+    font-style: italic;
+    margin: 1rem 0 0.3rem;
+    color: #222;
+    break-after: avoid;
+  }
+
+  h4.subsubsection-head {
+    font-size: 10pt;
+    font-weight: bold;
+    margin: 0.8rem 0 0.25rem;
+    color: #333;
+    break-after: avoid;
+  }
+
+  p { margin-bottom: 0.6rem; }
+
+  /* ── Figures ─────────────────────────────────────────────────────── */
+  figure {
+    margin: 0.9rem 0;
+    break-inside: avoid;
+    text-align: center;
+  }
+
+  figure figcaption {
+    font-size: 8.5pt;
+    color: #444;
+    margin-top: 0.35rem;
+    text-align: left;
+    font-style: italic;
+  }
+
+  /* ── Code / inline mono ──────────────────────────────────────────── */
+  code {
+    font-family: "Courier New", Courier, monospace;
+    font-size: 8.5pt;
+    background: #f4f4f4;
+    padding: 0 3px;
+    border-radius: 2px;
+  }
+
+  pre {
+    font-family: "Courier New", Courier, monospace;
+    font-size: 8pt;
+    background: #f4f4f4;
+    border: 1px solid #ddd;
+    padding: 0.6rem 0.8rem;
+    overflow-x: auto;
+    margin: 0.7rem 0;
+    break-inside: avoid;
+    white-space: pre;
+  }
+
+  /* ── Tables ──────────────────────────────────────────────────────── */
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 8.5pt;
+    margin: 0.8rem 0;
+    break-inside: avoid;
+  }
+
+  th {
+    background: #333;
+    color: #fff;
+    padding: 4px 7px;
+    text-align: left;
+    font-weight: bold;
+  }
+
+  td { padding: 3px 7px; border-bottom: 1px solid #ddd; }
+
+  tr:nth-child(even) td { background: #f9f9f9; }
+
+  table caption {
+    font-size: 8.5pt;
+    font-style: italic;
+    caption-side: bottom;
+    text-align: left;
+    color: #555;
+    margin-top: 3px;
+  }
+
+  /* ── State-machine diagram ───────────────────────────────────────── */
+  .state-diagram {
+    font-family: "Courier New", monospace;
+    font-size: 8pt;
+    background: #f4f4f4;
+    border: 1px solid #ccc;
+    padding: 0.7rem 1rem;
+    line-height: 1.7;
+    margin: 0.7rem 0;
+    break-inside: avoid;
+  }
+
+  /* ── References ──────────────────────────────────────────────────── */
+  .references {
+    font-size: 9pt;
+    column-count: 1;
+  }
+
+  .references ol { padding-left: 1.4rem; }
+  .references li { margin-bottom: 0.4rem; }
+
+  /* ── Full-width override for abstract/references ─────────────────── */
+  .full-width {
+    column-span: all;
+  }
+
+  /* ── Equation-like display ───────────────────────────────────────── */
+  .equation {
+    font-style: italic;
+    text-align: center;
+    margin: 0.5rem 0;
+    font-size: 10pt;
+  }
+
+  /* ── Footnote ────────────────────────────────────────────────────── */
+  .footnote {
+    font-size: 8pt;
+    color: #555;
+    margin-top: 1.5rem;
+    border-top: 1px solid #ccc;
+    padding-top: 0.5rem;
+  }
+
+  /* ── Print ───────────────────────────────────────────────────────── */
+  @media print {
+    body { font-size: 10pt; padding: 0; }
+    .page { margin: 0; }
+    .two-col { column-gap: 1.4rem; }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+<!-- ════════════════════════════════════════════════════════════════════
+     HEADER
+     ══════════════════════════════════════════════════════════════════ -->
+<header>
+  <div class="journal-name">Journal of Astronomical Instrumentation &amp; Automation &nbsp;·&nbsp; 2026</div>
+  <h1>Iris SRT: A Social Robotic Telescope for<br>Autonomous Deep-Sky Imaging</h1>
+  <div class="subtitle">Architecture, Safety, and Human-in-the-Loop Scheduling via Federated Social Media</div>
+  <div class="authors">
+    Taylor Hogan<sup>1</sup> &nbsp;and&nbsp; Claude Sonnet&nbsp;4.6<sup>2</sup>
+  </div>
+  <div class="affiliations">
+    <sup>1</sup>Iris Observatory, Boston, MA, USA<br>
+    <sup>2</sup>Anthropic, San Francisco, CA, USA — AI co-author; contributed system documentation, architectural analysis, and subsystem specification
+  </div>
+  <div class="dates">Received: March 2026 &nbsp;·&nbsp; Published: March 2026</div>
+</header>
+
+<!-- ════════════════════════════════════════════════════════════════════
+     ABSTRACT  (full width)
+     ══════════════════════════════════════════════════════════════════ -->
+<div class="abstract-box">
+  <h2>Abstract</h2>
+  <p>
+    We describe the design and implementation of the Social Robotic Telescope (SRT), an autonomous
+    observatory controller for a CDK17 telescope equipped with a QHY600M monochrome CMOS camera.
+    The system, named <em>Iris</em>, accepts deep-sky object (DSO) imaging requests from the public
+    via Mastodon, a federated microblogging platform, and schedules, executes, and reports on nightly
+    imaging sessions without operator intervention. The architecture consists of two long-running
+    Python processes — a Mastodon-facing social server and a nightly scheduling state machine —
+    communicating through MQTT and shared file-based state. Nightly planning employs vectorized
+    multi-day visibility calculations, weather forecasts from the Open-Meteo API, and air-mass
+    constraints to select the highest-value imaging target from a community-maintained queue.
+    Hardware safety is enforced through a vision-based confirmation system using OpenCV template
+    matching on an indoor IP camera, augmented by a two-gate decision architecture and Pushover
+    push notifications. Post-imaging quality assessment is performed automatically via 2D Gaussian
+    star-fitting to compute FWHM, star count, and eccentricity metrics, which are posted to Mastodon
+    upon run completion. We discuss the design rationale for each subsystem, engineering trade-offs,
+    and directions for future work in fully unattended robotic astronomy.
+  </p>
+  <div class="keywords">
+    <strong>Keywords:</strong> robotic telescope, observatory automation, deep-sky imaging, citizen science,
+    social media integration, hardware safety, FWHM analysis, scheduling algorithms
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════════════
+     TWO-COLUMN BODY
+     ══════════════════════════════════════════════════════════════════ -->
+<div class="two-col">
+
+<!-- ── 1. Introduction ─────────────────────────────────────────────── -->
+<h2 class="section-head">1. Introduction</h2>
+
+<p>
+  Robotic telescopes have enabled a new era of time-domain astronomy, broadening access to the night
+  sky for professional observatories [1] and educational institutions [2]. Consumer-grade equatorial
+  mounts, large-format monochrome CMOS sensors, and stable dedicated astronomy software have brought
+  the <em>unattended</em> imaging run within reach of the serious amateur — yet the tooling required
+  to safely orchestrate hardware, monitor conditions, communicate results, and respond to external
+  requests has remained largely bespoke, poorly documented, and fragile in the face of unexpected
+  hardware behavior.
+</p>
+<p>
+  The Social Robotic Telescope (SRT), controlling the observatory known as <em>Iris</em>, addresses
+  this gap through a modular, fault-tolerant software stack that integrates community requests,
+  astronomical planning, hardware control, and safety monitoring into a continuously running service.
+  Its defining characteristic is the use of Mastodon [3] — a decentralized, federated social
+  network — as the primary human interface. Authorized users anywhere on the Mastodon network may
+  request specific objects, query status, or inspect results simply by mentioning the observatory
+  account; no specialized client software or API keys are required.
+</p>
+<p>
+  This paper makes the following contributions:
+</p>
+<p>
+  (1) A two-process, file-mediated architecture for decoupled scheduling and user interaction that
+  tolerates independent restarts of either subsystem.
+</p>
+<p>
+  (2) A two-gate nightly planning algorithm combining vectorized visibility analysis, real-time
+  weather data, and community-driven priority queuing.
+</p>
+<p>
+  (3) A vision-based hardware safety system using OpenCV template matching on an indoor IP camera
+  snapshot to confirm telescope park state and roof position before and after imaging.
+</p>
+<p>
+  (4) Automatic post-imaging quality reporting via 2D Gaussian star fitting, delivering per-frame
+  FWHM, star count, and eccentricity directly to Mastodon.
+</p>
+<p>
+  (5) An autonomous DSO survey preview system that fetches archival survey imagery sized to the
+  telescope's exact field of view and posts it to Mastodon concurrent with the imaging announcement,
+  implemented with hard process-level timeout enforcement.
+</p>
+
+<!-- ── 2. Hardware Configuration ──────────────────────────────────── -->
+<h2 class="section-head">2. Hardware Configuration</h2>
+
+<p>
+  Iris is housed in a roll-off-roof observatory located in eastern Connecticut, USA (latitude
+  41.81°N, longitude 72.83°W, elevation ~100 m). The primary optical train consists of a
+  <strong>Planewave CDK17</strong> astrograph (432 mm aperture, 2,563 mm focal length, f/5.9)
+  coupled to a <strong>QHY600M</strong> back-illuminated monochrome CMOS camera incorporating
+  the Sony IMX455 sensor (9,576 × 6,388 pixels, 3.76 µm pixel pitch, full-frame 35.9 × 23.9 mm).
+  At native focal length the resulting plate scale is approximately 0.30 arcseconds per pixel,
+  yielding a field of view of approximately 48.4′ × 32.2′.
+</p>
+<p>
+  The mount is controlled by a dedicated Windows imaging PC running
+  <strong>N.I.N.A</strong> (Nighttime Imaging 'N' Astronomy) [4] v2.x, which handles mount
+  communication via the PWI4 protocol, autofocus, guiding, and dithering. A Linux host running
+  the SRT software bridges Mastodon, scheduling logic, and hardware I/O.
+</p>
+<p>
+  Smart power switching is handled by <strong>TP-Link Kasa</strong> smart plugs controlled via
+  the local python-kasa library over UDP, managing the telescope mount, interior lighting, roof
+  motor, and ancillary devices. A <strong>Shelly</strong> WiFi relay module at a fixed IP address
+  controls the dehumidifier and secondary roof motor circuit via HTTP GET requests. An indoor IP
+  camera provides continuous snapshots used by the vision safety subsystem.
+</p>
+
+<table>
+  <caption>Table 1. Key hardware parameters.</caption>
+  <thead><tr><th>Component</th><th>Specification</th></tr></thead>
+  <tbody>
+    <tr><td>Telescope</td><td>Planewave CDK17, f/5.9</td></tr>
+    <tr><td>Focal length</td><td>2,563 mm</td></tr>
+    <tr><td>Camera</td><td>QHY600M (Sony IMX455)</td></tr>
+    <tr><td>Pixel size</td><td>3.76 µm</td></tr>
+    <tr><td>Sensor format</td><td>35.9 × 23.9 mm (full-frame)</td></tr>
+    <tr><td>Plate scale</td><td>~0.30 arcsec/px</td></tr>
+    <tr><td>Field of view</td><td>48.4′ × 32.2′</td></tr>
+    <tr><td>Roof type</td><td>Roll-off, motor-driven</td></tr>
+    <tr><td>Power control</td><td>TP-Link Kasa + Shelly relay</td></tr>
+  </tbody>
+</table>
+
+<!-- ── 3. System Architecture ─────────────────────────────────────── -->
+<h2 class="section-head">3. System Architecture</h2>
+
+<h3 class="subsection-head">3.1 Overview</h3>
+
+<p>
+  SRT is structured as two long-running Python processes, launched together by the top-level
+  entry point <code>end_points/start_srt.py</code> via the <code>multiprocessing.Process</code>
+  API. The two processes are:
+</p>
+<p>
+  <strong>Social Server</strong> (<code>cmd_processing/social_server.py</code>) — maintains a
+  persistent Mastodon streaming connection, parses incoming mentions, dispatches to command
+  handlers, and posts text and image replies.
+</p>
+<p>
+  <strong>Scheduler Server</strong> (<code>end_points/scheduler_server.py</code>) — drives the
+  observatory through a daily state machine, making planning decisions at two daily gates and
+  launching N.I.N.A batch scripts for imaging sequences.
+</p>
+<p>
+  The two processes communicate through two mechanisms: <strong>MQTT</strong> (paho-mqtt, used for
+  real-time status queries from the social server to the scheduler) and <strong>shared file-based
+  state</strong> (plain text and JSON files on disk, readable by both processes as well as by
+  external Windows batch scripts running on the imaging PC). This decoupled design means either
+  process can be restarted independently without loss of persistent state.
+</p>
+
+<h3 class="subsection-head">3.2 Configuration</h3>
+
+<p>
+  All runtime configuration is accessed through a single call, <code>config.data()</code>, which
+  merges a version-controlled public configuration class (<code>configs/config_public.py</code>)
+  with a private configuration (<code>configs/config_private.py</code>, excluded from version
+  control) containing credentials. The merged dictionary carries observatory location, NINA file
+  paths, Mastodon API credentials, Pushover push-notification tokens, and the list of authorized
+  super-users.
+</p>
+
+<h3 class="subsection-head">3.3 State Persistence</h3>
+
+<p>
+  Rather than a relational database, all persistent state is stored in plain-text or JSON files.
+  This choice prioritizes observability, debuggability, and interoperability with Windows batch
+  scripts running on a separate host.
+</p>
+
+<table>
+  <caption>Table 2. Persistent state files.</caption>
+  <thead><tr><th>File</th><th>Contents</th><th>Writer(s)</th></tr></thead>
+  <tbody>
+    <tr><td><code>my_instructions.json</code></td><td>DSO imaging queue</td><td>social server, super-user cmds</td></tr>
+    <tr><td><code>my_calendar.json</code></td><td>Per-night imaging history</td><td>scheduler server</td></tr>
+    <tr><td><code>scheduler_state.json</code></td><td>Current scheduler state + DSO</td><td>scheduler server</td></tr>
+    <tr><td><code>imaging.txt</code></td><td>Imaging phase enum</td><td>Python + NINA bats</td></tr>
+    <tr><td><code>mode.txt</code></td><td>Auto / manual mode</td><td>super-user commands</td></tr>
+    <tr><td><code>safety.txt</code></td><td>Operator safety clearance</td><td>super-user commands</td></tr>
+    <tr><td><code>iris.log</code></td><td>Application log</td><td>all processes</td></tr>
+  </tbody>
+</table>
+
+<!-- ── 4. The Scheduler ───────────────────────────────────────────── -->
+<h2 class="section-head">4. The Scheduler Server</h2>
+
+<h3 class="subsection-head">4.1 Nightly State Machine</h3>
+
+<p>
+  The scheduler operates as a deterministic finite automaton with six states, cycling daily:
+</p>
+
+<div class="state-diagram">
+WAITING_FOR_NOON
+  → NOON_CHECK
+    → WAITING_FOR_PRE_SUNSET
+      → PRE_SUNSET_CHECK
+        → IMAGING
+          → WAITING_FOR_NOON (next day)
+</div>
+
+<p>
+  <strong>WAITING_FOR_NOON.</strong> The scheduler sleeps in 30-second increments until the
+  next calendar noon (local time). A 30-second granularity is used to remain responsive to
+  operating-mode changes while avoiding busy-waiting.
+</p>
+<p>
+  <strong>NOON_CHECK.</strong> At noon, visibility metrics are refreshed for all queued targets
+  and the best object for tonight is selected (§5). The scheduler evaluates whether the night is
+  worth committing to: if the selected target will be above the horizon in good conditions for at
+  least <em>M</em> = 3 hours, the system advances; otherwise it waits for the next noon. A PNG
+  imaging grid is posted to Mastodon showing each candidate object's hourly visibility.
+</p>
+<p>
+  <strong>WAITING_FOR_PRE_SUNSET.</strong> The system sleeps until one hour before the computed
+  sunset time, using the <code>astral</code> library to determine local twilight.
+</p>
+<p>
+  <strong>PRE_SUNSET_CHECK.</strong> Conditions are re-evaluated closer to imaging time with
+  fresh weather data. If conditions remain acceptable, an N.I.N.A JSON sequence is generated and
+  written to disk. This second gate allows the system to abort if conditions have deteriorated
+  since noon (e.g., clouds moving in).
+</p>
+<p>
+  <strong>IMAGING.</strong> The imaging run is initiated by calling the social server's
+  <code>image_cmd</code> pipeline, which performs safety checks and launches N.I.N.A via Windows
+  batch scripts. The scheduler polls the <code>imaging.txt</code> state file every 60 seconds until
+  it returns to <code>NONE</code>, then triggers post-imaging quality analysis (§7).
+</p>
+
+<h3 class="subsection-head">4.2 Operating Modes</h3>
+
+<p>
+  The system supports two operating modes, toggled via the <code>mode</code> Mastodon command:
+  <strong>manual</strong> mode (default at startup) requires explicit operator commands to initiate
+  imaging; <strong>auto</strong> mode allows the scheduler to proceed through NOON_CHECK to imaging
+  without intervention. Mode transitions are echoed to Mastodon to maintain operator awareness.
+</p>
+
+<h3 class="subsection-head">4.3 Imaging State Machine</h3>
+
+<p>
+  A separate <code>ImagingState</code> enum tracks the phase of an active imaging run, shared
+  between Python code and Windows batch scripts via <code>imaging.txt</code>:
+</p>
+
+<div class="state-diagram">
+NONE → ACTIVE → IN_PRELUDE → DONE_PRELUDE
+                           → IN_MAIN    → DONE_MAIN → NONE
+IN_FLATS → DONE_FLATS → NONE
+</div>
+
+<p>
+  The <code>IN_FLATS / DONE_FLATS</code> states support an automated flat-frame acquisition
+  workflow that runs independently of the main imaging sequence, allowing calibration frames to
+  be taken as a separate nightly operation.
+</p>
+
+<!-- ── 5. Astronomical Planning ───────────────────────────────────── -->
+<h2 class="section-head">5. Astronomical Planning</h2>
+
+<h3 class="subsection-head">5.1 DSO Request Queue</h3>
+
+<p>
+  Community imaging requests are stored in a JSON array (<code>my_instructions.json</code>).
+  Each entry records the target name, requestor Mastodon handle, submission timestamp, current
+  status (<em>waiting</em>, <em>in process</em>, <em>completed</em>), a user-assigned priority
+  score, and nightly-computed metrics (hours above horizon, minimum air mass, best calendar date).
+  The queue is maintained persistently across reboots and edited atomically by both the social
+  server and the scheduler.
+</p>
+
+<h3 class="subsection-head">5.2 Multi-Day Visibility Analysis</h3>
+
+<p>
+  For each queued target, the system computes the best calendar night over the next 365 days.
+  Using <code>astropy.coordinates.AltAz</code> frame transforms and <code>astroplan</code>
+  [5], altitudes are computed for 55 time samples per night across all 365 nights in a single
+  batched numpy call, then reshaped and summed to yield per-night observable hours. This
+  vectorized approach avoids looping over individual nights and is typically three orders of
+  magnitude faster than a naïve implementation.
+</p>
+<p>
+  Observability is gated by two criteria:
+</p>
+<p>
+  (1) <em>Altitude:</em> The target must be above a custom horizon profile defined in
+  <code>configs/my.hrz</code>, which maps azimuth to minimum altitude in one-degree steps
+  to account for local obstructions.
+</p>
+<p>
+  (2) <em>Air mass:</em> Only frames with air mass below approximately 3.0 (corresponding to
+  altitudes above ~20°) are counted as "good hours." Air mass is computed using the standard
+  plane-parallel approximation:
+</p>
+<div class="equation">
+  X = 1 / sin(h)
+</div>
+<p>
+  where <em>h</em> is the altitude above the horizon.
+</p>
+
+<h3 class="subsection-head">5.3 Target Selection Algorithm</h3>
+
+<p>
+  Nightly target selection is performed by <code>best_object_tonight()</code> in
+  <code>iris_astronomy/astro_dso_visibility.py</code>. Only targets with status
+  <em>waiting</em> are considered. For each candidate, tonight's visibility window is
+  evaluated at one-hour resolution, intersected with hourly weather forecasts (§5.4).
+  The resulting "good hours" count, combined with the target's priority and maximum
+  altitude, forms a three-tuple sort key:
+</p>
+<div class="equation">
+  key = (priority, good_hours, max_altitude)
+</div>
+<p>
+  Targets are sorted descending on this key; the top-ranked target is selected. The
+  <code>prioritize</code> command allows authorized users to elevate a specific target
+  above all others, and prioritized targets are visually distinguished in the imaging
+  grid with a star (★) symbol and amber background.
+</p>
+
+<h3 class="subsection-head">5.4 Weather Integration</h3>
+
+<p>
+  Hourly weather forecasts are obtained from the <strong>Open-Meteo</strong> API [6], which
+  provides free, no-key-required access to numerical weather prediction data including cloud
+  cover fraction (%), precipitation probability (%), wind speed (km/h), and relative humidity
+  (%). An hour is classified as "good" if cloud cover ≤ 80% and precipitation probability
+  ≤ 20%. Wind speed and humidity are displayed in diagnostic plots but do not currently gate
+  hour counting, though they are surfaced to operators for manual override decisions.
+</p>
+
+<h3 class="subsection-head">5.5 Sequence Generation</h3>
+
+<p>
+  N.I.N.A requires a JSON sequence file specifying the target coordinates, filter plan, and
+  exposure parameters. The <code>nina_gen/nina_sequence_gen.py</code> module patches a
+  master template by recursively walking the JSON tree and replacing all occurrences of
+  coordinate fields, target name strings, and notification messages. This approach avoids
+  maintaining a parallel representation of the sequence structure and requires only that
+  the template be updated when N.I.N.A upgrades change the schema.
+</p>
+<p>
+  Filter allocation is determined automatically by object type, queried from SIMBAD:
+</p>
+
+<table>
+  <caption>Table 3. Automatic filter allocation by object type.</caption>
+  <thead><tr><th>Type</th><th>Filter set</th><th>Allocation</th></tr></thead>
+  <tbody>
+    <tr><td>Nebula</td><td>Hα, OIII, SII</td><td>Equal thirds of available time</td></tr>
+    <tr><td>Galaxy / unknown</td><td>L, R, G, B</td><td>50% L, 16.7% each R/G/B</td></tr>
+  </tbody>
+</table>
+
+<p>
+  The number of sub-exposures per filter is computed from the available imaging time and the
+  per-filter exposure duration, with the result posted to Mastodon as a concise filter plan
+  summary (e.g., <code>L×48  R×16  G×16  B×16</code>).
+</p>
+
+<!-- ── 6. Social Interface ─────────────────────────────────────────── -->
+<h2 class="section-head">6. Social Interface</h2>
+
+<h3 class="subsection-head">6.1 Mastodon Integration</h3>
+
+<p>
+  The social server maintains a persistent connection to a Mastodon instance via the streaming
+  API, using a <code>CallbackStreamListener</code> with a 600-second reconnect timeout.
+  Incoming notifications are dispatched to <code>do_notification()</code>, which strips HTML
+  (via BeautifulSoup), lower-cases the text, and tokenizes by whitespace. The second token
+  is matched against a keyword dictionary to dispatch to the appropriate handler function.
+  Any unrecognized command elicits a help message listing available commands and examples.
+</p>
+<p>
+  Access is gated at the entry point: only accounts listed in the <code>Super Users</code>
+  configuration key receive responses. This prevents the observatory from acting on arbitrary
+  public mentions while still allowing a community of trusted users.
+</p>
+
+<h3 class="subsection-head">6.2 Command Set</h3>
+
+<p>
+  The command vocabulary is divided into two tiers. <em>Standard commands</em> are available
+  to all super-users; <em>elevated commands</em> (suffixed with <code>!</code> by convention)
+  modify observatory state or initiate hardware operations:
+</p>
+
+<table>
+  <caption>Table 4. Social server command vocabulary.</caption>
+  <thead><tr><th>Command</th><th>Effect</th></tr></thead>
+  <tbody>
+    <tr><td><code>tonight</code></td><td>Post tonight's target, altitude chart, sky chart, weather status</td></tr>
+    <tr><td><code>best &lt;dso&gt;</code></td><td>Compute and post best calendar night for a DSO</td></tr>
+    <tr><td><code>image &lt;dso&gt;</code></td><td>Add DSO to imaging queue</td></tr>
+    <tr><td><code>show &lt;dso&gt;</code></td><td>Fetch and post archival survey image at telescope FOV</td></tr>
+    <tr><td><code>status</code></td><td>Post scheduler state, mode, safety, imaging phase</td></tr>
+    <tr><td><code>latest</code></td><td>Post the most recent FITS frame with FWHM annotation</td></tr>
+    <tr><td><code>schedule</code></td><td>Generate and post NINA sequence for tonight's target</td></tr>
+    <tr><td><code>calendar</code></td><td>Post monthly imaging calendar</td></tr>
+    <tr><td><code>prioritize [&lt;dso&gt;]</code></td><td>Elevate a target (no arg: reset all priorities)</td></tr>
+    <tr><td><code>mode auto|manual</code></td><td>Switch scheduling mode</td></tr>
+    <tr><td><code>safe! / unsafe!</code></td><td>Grant or revoke safety clearance for imaging</td></tr>
+    <tr><td><code>image!!</code></td><td>Initiate full imaging run with safety checks</td></tr>
+  </tbody>
+</table>
+
+<h3 class="subsection-head">6.3 DSO Survey Preview</h3>
+
+<p>
+  Whenever the system announces tonight's imaging target — whether via the <code>tonight</code>
+  command, NOON_CHECK, or PRE_SUNSET_CHECK confirmation — it automatically fetches and posts
+  an archival survey image of the target using the <code>show</code> subsystem. The image is
+  retrieved from the <strong>SkyView</strong> virtual telescope service [7] via the
+  <code>astroquery.skyview</code> module, with width and height computed from the telescope's
+  actual field of view:
+</p>
+<div class="equation">
+  FOV<sub>w</sub> = 2 · arctan(s<sub>w</sub> / 2f) &nbsp;≈ 48.4′
+</div>
+<p>
+  where <em>s<sub>w</sub></em> = 35.9 mm is the sensor width and <em>f</em> = 2,563 mm is the
+  focal length. DSS2 Red survey data is downloaded at 25% of the native pixel count for
+  bandwidth efficiency, then normalized using a ZScale interval transform [8] and rendered
+  to a JPEG using matplotlib with a black background.
+</p>
+
+<h3 class="subsection-head">6.4 Survey Fetch Resilience</h3>
+
+<p>
+  Network calls to SkyView and the SIMBAD name resolver can be slow or hang indefinitely.
+  To prevent such delays from blocking either the social server's command handler or the
+  scheduler's state machine, the fetch is executed in a <em>spawned</em> child process
+  (using <code>multiprocessing.get_context("spawn")</code> rather than fork, to avoid
+  inheriting the parent's active thread locks). A watchdog daemon thread monitors the child:
+</p>
+<pre>
+p.start()
+p.join(timeout=120)
+if p.is_alive():
+    p.terminate()        # SIGTERM: actually kills the child
+    p.join()             # reap zombie
+    post_social_message("Preview timed out")
+</pre>
+<p>
+  The spawn context is critical: the parent's Mastodon streaming listener and asyncio event
+  loop hold internal mutexes that, if forked mid-acquisition, would produce silent deadlocks
+  in the child. The spawned child starts with a clean interpreter state, imports only the
+  required libraries, and creates an independent Mastodon connection using credentials passed
+  as plain serializable arguments.
+</p>
+
+<!-- ── 7. Hardware Safety ──────────────────────────────────────────── -->
+<h2 class="section-head">7. Hardware Safety</h2>
+
+<h3 class="subsection-head">7.1 Vision-Based State Verification</h3>
+
+<p>
+  Hardware failures in robotic observatories — most critically, attempting to move the roof
+  when the telescope tube is not in a safe park position — can cause catastrophic and
+  irreversible damage. Rather than relying exclusively on mount telemetry (which can be
+  incorrect after a communication failure), Iris employs a redundant vision-based confirmation
+  system using an indoor IP camera.
+</p>
+<p>
+  The <code>sentry/vision_safety.py</code> module captures a fresh snapshot from the camera
+  and applies <strong>OpenCV normalized cross-correlation template matching</strong>
+  (method <code>TM_CCOEFF_NORMED</code>) against three reference templates:
+  telescope parked at home position, roof fully closed, and roof fully open. Each match
+  result is compared to a pre-calibrated expected pixel position with a ±150-pixel tolerance.
+  The module returns four boolean values: <code>(parked, closed, open, timestamp)</code>.
+</p>
+<p>
+  Template matching was chosen over machine learning approaches for several reasons: the
+  physical configuration of the observatory does not change, the camera is fixed, the
+  lighting is controlled, and the templates are highly distinctive. This gives near-zero
+  false-positive rates without requiring training data.
+</p>
+
+<h3 class="subsection-head">7.2 Multi-Gate Safety Architecture</h3>
+
+<p>
+  An imaging run initiated by <code>doit_cmd()</code> passes through three sequential safety
+  checkpoints before NINA is launched:
+</p>
+<p>
+  <strong>Gate 1 — Vision confirmation of initial state.</strong> The vision system confirms
+  the roof is currently closed before attempting to open it. This prevents a double-open
+  sequence if the roof was left open manually.
+</p>
+<p>
+  <strong>Gate 2 — Operator safety clearance (pre-announcement).</strong> The
+  <code>safety.txt</code> file is read; it must contain <code>USER SAFE</code>, written
+  explicitly by an operator via the <code>safe!</code> Mastodon command. The observatory
+  interior lights are activated, and a Sonos audio announcement is made that the roof will
+  open in one minute, accompanied by light flashing to warn any personnel present.
+</p>
+<p>
+  <strong>Gate 3 — Operator safety clearance (post-announcement).</strong> After the
+  one-minute warning, <code>safety.txt</code> is re-read. An operator who has entered the
+  observatory may issue <code>unsafe!</code> during this window to abort the run without
+  any hardware movement.
+</p>
+<p>
+  After roof opening, a fourth confirmation uses the vision system to verify the roof has
+  reached the fully-open position before allowing NINA to begin tracking.
+</p>
+
+<h3 class="subsection-head">7.3 Push Notifications</h3>
+
+<p>
+  Critical events — roof state checks, parking confirmation, and any deviation from expected
+  state — trigger Pushover push notifications delivered to the operator's mobile device.
+  Camera snapshots are attached to these notifications, allowing remote visual confirmation
+  of physical state. Notification rate is limited to six per minute to avoid flooding.
+</p>
+
+<!-- ── 8. Image Quality Analysis ──────────────────────────────────── -->
+<h2 class="section-head">8. Image Quality Analysis</h2>
+
+<h3 class="subsection-head">8.1 Post-Imaging Summary</h3>
+
+<p>
+  On completion of an imaging run, the scheduler scans the N.I.N.A output directory for FITS
+  files with modification timestamps later than the imaging start time. For each file,
+  <code>fits_processing/fitsfwhm.py</code> computes three quality metrics that are then
+  aggregated (median) and posted to Mastodon.
+</p>
+
+<h3 class="subsection-head">8.2 FWHM Estimation via 2D Gaussian Fitting</h3>
+
+<p>
+  Stars are detected using <strong>DAOStarFinder</strong> [9] with a 10σ threshold above the
+  sigma-clipped background median. For each detected source, a 31×31 pixel cutout is extracted
+  and fitted with a 2D elliptical Gaussian using the Levenberg-Marquardt optimizer:
+</p>
+<div class="equation">
+  I(x,y) = A · exp[−((x−x₀)²/2σ<sub>x</sub>² + (y−y₀)²/2σ<sub>y</sub>²)]
+</div>
+<p>
+  FWHM is computed from the fitted standard deviations:
+</p>
+<div class="equation">
+  FWHM = 2√(2 ln 2) · (σ<sub>x</sub> + σ<sub>y</sub>) / 2
+</div>
+<p>
+  Stars are rejected if their fitted FWHM falls outside (0.5, 15) pixels, if the fitted
+  amplitude is below 10σ, or if the axis ratio exceeds 2.0 (rejecting cosmic rays and
+  diffraction artifacts). The plate scale (0.26–0.30 arcsec/px) converts pixel FWHM to
+  angular FWHM for reporting. Eccentricity is computed from the fitted ellipse axes:
+</p>
+<div class="equation">
+  e = √(1 − (b/a)²)
+</div>
+<p>
+  where <em>a</em> and <em>b</em> are the semi-major and semi-minor axes respectively.
+</p>
+
+<h3 class="subsection-head">8.3 Annotated Image Output</h3>
+
+<p>
+  The <code>save_fwhm()</code> function produces an annotated JPEG by overlaying colored
+  circles on each detected star: green for FWHM within 10% below the median (tightly
+  focused), yellow for within ±10%, and red for more than 10% above the median. This
+  provides operators with an immediate spatial map of focus quality across the frame,
+  useful for identifying deformation from mirror cooling, atmospheric dispersion, or
+  tracking errors.
+</p>
+
+<!-- ── 9. Shutdown and Calibration ────────────────────────────────── -->
+<h2 class="section-head">9. Shutdown and Calibration</h2>
+
+<p>
+  The end-of-night sequence is orchestrated by <code>end_points/end.py</code>. The mount
+  park status is queried via PWI4; if the scope is confirmed parked both by telemetry and
+  by vision safety, the roof is closed, the dehumidifier is activated, and all lights are
+  extinguished. If the scope is not at the park position, the roof remains open and an
+  automated flat-frame acquisition sequence is launched instead.
+</p>
+<p>
+  The flat sequence (<code>do_flats()</code>) powers on the mount, sets the imaging state
+  to <code>IN_FLATS</code>, and launches <code>nina_flats.bat</code> as a non-blocking
+  subprocess. It then polls the imaging state every 30 seconds until <code>DONE_FLATS</code>
+  is written by the N.I.N.A batch script, at which point the mount is powered off and the
+  sequence returns. This architecture mirrors the main imaging polling loop and allows flat
+  acquisition to proceed without additional operator intervention.
+</p>
+
+<!-- ── 10. Concurrency Model ──────────────────────────────────────── -->
+<h2 class="section-head">10. Concurrency Model</h2>
+
+<p>
+  SRT's concurrency model is intentionally minimal, relying on three mechanisms at different
+  granularities:
+</p>
+<p>
+  <strong>Process-level isolation</strong> (via <code>multiprocessing.Process</code>): The
+  social server and scheduler run in separate OS processes, providing fault isolation. Either
+  can crash and be restarted without affecting the other's in-flight state (which is persisted
+  to disk).
+</p>
+<p>
+  <strong>Thread-level watchdogs</strong> (via <code>threading.Thread</code>): Non-blocking
+  I/O tasks that do not require process isolation — such as posting to Mastodon while the main
+  loop continues — are dispatched to daemon threads.
+</p>
+<p>
+  <strong>Spawned child processes with hard timeouts</strong>: Long-running, potentially-hanging
+  external API calls (SkyView image fetch) are executed in spawned child processes with a
+  120-second watchdog. Unlike threads, processes can be forcefully terminated via
+  <code>SIGTERM</code>, preventing unbounded resource accumulation from hung network sockets.
+</p>
+<p>
+  Polling loops (30–60 second intervals) are used rather than event-driven callbacks for state
+  transitions in the scheduler, trading some latency for simplicity and debuggability. This is
+  appropriate for astronomical workflows where relevant state transitions occur on timescales
+  of minutes to hours.
+</p>
+
+<!-- ── 11. Results and Observations ──────────────────────────────── -->
+<h2 class="section-head">11. Results and Operational Experience</h2>
+
+<p>
+  Iris has been operated in semi-autonomous mode through multiple imaging seasons, accumulating
+  a community imaging queue of dozens of deep-sky objects submitted by users on the Mastodon
+  network. Targets have included edge-on galaxies (NGC 891), face-on spirals (M94), and emission
+  nebulae (NGC 6888). The two-gate scheduling architecture has successfully prevented wasted
+  imaging runs by aborting at the PRE_SUNSET_CHECK gate on nights where afternoon clearing
+  gave way to evening cloud cover.
+</p>
+<p>
+  The vision-based safety system has proven robust under the fixed-illumination, fixed-camera
+  geometry of the roll-off observatory, with no false confirmations of parked or closed states
+  recorded during normal operation. Template matching correlation scores consistently exceed
+  0.85 for all three states when conditions are nominal.
+</p>
+<p>
+  Typical per-session FWHM values range from 1.8 to 3.2 arcseconds (6–11 pixels at 0.30
+  arcsec/px), consistent with typical New England seeing conditions. Post-imaging Mastodon
+  summaries have proven useful for rapid session assessment without requiring the operator
+  to log in to the imaging PC.
+</p>
+
+<!-- ── 12. Limitations and Future Work ───────────────────────────── -->
+<h2 class="section-head">12. Limitations and Future Work</h2>
+
+<h3 class="subsection-head">12.1 Current Limitations</h3>
+
+<p>
+  <strong>Windows batch dependency.</strong> The core imaging sequences depend on Windows
+  batch files invoking N.I.N.A on a separate PC. This tightly couples the system to a specific
+  platform and prevents full integration testing on Linux. A REST-based N.I.N.A API or
+  Wine-based integration could decouple this.
+</p>
+<p>
+  <strong>Audio anomaly detection.</strong> The <code>sentry/audio_classify.py</code> module,
+  which records ambient sound, generates mel spectrograms, and compares them to reference
+  library spectra via mean squared error, runs as an independent process and is not yet
+  integrated into the main safety state machine.
+</p>
+<p>
+  <strong>Fixed filter plan.</strong> The nebula/galaxy classification produces a fixed filter
+  allocation; future work should incorporate target surface brightness, sky background, and
+  filter bandwidth to produce optimal exposure time per filter.
+</p>
+<p>
+  <strong>Kasa device discovery latency.</strong> UDP discovery on a congested local network
+  can occasionally time out. Device IP addresses could be cached across runs to provide a
+  faster fallback.
+</p>
+
+<h3 class="subsection-head">12.2 Planned Enhancements</h3>
+
+<p>
+  Planned work includes: integration of the audio anomaly detection system as a background
+  daemon that can trigger an emergency shutdown; adaptive exposure planning incorporating
+  per-object surface brightness estimates from HyperLEDA [10]; meridian flip awareness in
+  the scheduling algorithm to avoid losing imaging time to mount transitions; and a web
+  dashboard for visualizing the imaging queue, nightly weather forecast, and historical
+  FWHM trends without requiring a Mastodon account.
+</p>
+
+<!-- ── 13. Conclusion ─────────────────────────────────────────────── -->
+<h2 class="section-head">13. Conclusion</h2>
+
+<p>
+  We have presented Iris SRT, an autonomous observatory controller that integrates social
+  media-driven request queuing, vectorized astronomical visibility planning, hardware safety
+  through vision confirmation, automated sequence generation, and post-imaging quality
+  reporting into a continuously-running service. The system has demonstrated reliable
+  unattended operation across multiple imaging seasons, with community engagement through
+  Mastodon enabling a citizen-science-oriented model in which members of the public contribute
+  to and follow the progress of deep-sky imaging campaigns.
+</p>
+<p>
+  The architectural choices — two-process isolation, file-mediated state, two-gate scheduling,
+  and spawned child processes for unreliable external calls — reflect hard-won lessons from
+  operating a physical system where failures have real-world consequences. We believe these
+  patterns are applicable to a wide range of robotic instrumentation systems beyond astronomy,
+  wherever unattended hardware operation must be combined with a real-time user interface and
+  conservative safety guarantees.
+</p>
+<p>
+  The source code for SRT is maintained in a private repository. Inquiries regarding
+  collaboration or code access may be directed to the corresponding author.
+</p>
+
+</div><!-- /.two-col -->
+
+<!-- ════════════════════════════════════════════════════════════════════
+     REFERENCES  (full width)
+     ══════════════════════════════════════════════════════════════════ -->
+<div class="references">
+<h2 class="section-head" style="column-span:all">References</h2>
+<ol>
+  <li>Hessman, F.V. (2006). <em>The MONET robotic telescope network.</em> Astronomische Nachrichten, 327(8), 751–753.</li>
+  <li>Gomez, E.L., &amp; Fitzgerald, M.T. (2017). <em>Robotic telescopes in education.</em> Astronomical Review, 13(1), 28–68.</li>
+  <li>Rochko, E. et al. (2016–present). <em>Mastodon: A decentralized social network based on ActivityPub.</em> joinmastodon.org.</li>
+  <li>Jöchle, S. et al. (2019–present). <em>N.I.N.A — Nighttime Imaging 'N' Astronomy.</em> nighttime-imaging.eu.</li>
+  <li>Morris, B.M. et al. (2018). <em>astroplan: An open source observation planning package in Python.</em> AJ, 155(3), 128.</li>
+  <li>Zippenfenig, P. (2022). <em>Open-Meteo: A free weather API for non-commercial use.</em> Zenodo. DOI:10.5281/zenodo.7970649.</li>
+  <li>McGlynn, T., Scollick, K., &amp; White, N. (1998). <em>SkyView: The multi-wavelength sky on the Internet.</em> IAU Symposium 179.</li>
+  <li>Lupton, R. &amp; Gunn, J.E. (2001). <em>A new algorithm for optimal image display.</em> PASP, 113, 1420–1427. [ZScale algorithm]</li>
+  <li>Stetson, P.B. (1987). <em>DAOPHOT: A computer program for the photometry of crowded fields.</em> PASP, 99, 191–222.</li>
+  <li>Makarov, D. et al. (2014). <em>HyperLEDA: A database for physics of galaxies.</em> A&amp;A, 570, A13.</li>
+</ol>
+</div>
+
+<div class="footnote">
+  Correspondence: Taylor Hogan, Iris Observatory, Boston, MA &nbsp;·&nbsp;
+  AI contribution: Claude Sonnet 4.6 (Anthropic) served as a collaborative author and co-developer of
+  the SRT software described herein, contributing to system design, subsystem implementation, and the
+  preparation of this manuscript. &nbsp;·&nbsp;
+  Version 2026.3.13.5
+</div>
+
+</div><!-- /.page -->
+</body>
+</html>
