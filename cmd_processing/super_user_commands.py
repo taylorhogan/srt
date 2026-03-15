@@ -1,4 +1,5 @@
 import asyncio
+from datetime import datetime
 import logging
 import os, sys
 import subprocess
@@ -503,6 +504,13 @@ def doit_cmd(words: list[str], account: str) -> None:
     # Claim the run immediately so no concurrent caller can slip through.
     set_imaging_state(ImagingState.ACTIVE)
     _logger.info("doit_cmd")
+
+    # Persist imaging start time so end.py can compute the post-imaging summary.
+    try:
+        with open("imaging_start.txt", "w") as _f:
+            _f.write(datetime.now().isoformat())
+    except Exception:
+        pass
     cfg = config.data()
 
     # Path used for camera snapshots shown in Pushover notifications.

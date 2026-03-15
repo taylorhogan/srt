@@ -1,10 +1,13 @@
 import asyncio
+from datetime import datetime
 import logging
 import os
+from pathlib import Path
 import subprocess
 import sys
 import time
 
+import numpy as np
 import requests
 
 if __package__ is None or __package__ == "":
@@ -14,6 +17,7 @@ if __package__ is None or __package__ == "":
 
 from configs import config
 
+from fits_processing import fitsfwhm
 from hardware_control import pwi4_utils, kasa_utils as ku
 from cmd_processing import super_user_commands, social_server
 from sentry import vision_safety
@@ -46,6 +50,67 @@ def determine_roof_state_visually(account):
 
 
 _SCRIPTS_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'scripts'))
+
+
+def _post_imaging_summary(imaging_start: datetime) -> None:
+    """Scan FITS files written since imaging_start and post quality metrics to Mastodon."""
+    logger = utils.set_logger()
+    cfg = config.data()
+    image_dir = Path(cfg["nina"]["image_dir"])
+    arcsec_per_pixel = cfg["nina"]["arc_sec_per_pixel"]
+    start_ts = imaging_start.timestamp()
+
+    try:
+        fits_files = sorted(
+            (f for f in image_dir.rglob("*.fits") if f.stat().st_mtime >= start_ts),
+            key=lambda f: f.stat().st_mtime,
+        )
+    except Exception:
+        logger.exception("Failed to scan image directory %s", image_dir)
+        social_server.post_social_message("Imaging complete — could not scan image directory")
+        return
+
+    if not fits_files:
+        social_server.post_social_message("Imaging complete — no new FITS files found")
+        return
+
+    logger.info("Found %d FITS files since imaging start", len(fits_files))
+    fwhm_px_list, fwhm_arcsec_list, star_count_list, ecc_list = [], [], [], []
+
+    for fits_file in fits_files:
+        try:
+            mean_px, mean_arcsec, star_count, mean_ecc = fitsfwhm.calculate_fwhm(
+                fits_file, arcsec_per_pixel=arcsec_per_pixel
+            )
+            if star_count > 0:
+                fwhm_px_list.append(mean_px)
+                fwhm_arcsec_list.append(mean_arcsec)
+                star_count_list.append(star_count)
+                ecc_list.append(mean_ecc)
+        except Exception:
+            logger.exception("FWHM analysis failed for %s", fits_file)
+
+    if not fwhm_px_list:
+        social_server.post_social_message(
+            f"Imaging complete — {len(fits_files)} frames, no stars detected in any frame"
+        )
+        return
+
+    median_fwhm_px     = float(np.median(fwhm_px_list))
+    median_fwhm_arcsec = float(np.median(fwhm_arcsec_list))
+    median_stars       = float(np.median(star_count_list))
+    median_ecc         = float(np.median(ecc_list))
+
+    social_server.post_social_message(
+        f"Imaging complete — {len(fits_files)} frames ({len(fwhm_px_list)} with stars)\n"
+        f"Median FWHM: {median_fwhm_px:.2f} px ({median_fwhm_arcsec:.2f}\")\n"
+        f"Median stars/frame: {median_stars:.0f}\n"
+        f"Median eccentricity: {median_ecc:.3f}"
+    )
+    logger.info(
+        "Imaging summary: %d frames, median FWHM=%.2f px (%.2f\"), stars=%.0f, ecc=%.3f",
+        len(fits_files), median_fwhm_px, median_fwhm_arcsec, median_stars, median_ecc,
+    )
 
 
 def do_flats() -> None:
@@ -161,6 +226,14 @@ def do_main():
                 logger.info("step 7")
                 asyncio.run(ku.kasa_do(dev_map, instructions))
                 logger.info("step 8")
+
+                # Read imaging start time written by doit_cmd
+                try:
+                    with open("imaging_start.txt") as _f:
+                        imaging_start = datetime.fromisoformat(_f.read().strip())
+                except Exception:
+                    imaging_start = datetime.now()  # fallback: won't match any old FITS files
+                _post_imaging_summary(imaging_start)
                 do_flats()
 
         except:
