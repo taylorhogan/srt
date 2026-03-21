@@ -258,7 +258,7 @@ def set_priority_instruction_db(dso_name: str, priority: int) -> bool:
     return matched
 
 
-def add_dso_object_instruction(dso_name, recipe, requestor, priority=0):
+def add_dso_object_instruction(dso_name, recipe, requestor, priority=5):
     now = datetime.now()
     formatted_date = now.strftime("%Y-%m-%d")
     with open(_INSTRUCTIONS_PATH, 'r') as f:
