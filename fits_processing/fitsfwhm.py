@@ -2,6 +2,8 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
+from astropy.utils.iers import conf
+conf.auto_max_age = None
 from astropy.utils import iers
 iers.conf.auto_download = False
 from astropy.io import fits
