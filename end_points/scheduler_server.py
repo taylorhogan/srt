@@ -595,7 +595,7 @@ def main():
     """
     print("Starting Scheduler Server")
     super_user_commands.safe_cmd(None, None)
-    super_user_commands.ImagingState(super_user_commands.ImagingState.NONE)
+    super_user_commands.set_imaging_state(super_user_commands.ImagingState.NONE)
     super_user_commands.set_mode("manual")
     LOGGER.info('Start Scheduler')
     try:
