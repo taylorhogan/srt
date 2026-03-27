@@ -7,7 +7,7 @@ class PublicConfig():
 
         },
         "version": {
-            "date": "2026.3.25.1"
+            "date": "2026.3.27.1"
         },
 
         "logger": {
@@ -66,6 +66,12 @@ class PublicConfig():
                 "Observatory State": "In Development",
                 "Imaging Tonight": "Unknown"
             },
+
+        "sync": {
+            "rsync_path": "C:/Users/iriso/Documents/cwrsync_6.4.7_x64_free/bin/rsync",
+            "source": "iriso@100.95.7.19:/cygdrive/c/Users/iriso/Documents/N.I.N.A/Targets",
+            "destination": "~/Desktop"
+        },
 
     })
 

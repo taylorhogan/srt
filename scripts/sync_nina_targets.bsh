@@ -1,0 +1,22 @@
+#!/bin/bash
+#
+# sync_nina_targets.bsh
+# Syncs N.I.N.A Targets folder from Windows box to Mac.
+#
+# Usage:
+#   ./sync_nina_targets.bsh <source> <destination>
+#
+# Defaults (from configs/config_public.py sync section):
+#   source:      iriso@100.95.7.19:/cygdrive/c/Users/iriso/Documents/N.I.N.A/Targets
+#   destination: ~/Desktop
+#
+# Cron (run at 6am daily) — add via `crontab -e`:
+#   0 6 * * * /home/taylor/Documents/srt/scripts/sync_nina_targets.bsh "iriso@100.95.7.19:/cygdrive/c/Users/iriso/Documents/N.I.N.A/Targets" "~/Desktop"
+
+SOURCE="${1:-iriso@100.95.7.19:/cygdrive/c/Users/iriso/Documents/N.I.N.A/Targets}"
+DESTINATION="${2:-~/Desktop}"
+
+rsync -avz \
+    --rsync-path="C:/Users/iriso/Documents/cwrsync_6.4.7_x64_free/bin/rsync" \
+    "$SOURCE" \
+    "$DESTINATION"
