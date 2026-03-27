@@ -14,7 +14,7 @@
 SOURCE="iriso@100.95.7.19:/cygdrive/c/Users/iriso/Documents/N.I.N.A/Targets"
 DESTINATION="/home/taylor/Desktop"
 
-rsync -avz \
+rsync -avz --ignore-existing \
     --rsync-path="C:/Users/iriso/Documents/cwrsync_6.4.7_x64_free/bin/rsync" \
     "$SOURCE" \
     "$DESTINATION"
