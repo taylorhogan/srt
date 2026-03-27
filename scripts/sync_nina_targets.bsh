@@ -14,7 +14,7 @@
 #   0 6 * * * /home/taylor/Documents/srt/scripts/sync_nina_targets.bsh "iriso@100.95.7.19:/cygdrive/c/Users/iriso/Documents/N.I.N.A/Targets" "~/Desktop"
 
 SOURCE="iriso@100.95.7.19:/cygdrive/c/Users/iriso/Documents/N.I.N.A/Targets"
-DESTINATION="/Users/home/taylorhogan/Desktop"
+DESTINATION="/Users/taylorhogan/Desktop"
 
 rsync -avz \
     --rsync-path="C:/Users/iriso/Documents/cwrsync_6.4.7_x64_free/bin/rsync" \
