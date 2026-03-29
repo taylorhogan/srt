@@ -54,8 +54,6 @@ def image_cmd(words: list[str], index: int, m: Mastodon, account: str) -> None:
     if dso_name is not None:
         object = astro_dso_visibility.is_a_dso_object(dso_name)
         if object is not None:
-
-            now = datetime.datetime.now()
             instructions.add_dso_object_instruction(dso_name, "", account)
             post_social_message(dso_name + " Added to list of objects to image\n")
         else:
@@ -401,7 +399,10 @@ def do_notification(notification: Any, m: Mastodon) -> None:
         logger = logging.getLogger(__name__)
         logger.info('Problem')
         logger.exception("Exception")
-        m.status_post("Oops I had a problem " + cmd)
+        try:
+            m.status_post("Oops I had a problem processing a command")
+        except Exception:
+            logger.exception("Failed to post error message to Mastodon")
 
 
 class TheStreamListener(StreamListener):
@@ -442,7 +443,8 @@ def post_social_message(message: str, image: Optional[str] = None, vis: Optional
         #        mastodon.media_update(media_upload_mastodon, description="text")
         #       post = mastodon.status_post(message, media_ids=media_upload_mastodon)
 
-        media = mastodon.media_post(image, "image/png")
+        mime = "image/jpeg" if image.lower().endswith((".jpg", ".jpeg")) else "image/png"
+        media = mastodon.media_post(image, mime)
         mastodon.status_post(message, media_ids=media, visibility=vis)
 
 
@@ -501,8 +503,14 @@ def main() -> None:
     except Exception:
         logger.info('Problem')
         logger.exception("Exception")
-        get_mastodon_instance().status_post("Oops I had a problem with Social server")
-        start_interface()
+        try:
+            get_mastodon_instance().status_post("Oops I had a problem with Social server")
+        except Exception:
+            logger.exception("Failed to post error message to Mastodon")
+        try:
+            start_interface()
+        except Exception:
+            logger.exception("Social server failed to restart")
 
     print("stop")
 

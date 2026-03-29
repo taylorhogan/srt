@@ -242,6 +242,12 @@ def image_nina2(words: Optional[list[str]], account: Optional[str]) -> None:
     print("Done with Nina")
 
 
+def home_and_park(words: Optional[list[str]], account: Optional[str]) -> None:
+    print("Starting Nina home and park")
+    subprocess.Popen([os.path.join(_SCRIPTS_DIR, "home_and_park.bat")], shell=True)
+    print("Done with Nina home and park")
+
+
 def shutdown(words: list[str], account: str) -> None:
     return
 
@@ -475,7 +481,7 @@ def doit_cmd(words: list[str], account: str) -> None:
     operand meanings:
         1 = full run (prelude + image_nina1)
         2 = full run (prelude + image_nina2)
-        3 = close-up only (no imaging, just run end sequence)
+        3 = full run (prelude + home_and_park, no imaging)
 
     State machine transitions written to imaging.txt during this function:
         NONE → ACTIVE   (immediately, guards against concurrent calls)
@@ -581,7 +587,7 @@ def doit_cmd(words: list[str], account: str) -> None:
         pushover.push_message("not safe 3, stopping", inside_view)
         return
 
-    if operand == 2 or operand == 1:
+    if operand in (1, 2, 3):
         print("starting Nina")
 
         # ------------------------------------------------------------------ #
@@ -643,21 +649,17 @@ def doit_cmd(words: list[str], account: str) -> None:
         set_imaging_state(ImagingState.IN_MAIN)
         if operand == 1:
             image_nina1(None, None)
-            # image_nina1 uses Popen (non-blocking); poll here until end.py
-            # or the NINA bat resets the state to NONE, signalling the run
-            # is truly complete before doit_cmd returns.
             _logger.info("Waiting for imaging state to return to NONE")
             while get_imaging_state() != ImagingState.NONE:
                 time.sleep(60)
             _logger.info("Imaging state is NONE — main imaging complete")
-
-    else:
-        # operand == 3: skip imaging entirely, just run the shutdown sequence.
-        # Useful for testing the close-up path or ending a manual session.
-        print("end started")
-        pushover.push_message("just closing up, no imaging")
-        time.sleep(60)
-        end.do_main()
+        elif operand == 3:
+            # No imaging — just home the scope and park via NINA.
+            home_and_park(None, None)
+            _logger.info("Waiting for home_and_park to complete (state = NONE)")
+            while get_imaging_state() != ImagingState.NONE:
+                time.sleep(60)
+            _logger.info("Imaging state is NONE — home and park complete")
 
 
 
