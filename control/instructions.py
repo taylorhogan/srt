@@ -250,7 +250,7 @@ def set_priority_instruction_db(dso_name: str, priority: int) -> bool:
         instructions = json.load(f)
     matched = False
     for instruction in instructions:
-        if instruction["dso"].lower() == dso_name.lower() and instruction["status"] == "waiting":
+        if instruction["dso"].lower().replace(" ", "") == dso_name.lower().replace(" ", "") and instruction["status"] == "waiting":
             instruction["priority"] = priority
             matched = True
             break

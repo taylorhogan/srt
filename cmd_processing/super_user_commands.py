@@ -505,6 +505,12 @@ def doit_cmd(words: list[str], account: str) -> None:
     set_imaging_state(ImagingState.ACTIVE)
     _logger.info("doit_cmd")
 
+    # Kill any stale NINA or PWI4 processes before starting a fresh run.
+    subprocess.run(
+        [r"C:\Users\iriso\Documents\development\srt\scripts\kill_nina_pwi4.bat"],
+        shell=True
+    )
+
     # Persist imaging start time so end.py can compute the post-imaging summary.
     try:
         with open("imaging_start.txt", "w") as _f:

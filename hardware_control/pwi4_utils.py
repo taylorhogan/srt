@@ -80,7 +80,9 @@ def get_is_parked ():
             return False
 
 
-    except:
+    except Exception as e:
+        logger = utils.set_logger()
+        logger.exception("get_is_parked failed — PWI4 unreachable or mount error: %s", e)
         return False
 
 
