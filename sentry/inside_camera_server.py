@@ -99,28 +99,44 @@ def take_snapshot(test_path=None):
             super_user_commands.turn_inside_light_off(dev_map)
 
 
+        vid = cv.VideoCapture(0, cv.CAP_DSHOW)
+        if not vid.isOpened():
+            _loger.error("Failed to open camera")
+            return False
+        vid.set(cv.CAP_PROP_AUTO_EXPOSURE, 0.25)
+
         pictures = []
         scores = []
-        for exposure_value in range(-1, -2, -1):
-            vid = cv.VideoCapture(0, cv.CAP_DSHOW)
+        for exposure_value in range(-1, -12, -1):
+            vid.set(cv.CAP_PROP_EXPOSURE, exposure_value)
+            actual = vid.get(cv.CAP_PROP_EXPOSURE)
+            # Discard settle frames so the sensor adjusts to the new exposure
+            for _ in range(3):
+                vid.read()
             ret, frame = vid.read()
             if not ret:
-                return False
-            #vid.set(cv.CAP_PROP_EXPOSURE, exposure_value)
-            # cv2.imshow('Camera - Manual Exposure', frame)
+                _loger.warning("Camera read failed at exposure %s", exposure_value)
+                continue
             score = best_exposure_score(frame)
-            print(f"Exposure: {exposure_value} Score: {score}")
+            _loger.info("Exposure: %s (actual: %s) Score: %.4f", exposure_value, actual, score)
             pictures.append(frame)
             scores.append(score)
+
+        vid.release()
 
     if not incoming_inside_light_status:
         super_user_commands.turn_inside_light_off(dev_map)
     else:
         super_user_commands.turn_inside_light_on(dev_map)
 
+    if not scores:
+        _loger.error("No valid frames captured at any exposure")
+        return False
+
     best_score = max(scores)
     best_index = scores.index(best_score)
     best_picture = pictures[best_index]
+    _loger.info("Selected exposure index %s with score %.4f", best_index, best_score)
 
 
 
