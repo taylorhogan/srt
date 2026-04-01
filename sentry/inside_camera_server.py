@@ -99,18 +99,24 @@ def take_snapshot(test_path=None):
             super_user_commands.turn_inside_light_off(dev_map)
 
 
+        # Open and immediately release to flush any state left by another app (e.g. Windows Camera)
+        _flush = cv.VideoCapture(0, cv.CAP_DSHOW)
+        _flush.release()
+        time.sleep(1.0)
+
         vid = cv.VideoCapture(0, cv.CAP_DSHOW)
         if not vid.isOpened():
             _loger.error("Failed to open camera")
             return False
 
-        # Warm-up: read a few frames so the driver is fully initialized
-        for _ in range(5):
-            vid.read()
-
-        # Disable auto-exposure (0.25 = manual for DSHOW, try 0 as fallback)
-        vid.set(cv.CAP_PROP_AUTO_EXPOSURE, 0.25)
+        # Disable auto-exposure before warm-up so the driver starts in manual mode.
+        # For DirectShow (CAP_DSHOW): 1 = manual, 3 = auto.
+        vid.set(cv.CAP_PROP_AUTO_EXPOSURE, 1)
         time.sleep(0.5)  # Give the driver time to switch to manual mode
+
+        # Warm-up: read a few frames so the sensor is fully initialized
+        for _ in range(10):
+            vid.read()
 
         # Verify auto-exposure was disabled
         ae_val = vid.get(cv.CAP_PROP_AUTO_EXPOSURE)
@@ -123,6 +129,8 @@ def take_snapshot(test_path=None):
             actual = vid.get(cv.CAP_PROP_EXPOSURE)
             if actual != exposure_value:
                 _loger.warning("Exposure set to %s but camera reports %s", exposure_value, actual)
+            # Wait for the driver to apply the new exposure before discarding frames
+            time.sleep(0.3)
             # Discard settle frames so the sensor adjusts to the new exposure
             for _ in range(5):
                 vid.read()
