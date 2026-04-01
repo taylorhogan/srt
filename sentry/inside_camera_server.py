@@ -103,15 +103,28 @@ def take_snapshot(test_path=None):
         if not vid.isOpened():
             _loger.error("Failed to open camera")
             return False
+
+        # Warm-up: read a few frames so the driver is fully initialized
+        for _ in range(5):
+            vid.read()
+
+        # Disable auto-exposure (0.25 = manual for DSHOW, try 0 as fallback)
         vid.set(cv.CAP_PROP_AUTO_EXPOSURE, 0.25)
+        time.sleep(0.5)  # Give the driver time to switch to manual mode
+
+        # Verify auto-exposure was disabled
+        ae_val = vid.get(cv.CAP_PROP_AUTO_EXPOSURE)
+        _loger.info("Auto-exposure value after set: %s", ae_val)
 
         pictures = []
         scores = []
         for exposure_value in range(-1, -12, -1):
             vid.set(cv.CAP_PROP_EXPOSURE, exposure_value)
             actual = vid.get(cv.CAP_PROP_EXPOSURE)
+            if actual != exposure_value:
+                _loger.warning("Exposure set to %s but camera reports %s", exposure_value, actual)
             # Discard settle frames so the sensor adjusts to the new exposure
-            for _ in range(3):
+            for _ in range(5):
                 vid.read()
             ret, frame = vid.read()
             if not ret:
