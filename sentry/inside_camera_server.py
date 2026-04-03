@@ -32,18 +32,23 @@ def best_exposure_score(img):
 
     L_norm = L / 255.0
 
-    # Count badly clipped pixels
-    under = np.sum(L < 8) / L.size  # < ~3%
-    over = np.sum(L > 248) / L.size  # > ~97%
+    # Count clipped pixels — use lenient thresholds since observatory scenes
+    # legitimately have dark shadow regions (telescope body, corners)
+    under = np.sum(L < 16) / L.size   # < ~6% brightness
+    over = np.sum(L > 240) / L.size   # > ~94% brightness
 
-    # Luminance mean (in log space is better, but linear works fine)
     mean_lum = np.mean(L_norm)
-
-    # Standard deviation of luminance (more contrast = better)
     std_lum = np.std(L_norm)
 
-    # Final score
-    score = std_lum * (1 - 8 * (under + over)) * np.exp(-15 * (mean_lum - 0.5) ** 2)
+    # Additive penalty only kicks in when clipping is heavy (>30% under, >5% over).
+    # Previously the penalty was multiplicative and went negative for any clipping
+    # above 12.5%, causing max() to pick the darkest (nearly black) frame.
+    clip_penalty = max(0.0, under - 0.30) * 3.0 + max(0.0, over - 0.05) * 3.0
+
+    # Reward frames close to target brightness (0.45) with high contrast
+    mean_reward = np.exp(-8.0 * (mean_lum - 0.45) ** 2)
+
+    score = std_lum * mean_reward - clip_penalty
     return score
 
 
@@ -130,9 +135,9 @@ def take_snapshot(test_path=None):
             if actual != exposure_value:
                 _loger.warning("Exposure set to %s but camera reports %s", exposure_value, actual)
             # Wait for the driver to apply the new exposure before discarding frames
-            time.sleep(0.3)
+            time.sleep(0.5)
             # Discard settle frames so the sensor adjusts to the new exposure
-            for _ in range(5):
+            for _ in range(10):
                 vid.read()
             ret, frame = vid.read()
             if not ret:
