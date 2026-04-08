@@ -229,7 +229,8 @@ def do_main():
 
                 # Read imaging start time written by doit_cmd
                 try:
-                    with open("imaging_start.txt") as _f:
+                    _root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+                    with open(os.path.join(_root, "imaging_start.txt")) as _f:
                         imaging_start = datetime.fromisoformat(_f.read().strip())
                 except Exception:
                     imaging_start = datetime.now()  # fallback: won't match any old FITS files

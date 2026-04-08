@@ -11,28 +11,30 @@ from hardware_control.pwi4_client import PWI4
 from utils import utils
 from configs import config
 
+logger = logging.getLogger(__name__)
+
 
 def park_scope ():
 
     pwi4 = PWI4()
 
     s = pwi4.status()
-    print("Mount connected:", s.mount.is_connected)
-    print("trying to park!")
+    logger.info("Mount connected: %s", s.mount.is_connected)
+    logger.info("Trying to park")
 
 
     if not s.mount.is_connected:
-        print("Connecting to mount...")
+        logger.info("Connecting to mount...")
         s = pwi4.mount_connect()
-        print("Mount connected:", s.mount.is_connected)
+        logger.info("Mount connected: %s", s.mount.is_connected)
         if not s.mount.is_connected:
             return False
-    print("Mount is connected")
-    print ("start park")
+    logger.info("Mount is connected")
+    logger.info("Start park")
     pwi4.mount_park()
-    print ("waiting for 30")
+    logger.info("Waiting for 30")
     time.sleep(30)
-    print ("end park")
+    logger.info("End park")
 
     return True
 
@@ -47,23 +49,23 @@ def get_is_parked ():
         pwi4 = PWI4()
 
         s = pwi4.status()
-        print("Mount connected:", s.mount.is_connected)
-        print (s)
+        logger.info("Mount connected: %s", s.mount.is_connected)
+        logger.debug("%s", s)
         if not s.mount.is_connected:
-            print("Connecting to mount...")
+            logger.info("Connecting to mount...")
             s = pwi4.mount_connect()
-            print("Mount connected:", s.mount.is_connected)
+            logger.info("Mount connected: %s", s.mount.is_connected)
             if not s.mount.is_connected:
                 return False
 
-        print ("Mount is connected")
+        logger.info("Mount is connected")
         alt = s.mount.altitude_degs
         az = s.mount.azimuth_degs
-        print (az)
-        print (alt)
+        logger.info("Azimuth: %s", az)
+        logger.info("Altitude: %s", alt)
 
         moving = s.mount.is_slewing or s.mount.is_tracking
-        print (moving)
+        logger.info("Moving: %s", moving)
 
         if moving:
             return False
@@ -72,8 +74,8 @@ def get_is_parked ():
 
         delta_altitude = abs(park_altitude-alt)
         delta_azimuth = abs(parked_azimuth-az)
-        print ("Delta al", delta_altitude)
-        print ("Delta az", delta_azimuth)
+        logger.info("Delta alt: %s", delta_altitude)
+        logger.info("Delta az: %s", delta_azimuth)
         if  delta_altitude < 1 and delta_azimuth < 1:
             return True
         else:
@@ -81,7 +83,6 @@ def get_is_parked ():
 
 
     except Exception as e:
-        logger = utils.set_logger()
         logger.exception("get_is_parked failed — PWI4 unreachable or mount error: %s", e)
         return False
 

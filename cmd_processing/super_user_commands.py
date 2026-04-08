@@ -519,7 +519,8 @@ def doit_cmd(words: list[str], account: str) -> None:
 
     # Persist imaging start time so end.py can compute the post-imaging summary.
     try:
-        with open("imaging_start.txt", "w") as _f:
+        _root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+        with open(os.path.join(_root, "imaging_start.txt"), "w") as _f:
             _f.write(datetime.now().isoformat())
     except Exception:
         pass
