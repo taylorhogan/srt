@@ -392,6 +392,7 @@ def get_super_user_commands() -> dict[str, Callable]:
         "sequence": sequence_cmd,
         "mode": mode_cmd,
         "prioritize": prioritize_cmd,
+        "doflats": doflats_cmd,
     }
 
 
@@ -654,6 +655,14 @@ def doit_cmd(words: list[str], account: str) -> None:
             while get_imaging_state() != ImagingState.NONE:
                 time.sleep(60)
             _logger.info("Imaging state is NONE — main imaging complete")
+            do_flats()
+        elif operand == 2:
+            image_nina2(None, None)
+            _logger.info("Waiting for imaging state to return to NONE")
+            while get_imaging_state() != ImagingState.NONE:
+                time.sleep(60)
+            _logger.info("Imaging state is NONE — main imaging complete")
+            do_flats()
         elif operand == 3:
             # No imaging — just home the scope and park via NINA.
             home_and_park(None, None)
@@ -662,6 +671,50 @@ def doit_cmd(words: list[str], account: str) -> None:
                 time.sleep(60)
             _logger.info("Imaging state is NONE — home and park complete")
 
+
+
+def do_flats() -> None:
+    """Run a flats sequence via NINA.
+
+    Sequence:
+        1. Power on the telescope mount.
+        2. Set imaging state to IN_FLATS.
+        3. Launch nina_flats.bat (non-blocking Popen).
+        4. Poll imaging state every 30 seconds until DONE_FLATS.
+        5. Power off the mount and return.
+    """
+    _logger.info("Begin flats sequence")
+    social_server.post_social_message("Starting flats sequence")
+
+    dev_map = asyncio.run(ku.make_discovery_map())
+    asyncio.run(ku.kasa_do(dev_map, {"Telescope mount": 'on'}))
+    _logger.info("Mount powered on")
+
+    set_imaging_state(ImagingState.IN_FLATS)
+
+    bat_path = os.path.join(_SCRIPTS_DIR, "nina_flats.bat")
+    subprocess.Popen([bat_path], shell=True)
+    _logger.info("nina_flats.bat launched")
+
+    _logger.info("Waiting for flats to complete (state = DONE_FLATS)")
+    while get_imaging_state() != ImagingState.DONE_FLATS:
+        time.sleep(30)
+
+    _logger.info("Flats complete")
+    asyncio.run(ku.kasa_do(dev_map, {"Telescope mount": 'off'}))
+    _logger.info("Mount powered off")
+    social_server.post_social_message("Flats sequence complete")
+
+
+def doflats_cmd(words: list[str], account: str) -> None:
+    if is_imaging():
+        pushover.push_message("Already imaging, cannot start flats")
+        return
+    set_imaging_state(ImagingState.ACTIVE)
+    try:
+        do_flats()
+    finally:
+        set_imaging_state(ImagingState.NONE)
 
 
 if __name__ == "__main__":
