@@ -526,7 +526,7 @@ def compute_optical_metrics(
         median_fwhm_arcsec  float
         median_ecc          float
         cv_fwhm             float  std/median FWHM — lower is more uniform
-        field_uniformity    float  min_cell/max_cell FWHM from grid — 1=perfect
+        field_uniformity    float  std/mean of per-cell median FWHM — 0=perfect, lower is better
         tilt_score          float  OLS FWHM(x,y)=ax+by+c gradient×diagonal/median_fwhm
         coma_score          float  Pearson r(ecc, radius) — 0=none, 1=eccentricity grows with radius
         collimation_score   float  mean(cos²(elongation−radial)) — 0.5=random, 1.0=all radial
@@ -554,10 +554,10 @@ def compute_optical_metrics(
     # --- Field Uniformity (grid-based) ---
     grid = _make_grid(xs, ys, fwhms, h, w, n_cells)
     populated = grid[~np.isnan(grid)]
-    if len(populated) >= 2:
-        field_uniformity = float(np.nanmin(grid) / np.nanmax(grid))
+    if len(populated) >= 2 and np.nanmean(grid) > 0:
+        field_uniformity = float(np.nanstd(populated) / np.nanmean(populated))
     else:
-        field_uniformity = 1.0
+        field_uniformity = 0.0
 
     # --- Tilt Score (OLS plane fit to FWHM) ---
     # FWHM = a*x + b*y + c  →  gradient magnitude normalised by image diagonal and median FWHM
@@ -592,6 +592,76 @@ def compute_optical_metrics(
         "coma_score":           coma_score,
         "collimation_score":    collimation_score,
     }
+
+
+def save_optical_metrics_table(metrics: dict, output_path: Path) -> Path:
+    """
+    Render the scalar optical-quality metrics as a 4-column table image
+    (Metric | Bad | Current | Good).  Each row is coloured on a green→red
+    gradient based on how the current value sits between the good and bad
+    reference thresholds.
+
+    Returns output_path.
+    """
+    m = metrics
+
+    def _badness(val: float, good: float, bad: float) -> float:
+        """Return 0.0 (best) … 1.0 (worst), clamped."""
+        span = bad - good
+        if span == 0:
+            return 0.0
+        return max(0.0, min(1.0, (val - good) / span))
+
+    rows = [
+        ("CV FWHM",         ">25%",  f"{m['cv_fwhm']*100:.1f}%",     "<10%"),
+        ("Field uniformity", ">0.30", f"{m['field_uniformity']:.2f}",  "<0.05"),
+        ("Tilt score",       ">0.50", f"{m['tilt_score']:.2f}",        "<0.20"),
+        ("Coma score",       ">0.50", f"{m['coma_score']:.2f}",        "<0.20"),
+        ("Collimation",      ">0.80", f"{m['collimation_score']:.2f}", "~0.50"),
+    ]
+    scores = [
+        _badness(m["cv_fwhm"] * 100,       good=10,   bad=25),    # lower is better
+        _badness(m["field_uniformity"],     good=0.05, bad=0.30),   # lower is better
+        _badness(m["tilt_score"],           good=0.20, bad=0.50),  # lower is better
+        _badness(m["coma_score"],           good=0.20, bad=0.50),  # lower is better
+        _badness(m["collimation_score"],    good=0.50, bad=0.80),  # lower is better
+    ]
+
+    cmap = plt.get_cmap("RdYlGn_r")
+    cell_text   = [list(row) for row in rows]
+    cell_colors = [[cmap(s)] * 4 for s in scores]
+
+    fig, ax = plt.subplots(figsize=(7, 3))
+    ax.axis("off")
+    ax.set_title(
+        f"Optical Quality  |  {m['star_count']} stars  |  "
+        f"FWHM {m['median_fwhm_px']:.2f}px ({m['median_fwhm_arcsec']:.2f}\")  |  "
+        f"ecc {m['median_ecc']:.3f}",
+        fontsize=11, pad=12,
+    )
+
+    table = ax.table(
+        cellText=cell_text,
+        colLabels=["Metric", "Bad", "Current", "Good"],
+        cellColours=cell_colors,
+        loc="center",
+        cellLoc="center",
+    )
+    table.auto_set_font_size(False)
+    table.set_fontsize(11)
+    table.scale(1.2, 2.2)
+
+    # Style header row
+    for col in range(4):
+        cell = table[0, col]
+        cell.set_facecolor("#2b2b2b")
+        cell.set_text_props(color="white", fontweight="bold")
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    plt.tight_layout()
+    plt.savefig(output_path, format="jpeg", dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    return output_path
 
 
 if __name__ == "__main__":

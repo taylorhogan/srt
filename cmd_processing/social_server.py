@@ -209,26 +209,9 @@ def latest_cmd(words: list[str], index: int, m: Mastodon, account: str) -> None:
         Path(str(latest_fits)), arcsec_per_pixel=cfg["nina"]["arc_sec_per_pixel"]
     )
     if metrics:
-        m = metrics
-        post_social_message(
-            f"Optical quality  |  {m['star_count']} stars\n"
-            f"FWHM             : {m['median_fwhm_px']:.2f} px ({m['median_fwhm_arcsec']:.2f}\")\n"
-            f"Eccentricity     : {m['median_ecc']:.3f}\n"
-            f"CV FWHM          : {m['cv_fwhm']*100:.1f}%\n"
-            f"Field uniformity : {m['field_uniformity']:.2f}\n"
-            f"Tilt score       : {m['tilt_score']:.2f}\n"
-            f"Coma score       : {m['coma_score']:.2f}\n"
-            f"Collimation      : {m['collimation_score']:.2f}"
-        )
-        post_social_message(
-            "Metric reference\n"
-            "                   good    bad\n"
-            "CV FWHM          : <10%   >25%  (focus / field curve)\n"
-            "Field uniformity : >0.85  <0.60 (FWHM gradient)\n"
-            "Tilt score       : <0.20  >0.50 (focus tilt OLS)\n"
-            "Coma score       : <0.20  >0.50 (ecc grows at edges)\n"
-            "Collimation      : ~0.50  >0.80 (elongations radial)"
-        )
+        metrics_table_path = Path(os.path.join(scratch_dir, "optical_metrics_table.jpg"))
+        fitsfwhm.save_optical_metrics_table(metrics, metrics_table_path)
+        post_social_message("Optical quality metrics", str(metrics_table_path))
 
     fwhm_heatmap_path = Path(os.path.join(scratch_dir, "fwhm_heatmap.jpg"))
     ecc_heatmap_path = Path(os.path.join(scratch_dir, "ecc_heatmap.jpg"))
