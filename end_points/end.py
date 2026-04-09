@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import sys
 import time
+import warnings
 
 import numpy as np
 import requests
@@ -77,19 +78,23 @@ def _post_imaging_summary(imaging_start: datetime) -> None:
     def _analyse(f):
         return fitsfwhm.calculate_fwhm(f, arcsec_per_pixel=arcsec_per_pixel)
 
+    from tqdm import tqdm
+
     max_workers = min(8, len(fits_files))
-    with ThreadPoolExecutor(max_workers=max_workers) as pool:
-        futures = {pool.submit(_analyse, f): f for f in fits_files}
-        for fut in as_completed(futures):
-            try:
-                mean_px, mean_arcsec, star_count, mean_ecc = fut.result()
-                if star_count > 0:
-                    fwhm_px_list.append(mean_px)
-                    fwhm_arcsec_list.append(mean_arcsec)
-                    star_count_list.append(star_count)
-                    ecc_list.append(mean_ecc)
-            except Exception:
-                logger.exception("FWHM analysis failed for %s", futures[fut])
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            futures = {pool.submit(_analyse, f): f for f in fits_files}
+            for fut in tqdm(as_completed(futures), total=len(futures), desc="Analysing frames", unit="frame"):
+                try:
+                    mean_px, mean_arcsec, star_count, mean_ecc = fut.result()
+                    if star_count > 0:
+                        fwhm_px_list.append(mean_px)
+                        fwhm_arcsec_list.append(mean_arcsec)
+                        star_count_list.append(star_count)
+                        ecc_list.append(mean_ecc)
+                except Exception:
+                    logger.exception("FWHM analysis failed for %s", futures[fut])
 
     if not fwhm_px_list:
         social_server.post_social_message(

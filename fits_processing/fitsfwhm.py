@@ -526,6 +526,7 @@ def compute_optical_metrics(
         median_fwhm_arcsec  float
         median_ecc          float
         field_uniformity    float  std/mean of per-cell median FWHM — 0=perfect, lower is better
+        cv_ecc              float  std/median eccentricity across all stars — lower is better
         tilt_score          float  OLS FWHM(x,y)=ax+by+c gradient×diagonal/median_fwhm
         coma_score          float  Pearson r(ecc, radius) — 0=none, 1=eccentricity grows with radius
         collimation_score   float  mean(cos²(elongation−radial)) — 0.5=random, 1.0=all radial
@@ -555,6 +556,10 @@ def compute_optical_metrics(
     else:
         field_uniformity = 0.0
 
+    # --- CV of Eccentricity ---
+    median_ecc = float(np.median(eccs))
+    cv_ecc = float(np.std(eccs) / median_ecc) if median_ecc > 0 else 0.0
+
     # --- Tilt Score (OLS plane fit to FWHM) ---
     # FWHM = a*x + b*y + c  →  gradient magnitude normalised by image diagonal and median FWHM
     A = np.column_stack([xs, ys, np.ones(len(xs))])
@@ -581,8 +586,9 @@ def compute_optical_metrics(
         "star_count":           len(stars),
         "median_fwhm_px":       median_fwhm,
         "median_fwhm_arcsec":   median_fwhm * arcsec_per_pixel,
-        "median_ecc":           float(np.median(eccs)),
+        "median_ecc":           median_ecc,
         "field_uniformity":     field_uniformity,
+        "cv_ecc":               cv_ecc,
         "tilt_score":           tilt_score,
         "coma_score":           coma_score,
         "collimation_score":    collimation_score,
@@ -608,13 +614,15 @@ def save_optical_metrics_table(metrics: dict, output_path: Path) -> Path:
         return max(0.0, min(1.0, (val - good) / span))
 
     rows = [
-        ("Field uniformity", ">0.30", f"{m['field_uniformity']:.2f}",  "<0.05"),
+        ("CV FWHM",          ">0.30", f"{m['field_uniformity']:.2f}",  "<0.05"),
+        ("CV Ecc",           ">0.30", f"{m['cv_ecc']:.2f}",            "<0.05"),
         ("Tilt score",       ">0.50", f"{m['tilt_score']:.2f}",        "<0.20"),
         ("Coma score",       ">0.50", f"{m['coma_score']:.2f}",        "<0.20"),
         ("Collimation",      ">0.80", f"{m['collimation_score']:.2f}", "~0.50"),
     ]
     scores = [
         _badness(m["field_uniformity"],     good=0.05, bad=0.30),  # lower is better
+        _badness(m["cv_ecc"],               good=0.05, bad=0.30),  # lower is better
         _badness(m["tilt_score"],           good=0.20, bad=0.50),  # lower is better
         _badness(m["coma_score"],           good=0.20, bad=0.50),  # lower is better
         _badness(m["collimation_score"],    good=0.50, bad=0.80),  # lower is better
