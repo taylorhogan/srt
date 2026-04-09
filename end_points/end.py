@@ -78,14 +78,14 @@ def _post_imaging_summary(imaging_start: datetime) -> None:
     def _analyse(f):
         return fitsfwhm.calculate_fwhm(f, arcsec_per_pixel=arcsec_per_pixel)
 
-    from tqdm import tqdm
-
-    max_workers = min(8, len(fits_files))
+    total = len(fits_files)
+    max_workers = min(8, total)
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         with ThreadPoolExecutor(max_workers=max_workers) as pool:
             futures = {pool.submit(_analyse, f): f for f in fits_files}
-            for fut in tqdm(as_completed(futures), total=len(futures), desc="Analysing frames", unit="frame"):
+            for n, fut in enumerate(as_completed(futures), start=1):
+                logger.info("Analysing frames: %d/%d", n, total)
                 try:
                     mean_px, mean_arcsec, star_count, mean_ecc = fut.result()
                     if star_count > 0:

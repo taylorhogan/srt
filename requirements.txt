@@ -95,4 +95,3 @@ webencodings==0.5.1
 yarl==1.18.3
 speedtest-cli
 gpiozero
-tqdm
