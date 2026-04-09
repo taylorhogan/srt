@@ -22,6 +22,14 @@ def create_timestamped_filename(base_name, extension=""):
         extension = "." + extension
     return f"{base_name}_{timestamp}{extension}"
 
+class _SuppressNoisyWarnings(logging.Filter):
+    _PATTERNS = ("fit may be unsuccessful",)
+
+    def filter(self, record):
+        msg = record.getMessage()
+        return not any(p in msg for p in self._PATTERNS)
+
+
 def set_logger ():
     global __logger
     if __logger is None:
@@ -30,6 +38,7 @@ def set_logger ():
         print("logging at " + str(path))
         logging.basicConfig(filename=path, level=logging.INFO, format='%(asctime)s %(message)s',
                             datefmt='%m/%d/%Y %I:%M:%S %p')
+        logging.getLogger("py.warnings").addFilter(_SuppressNoisyWarnings())
         logger = logging.getLogger(__name__)
         cfg["logger"]["logging"] = logger
         __logger = logger
