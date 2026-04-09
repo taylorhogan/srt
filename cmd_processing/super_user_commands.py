@@ -1,5 +1,5 @@
 import asyncio
-from datetime import datetime
+from datetime import datetime, timedelta
 import logging
 import os, sys
 import subprocess
@@ -393,6 +393,7 @@ def get_super_user_commands() -> dict[str, Callable]:
         "mode": mode_cmd,
         "prioritize": prioritize_cmd,
         "doflats": doflats_cmd,
+        "image_stats": image_stats_cmd,
     }
 
 
@@ -715,6 +716,19 @@ def doflats_cmd(words: list[str], account: str) -> None:
         do_flats()
     finally:
         set_imaging_state(ImagingState.NONE)
+
+
+def image_stats_cmd(words: list[str], account: str) -> None:
+    """Post imaging quality stats for FITS files captured since yesterday's sunset."""
+    from astral import LocationInfo
+    from astral.sun import sun
+
+    cfg = config.data()
+    loc = cfg["location"]
+    city = LocationInfo(loc["city"], "USA", loc["timezone"], loc["latitude"], loc["longitude"])
+    yesterday = datetime.now() - timedelta(days=1)
+    sunset = sun(city.observer, date=yesterday)["sunset"]
+    end._post_imaging_summary(sunset.replace(tzinfo=None))
 
 
 if __name__ == "__main__":

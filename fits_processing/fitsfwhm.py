@@ -216,6 +216,7 @@ def save_fwhm(
     threshold_sigma: float = _DETECTION_THRESHOLD_SIGMA,
     min_snr: float = _MIN_SNR,
     max_ellipticity: float = _MAX_ELLIPTICITY,
+    annotate: bool = True,
 ) -> Path:
     """
     Annotate a FITS image with detected stars and save it as a JPG.
@@ -232,14 +233,15 @@ def save_fwhm(
     fig, ax = plt.subplots(figsize=(12, 12))
     ax.imshow(data, origin="lower", cmap="gray", vmin=vmin, vmax=vmax, interpolation="nearest")
 
-    for x, y, fwhm, _ in stars:
-        if fwhm > mean_px * 1.1:
-            color = "red"
-        elif fwhm < mean_px * 0.9:
-            color = "green"
-        else:
-            color = "yellow"
-        ax.add_patch(Circle((x, y), radius=fwhm * 2.5, color=color, fill=False, linewidth=1.5))
+    if annotate:
+        for x, y, fwhm, _ in stars:
+            if fwhm > mean_px * 1.1:
+                color = "red"
+            elif fwhm < mean_px * 0.9:
+                color = "green"
+            else:
+                color = "yellow"
+            ax.add_patch(Circle((x, y), radius=fwhm * 2.5, color=color, fill=False, linewidth=1.5))
 
     title = (
         f"{fits_path.name}  |  {len(stars)} stars  |  "
@@ -250,7 +252,7 @@ def save_fwhm(
     ax.set_title(title)
     ax.set_xlabel("X (pixels)")
     ax.set_ylabel("Y (pixels)")
-    if stars:
+    if annotate and stars:
         ax.legend(handles=[
             Patch(facecolor="none", edgecolor="green",  label=f"Good  (< {mean_px * 0.9:.1f} px)"),
             Patch(facecolor="none", edgecolor="yellow", label=f"OK    ({mean_px * 0.9:.1f} – {mean_px * 1.1:.1f} px)"),

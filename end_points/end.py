@@ -189,14 +189,7 @@ def do_main():
                 asyncio.run(ku.kasa_do(dev_map, instructions))
                 logger.info("step 8")
 
-                # Read imaging start time written by doit_cmd
-                try:
-                    _root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-                    with open(os.path.join(_root, "imaging_start.txt")) as _f:
-                        imaging_start = datetime.fromisoformat(_f.read().strip())
-                except Exception:
-                    imaging_start = datetime.now()  # fallback: won't match any old FITS files
-                _post_imaging_summary(imaging_start)
+
 
         except:
             logger.info('Problem')
@@ -207,7 +200,16 @@ def do_main():
         logger.info('Problem')
         logger.exception("Exception")
 
+
     super_user_commands.set_imaging_state(super_user_commands.ImagingState.NONE)
+    # Read imaging start time written by doit_cmd
+    try:
+        _root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+        with open(os.path.join(_root, "imaging_start.txt")) as _f:
+            imaging_start = datetime.fromisoformat(_f.read().strip())
+    except Exception:
+        imaging_start = datetime.now()  # fallback: won't match any old FITS files
+    _post_imaging_summary(imaging_start)
     logger.info('End End Sequence')
 
 
