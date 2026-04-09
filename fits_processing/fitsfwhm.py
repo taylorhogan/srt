@@ -272,30 +272,91 @@ def save_fwhm(
     return output_path, mean_px, mean_ecc
 
 
+def _make_grid(xs: np.ndarray, ys: np.ndarray, values: np.ndarray,
+               img_h: int, img_w: int, n_cells: int = 8) -> np.ndarray:
+    """
+    Divide the image into an n_cells × n_cells grid and fill each cell with
+    the median of `values` for stars that fall inside it.
+    Cells with no stars are NaN (rendered as transparent/masked).
+    Returns a 2-D array shaped (n_cells, n_cells), origin='lower'.
+    """
+    grid = np.full((n_cells, n_cells), np.nan)
+    cell_w = img_w / n_cells
+    cell_h = img_h / n_cells
+    col_idx = np.clip((xs / cell_w).astype(int), 0, n_cells - 1)
+    row_idx = np.clip((ys / cell_h).astype(int), 0, n_cells - 1)
+    for r in range(n_cells):
+        for c in range(n_cells):
+            mask = (row_idx == r) & (col_idx == c)
+            if mask.any():
+                grid[r, c] = float(np.median(values[mask]))
+    return grid
+
+
 def save_fwhm_heatmaps(
     fits_path: Path,
     fwhm_output_path: Path,
     ecc_output_path: Path,
     arcsec_per_pixel: float = 1.0,
+    n_cells: int = 8,
     threshold_sigma: float = _DETECTION_THRESHOLD_SIGMA,
     min_snr: float = _MIN_SNR,
     max_ellipticity: float = _MAX_ELLIPTICITY,
 ) -> tuple[Path, Path]:
     """
-    Produce two heatmap images showing per-star FWHM and eccentricity
-    as coloured scatter points overlaid on the FITS image.
+    Produce two grid heatmap images overlaid on the FITS image.
+    Each cell is coloured by the median FWHM (or eccentricity) of the
+    stars that fall inside it, making field-wide optical patterns obvious.
 
     Returns (fwhm_output_path, ecc_output_path).
     """
     data, stars = _fit_stars(fits_path, threshold_sigma, min_snr, max_ellipticity)
     vmin, vmax = ZScaleInterval().get_limits(data)
+    img_h, img_w = data.shape
+
+    def _render(out_path, label, grid, norm, cbar_label, title):
+        fig, ax = plt.subplots(figsize=(10, 10))
+        ax.imshow(data, origin="lower", cmap="gray", vmin=vmin, vmax=vmax,
+                  interpolation="nearest", extent=[0, img_w, 0, img_h])
+        # Draw each cell as a coloured rectangle; skip NaN cells
+        cell_w = img_w / n_cells
+        cell_h = img_h / n_cells
+        cmap = plt.get_cmap("RdYlGn_r")
+        for r in range(n_cells):
+            for c in range(n_cells):
+                val = grid[r, c]
+                if np.isnan(val):
+                    continue
+                color = cmap(norm(val))
+                rect = plt.Rectangle(
+                    (c * cell_w, r * cell_h), cell_w, cell_h,
+                    facecolor=(*color[:3], 0.55), edgecolor="white",
+                    linewidth=0.8,
+                )
+                ax.add_patch(rect)
+                ax.text(
+                    c * cell_w + cell_w / 2, r * cell_h + cell_h / 2,
+                    f"{val:.2f}", ha="center", va="center",
+                    fontsize=9, color="white",
+                    fontweight="bold",
+                )
+        cb = plt.colorbar(ScalarMappable(norm=norm, cmap="RdYlGn_r"),
+                          ax=ax, fraction=0.03, pad=0.02)
+        cb.set_label(cbar_label)
+        ax.set_title(title)
+        ax.set_xlabel("X (pixels)")
+        ax.set_ylabel("Y (pixels)")
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        plt.tight_layout()
+        plt.savefig(out_path, format="jpeg", dpi=150, bbox_inches="tight")
+        plt.close(fig)
 
     if not stars:
-        # Write blank images with a "no stars" message
         for out_path, label in [(fwhm_output_path, "FWHM"), (ecc_output_path, "Eccentricity")]:
             fig, ax = plt.subplots(figsize=(10, 10))
-            ax.imshow(data, origin="lower", cmap="gray", vmin=vmin, vmax=vmax, interpolation="nearest")
-            ax.set_title(f"{fits_path.name}  |  {label} heatmap  |  no stars detected")
+            ax.imshow(data, origin="lower", cmap="gray", vmin=vmin, vmax=vmax,
+                      interpolation="nearest")
+            ax.set_title(f"{fits_path.name}  |  {label} grid heatmap  |  no stars detected")
             out_path.parent.mkdir(parents=True, exist_ok=True)
             plt.tight_layout()
             plt.savefig(out_path, format="jpeg", dpi=150, bbox_inches="tight")
@@ -307,45 +368,29 @@ def save_fwhm_heatmaps(
     fwhms = np.array([s[2] for s in stars])
     eccs = np.array([s[3] for s in stars])
 
-    dot_size = max(data.shape) / 30
-
-    # --- FWHM heatmap ---
-    fig, ax = plt.subplots(figsize=(10, 10))
-    ax.imshow(data, origin="lower", cmap="gray", vmin=vmin, vmax=vmax, interpolation="nearest")
-    norm_fwhm = Normalize(vmin=fwhms.min(), vmax=fwhms.max())
-    sc = ax.scatter(xs, ys, c=fwhms, cmap="RdYlGn_r", norm=norm_fwhm, s=dot_size, alpha=0.85, linewidths=0)
-    cb = plt.colorbar(ScalarMappable(norm=norm_fwhm, cmap="RdYlGn_r"), ax=ax, fraction=0.03, pad=0.02)
-    cb.set_label("FWHM (px)")
-    mean_px = float(np.median(fwhms))
-    ax.set_title(
-        f"{fits_path.name}  |  FWHM heatmap  |  {len(stars)} stars  |  "
-        f"median {mean_px:.2f} px ({mean_px * arcsec_per_pixel:.2f}\")"
+    # --- FWHM grid ---
+    fwhm_grid = _make_grid(xs, ys, fwhms, img_h, img_w, n_cells)
+    median_fwhm = float(np.median(fwhms))
+    _render(
+        fwhm_output_path, "FWHM",
+        fwhm_grid,
+        Normalize(vmin=np.nanmin(fwhm_grid), vmax=np.nanmax(fwhm_grid)),
+        "FWHM (px)",
+        f"{fits_path.name}  |  FWHM grid  |  {len(stars)} stars  |  "
+        f"median {median_fwhm:.2f} px ({median_fwhm * arcsec_per_pixel:.2f}\")",
     )
-    ax.set_xlabel("X (pixels)")
-    ax.set_ylabel("Y (pixels)")
-    fwhm_output_path.parent.mkdir(parents=True, exist_ok=True)
-    plt.tight_layout()
-    plt.savefig(fwhm_output_path, format="jpeg", dpi=150, bbox_inches="tight")
-    plt.close(fig)
 
-    # --- Eccentricity heatmap ---
-    fig, ax = plt.subplots(figsize=(10, 10))
-    ax.imshow(data, origin="lower", cmap="gray", vmin=vmin, vmax=vmax, interpolation="nearest")
-    norm_ecc = Normalize(vmin=0.0, vmax=max(eccs.max(), 0.5))
-    sc = ax.scatter(xs, ys, c=eccs, cmap="RdYlGn_r", norm=norm_ecc, s=dot_size, alpha=0.85, linewidths=0)
-    cb = plt.colorbar(ScalarMappable(norm=norm_ecc, cmap="RdYlGn_r"), ax=ax, fraction=0.03, pad=0.02)
-    cb.set_label("Eccentricity (0=round, 1=elongated)")
-    mean_ecc = float(np.median(eccs))
-    ax.set_title(
-        f"{fits_path.name}  |  Eccentricity heatmap  |  {len(stars)} stars  |  "
-        f"median ecc {mean_ecc:.3f}"
+    # --- Eccentricity grid ---
+    ecc_grid = _make_grid(xs, ys, eccs, img_h, img_w, n_cells)
+    median_ecc = float(np.median(eccs))
+    _render(
+        ecc_output_path, "Eccentricity",
+        ecc_grid,
+        Normalize(vmin=0.0, vmax=max(float(np.nanmax(ecc_grid)), 0.5)),
+        "Eccentricity (0=round, 1=elongated)",
+        f"{fits_path.name}  |  Eccentricity grid  |  {len(stars)} stars  |  "
+        f"median ecc {median_ecc:.3f}",
     )
-    ax.set_xlabel("X (pixels)")
-    ax.set_ylabel("Y (pixels)")
-    ecc_output_path.parent.mkdir(parents=True, exist_ok=True)
-    plt.tight_layout()
-    plt.savefig(ecc_output_path, format="jpeg", dpi=150, bbox_inches="tight")
-    plt.close(fig)
 
     return fwhm_output_path, ecc_output_path
 
@@ -431,7 +476,7 @@ def save_eccentricity_angle_map(
         cmap = plt.get_cmap("RdYlGn_r")
 
         # Arrow length is proportional to eccentricity, scaled to ~2 % of image width
-        arrow_scale = max(data.shape) * 0.025
+        arrow_scale = max(data.shape) * 0.05
 
         for x, y, fwhm, ecc, angle in stars:
             length = ecc * arrow_scale
