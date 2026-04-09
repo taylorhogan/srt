@@ -7,7 +7,7 @@ class PublicConfig():
 
         },
         "version": {
-            "date": "2026.4.9.1"
+            "date": "2026.4.9.2"
         },
 
         "logger": {
@@ -38,8 +38,8 @@ class PublicConfig():
     },
 
         "camera safety": {
-            "parked azimuth deg": 57.1,
-            "parked altitude deg": 5,
+            "parked azimuth deg": 57.2,
+            "parked altitude deg": 1.0,
             "closed template": "./base_images/closed_marker.jpg",
             "parked template": "./base_images/parked_marker.png",
             "open template": "./base_images/open_marker.jpg",
