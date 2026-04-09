@@ -1,4 +1,5 @@
 import asyncio
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 import logging
 import os
@@ -73,18 +74,22 @@ def _post_imaging_summary(imaging_start: datetime) -> None:
     logger.info("Found %d FITS files since imaging start", len(fits_files))
     fwhm_px_list, fwhm_arcsec_list, star_count_list, ecc_list = [], [], [], []
 
-    for fits_file in fits_files:
-        try:
-            mean_px, mean_arcsec, star_count, mean_ecc = fitsfwhm.calculate_fwhm(
-                fits_file, arcsec_per_pixel=arcsec_per_pixel
-            )
-            if star_count > 0:
-                fwhm_px_list.append(mean_px)
-                fwhm_arcsec_list.append(mean_arcsec)
-                star_count_list.append(star_count)
-                ecc_list.append(mean_ecc)
-        except Exception:
-            logger.exception("FWHM analysis failed for %s", fits_file)
+    def _analyse(f):
+        return fitsfwhm.calculate_fwhm(f, arcsec_per_pixel=arcsec_per_pixel)
+
+    max_workers = min(8, len(fits_files))
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        futures = {pool.submit(_analyse, f): f for f in fits_files}
+        for fut in as_completed(futures):
+            try:
+                mean_px, mean_arcsec, star_count, mean_ecc = fut.result()
+                if star_count > 0:
+                    fwhm_px_list.append(mean_px)
+                    fwhm_arcsec_list.append(mean_arcsec)
+                    star_count_list.append(star_count)
+                    ecc_list.append(mean_ecc)
+            except Exception:
+                logger.exception("FWHM analysis failed for %s", futures[fut])
 
     if not fwhm_px_list:
         social_server.post_social_message(
