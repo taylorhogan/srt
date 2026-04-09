@@ -11,6 +11,8 @@ from astropy.modeling import fitting, models
 from astropy.stats import sigma_clipped_stats
 from astropy.visualization import ZScaleInterval
 from matplotlib.patches import Circle, Patch
+from matplotlib.colors import Normalize
+from matplotlib.cm import ScalarMappable
 from photutils.detection import DAOStarFinder
 
 # FWHM = 2 * sqrt(2 * ln(2)) * sigma
@@ -111,7 +113,11 @@ def _fit_stars(
                 continue
 
             ecc = float(np.sqrt(1.0 - (short_ax / long_ax) ** 2)) if long_ax > 0 else 0.0
-            stars.append((float(xc), float(yc), fwhm, ecc))
+            # theta is the CCW rotation of the x_stddev axis from the +x axis.
+            # Major axis angle: if x_stddev >= y_stddev it's theta, otherwise theta + 90°.
+            theta = float(fitted.theta.value)
+            major_angle = theta if sigma_x >= sigma_y else theta + np.pi / 2.0
+            stars.append((float(xc), float(yc), fwhm, ecc, major_angle))
         except Exception:
             continue
 
@@ -183,7 +189,7 @@ def display_fwhm(
     fig, ax = plt.subplots(figsize=(12, 12))
     ax.imshow(data, origin="lower", cmap="gray", vmin=vmin, vmax=vmax, interpolation="nearest")
 
-    for x, y, fwhm, _ in stars:
+    for x, y, fwhm, *_ in stars:
         if fwhm > mean_px * 1.1:
             color = "red"
         elif fwhm < mean_px * 0.9:
@@ -234,7 +240,7 @@ def save_fwhm(
     ax.imshow(data, origin="lower", cmap="gray", vmin=vmin, vmax=vmax, interpolation="nearest")
 
     if annotate:
-        for x, y, fwhm, _ in stars:
+        for x, y, fwhm, *_ in stars:
             if fwhm > mean_px * 1.1:
                 color = "red"
             elif fwhm < mean_px * 0.9:
@@ -264,6 +270,198 @@ def save_fwhm(
     plt.savefig(output_path, format="jpeg", dpi=150, bbox_inches="tight")
     plt.close(fig)
     return output_path, mean_px, mean_ecc
+
+
+def save_fwhm_heatmaps(
+    fits_path: Path,
+    fwhm_output_path: Path,
+    ecc_output_path: Path,
+    arcsec_per_pixel: float = 1.0,
+    threshold_sigma: float = _DETECTION_THRESHOLD_SIGMA,
+    min_snr: float = _MIN_SNR,
+    max_ellipticity: float = _MAX_ELLIPTICITY,
+) -> tuple[Path, Path]:
+    """
+    Produce two heatmap images showing per-star FWHM and eccentricity
+    as coloured scatter points overlaid on the FITS image.
+
+    Returns (fwhm_output_path, ecc_output_path).
+    """
+    data, stars = _fit_stars(fits_path, threshold_sigma, min_snr, max_ellipticity)
+    vmin, vmax = ZScaleInterval().get_limits(data)
+
+    if not stars:
+        # Write blank images with a "no stars" message
+        for out_path, label in [(fwhm_output_path, "FWHM"), (ecc_output_path, "Eccentricity")]:
+            fig, ax = plt.subplots(figsize=(10, 10))
+            ax.imshow(data, origin="lower", cmap="gray", vmin=vmin, vmax=vmax, interpolation="nearest")
+            ax.set_title(f"{fits_path.name}  |  {label} heatmap  |  no stars detected")
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            plt.tight_layout()
+            plt.savefig(out_path, format="jpeg", dpi=150, bbox_inches="tight")
+            plt.close(fig)
+        return fwhm_output_path, ecc_output_path
+
+    xs = np.array([s[0] for s in stars])
+    ys = np.array([s[1] for s in stars])
+    fwhms = np.array([s[2] for s in stars])
+    eccs = np.array([s[3] for s in stars])
+
+    dot_size = max(data.shape) / 30
+
+    # --- FWHM heatmap ---
+    fig, ax = plt.subplots(figsize=(10, 10))
+    ax.imshow(data, origin="lower", cmap="gray", vmin=vmin, vmax=vmax, interpolation="nearest")
+    norm_fwhm = Normalize(vmin=fwhms.min(), vmax=fwhms.max())
+    sc = ax.scatter(xs, ys, c=fwhms, cmap="RdYlGn_r", norm=norm_fwhm, s=dot_size, alpha=0.85, linewidths=0)
+    cb = plt.colorbar(ScalarMappable(norm=norm_fwhm, cmap="RdYlGn_r"), ax=ax, fraction=0.03, pad=0.02)
+    cb.set_label("FWHM (px)")
+    mean_px = float(np.median(fwhms))
+    ax.set_title(
+        f"{fits_path.name}  |  FWHM heatmap  |  {len(stars)} stars  |  "
+        f"median {mean_px:.2f} px ({mean_px * arcsec_per_pixel:.2f}\")"
+    )
+    ax.set_xlabel("X (pixels)")
+    ax.set_ylabel("Y (pixels)")
+    fwhm_output_path.parent.mkdir(parents=True, exist_ok=True)
+    plt.tight_layout()
+    plt.savefig(fwhm_output_path, format="jpeg", dpi=150, bbox_inches="tight")
+    plt.close(fig)
+
+    # --- Eccentricity heatmap ---
+    fig, ax = plt.subplots(figsize=(10, 10))
+    ax.imshow(data, origin="lower", cmap="gray", vmin=vmin, vmax=vmax, interpolation="nearest")
+    norm_ecc = Normalize(vmin=0.0, vmax=max(eccs.max(), 0.5))
+    sc = ax.scatter(xs, ys, c=eccs, cmap="RdYlGn_r", norm=norm_ecc, s=dot_size, alpha=0.85, linewidths=0)
+    cb = plt.colorbar(ScalarMappable(norm=norm_ecc, cmap="RdYlGn_r"), ax=ax, fraction=0.03, pad=0.02)
+    cb.set_label("Eccentricity (0=round, 1=elongated)")
+    mean_ecc = float(np.median(eccs))
+    ax.set_title(
+        f"{fits_path.name}  |  Eccentricity heatmap  |  {len(stars)} stars  |  "
+        f"median ecc {mean_ecc:.3f}"
+    )
+    ax.set_xlabel("X (pixels)")
+    ax.set_ylabel("Y (pixels)")
+    ecc_output_path.parent.mkdir(parents=True, exist_ok=True)
+    plt.tight_layout()
+    plt.savefig(ecc_output_path, format="jpeg", dpi=150, bbox_inches="tight")
+    plt.close(fig)
+
+    return fwhm_output_path, ecc_output_path
+
+
+def save_fwhm_vs_distance(
+    fits_path: Path,
+    output_path: Path,
+    arcsec_per_pixel: float = 1.0,
+    threshold_sigma: float = _DETECTION_THRESHOLD_SIGMA,
+    min_snr: float = _MIN_SNR,
+    max_ellipticity: float = _MAX_ELLIPTICITY,
+) -> Path:
+    """
+    Scatter plot of FWHM (px) vs distance from image centre (px).
+    Useful for diagnosing field curvature: good optics show a flat
+    distribution; curvature shows FWHM rising away from centre.
+    """
+    data, stars = _fit_stars(fits_path, threshold_sigma, min_snr, max_ellipticity)
+
+    fig, ax = plt.subplots(figsize=(8, 6))
+
+    if not stars:
+        ax.set_title(f"{fits_path.name}  |  FWHM vs distance  |  no stars detected")
+    else:
+        cy, cx = data.shape[0] / 2.0, data.shape[1] / 2.0
+        distances = np.array([np.hypot(s[0] - cx, s[1] - cy) for s in stars])
+        fwhms = np.array([s[2] for s in stars])
+
+        ax.scatter(distances, fwhms, s=18, alpha=0.7, color="steelblue", linewidths=0)
+
+        # Linear trend line
+        if len(stars) >= 2:
+            coeffs = np.polyfit(distances, fwhms, 1)
+            x_line = np.linspace(distances.min(), distances.max(), 200)
+            ax.plot(x_line, np.polyval(coeffs, x_line), color="tomato", linewidth=1.5,
+                    label=f"trend  slope={coeffs[0]:+.4f} px/px")
+            ax.legend(fontsize=9)
+
+        median_fwhm = float(np.median(fwhms))
+        ax.axhline(median_fwhm, color="gray", linewidth=1, linestyle="--",
+                   label=f"median {median_fwhm:.2f} px")
+        ax.set_xlabel("Distance from centre (px)")
+        ax.set_ylabel(f"FWHM (px)   [1 px = {arcsec_per_pixel:.3f}\"]")
+        ax.set_title(
+            f"{fits_path.name}  |  FWHM vs distance  |  {len(stars)} stars  |  "
+            f"median {median_fwhm:.2f} px ({median_fwhm * arcsec_per_pixel:.2f}\")"
+        )
+        ax.grid(True, alpha=0.3)
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    plt.tight_layout()
+    plt.savefig(output_path, format="jpeg", dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    return output_path
+
+
+def save_eccentricity_angle_map(
+    fits_path: Path,
+    output_path: Path,
+    arcsec_per_pixel: float = 1.0,
+    threshold_sigma: float = _DETECTION_THRESHOLD_SIGMA,
+    min_snr: float = _MIN_SNR,
+    max_ellipticity: float = _MAX_ELLIPTICITY,
+) -> Path:
+    """
+    Plot an arrow at each star's position pointing along the major axis of
+    its fitted Gaussian.  Arrow length and colour both scale with eccentricity
+    (round stars get a short, green stub; elongated stars get a long, red arrow).
+    Useful for diagnosing tilt, collimation, or tracking errors: a systematic
+    radial or tangential pattern reveals the underlying aberration.
+    """
+    data, stars = _fit_stars(fits_path, threshold_sigma, min_snr, max_ellipticity)
+    vmin, vmax = ZScaleInterval().get_limits(data)
+
+    fig, ax = plt.subplots(figsize=(10, 10))
+    ax.imshow(data, origin="lower", cmap="gray", vmin=vmin, vmax=vmax, interpolation="nearest")
+
+    if not stars:
+        ax.set_title(f"{fits_path.name}  |  Eccentricity angle map  |  no stars detected")
+    else:
+        eccs = np.array([s[3] for s in stars])
+        norm_ecc = Normalize(vmin=0.0, vmax=max(eccs.max(), 0.5))
+        cmap = plt.get_cmap("RdYlGn_r")
+
+        # Arrow length is proportional to eccentricity, scaled to ~2 % of image width
+        arrow_scale = max(data.shape) * 0.025
+
+        for x, y, fwhm, ecc, angle in stars:
+            length = ecc * arrow_scale
+            if length < 1.0:
+                length = 1.0          # always draw a tiny stub so every star is visible
+            dx = length * np.cos(angle)
+            dy = length * np.sin(angle)
+            color = cmap(norm_ecc(ecc))
+            # Draw a two-headed arrow (positive and negative direction along major axis)
+            ax.annotate(
+                "", xy=(x + dx, y + dy), xytext=(x - dx, y - dy),
+                arrowprops=dict(arrowstyle="<->", color=color, lw=1.2),
+            )
+
+        cb = plt.colorbar(ScalarMappable(norm=norm_ecc, cmap="RdYlGn_r"), ax=ax,
+                          fraction=0.03, pad=0.02)
+        cb.set_label("Eccentricity (0=round, 1=elongated)")
+        mean_ecc = float(np.median(eccs))
+        ax.set_title(
+            f"{fits_path.name}  |  Elongation angle map  |  {len(stars)} stars  |  "
+            f"median ecc {mean_ecc:.3f}"
+        )
+
+    ax.set_xlabel("X (pixels)")
+    ax.set_ylabel("Y (pixels)")
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    plt.tight_layout()
+    plt.savefig(output_path, format="jpeg", dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    return output_path
 
 
 if __name__ == "__main__":

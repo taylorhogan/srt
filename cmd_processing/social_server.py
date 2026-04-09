@@ -205,6 +205,29 @@ def latest_cmd(words: list[str], index: int, m: Mastodon, account: str) -> None:
     caption = f"Latest  |  FWHM {mean_px:.2f} px ({arcsec:.2f}\")  |  ecc {mean_ecc:.3f}"
     post_social_message(caption, str(latest_jpg))
 
+    fwhm_heatmap_path = Path(os.path.join(scratch_dir, "fwhm_heatmap.jpg"))
+    ecc_heatmap_path = Path(os.path.join(scratch_dir, "ecc_heatmap.jpg"))
+    fwhm_out, ecc_out = fitsfwhm.save_fwhm_heatmaps(
+        Path(str(latest_fits)), fwhm_heatmap_path, ecc_heatmap_path,
+        arcsec_per_pixel=cfg["nina"]["arc_sec_per_pixel"]
+    )
+    post_social_message("FWHM heatmap", str(fwhm_out))
+    post_social_message("Eccentricity heatmap", str(ecc_out))
+
+    dist_plot_path = Path(os.path.join(scratch_dir, "fwhm_vs_distance.jpg"))
+    dist_out = fitsfwhm.save_fwhm_vs_distance(
+        Path(str(latest_fits)), dist_plot_path,
+        arcsec_per_pixel=cfg["nina"]["arc_sec_per_pixel"]
+    )
+    post_social_message("FWHM vs distance from centre", str(dist_out))
+
+    angle_map_path = Path(os.path.join(scratch_dir, "ecc_angle_map.jpg"))
+    angle_out = fitsfwhm.save_eccentricity_angle_map(
+        Path(str(latest_fits)), angle_map_path,
+        arcsec_per_pixel=cfg["nina"]["arc_sec_per_pixel"]
+    )
+    post_social_message("Elongation angle map", str(angle_out))
+
 
 def schedule_cmd(words: list[str], index: int, m: Mastodon, account: str) -> None:
     """
