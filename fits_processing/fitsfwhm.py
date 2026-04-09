@@ -525,7 +525,6 @@ def compute_optical_metrics(
         median_fwhm_px      float
         median_fwhm_arcsec  float
         median_ecc          float
-        cv_fwhm             float  std/median FWHM — lower is more uniform
         field_uniformity    float  std/mean of per-cell median FWHM — 0=perfect, lower is better
         tilt_score          float  OLS FWHM(x,y)=ax+by+c gradient×diagonal/median_fwhm
         coma_score          float  Pearson r(ecc, radius) — 0=none, 1=eccentricity grows with radius
@@ -547,9 +546,6 @@ def compute_optical_metrics(
     angles = np.array([s[4] for s in stars])
 
     median_fwhm = float(np.median(fwhms))
-
-    # --- CV of FWHM ---
-    cv_fwhm = float(np.std(fwhms) / median_fwhm) if median_fwhm > 0 else 0.0
 
     # --- Field Uniformity (grid-based) ---
     grid = _make_grid(xs, ys, fwhms, h, w, n_cells)
@@ -586,7 +582,6 @@ def compute_optical_metrics(
         "median_fwhm_px":       median_fwhm,
         "median_fwhm_arcsec":   median_fwhm * arcsec_per_pixel,
         "median_ecc":           float(np.median(eccs)),
-        "cv_fwhm":              cv_fwhm,
         "field_uniformity":     field_uniformity,
         "tilt_score":           tilt_score,
         "coma_score":           coma_score,
@@ -613,15 +608,13 @@ def save_optical_metrics_table(metrics: dict, output_path: Path) -> Path:
         return max(0.0, min(1.0, (val - good) / span))
 
     rows = [
-        ("CV FWHM",         ">25%",  f"{m['cv_fwhm']*100:.1f}%",     "<10%"),
         ("Field uniformity", ">0.30", f"{m['field_uniformity']:.2f}",  "<0.05"),
         ("Tilt score",       ">0.50", f"{m['tilt_score']:.2f}",        "<0.20"),
         ("Coma score",       ">0.50", f"{m['coma_score']:.2f}",        "<0.20"),
         ("Collimation",      ">0.80", f"{m['collimation_score']:.2f}", "~0.50"),
     ]
     scores = [
-        _badness(m["cv_fwhm"] * 100,       good=10,   bad=25),    # lower is better
-        _badness(m["field_uniformity"],     good=0.05, bad=0.30),   # lower is better
+        _badness(m["field_uniformity"],     good=0.05, bad=0.30),  # lower is better
         _badness(m["tilt_score"],           good=0.20, bad=0.50),  # lower is better
         _badness(m["coma_score"],           good=0.20, bad=0.50),  # lower is better
         _badness(m["collimation_score"],    good=0.50, bad=0.80),  # lower is better
