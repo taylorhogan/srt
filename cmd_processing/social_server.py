@@ -205,6 +205,31 @@ def latest_cmd(words: list[str], index: int, m: Mastodon, account: str) -> None:
     caption = f"Latest  |  FWHM {mean_px:.2f} px ({arcsec:.2f}\")  |  ecc {mean_ecc:.3f}"
     post_social_message(caption, str(latest_jpg))
 
+    metrics = fitsfwhm.compute_optical_metrics(
+        Path(str(latest_fits)), arcsec_per_pixel=cfg["nina"]["arc_sec_per_pixel"]
+    )
+    if metrics:
+        m = metrics
+        post_social_message(
+            f"Optical quality  |  {m['star_count']} stars\n"
+            f"FWHM             : {m['median_fwhm_px']:.2f} px ({m['median_fwhm_arcsec']:.2f}\")\n"
+            f"Eccentricity     : {m['median_ecc']:.3f}\n"
+            f"CV FWHM          : {m['cv_fwhm']*100:.1f}%\n"
+            f"Field uniformity : {m['field_uniformity']:.2f}\n"
+            f"Tilt score       : {m['tilt_score']:.2f}\n"
+            f"Coma score       : {m['coma_score']:.2f}\n"
+            f"Collimation      : {m['collimation_score']:.2f}"
+        )
+        post_social_message(
+            "Metric reference\n"
+            "                   good    bad\n"
+            "CV FWHM          : <10%   >25%  (focus / field curve)\n"
+            "Field uniformity : >0.85  <0.60 (FWHM gradient)\n"
+            "Tilt score       : <0.20  >0.50 (focus tilt OLS)\n"
+            "Coma score       : <0.20  >0.50 (ecc grows at edges)\n"
+            "Collimation      : ~0.50  >0.80 (elongations radial)"
+        )
+
     fwhm_heatmap_path = Path(os.path.join(scratch_dir, "fwhm_heatmap.jpg"))
     ecc_heatmap_path = Path(os.path.join(scratch_dir, "ecc_heatmap.jpg"))
     fwhm_out, ecc_out = fitsfwhm.save_fwhm_heatmaps(

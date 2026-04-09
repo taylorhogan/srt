@@ -509,6 +509,91 @@ def save_eccentricity_angle_map(
     return output_path
 
 
+def compute_optical_metrics(
+    fits_path: Path,
+    arcsec_per_pixel: float = 1.0,
+    n_cells: int = 8,
+    threshold_sigma: float = _DETECTION_THRESHOLD_SIGMA,
+    min_snr: float = _MIN_SNR,
+    max_ellipticity: float = _MAX_ELLIPTICITY,
+) -> dict:
+    """
+    Compute a set of scalar optical-quality metrics from a FITS image.
+
+    Returns a dict with keys:
+        star_count          int
+        median_fwhm_px      float
+        median_fwhm_arcsec  float
+        median_ecc          float
+        cv_fwhm             float  std/median FWHM — lower is more uniform
+        field_uniformity    float  min_cell/max_cell FWHM from grid — 1=perfect
+        tilt_score          float  OLS FWHM(x,y)=ax+by+c gradient×diagonal/median_fwhm
+        coma_score          float  Pearson r(ecc, radius) — 0=none, 1=eccentricity grows with radius
+        collimation_score   float  mean(cos²(elongation−radial)) — 0.5=random, 1.0=all radial
+
+    Returns an empty dict if fewer than 5 stars are detected.
+    """
+    data, stars = _fit_stars(fits_path, threshold_sigma, min_snr, max_ellipticity)
+    if len(stars) < 5:
+        return {}
+
+    h, w = data.shape
+    cx, cy = w / 2.0, h / 2.0
+
+    xs     = np.array([s[0] for s in stars])
+    ys     = np.array([s[1] for s in stars])
+    fwhms  = np.array([s[2] for s in stars])
+    eccs   = np.array([s[3] for s in stars])
+    angles = np.array([s[4] for s in stars])
+
+    median_fwhm = float(np.median(fwhms))
+
+    # --- CV of FWHM ---
+    cv_fwhm = float(np.std(fwhms) / median_fwhm) if median_fwhm > 0 else 0.0
+
+    # --- Field Uniformity (grid-based) ---
+    grid = _make_grid(xs, ys, fwhms, h, w, n_cells)
+    populated = grid[~np.isnan(grid)]
+    if len(populated) >= 2:
+        field_uniformity = float(np.nanmin(grid) / np.nanmax(grid))
+    else:
+        field_uniformity = 1.0
+
+    # --- Tilt Score (OLS plane fit to FWHM) ---
+    # FWHM = a*x + b*y + c  →  gradient magnitude normalised by image diagonal and median FWHM
+    A = np.column_stack([xs, ys, np.ones(len(xs))])
+    coeffs, _, _, _ = np.linalg.lstsq(A, fwhms, rcond=None)
+    a_coef, b_coef = coeffs[0], coeffs[1]
+    diagonal = float(np.hypot(w, h))
+    tilt_score = float(np.hypot(a_coef, b_coef) * diagonal / median_fwhm) if median_fwhm > 0 else 0.0
+
+    # --- Coma Score (eccentricity vs radial distance) ---
+    radii = np.hypot(xs - cx, ys - cy)
+    if np.std(radii) > 0 and np.std(eccs) > 0:
+        coma_score = float(max(0.0, np.corrcoef(radii, eccs)[0, 1]))
+    else:
+        coma_score = 0.0
+
+    # --- Collimation Score (radial alignment of elongation vectors) ---
+    # For each star, angle between its elongation direction and the radial direction from centre.
+    # cos²(Δ) = 1 → radial (coma-like); 0.5 → random; 0 → tangential.
+    radial_angles = np.arctan2(ys - cy, xs - cx)
+    delta = angles - radial_angles
+    collimation_score = float(np.mean(np.cos(delta) ** 2))
+
+    return {
+        "star_count":           len(stars),
+        "median_fwhm_px":       median_fwhm,
+        "median_fwhm_arcsec":   median_fwhm * arcsec_per_pixel,
+        "median_ecc":           float(np.median(eccs)),
+        "cv_fwhm":              cv_fwhm,
+        "field_uniformity":     field_uniformity,
+        "tilt_score":           tilt_score,
+        "coma_score":           coma_score,
+        "collimation_score":    collimation_score,
+    }
+
+
 if __name__ == "__main__":
     import sys
     import os
