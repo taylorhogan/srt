@@ -1,6 +1,6 @@
 import asyncio
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime
+from datetime import datetime, timedelta
 import logging
 import os
 from pathlib import Path
@@ -73,6 +73,9 @@ def _post_imaging_summary(imaging_start: datetime) -> None:
         return
 
     logger.info("Found %d FITS files since imaging start", len(fits_files))
+    social_server.post_social_message(
+        f"Processing {len(fits_files)} FITS files, first: {fits_files[0].name}"
+    )
     fwhm_px_list, fwhm_arcsec_list, star_count_list, ecc_list = [], [], [], []
 
     def _analyse(f):
@@ -212,14 +215,15 @@ def do_main():
 
 
     super_user_commands.set_imaging_state(super_user_commands.ImagingState.NONE)
-    # Read imaging start time written by doit_cmd
-    try:
-        _root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-        with open(os.path.join(_root, "imaging_start.txt")) as _f:
-            imaging_start = datetime.fromisoformat(_f.read().strip())
-    except Exception:
-        imaging_start = datetime.now()  # fallback: won't match any old FITS files
-    _post_imaging_summary(imaging_start)
+
+    from astral import LocationInfo
+    from astral.sun import sun
+    cfg = config.data()
+    loc = cfg["location"]
+    city = LocationInfo(loc["city"], "USA", loc["timezone"], loc["latitude"], loc["longitude"])
+    yesterday = datetime.now() - timedelta(days=1)
+    sunset = sun(city.observer, date=yesterday)["sunset"]
+    _post_imaging_summary(sunset.replace(tzinfo=None))
     logger.info('End End Sequence')
 
 
