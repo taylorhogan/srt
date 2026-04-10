@@ -1,0 +1,653 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mxGraphModel dx="1422" dy="762" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1654" pageHeight="1169" math="0" shadow="0">
+  <root>
+    <mxCell id="0" />
+    <mxCell id="1" parent="0" />
+
+    <!-- ═══════════════════════════════════════════════════════════════ -->
+    <!-- TITLE                                                           -->
+    <!-- ═══════════════════════════════════════════════════════════════ -->
+    <mxCell id="title" value="Iris SRT — Full State Machine" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=20;fontStyle=1;" vertex="1" parent="1">
+      <mxGeometry x="527" y="20" width="600" height="40" as="geometry" />
+    </mxCell>
+
+    <!-- ═══════════════════════════════════════════════════════════════ -->
+    <!-- SCHEDULER STATES (left column)                                 -->
+    <!-- ═══════════════════════════════════════════════════════════════ -->
+
+    <!-- WAITING_FOR_BOOT -->
+    <mxCell id="s_boot" value="WAITING_FOR_BOOT" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontStyle=1;fontSize=11;" vertex="1" parent="1">
+      <mxGeometry x="80" y="100" width="200" height="50" as="geometry" />
+    </mxCell>
+
+    <!-- WAITING_FOR_NOON -->
+    <mxCell id="s_noon_wait" value="WAITING_FOR_NOON" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontStyle=1;fontSize=11;" vertex="1" parent="1">
+      <mxGeometry x="80" y="210" width="200" height="50" as="geometry" />
+    </mxCell>
+
+    <!-- NOON_CHECK -->
+    <mxCell id="s_noon_check" value="NOON_CHECK" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontStyle=1;fontSize=11;" vertex="1" parent="1">
+      <mxGeometry x="60" y="320" width="240" height="100" as="geometry" />
+    </mxCell>
+
+    <!-- WAITING_FOR_PRE_SUNSET -->
+    <mxCell id="s_sunset_wait" value="WAITING_FOR_PRE_SUNSET" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontStyle=1;fontSize=11;" vertex="1" parent="1">
+      <mxGeometry x="80" y="480" width="200" height="50" as="geometry" />
+    </mxCell>
+
+    <!-- PRE_SUNSET_CHECK -->
+    <mxCell id="s_sunset_check" value="PRE_SUNSET_CHECK" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontStyle=1;fontSize=11;" vertex="1" parent="1">
+      <mxGeometry x="60" y="590" width="240" height="100" as="geometry" />
+    </mxCell>
+
+    <!-- IMAGING (scheduler state) -->
+    <mxCell id="s_imaging" value="IMAGING&#xa;(scheduler state)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontStyle=1;fontSize=11;" vertex="1" parent="1">
+      <mxGeometry x="80" y="750" width="200" height="50" as="geometry" />
+    </mxCell>
+
+    <!-- ─── scheduler edges ─── -->
+    <mxCell id="e_boot_noon" style="edgeStyle=orthogonalEdgeStyle;" edge="1" source="s_boot" target="s_noon_wait" parent="1">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+    <mxCell id="e_boot_noon_lbl" value="60 s" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];" vertex="1" connectable="0" parent="e_boot_noon">
+      <mxGeometry x="-0.1" relative="1" as="geometry"><mxPoint as="offset" /></mxGeometry>
+    </mxCell>
+
+    <mxCell id="e_noon_wait_check" style="edgeStyle=orthogonalEdgeStyle;" edge="1" source="s_noon_wait" target="s_noon_check" parent="1">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+    <mxCell id="e_noon_wait_check_lbl" value="wait until noon" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];" vertex="1" connectable="0" parent="e_noon_wait_check">
+      <mxGeometry x="-0.1" relative="1" as="geometry"><mxPoint as="offset" /></mxGeometry>
+    </mxCell>
+
+    <!-- NOON_CHECK → WAITING_FOR_PRE_SUNSET (good hours) -->
+    <mxCell id="e_noon_ok" style="edgeStyle=orthogonalEdgeStyle;" edge="1" source="s_noon_check" target="s_sunset_wait" parent="1">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+    <mxCell id="e_noon_ok_lbl" value="good_hours ≥ min&#xa;post tonight plan" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];" vertex="1" connectable="0" parent="e_noon_ok">
+      <mxGeometry x="-0.1" relative="1" as="geometry"><mxPoint as="offset" /></mxGeometry>
+    </mxCell>
+
+    <!-- NOON_CHECK → WAITING_FOR_NOON (skip) -->
+    <mxCell id="e_noon_skip" style="edgeStyle=orthogonalEdgeStyle;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;curved=1;" edge="1" source="s_noon_check" target="s_noon_wait" parent="1">
+      <mxGeometry relative="1" as="geometry">
+        <Array as="points">
+          <mxPoint x="340" y="370" />
+          <mxPoint x="340" y="235" />
+        </Array>
+      </mxGeometry>
+    </mxCell>
+    <mxCell id="e_noon_skip_lbl" value="not enough hours&#xa;skip tonight" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];" vertex="1" connectable="0" parent="e_noon_skip">
+      <mxGeometry x="-0.1" relative="1" as="geometry"><mxPoint as="offset" /></mxGeometry>
+    </mxCell>
+
+    <mxCell id="e_sunset_wait_check" style="edgeStyle=orthogonalEdgeStyle;" edge="1" source="s_sunset_wait" target="s_sunset_check" parent="1">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+    <mxCell id="e_sunset_wait_check_lbl" value="wait until 1h before sunset" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];" vertex="1" connectable="0" parent="e_sunset_wait_check">
+      <mxGeometry x="-0.1" relative="1" as="geometry"><mxPoint as="offset" /></mxGeometry>
+    </mxCell>
+
+    <!-- PRE_SUNSET_CHECK → IMAGING -->
+    <mxCell id="e_sunset_ok" style="edgeStyle=orthogonalEdgeStyle;" edge="1" source="s_sunset_check" target="s_imaging" parent="1">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+    <mxCell id="e_sunset_ok_lbl" value="still good&#xa;generate NINA sequence&#xa;post DSO preview" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];" vertex="1" connectable="0" parent="e_sunset_ok">
+      <mxGeometry x="-0.1" relative="1" as="geometry"><mxPoint as="offset" /></mxGeometry>
+    </mxCell>
+
+    <!-- PRE_SUNSET_CHECK → WAITING_FOR_NOON (skip) -->
+    <mxCell id="e_sunset_skip" style="edgeStyle=orthogonalEdgeStyle;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;curved=1;" edge="1" source="s_sunset_check" target="s_noon_wait" parent="1">
+      <mxGeometry relative="1" as="geometry">
+        <Array as="points">
+          <mxPoint x="360" y="640" />
+          <mxPoint x="360" y="235" />
+        </Array>
+      </mxGeometry>
+    </mxCell>
+    <mxCell id="e_sunset_skip_lbl" value="conditions degraded&#xa;skip tonight" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];" vertex="1" connectable="0" parent="e_sunset_skip">
+      <mxGeometry x="-0.1" relative="1" as="geometry"><mxPoint as="offset" /></mxGeometry>
+    </mxCell>
+
+    <!-- IMAGING → WAITING_FOR_NOON (loop back) -->
+    <mxCell id="e_imaging_loop" style="edgeStyle=orthogonalEdgeStyle;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;curved=1;" edge="1" source="s_imaging" target="s_noon_wait" parent="1">
+      <mxGeometry relative="1" as="geometry">
+        <Array as="points">
+          <mxPoint x="-20" y="775" />
+          <mxPoint x="-20" y="235" />
+        </Array>
+      </mxGeometry>
+    </mxCell>
+    <mxCell id="e_imaging_loop_lbl" value="ImagingState → NONE&#xa;(run complete / manual mode)" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];" vertex="1" connectable="0" parent="e_imaging_loop">
+      <mxGeometry x="-0.1" relative="1" as="geometry"><mxPoint as="offset" /></mxGeometry>
+    </mxCell>
+
+    <!-- ═══════════════════════════════════════════════════════════════ -->
+    <!-- doit_cmd IMAGING STATES (center column)                        -->
+    <!-- ═══════════════════════════════════════════════════════════════ -->
+
+    <!-- Group label -->
+    <mxCell id="doit_group_label" value="doit_cmd  /  ImagingState (imaging.txt)" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=13;fontStyle=1;fontColor=#3d3d3d;" vertex="1" parent="1">
+      <mxGeometry x="470" y="70" width="380" height="30" as="geometry" />
+    </mxCell>
+
+    <!-- Guard: already imaging? -->
+    <mxCell id="d_guard" value="ImagingState = NONE?" style="rhombus;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontStyle=1;fontSize=11;" vertex="1" parent="1">
+      <mxGeometry x="480" y="100" width="200" height="80" as="geometry" />
+    </mxCell>
+
+    <!-- ACTIVE -->
+    <mxCell id="d_active" value="ImagingState = ACTIVE&#xa;write imaging_start.txt" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontStyle=1;fontSize=11;" vertex="1" parent="1">
+      <mxGeometry x="480" y="230" width="200" height="60" as="geometry" />
+    </mxCell>
+
+    <!-- Pre-flight: roof closed? -->
+    <mxCell id="d_roof_closed" value="Roof closed?" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontStyle=1;fontSize=11;" vertex="1" parent="1">
+      <mxGeometry x="480" y="340" width="200" height="80" as="geometry" />
+    </mxCell>
+
+    <!-- Safety gate 1 -->
+    <mxCell id="d_safe1" value="is_safe? (gate 1)" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontStyle=1;fontSize=11;" vertex="1" parent="1">
+      <mxGeometry x="480" y="470" width="200" height="80" as="geometry" />
+    </mxCell>
+
+    <!-- Wait 1 min -->
+    <mxCell id="d_wait1" value="sleep 60 s" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontColor=#333333;fontSize=11;" vertex="1" parent="1">
+      <mxGeometry x="480" y="600" width="200" height="50" as="geometry" />
+    </mxCell>
+
+    <!-- Safety gate 2 -->
+    <mxCell id="d_safe2" value="is_safe? (gate 2)" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontStyle=1;fontSize=11;" vertex="1" parent="1">
+      <mxGeometry x="480" y="700" width="200" height="80" as="geometry" />
+    </mxCell>
+
+    <!-- Open roof -->
+    <mxCell id="d_open_roof" value="Announce + open roof&#xa;open_roof_with_option()" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=11;" vertex="1" parent="1">
+      <mxGeometry x="480" y="830" width="200" height="60" as="geometry" />
+    </mxCell>
+
+    <!-- Safety gate 3 -->
+    <mxCell id="d_safe3" value="is_safe? (gate 3)" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontStyle=1;fontSize=11;" vertex="1" parent="1">
+      <mxGeometry x="480" y="940" width="200" height="80" as="geometry" />
+    </mxCell>
+
+    <!-- IN_PRELUDE -->
+    <mxCell id="d_prelude" value="ImagingState = IN_PRELUDE&#xa;launch on_nina.bat&#xa;(mount connect, autofocus, slew)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=11;" vertex="1" parent="1">
+      <mxGeometry x="480" y="1070" width="200" height="70" as="geometry" />
+    </mxCell>
+
+    <!-- Poll: DONE_PRELUDE? -->
+    <mxCell id="d_done_prelude" value="ImagingState =&#xa;DONE_PRELUDE?&#xa;(bat sets externally)" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=11;" vertex="1" parent="1">
+      <mxGeometry x="480" y="1190" width="200" height="90" as="geometry" />
+    </mxCell>
+
+    <!-- Safety gate 4 -->
+    <mxCell id="d_safe4" value="is_safe? (gate 4)&#xa;scope parked? roof open?" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=11;" vertex="1" parent="1">
+      <mxGeometry x="480" y="1340" width="200" height="90" as="geometry" />
+    </mxCell>
+
+    <!-- IN_MAIN -->
+    <mxCell id="d_main" value="ImagingState = IN_MAIN&#xa;launch image_nina1.bat&#xa;(NINA main sequence)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=11;" vertex="1" parent="1">
+      <mxGeometry x="480" y="1480" width="200" height="70" as="geometry" />
+    </mxCell>
+
+    <!-- Poll: ImagingState = NONE? -->
+    <mxCell id="d_wait_none" value="ImagingState = NONE?&#xa;(end.py / bat resets)" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=11;" vertex="1" parent="1">
+      <mxGeometry x="480" y="1600" width="200" height="80" as="geometry" />
+    </mxCell>
+
+    <!-- doit_cmd returns -->
+    <mxCell id="d_return" value="doit_cmd returns&#xa;image_cmd sets NONE" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=11;" vertex="1" parent="1">
+      <mxGeometry x="480" y="1730" width="200" height="50" as="geometry" />
+    </mxCell>
+
+    <!-- Abort node -->
+    <mxCell id="d_abort" value="ABORT&#xa;(return, roof stays open&#xa;end.py handles close)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontStyle=1;fontSize=11;" vertex="1" parent="1">
+      <mxGeometry x="730" y="700" width="180" height="70" as="geometry" />
+    </mxCell>
+
+    <!-- ─── doit_cmd edges ─── -->
+    <mxCell id="e_sched_guard" style="edgeStyle=orthogonalEdgeStyle;" edge="1" source="s_imaging" target="d_guard" parent="1">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+    <mxCell id="e_sched_guard_lbl" value="auto mode: calls image_cmd → doit_cmd" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];" vertex="1" connectable="0" parent="e_sched_guard">
+      <mxGeometry x="-0.1" relative="1" as="geometry"><mxPoint as="offset" /></mxGeometry>
+    </mxCell>
+
+    <!-- guard no → abort -->
+    <mxCell id="e_guard_no" style="edgeStyle=orthogonalEdgeStyle;exitX=1;exitY=0.5;exitDx=0;exitDy=0;" edge="1" source="d_guard" target="d_abort" parent="1">
+      <mxGeometry relative="1" as="geometry">
+        <Array as="points">
+          <mxPoint x="730" y="140" />
+          <mxPoint x="730" y="735" />
+        </Array>
+      </mxGeometry>
+    </mxCell>
+    <mxCell id="e_guard_no_lbl" value="No → already running" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];" vertex="1" connectable="0" parent="e_guard_no">
+      <mxGeometry x="-0.1" relative="1" as="geometry"><mxPoint as="offset" /></mxGeometry>
+    </mxCell>
+
+    <mxCell id="e_guard_yes" style="edgeStyle=orthogonalEdgeStyle;" edge="1" source="d_guard" target="d_active" parent="1">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+    <mxCell id="e_guard_yes_lbl" value="Yes" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];" vertex="1" connectable="0" parent="e_guard_yes">
+      <mxGeometry x="-0.1" relative="1" as="geometry"><mxPoint as="offset" /></mxGeometry>
+    </mxCell>
+
+    <mxCell id="e_active_roof" style="edgeStyle=orthogonalEdgeStyle;" edge="1" source="d_active" target="d_roof_closed" parent="1">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+
+    <!-- roof not closed → abort -->
+    <mxCell id="e_roof_no" style="edgeStyle=orthogonalEdgeStyle;exitX=1;exitY=0.5;exitDx=0;exitDy=0;" edge="1" source="d_roof_closed" target="d_abort" parent="1">
+      <mxGeometry relative="1" as="geometry">
+        <Array as="points">
+          <mxPoint x="730" y="380" />
+          <mxPoint x="730" y="735" />
+        </Array>
+      </mxGeometry>
+    </mxCell>
+    <mxCell id="e_roof_no_lbl" value="No" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];" vertex="1" connectable="0" parent="e_roof_no">
+      <mxGeometry x="-0.1" relative="1" as="geometry"><mxPoint as="offset" /></mxGeometry>
+    </mxCell>
+
+    <mxCell id="e_roof_yes" style="edgeStyle=orthogonalEdgeStyle;" edge="1" source="d_roof_closed" target="d_safe1" parent="1">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+    <mxCell id="e_roof_yes_lbl" value="Yes" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];" vertex="1" connectable="0" parent="e_roof_yes">
+      <mxGeometry x="-0.1" relative="1" as="geometry"><mxPoint as="offset" /></mxGeometry>
+    </mxCell>
+
+    <!-- safe1 no → abort -->
+    <mxCell id="e_safe1_no" style="edgeStyle=orthogonalEdgeStyle;exitX=1;exitY=0.5;exitDx=0;exitDy=0;" edge="1" source="d_safe1" target="d_abort" parent="1">
+      <mxGeometry relative="1" as="geometry">
+        <Array as="points">
+          <mxPoint x="730" y="510" />
+          <mxPoint x="730" y="735" />
+        </Array>
+      </mxGeometry>
+    </mxCell>
+    <mxCell id="e_safe1_no_lbl" value="No" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];" vertex="1" connectable="0" parent="e_safe1_no">
+      <mxGeometry x="-0.1" relative="1" as="geometry"><mxPoint as="offset" /></mxGeometry>
+    </mxCell>
+
+    <mxCell id="e_safe1_yes" style="edgeStyle=orthogonalEdgeStyle;" edge="1" source="d_safe1" target="d_wait1" parent="1">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+    <mxCell id="e_safe1_yes_lbl" value="Yes" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];" vertex="1" connectable="0" parent="e_safe1_yes">
+      <mxGeometry x="-0.1" relative="1" as="geometry"><mxPoint as="offset" /></mxGeometry>
+    </mxCell>
+
+    <mxCell id="e_wait1_safe2" style="edgeStyle=orthogonalEdgeStyle;" edge="1" source="d_wait1" target="d_safe2" parent="1">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+
+    <!-- safe2 no → abort -->
+    <mxCell id="e_safe2_no" style="edgeStyle=orthogonalEdgeStyle;exitX=1;exitY=0.5;exitDx=0;exitDy=0;" edge="1" source="d_safe2" target="d_abort" parent="1">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+    <mxCell id="e_safe2_no_lbl" value="No" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];" vertex="1" connectable="0" parent="e_safe2_no">
+      <mxGeometry x="-0.1" relative="1" as="geometry"><mxPoint as="offset" /></mxGeometry>
+    </mxCell>
+
+    <mxCell id="e_safe2_yes" style="edgeStyle=orthogonalEdgeStyle;" edge="1" source="d_safe2" target="d_open_roof" parent="1">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+    <mxCell id="e_safe2_yes_lbl" value="Yes" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];" vertex="1" connectable="0" parent="e_safe2_yes">
+      <mxGeometry x="-0.1" relative="1" as="geometry"><mxPoint as="offset" /></mxGeometry>
+    </mxCell>
+
+    <!-- roof open failed → abort -->
+    <mxCell id="e_openroof_fail" style="edgeStyle=orthogonalEdgeStyle;exitX=1;exitY=0.5;exitDx=0;exitDy=0;" edge="1" source="d_open_roof" target="d_abort" parent="1">
+      <mxGeometry relative="1" as="geometry">
+        <Array as="points">
+          <mxPoint x="730" y="860" />
+          <mxPoint x="730" y="735" />
+        </Array>
+      </mxGeometry>
+    </mxCell>
+    <mxCell id="e_openroof_fail_lbl" value="vision safety: roof not open" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];" vertex="1" connectable="0" parent="e_openroof_fail">
+      <mxGeometry x="-0.1" relative="1" as="geometry"><mxPoint as="offset" /></mxGeometry>
+    </mxCell>
+
+    <mxCell id="e_openroof_ok" style="edgeStyle=orthogonalEdgeStyle;" edge="1" source="d_open_roof" target="d_safe3" parent="1">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+    <mxCell id="e_openroof_ok_lbl" value="roof open ✓&#xa;sleep 60 s" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];" vertex="1" connectable="0" parent="e_openroof_ok">
+      <mxGeometry x="-0.1" relative="1" as="geometry"><mxPoint as="offset" /></mxGeometry>
+    </mxCell>
+
+    <!-- safe3 no → abort -->
+    <mxCell id="e_safe3_no" style="edgeStyle=orthogonalEdgeStyle;exitX=1;exitY=0.5;exitDx=0;exitDy=0;" edge="1" source="d_safe3" target="d_abort" parent="1">
+      <mxGeometry relative="1" as="geometry">
+        <Array as="points">
+          <mxPoint x="730" y="980" />
+          <mxPoint x="730" y="735" />
+        </Array>
+      </mxGeometry>
+    </mxCell>
+    <mxCell id="e_safe3_no_lbl" value="No" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];" vertex="1" connectable="0" parent="e_safe3_no">
+      <mxGeometry x="-0.1" relative="1" as="geometry"><mxPoint as="offset" /></mxGeometry>
+    </mxCell>
+
+    <mxCell id="e_safe3_yes" style="edgeStyle=orthogonalEdgeStyle;" edge="1" source="d_safe3" target="d_prelude" parent="1">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+    <mxCell id="e_safe3_yes_lbl" value="Yes" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];" vertex="1" connectable="0" parent="e_safe3_yes">
+      <mxGeometry x="-0.1" relative="1" as="geometry"><mxPoint as="offset" /></mxGeometry>
+    </mxCell>
+
+    <mxCell id="e_prelude_poll" style="edgeStyle=orthogonalEdgeStyle;" edge="1" source="d_prelude" target="d_done_prelude" parent="1">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+
+    <!-- poll: not done yet → loop -->
+    <mxCell id="e_prelude_wait" style="edgeStyle=orthogonalEdgeStyle;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;" edge="1" source="d_done_prelude" target="d_done_prelude" parent="1">
+      <mxGeometry relative="1" as="geometry">
+        <Array as="points">
+          <mxPoint x="740" y="1235" />
+          <mxPoint x="740" y="1235" />
+        </Array>
+      </mxGeometry>
+    </mxCell>
+    <mxCell id="e_prelude_wait_lbl" value="No — sleep 30 s" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];" vertex="1" connectable="0" parent="e_prelude_wait">
+      <mxGeometry x="-0.1" relative="1" as="geometry"><mxPoint as="offset" /></mxGeometry>
+    </mxCell>
+
+    <!-- prelude timeout → abort -->
+    <mxCell id="e_prelude_timeout" style="edgeStyle=orthogonalEdgeStyle;exitX=0;exitY=0.5;exitDx=0;exitDy=0;" edge="1" source="d_done_prelude" target="d_abort" parent="1">
+      <mxGeometry relative="1" as="geometry">
+        <Array as="points">
+          <mxPoint x="420" y="1235" />
+          <mxPoint x="420" y="735" />
+          <mxPoint x="730" y="735" />
+        </Array>
+      </mxGeometry>
+    </mxCell>
+    <mxCell id="e_prelude_timeout_lbl" value="timeout (10 min)" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];" vertex="1" connectable="0" parent="e_prelude_timeout">
+      <mxGeometry x="-0.1" relative="1" as="geometry"><mxPoint as="offset" /></mxGeometry>
+    </mxCell>
+
+    <mxCell id="e_prelude_done" style="edgeStyle=orthogonalEdgeStyle;" edge="1" source="d_done_prelude" target="d_safe4" parent="1">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+    <mxCell id="e_prelude_done_lbl" value="Yes" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];" vertex="1" connectable="0" parent="e_prelude_done">
+      <mxGeometry x="-0.1" relative="1" as="geometry"><mxPoint as="offset" /></mxGeometry>
+    </mxCell>
+
+    <!-- safe4 no → abort -->
+    <mxCell id="e_safe4_no" style="edgeStyle=orthogonalEdgeStyle;exitX=1;exitY=0.5;exitDx=0;exitDy=0;" edge="1" source="d_safe4" target="d_abort" parent="1">
+      <mxGeometry relative="1" as="geometry">
+        <Array as="points">
+          <mxPoint x="730" y="1385" />
+          <mxPoint x="730" y="735" />
+        </Array>
+      </mxGeometry>
+    </mxCell>
+    <mxCell id="e_safe4_no_lbl" value="No" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];" vertex="1" connectable="0" parent="e_safe4_no">
+      <mxGeometry x="-0.1" relative="1" as="geometry"><mxPoint as="offset" /></mxGeometry>
+    </mxCell>
+
+    <mxCell id="e_safe4_yes" style="edgeStyle=orthogonalEdgeStyle;" edge="1" source="d_safe4" target="d_main" parent="1">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+    <mxCell id="e_safe4_yes_lbl" value="Yes" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];" vertex="1" connectable="0" parent="e_safe4_yes">
+      <mxGeometry x="-0.1" relative="1" as="geometry"><mxPoint as="offset" /></mxGeometry>
+    </mxCell>
+
+    <mxCell id="e_main_poll" style="edgeStyle=orthogonalEdgeStyle;" edge="1" source="d_main" target="d_wait_none" parent="1">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+
+    <!-- poll NONE: not yet → loop -->
+    <mxCell id="e_main_wait" style="edgeStyle=orthogonalEdgeStyle;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;" edge="1" source="d_wait_none" target="d_wait_none" parent="1">
+      <mxGeometry relative="1" as="geometry">
+        <Array as="points">
+          <mxPoint x="740" y="1640" />
+          <mxPoint x="740" y="1640" />
+        </Array>
+      </mxGeometry>
+    </mxCell>
+    <mxCell id="e_main_wait_lbl" value="No — sleep 60 s" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];" vertex="1" connectable="0" parent="e_main_wait">
+      <mxGeometry x="-0.1" relative="1" as="geometry"><mxPoint as="offset" /></mxGeometry>
+    </mxCell>
+
+    <mxCell id="e_main_done" style="edgeStyle=orthogonalEdgeStyle;" edge="1" source="d_wait_none" target="d_return" parent="1">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+    <mxCell id="e_main_done_lbl" value="Yes" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];" vertex="1" connectable="0" parent="e_main_done">
+      <mxGeometry x="-0.1" relative="1" as="geometry"><mxPoint as="offset" /></mxGeometry>
+    </mxCell>
+
+    <!-- ═══════════════════════════════════════════════════════════════ -->
+    <!-- end.py (right column)                                          -->
+    <!-- ═══════════════════════════════════════════════════════════════ -->
+
+    <!-- Group label -->
+    <mxCell id="end_group_label" value="end.py  —  do_main()" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=13;fontStyle=1;fontColor=#3d3d3d;" vertex="1" parent="1">
+      <mxGeometry x="990" y="70" width="280" height="30" as="geometry" />
+    </mxCell>
+
+    <!-- write safety.txt -->
+    <mxCell id="end_safety" value='write safety.txt = "USER SAFE"' style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=11;" vertex="1" parent="1">
+      <mxGeometry x="990" y="110" width="240" height="50" as="geometry" />
+    </mxCell>
+
+    <!-- device discovery -->
+    <mxCell id="end_discover" value="Kasa device discovery" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=11;" vertex="1" parent="1">
+      <mxGeometry x="990" y="210" width="240" height="50" as="geometry" />
+    </mxCell>
+
+    <!-- is mount parked? -->
+    <mxCell id="end_parked" value="PWI4: is scope parked?" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=11;" vertex="1" parent="1">
+      <mxGeometry x="990" y="310" width="240" height="90" as="geometry" />
+    </mxCell>
+
+    <!-- NOT parked branch -->
+    <mxCell id="end_not_parked" value="Post: Iris NOT parked&#xa;roof stays open&#xa;power off mount + lights" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=11;" vertex="1" parent="1">
+      <mxGeometry x="1280" y="330" width="200" height="70" as="geometry" />
+    </mxCell>
+
+    <!-- Parked branch: power/lights on -->
+    <mxCell id="end_lights" value="Post: Iris parked&#xa;power off mount&#xa;turn on roof motor + lights" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=11;" vertex="1" parent="1">
+      <mxGeometry x="990" y="450" width="240" height="70" as="geometry" />
+    </mxCell>
+
+    <!-- sleep 60 s -->
+    <mxCell id="end_sleep" value="sleep 60 s" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontColor=#333333;fontSize=11;" vertex="1" parent="1">
+      <mxGeometry x="990" y="570" width="240" height="50" as="geometry" />
+    </mxCell>
+
+    <!-- vision safety check -->
+    <mxCell id="end_vision" value="Vision safety: scope parked?" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=11;" vertex="1" parent="1">
+      <mxGeometry x="990" y="670" width="240" height="90" as="geometry" />
+    </mxCell>
+
+    <!-- vision: not parked -->
+    <mxCell id="end_vision_fail" value="Post: Vision says NOT parked&#xa;(end sequence aborts)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=11;" vertex="1" parent="1">
+      <mxGeometry x="1280" y="690" width="200" height="60" as="geometry" />
+    </mxCell>
+
+    <!-- announce + close roof -->
+    <mxCell id="end_close_roof" value="Announce roof closing&#xa;toggle_roof() — close" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=11;" vertex="1" parent="1">
+      <mxGeometry x="990" y="810" width="240" height="60" as="geometry" />
+    </mxCell>
+
+    <!-- verify roof closed -->
+    <mxCell id="end_verify_roof" value="Vision: roof closed?" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=11;" vertex="1" parent="1">
+      <mxGeometry x="990" y="920" width="240" height="80" as="geometry" />
+    </mxCell>
+
+    <!-- dehumidifier + lights off -->
+    <mxCell id="end_dehumid" value="Dehumidifier ON (Shelly)&#xa;Lights OFF&#xa;Roof motor OFF" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=11;" vertex="1" parent="1">
+      <mxGeometry x="990" y="1050" width="240" height="70" as="geometry" />
+    </mxCell>
+
+    <!-- _post_imaging_summary -->
+    <mxCell id="end_summary" value="_post_imaging_summary()&#xa;read imaging_start.txt&#xa;scan FITS → post FWHM metrics" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontStyle=1;fontSize=11;" vertex="1" parent="1">
+      <mxGeometry x="990" y="1180" width="240" height="70" as="geometry" />
+    </mxCell>
+
+    <!-- do_flats -->
+    <mxCell id="end_flats" value="do_flats()&#xa;power on mount&#xa;launch nina_flats.bat&#xa;poll until DONE_FLATS&#xa;power off mount" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=11;" vertex="1" parent="1">
+      <mxGeometry x="990" y="1310" width="240" height="90" as="geometry" />
+    </mxCell>
+
+    <!-- set ImagingState = NONE -->
+    <mxCell id="end_none" value="set ImagingState = NONE" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontStyle=1;fontSize=11;" vertex="1" parent="1">
+      <mxGeometry x="990" y="1460" width="240" height="50" as="geometry" />
+    </mxCell>
+
+    <!-- END -->
+    <mxCell id="end_done" value="End sequence complete" style="ellipse;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontStyle=1;fontSize=11;" vertex="1" parent="1">
+      <mxGeometry x="1020" y="1560" width="180" height="50" as="geometry" />
+    </mxCell>
+
+    <!-- ─── end.py edges ─── -->
+    <mxCell id="e_end_safety_discover" style="edgeStyle=orthogonalEdgeStyle;" edge="1" source="end_safety" target="end_discover" parent="1">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+
+    <mxCell id="e_end_discover_parked" style="edgeStyle=orthogonalEdgeStyle;" edge="1" source="end_discover" target="end_parked" parent="1">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+
+    <!-- parked → yes path -->
+    <mxCell id="e_end_parked_yes" style="edgeStyle=orthogonalEdgeStyle;" edge="1" source="end_parked" target="end_lights" parent="1">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+    <mxCell id="e_end_parked_yes_lbl" value="Yes" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];" vertex="1" connectable="0" parent="e_end_parked_yes">
+      <mxGeometry x="-0.1" relative="1" as="geometry"><mxPoint as="offset" /></mxGeometry>
+    </mxCell>
+
+    <!-- parked → no path -->
+    <mxCell id="e_end_parked_no" style="edgeStyle=orthogonalEdgeStyle;exitX=1;exitY=0.5;exitDx=0;exitDy=0;" edge="1" source="end_parked" target="end_not_parked" parent="1">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+    <mxCell id="e_end_parked_no_lbl" value="No" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];" vertex="1" connectable="0" parent="e_end_parked_no">
+      <mxGeometry x="-0.1" relative="1" as="geometry"><mxPoint as="offset" /></mxGeometry>
+    </mxCell>
+
+    <!-- not parked → summary (still runs summary+flats) -->
+    <mxCell id="e_end_notparked_summary" style="edgeStyle=orthogonalEdgeStyle;exitX=0;exitY=0.5;exitDx=0;exitDy=0;" edge="1" source="end_not_parked" target="end_summary" parent="1">
+      <mxGeometry relative="1" as="geometry">
+        <Array as="points">
+          <mxPoint x="960" y="365" />
+          <mxPoint x="960" y="1215" />
+        </Array>
+      </mxGeometry>
+    </mxCell>
+    <mxCell id="e_end_notparked_summary_lbl" value="power off devices" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];" vertex="1" connectable="0" parent="e_end_notparked_summary">
+      <mxGeometry x="-0.1" relative="1" as="geometry"><mxPoint as="offset" /></mxGeometry>
+    </mxCell>
+
+    <mxCell id="e_end_lights_sleep" style="edgeStyle=orthogonalEdgeStyle;" edge="1" source="end_lights" target="end_sleep" parent="1">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+
+    <mxCell id="e_end_sleep_vision" style="edgeStyle=orthogonalEdgeStyle;" edge="1" source="end_sleep" target="end_vision" parent="1">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+
+    <mxCell id="e_end_vision_yes" style="edgeStyle=orthogonalEdgeStyle;" edge="1" source="end_vision" target="end_close_roof" parent="1">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+    <mxCell id="e_end_vision_yes_lbl" value="Yes" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];" vertex="1" connectable="0" parent="e_end_vision_yes">
+      <mxGeometry x="-0.1" relative="1" as="geometry"><mxPoint as="offset" /></mxGeometry>
+    </mxCell>
+
+    <mxCell id="e_end_vision_no" style="edgeStyle=orthogonalEdgeStyle;exitX=1;exitY=0.5;exitDx=0;exitDy=0;" edge="1" source="end_vision" target="end_vision_fail" parent="1">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+    <mxCell id="e_end_vision_no_lbl" value="No" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];" vertex="1" connectable="0" parent="e_end_vision_no">
+      <mxGeometry x="-0.1" relative="1" as="geometry"><mxPoint as="offset" /></mxGeometry>
+    </mxCell>
+
+    <mxCell id="e_end_close_verify" style="edgeStyle=orthogonalEdgeStyle;" edge="1" source="end_close_roof" target="end_verify_roof" parent="1">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+    <mxCell id="e_end_close_verify_lbl" value="sleep 30 s" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];" vertex="1" connectable="0" parent="e_end_close_verify">
+      <mxGeometry x="-0.1" relative="1" as="geometry"><mxPoint as="offset" /></mxGeometry>
+    </mxCell>
+
+    <mxCell id="e_end_verify_dehumid" style="edgeStyle=orthogonalEdgeStyle;" edge="1" source="end_verify_roof" target="end_dehumid" parent="1">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+    <mxCell id="e_end_verify_lbl" value="closed / not closed&#xa;(post result either way)" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];" vertex="1" connectable="0" parent="e_end_verify_dehumid">
+      <mxGeometry x="-0.1" relative="1" as="geometry"><mxPoint as="offset" /></mxGeometry>
+    </mxCell>
+
+    <mxCell id="e_end_dehumid_summary" style="edgeStyle=orthogonalEdgeStyle;" edge="1" source="end_dehumid" target="end_summary" parent="1">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+
+    <mxCell id="e_end_summary_flats" style="edgeStyle=orthogonalEdgeStyle;" edge="1" source="end_summary" target="end_flats" parent="1">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+
+    <mxCell id="e_end_flats_none" style="edgeStyle=orthogonalEdgeStyle;" edge="1" source="end_flats" target="end_none" parent="1">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+
+    <mxCell id="e_end_none_done" style="edgeStyle=orthogonalEdgeStyle;" edge="1" source="end_none" target="end_done" parent="1">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+
+    <!-- ═══════════════════════════════════════════════════════════════ -->
+    <!-- Cross-column link: doit_cmd return → end.py (end.py called     -->
+    <!-- by the NINA bat or operand==3)                                  -->
+    <!-- ═══════════════════════════════════════════════════════════════ -->
+    <mxCell id="e_return_end" style="edgeStyle=orthogonalEdgeStyle;dashed=1;strokeColor=#9673a6;" edge="1" source="d_return" target="end_safety" parent="1">
+      <mxGeometry relative="1" as="geometry">
+        <Array as="points">
+          <mxPoint x="580" y="1800" />
+          <mxPoint x="1110" y="1800" />
+          <mxPoint x="1110" y="160" />
+        </Array>
+      </mxGeometry>
+    </mxCell>
+    <mxCell id="e_return_end_lbl" value="NINA bat calls end.py&#xa;(or operand==3 calls end.do_main())" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];" vertex="1" connectable="0" parent="e_return_end">
+      <mxGeometry x="-0.1" relative="1" as="geometry"><mxPoint as="offset" /></mxGeometry>
+    </mxCell>
+
+    <!-- end_none resets ImagingState → scheduler poll resolves -->
+    <mxCell id="e_none_resolves" style="edgeStyle=orthogonalEdgeStyle;dashed=1;strokeColor=#82b366;" edge="1" source="end_none" target="d_wait_none" parent="1">
+      <mxGeometry relative="1" as="geometry">
+        <Array as="points">
+          <mxPoint x="990" y="1485" />
+          <mxPoint x="580" y="1485" />
+          <mxPoint x="580" y="1640" />
+        </Array>
+      </mxGeometry>
+    </mxCell>
+    <mxCell id="e_none_resolves_lbl" value="ImagingState → NONE&#xa;unblocks scheduler poll" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];" vertex="1" connectable="0" parent="e_none_resolves">
+      <mxGeometry x="-0.1" relative="1" as="geometry"><mxPoint as="offset" /></mxGeometry>
+    </mxCell>
+
+    <!-- ═══════════════════════════════════════════════════════════════ -->
+    <!-- LEGEND                                                          -->
+    <!-- ═══════════════════════════════════════════════════════════════ -->
+    <mxCell id="legend_title" value="Legend" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontStyle=1;fontSize=12;" vertex="1" parent="1">
+      <mxGeometry x="80" y="880" width="80" height="30" as="geometry" />
+    </mxCell>
+    <mxCell id="leg_sched" value="Scheduler state" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=10;" vertex="1" parent="1">
+      <mxGeometry x="80" y="920" width="140" height="30" as="geometry" />
+    </mxCell>
+    <mxCell id="leg_action" value="Action / step" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=10;" vertex="1" parent="1">
+      <mxGeometry x="80" y="960" width="140" height="30" as="geometry" />
+    </mxCell>
+    <mxCell id="leg_decision" value="Decision / check" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=10;" vertex="1" parent="1">
+      <mxGeometry x="80" y="1000" width="140" height="40" as="geometry" />
+    </mxCell>
+    <mxCell id="leg_abort" value="Abort / error" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=10;" vertex="1" parent="1">
+      <mxGeometry x="80" y="1055" width="140" height="30" as="geometry" />
+    </mxCell>
+    <mxCell id="leg_end" value="end.py step" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=10;" vertex="1" parent="1">
+      <mxGeometry x="80" y="1095" width="140" height="30" as="geometry" />
+    </mxCell>
+    <mxCell id="leg_cross" value="Cross-module call" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#9673a6;dashed=1;fontSize=10;" vertex="1" parent="1">
+      <mxGeometry x="80" y="1135" width="140" height="30" as="geometry" />
+    </mxCell>
+
+  </root>
+</mxGraphModel>
