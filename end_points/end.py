@@ -57,6 +57,9 @@ def _post_imaging_summary(imaging_start: datetime) -> None:
     image_dir = Path(cfg["nina"]["image_dir"])
     arcsec_per_pixel = cfg["nina"]["arc_sec_per_pixel"]
     start_ts = imaging_start.timestamp()
+    social_server.post_social_message(
+        f"Scanning for FITS since {imaging_start.strftime('%Y-%m-%d %H:%M')}"
+    )
 
     try:
         fits_files = sorted(
