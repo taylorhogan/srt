@@ -186,6 +186,7 @@ def help_cmd(words: list[str], index: int, m: Mastodon, account: str) -> None:
         else:
             stripped = example.replace("\n", "")
             reply += word + "  " + stripped + "\n"
+    reply += "\nFull docs: https://github.com/taylorhogan/srt/blob/main/docs/commands.md"
     post_social_message(reply)
     su.print_help(account)
 
