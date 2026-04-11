@@ -665,6 +665,142 @@ def save_optical_metrics_table(metrics: dict, output_path: Path) -> Path:
     return output_path
 
 
+def _extract_filter(fits_path: Path) -> str:
+    """Extract filter name from a NINA FITS filename.
+
+    NINA naming: DATE_TIME_FILTER__EXPOSURE_SEQUENCE.fits
+    e.g. 2026-04-07_23-15-02_Ha__300.00s_0012.fits → 'Ha'
+    """
+    parts = fits_path.stem.split("_")
+    if len(parts) >= 3:
+        return parts[2]
+    return "?"
+
+
+# Standard colour mapping for common narrowband/broadband filters.
+_FILTER_COLORS = {
+    "L":  "#cccccc",
+    "R":  "#e74c3c",
+    "G":  "#2ecc71",
+    "B":  "#3498db",
+    "Ha": "#e74c3c",
+    "Oiii": "#2ecc71",
+    "OIII": "#2ecc71",
+    "Sii": "#9b59b6",
+    "SII": "#9b59b6",
+}
+
+
+def save_stats_plot(
+    fits_files: list[Path],
+    output_path: Path,
+    arcsec_per_pixel: float = 1.0,
+    threshold_sigma: float = _DETECTION_THRESHOLD_SIGMA,
+    min_snr: float = _MIN_SNR,
+    max_ellipticity: float = _MAX_ELLIPTICITY,
+) -> tuple[Path, int]:
+    """Produce a two-panel plot of per-frame FWHM and eccentricity.
+
+    Each frame is a dot coloured by filter. Median lines are drawn across.
+
+    Returns (output_path, frames_with_stars).
+    """
+    import warnings
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    filters = [_extract_filter(f) for f in fits_files]
+
+    def _analyse(f):
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            _, stars = _fit_stars(f, threshold_sigma, min_snr, max_ellipticity)
+        if not stars:
+            return 0.0, 0.0, 0
+        return (
+            float(np.mean([s[2] for s in stars])),
+            float(np.mean([s[3] for s in stars])),
+            len(stars),
+        )
+
+    results = [None] * len(fits_files)
+    max_workers = min(8, len(fits_files))
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        future_to_idx = {pool.submit(_analyse, f): i for i, f in enumerate(fits_files)}
+        for fut in as_completed(future_to_idx):
+            idx = future_to_idx[fut]
+            try:
+                results[idx] = fut.result()
+            except Exception:
+                results[idx] = (0.0, 0.0, 0)
+
+    # Filter to frames with detected stars, keeping original index for x-axis.
+    indices, fwhms, eccs, frame_filters = [], [], [], []
+    for i, (fwhm, ecc, count) in enumerate(results):
+        if count > 0:
+            indices.append(i)
+            fwhms.append(fwhm)
+            eccs.append(ecc)
+            frame_filters.append(filters[i])
+
+    if not fwhms:
+        return output_path, 0
+
+    fwhms_arr = np.array(fwhms)
+    eccs_arr = np.array(eccs)
+    median_fwhm = float(np.median(fwhms_arr))
+    median_ecc = float(np.median(eccs_arr))
+
+    # Assign colours by filter.
+    unique_filters = sorted(set(frame_filters))
+    colors = [_FILTER_COLORS.get(f, "#f39c12") for f in frame_filters]
+
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 7), sharex=True)
+
+    ax1.scatter(indices, fwhms, c=colors, s=30, zorder=3)
+    ax1.axhline(median_fwhm, color="white", linestyle="--", linewidth=1, alpha=0.8)
+    ax1.text(len(fits_files) * 0.01, median_fwhm, f" median {median_fwhm:.2f} px ({median_fwhm * arcsec_per_pixel:.2f}\")",
+             va="bottom", color="white", fontsize=9)
+    ax1.set_ylabel("FWHM (px)")
+    ax1.set_facecolor("#1a1a2e")
+    ax1.grid(True, alpha=0.2)
+
+    ax2.scatter(indices, eccs, c=colors, s=30, zorder=3)
+    ax2.axhline(median_ecc, color="white", linestyle="--", linewidth=1, alpha=0.8)
+    ax2.text(len(fits_files) * 0.01, median_ecc, f" median {median_ecc:.3f}",
+             va="bottom", color="white", fontsize=9)
+    ax2.set_ylabel("Eccentricity")
+    ax2.set_xlabel("Frame")
+    ax2.set_facecolor("#1a1a2e")
+    ax2.grid(True, alpha=0.2)
+
+    # Legend for filters.
+    handles = []
+    for f in unique_filters:
+        c = _FILTER_COLORS.get(f, "#f39c12")
+        handles.append(plt.Line2D([0], [0], marker="o", color="none", markerfacecolor=c,
+                                  markersize=8, label=f))
+    ax1.legend(handles=handles, loc="upper right", fontsize=9, framealpha=0.7)
+
+    fig.patch.set_facecolor("#0d0d1a")
+    ax1.tick_params(colors="white")
+    ax2.tick_params(colors="white")
+    for ax in (ax1, ax2):
+        ax.xaxis.label.set_color("white")
+        ax.yaxis.label.set_color("white")
+        ax.title.set_color("white")
+        for spine in ax.spines.values():
+            spine.set_color("#444")
+
+    title = f"{len(fwhms)}/{len(fits_files)} frames with stars"
+    ax1.set_title(title, color="white")
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    plt.tight_layout()
+    plt.savefig(output_path, format="jpeg", dpi=150, bbox_inches="tight", facecolor=fig.get_facecolor())
+    plt.close(fig)
+    return output_path, len(fwhms)
+
+
 if __name__ == "__main__":
     import sys
     import os

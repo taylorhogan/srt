@@ -393,7 +393,7 @@ def get_super_user_commands() -> dict[str, Callable]:
         "mode": mode_cmd,
         "prioritize": prioritize_cmd,
         "doflats": doflats_cmd,
-        "image_stats": image_stats_cmd,
+        "stats": image_stats_cmd,
     }
 
 
@@ -719,16 +719,75 @@ def doflats_cmd(words: list[str], account: str) -> None:
 
 
 def image_stats_cmd(words: list[str], account: str) -> None:
-    """Post imaging quality stats for FITS files captured since yesterday's sunset."""
+    """Post per-frame FWHM/eccentricity graph.
+
+    Usage:
+        stats        — frames since yesterday's sunset
+        stats full   — all LIGHT frames for the same DSO (same root dir)
+    """
     from astral import LocationInfo
     from astral.sun import sun
+    from fits_processing import fitsfwhm
 
     cfg = config.data()
-    loc = cfg["location"]
-    city = LocationInfo(loc["city"], "USA", loc["timezone"], loc["latitude"], loc["longitude"])
-    yesterday = datetime.now() - timedelta(days=1)
-    sunset = sun(city.observer, date=yesterday)["sunset"]
-    end._post_imaging_summary(sunset.replace(tzinfo=None))
+    image_dir = Path(cfg["nina"]["image_dir"])
+    arcsec_per_pixel = cfg["nina"]["arc_sec_per_pixel"]
+
+    mode = words[2] if len(words) > 2 else "recent"
+
+    if mode == "full":
+        # Find the most recently modified FITS, then collect all LIGHT frames
+        # under the same DSO root directory.
+        all_fits = sorted(image_dir.rglob("*.fits"), key=lambda f: f.stat().st_mtime)
+        if not all_fits:
+            social_server.post_social_message("No FITS files found")
+            return
+        latest = all_fits[-1]
+        # Walk up to find the DSO-level directory (parent of scope/date/LIGHT).
+        # Structure: Targets/<DSO>/<scope>/<date>/LIGHT/<file>.fits
+        dso_dir = latest.parent
+        while dso_dir.parent != image_dir and dso_dir.parent != dso_dir:
+            dso_dir = dso_dir.parent
+        fits_files = sorted(dso_dir.rglob("*.fits"), key=lambda f: f.stat().st_mtime)
+        social_server.post_social_message(
+            f"Stats (full) for {dso_dir.name}: {len(fits_files)} frames"
+        )
+    else:
+        loc = cfg["location"]
+        city = LocationInfo(loc["city"], "USA", loc["timezone"], loc["latitude"], loc["longitude"])
+        yesterday = datetime.now() - timedelta(days=1)
+        sunset = sun(city.observer, date=yesterday)["sunset"]
+        start_ts = sunset.replace(tzinfo=None).timestamp()
+        social_server.post_social_message(
+            f"Stats since {sunset.strftime('%Y-%m-%d %H:%M')}"
+        )
+        fits_files = sorted(
+            (f for f in image_dir.rglob("*.fits") if f.stat().st_mtime >= start_ts),
+            key=lambda f: f.stat().st_mtime,
+        )
+
+    if not fits_files:
+        social_server.post_social_message("No FITS files found for the requested period")
+        return
+
+    _project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    scratch_dir = os.path.join(_project_root, cfg["scratch"]["directory"])
+    output_path = Path(os.path.join(scratch_dir, "stats_plot.jpg"))
+
+    plot_path, frames_with_stars = fitsfwhm.save_stats_plot(
+        fits_files, output_path, arcsec_per_pixel=arcsec_per_pixel
+    )
+
+    if frames_with_stars == 0:
+        social_server.post_social_message(
+            f"No stars detected in any of the {len(fits_files)} frames"
+        )
+        return
+
+    social_server.post_social_message(
+        f"FWHM & eccentricity — {frames_with_stars}/{len(fits_files)} frames",
+        str(plot_path)
+    )
 
 
 if __name__ == "__main__":

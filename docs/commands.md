@@ -36,7 +36,7 @@ Restricted to super users. These control observatory hardware and the imaging pi
 |---------|-------------|---------|
 | `image!!` | Start a full imaging run (safety checks, roof open, NINA prelude, main imaging). Append `1`, `2`, or `3` to select mode: 1/2 = full run with different NINA sequences, 3 = home and park only | `@iris image!! 1` |
 | `doflats` | Run a standalone flats sequence — powers on mount, launches NINA flats, waits for completion, powers off mount | `@iris doflats` |
-| `image_stats` | Post FWHM quality stats for all FITS files captured since yesterday's sunset | `@iris image_stats` |
+| `stats` | Post per-frame FWHM and eccentricity graph (colour-coded by filter) for last night's frames. Use `stats full` to analyse all frames for the same DSO | `@iris stats` or `@iris stats full` |
 
 ### Mode
 
