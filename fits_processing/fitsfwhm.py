@@ -745,7 +745,8 @@ def save_stats_plot(
     if not fwhms:
         return output_path, 0
 
-    fwhms_arr = np.array(fwhms)
+    fwhms_arcsec = [f * arcsec_per_pixel for f in fwhms]
+    fwhms_arr = np.array(fwhms_arcsec)
     eccs_arr = np.array(eccs)
     median_fwhm = float(np.median(fwhms_arr))
     median_ecc = float(np.median(eccs_arr))
@@ -756,11 +757,11 @@ def save_stats_plot(
 
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 7), sharex=True)
 
-    ax1.scatter(indices, fwhms, c=colors, s=30, zorder=3)
+    ax1.scatter(indices, fwhms_arcsec, c=colors, s=30, zorder=3)
     ax1.axhline(median_fwhm, color="white", linestyle="--", linewidth=1, alpha=0.8)
-    ax1.text(len(fits_files) * 0.01, median_fwhm, f" median {median_fwhm:.2f} px ({median_fwhm * arcsec_per_pixel:.2f}\")",
+    ax1.text(len(fits_files) * 0.01, median_fwhm, f' median {median_fwhm:.2f}"',
              va="bottom", color="white", fontsize=9)
-    ax1.set_ylabel("FWHM (px)")
+    ax1.set_ylabel('FWHM (arcsec)')
     ax1.set_facecolor("#1a1a2e")
     ax1.grid(True, alpha=0.2)
 

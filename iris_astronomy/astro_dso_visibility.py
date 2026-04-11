@@ -341,6 +341,19 @@ def show_plots(dso: FixedTarget) -> tuple[Optional[str], Optional[str], Optional
     try:
 
         astroplan.plots.plot_sky(dso, my_observatory, observe_time)
+        # Overlay custom horizon from my.hrz on the polar sky chart.
+        hz_az, hz_alt = map_az_to_horizon()
+        plt.clf()  # clear the side-effect plot from map_az_to_horizon
+        astroplan.plots.plot_sky(dso, my_observatory, observe_time)
+        ax_sky = plt.gca()
+        # Close the horizon loop back to the first point.
+        hz_az_closed = hz_az + [hz_az[0] + 360]
+        hz_alt_closed = hz_alt + [hz_alt[0]]
+        # Polar plot: azimuth in radians, radius = 90 - altitude.
+        hz_theta = [np.radians(a) for a in hz_az_closed]
+        hz_r = [90 - a for a in hz_alt_closed]
+        ax_sky.plot(hz_theta, hz_r, color='red', linewidth=2, linestyle='-', label='My Horizon', zorder=5)
+        ax_sky.fill_between(hz_theta, hz_r, 90, color='red', alpha=0.15, zorder=4)
         plt.legend(loc='center left', bbox_to_anchor=(1.25, 0.5))
         sky_path = os.path.join(scratch_dir, "sky.png")
         plt.savefig(sky_path)
