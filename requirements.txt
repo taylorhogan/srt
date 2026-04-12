@@ -95,3 +95,7 @@ webencodings==0.5.1
 yarl==1.18.3
 speedtest-cli
 gpiozero
+fastapi
+uvicorn[standard]
+websockets
+python-multipart

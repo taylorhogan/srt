@@ -7,7 +7,7 @@ class PublicConfig():
 
         },
         "version": {
-            "date": "2026.4.12.1"
+            "date": "2026.4.12.2"
         },
 
         "logger": {
@@ -66,6 +66,14 @@ class PublicConfig():
                 "Observatory State": "In Development",
                 "Imaging Tonight": "Unknown"
             },
+
+        "web_chat": {
+            "enabled": True,
+            "port": 8095,
+            "host": "0.0.0.0",
+            "mastodon_mirror": False,
+            "max_history": 500,
+        },
 
         "sync": {
             "rsync_path": "C:/Users/iriso/Documents/cwrsync_6.4.7_x64_free/bin/rsync",

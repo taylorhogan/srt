@@ -18,12 +18,14 @@ if __package__ is None or __package__ == "":
     if project_root not in sys.path:
         sys.path.insert(0, project_root)
 
+import requests as _requests_lib
 from iris_astronomy import astro_dso_visibility, obs_calendar, show_dso
 from configs import config
 from end_points import end
 from fits_processing import fitstojpg, fitsfwhm
 from control import instructions
 from cmd_processing import super_user_commands as su
+from cmd_processing import message_bus
 from nina_gen import nina_sequence_gen
 from utils.utils import topic_to_sched
 from utils import utils
@@ -281,8 +283,8 @@ def schedule_cmd(words: list[str], index: int, m: Mastodon, account: str) -> Non
         post_social_message(f"Failed to generate schedule for {best_name}: {e}")
 
 
-def _preview_worker(dso_name: str, scratch_dir: str, access_token: str, api_base_url: str) -> None:
-    """Runs in a spawned child process — fetches DSO survey image and posts to Mastodon."""
+def _preview_worker(dso_name: str, scratch_dir: str, web_chat_port: int) -> None:
+    """Runs in a spawned child process — fetches DSO survey image and posts via web chat API."""
     import os, sys
     _root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
     if _root not in sys.path:
@@ -292,16 +294,15 @@ def _preview_worker(dso_name: str, scratch_dir: str, access_token: str, api_base
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
     from astropy.visualization import ZScaleInterval, ImageNormalize
-    from mastodon import Mastodon
     from iris_astronomy import show_dso
+    import requests
 
     def _post(msg, image_path=None):
-        m = Mastodon(access_token=access_token, api_base_url=api_base_url)
+        url = f"http://localhost:{web_chat_port}/api/post"
+        data = {"message": msg}
         if image_path:
-            media = m.media_post(image_path, "image/jpeg")
-            m.status_post(msg, media_ids=media)
-        else:
-            m.status_post(msg)
+            data["image_path"] = image_path
+        requests.post(url, data=data, timeout=30)
 
     try:
         data, _ = show_dso.get_dso_image(dso_name, show=False)
@@ -327,7 +328,7 @@ def _preview_worker(dso_name: str, scratch_dir: str, access_token: str, api_base
 
 
 def post_dso_preview(dso_name: str) -> None:
-    """Fetch a DSS2 survey image in a child process and post it to Mastodon.
+    """Fetch a DSS2 survey image in a child process and post it to the chat.
 
     Uses multiprocessing (spawn) so a hung SkyView/SIMBAD call can be
     forcefully terminated after the timeout rather than leaking a thread.
@@ -337,13 +338,12 @@ def post_dso_preview(dso_name: str) -> None:
     cfg = config.data()
     _project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
     scratch_dir = os.path.join(_project_root, cfg["scratch"]["directory"])
-    access_token = cfg["mastodon"]["access_token"]
-    api_base_url = cfg["mastodon"]["api_base_url"]
+    web_chat_port = cfg.get("web_chat", {}).get("port", 8095)
 
     def _watchdog():
         p = _PREVIEW_MP_CONTEXT.Process(
             target=_preview_worker,
-            args=(dso_name, scratch_dir, access_token, api_base_url),
+            args=(dso_name, scratch_dir, web_chat_port),
             daemon=True,
         )
         p.start()
@@ -386,7 +386,7 @@ keywords = {
 }
 
 
-def do_command(sentence: str, m: Mastodon, account: str) -> None:
+def do_command(sentence: str, m: Optional[Any] = None, account: str = "") -> None:
 
     if not su.is_super_user(account):
         return
@@ -459,25 +459,38 @@ def get_mastodon_instance() -> Mastodon:
 
 
 def post_social_message(message: str, image: Optional[str] = None, vis: Optional[str] = None) -> None:
-    cfg = config.data()
     logger = logging.getLogger(__name__)
-    mastodon = cfg["globals"]["mastodon instance"]
+    cfg = config.data()
 
-    if mastodon is None:
-        mastodon = get_mastodon_instance()
-        cfg["globals"]["mastodon instance"] = mastodon
-
-
-    if image is None:
-        mastodon.status_post(message, visibility=vis)
+    # Route through in-process message bus if available (web server process),
+    # otherwise fall back to HTTP POST (scheduler process, standalone scripts).
+    if message_bus.is_initialized():
+        message_bus.post_message(message, image)
     else:
-        #       media_upload_mastodon = mastodon.media_post(image)
-        #        mastodon.media_update(media_upload_mastodon, description="text")
-        #       post = mastodon.status_post(message, media_ids=media_upload_mastodon)
+        try:
+            port = cfg.get("web_chat", {}).get("port", 8095)
+            data = {"message": message}
+            if image:
+                data["image_path"] = image
+            _requests_lib.post(f"http://localhost:{port}/api/post", data=data, timeout=30)
+        except Exception:
+            logger.exception("Failed to post message via web chat API")
 
-        mime = "image/jpeg" if image.lower().endswith((".jpg", ".jpeg")) else "image/png"
-        media = mastodon.media_post(image, mime)
-        mastodon.status_post(message, media_ids=media, visibility=vis)
+    # Optionally mirror to Mastodon
+    if cfg.get("web_chat", {}).get("mastodon_mirror", False):
+        try:
+            mastodon = cfg["globals"]["mastodon instance"]
+            if mastodon is None:
+                mastodon = get_mastodon_instance()
+                cfg["globals"]["mastodon instance"] = mastodon
+            if image is None:
+                mastodon.status_post(message, visibility=vis)
+            else:
+                mime = "image/jpeg" if image.lower().endswith((".jpg", ".jpeg")) else "image/png"
+                media = mastodon.media_post(image, mime)
+                mastodon.status_post(message, media_ids=media, visibility=vis)
+        except Exception:
+            logger.exception("Failed to mirror message to Mastodon")
 
 
 def handle_mention(notification: Any) -> None:
@@ -489,22 +502,31 @@ def handle_mention(notification: Any) -> None:
 
 
 def start_interface() -> None:
-    print("Starting Social Server")
+    """Start the web chat server (FastAPI/uvicorn)."""
+    import uvicorn
+    from cmd_processing import web_server
+
     cfg = config.data()
+    web_cfg = cfg.get("web_chat", {})
+    host = web_cfg.get("host", "0.0.0.0")
+    port = web_cfg.get("port", 8095)
+
+    _project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+    images_dir = os.path.join(_project_root, "iris_astronomy", "scratch", "chat_images")
+    web_server.init(images_dir)
+
     post_social_message("Starting Version " + cfg["version"]["date"])
 
-    mastodon = get_mastodon_instance()
+    # Optionally also listen on Mastodon
+    if web_cfg.get("mastodon_mirror", False):
+        try:
+            mastodon = get_mastodon_instance()
+            listener = CallbackStreamListener(notification_handler=handle_mention)
+            mastodon.stream_user(listener, run_async=True, reconnect_async=True, timeout=600)
+        except Exception:
+            logging.getLogger(__name__).exception("Failed to start Mastodon listener")
 
-    listener = CallbackStreamListener(notification_handler=handle_mention)
-    mastodon.stream_user(listener, run_async=True, reconnect_async=True, timeout=600)
-    while True:
-        asyncio.run(wait_a_bit())
-
-
-
-
-async def wait_a_bit() -> None:
-    await asyncio.sleep(10)
+    uvicorn.run(web_server.app, host=host, port=port, log_level="info")
 
 
 def main() -> None:
@@ -520,8 +542,15 @@ def main() -> None:
                         datefmt='%m/%d/%Y %I:%M:%S %p')
     logger.info('Started Social Server')
 
+    # Initialize Mastodon instance if mirroring is enabled
+    web_cfg = cfg.get("web_chat", {})
+    if web_cfg.get("mastodon_mirror", False):
+        cfg["globals"]["mastodon instance"] = get_mastodon_instance()
 
-    cfg["globals"]["mastodon instance"] = get_mastodon_instance()
+    # Initialize the message bus
+    _project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+    images_dir = os.path.join(_project_root, "iris_astronomy", "scratch", "chat_images")
+    message_bus.init(images_dir, max_history=web_cfg.get("max_history", 500))
 
     mqtt_client = utils.connect_mqtt()
     cfg["globals"]["mqtt_client"] = mqtt_client
@@ -535,10 +564,6 @@ def main() -> None:
     except Exception:
         logger.info('Problem')
         logger.exception("Exception")
-        try:
-            get_mastodon_instance().status_post("Oops I had a problem with Social server")
-        except Exception:
-            logger.exception("Failed to post error message to Mastodon")
         try:
             start_interface()
         except Exception:
