@@ -217,7 +217,7 @@ def do_main():
         logger.exception("Exception")
 
 
-    super_user_commands.set_imaging_state(super_user_commands.ImagingState.NONE)
+
 
     from astral import LocationInfo
     from astral.sun import sun
@@ -228,6 +228,7 @@ def do_main():
     sunset = sun(city.observer, date=yesterday)["sunset"]
     _post_imaging_summary(sunset.replace(tzinfo=None))
     logger.info('End End Sequence')
+    super_user_commands.set_imaging_state(super_user_commands.ImagingState.NONE)
 
 
 

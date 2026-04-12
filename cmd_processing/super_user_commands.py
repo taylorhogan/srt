@@ -262,6 +262,26 @@ def open_if_mount_off_cmd(words: list[str], account: str) -> None:
 _SCRIPTS_DIR = os.path.join(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')), "scripts")
 
 
+def _wait_for_nina_exit(poll_interval: int = 30, timeout: int = 600) -> None:
+    """Block until no NINA.exe process is running.
+
+    Polls every *poll_interval* seconds. Gives up after *timeout* seconds
+    and logs a warning, but does not raise — the caller can proceed anyway.
+    """
+    start = time.time()
+    while time.time() - start < timeout:
+        result = subprocess.run(
+            ["tasklist", "/FI", "IMAGENAME eq NINA.exe"],
+            capture_output=True, text=True, shell=True,
+        )
+        if "NINA.exe" not in result.stdout:
+            _logger.info("NINA process has exited")
+            return
+        _logger.info("NINA still running, waiting %ds", poll_interval)
+        time.sleep(poll_interval)
+    _logger.warning("Timed out waiting for NINA to exit after %ds", timeout)
+
+
 def on_nina(words: Optional[list[str]], account: Optional[str]) -> None:
     """Launch the NINA prelude script (blocking).
 
@@ -706,25 +726,22 @@ def doit_cmd(words: list[str], account: str) -> None:
         set_imaging_state(ImagingState.IN_MAIN)
         if operand == 1:
             image_nina1(None, None)
-            _logger.info("Waiting for imaging state to return to NONE")
-            while get_imaging_state() != ImagingState.NONE:
-                time.sleep(60)
-            _logger.info("Imaging state is NONE — main imaging complete")
-            do_flats()
         elif operand == 2:
             image_nina2(None, None)
-            _logger.info("Waiting for imaging state to return to NONE")
-            while get_imaging_state() != ImagingState.NONE:
-                time.sleep(60)
-            _logger.info("Imaging state is NONE — main imaging complete")
-            do_flats()
         elif operand == 3:
             # No imaging — just home the scope and park via NINA.
             home_and_park(None, None)
-            _logger.info("Waiting for home_and_park to complete (state = NONE)")
-            while get_imaging_state() != ImagingState.NONE:
-                time.sleep(60)
-            _logger.info("Imaging state is NONE — home and park complete")
+
+        _logger.info("Waiting for imaging state to return to NONE")
+        while get_imaging_state() != ImagingState.NONE:
+            time.sleep(60)
+        _logger.info("Imaging state is NONE — main phase complete")
+
+        # Wait for NINA to fully exit before starting flats.
+        _logger.info("Waiting for NINA process to exit")
+        social_server.post_social_message("Waiting for NINA to exit before flats")
+        _wait_for_nina_exit()
+        do_flats()
 
 
 
