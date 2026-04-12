@@ -115,7 +115,7 @@ def _post_imaging_summary(imaging_start: datetime) -> None:
 
     social_server.post_social_message(
         f"Imaging complete — {len(fits_files)} frames ({len(fwhm_px_list)} with stars)\n"
-        f"Median FWHM: {median_fwhm_px:.2f} px ({median_fwhm_arcsec:.2f}\")\n"
+        f'Median FWHM: {median_fwhm_arcsec:.2f}"\n'
         f"Median stars/frame: {median_stars:.0f}\n"
         f"Median eccentricity: {median_ecc:.3f}"
     )

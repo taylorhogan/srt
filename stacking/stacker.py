@@ -899,4 +899,5 @@ if __name__ == "__main__":
             if info["fwhm_values"]:
                 vals = [v for v in info["fwhm_values"].values() if v > 0]
                 if vals:
-                    print(f"  FWHM range: {min(vals):.2f} – {max(vals):.2f} px  (mean {np.mean(vals):.2f} px)")
+                    app = _get_arcsec_per_pixel()
+                    print(f'  FWHM range: {min(vals)*app:.2f} – {max(vals)*app:.2f}"  (mean {np.mean(vals)*app:.2f}")')

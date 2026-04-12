@@ -203,7 +203,7 @@ def latest_cmd(words: list[str], index: int, m: Mastodon, account: str) -> None:
 
     latest_jpg, mean_px, mean_ecc = fitsfwhm.save_fwhm(Path(str(latest_fits)), output_path, arcsec_per_pixel=cfg["nina"]["arc_sec_per_pixel"], annotate=False)
     arcsec = mean_px * cfg["nina"]["arc_sec_per_pixel"]
-    caption = f"Latest  |  FWHM {mean_px:.2f} px ({arcsec:.2f}\")  |  ecc {mean_ecc:.3f}"
+    caption = f'Latest  |  FWHM {arcsec:.2f}"  |  ecc {mean_ecc:.3f}'
     post_social_message(caption, str(latest_jpg))
 
     metrics = fitsfwhm.compute_optical_metrics(

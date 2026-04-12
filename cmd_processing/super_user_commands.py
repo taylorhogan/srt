@@ -32,24 +32,32 @@ from nina_gen import nina_sequence_gen
 _logger = utils.set_logger()
 
 def is_inside_light_on(dev_map: dict) -> bool:
+    """Check whether the observatory inside light is currently on via Kasa."""
     inst = {"Iris inside light": "ison"}
     inside_light_on = asyncio.run(ku.kasa_check(dev_map, inst))
     return inside_light_on
 
 
 def turn_inside_light_on(dev_map: dict) -> None:
+    """Turn on the observatory inside light and wait for the relay to settle."""
     inst = {"Iris inside light": 'on'}
     asyncio.run(ku.kasa_do(dev_map, inst))
     time.sleep(2)
 
 
 def turn_inside_light_off(dev_map: dict) -> None:
+    """Turn off the observatory inside light and wait for the relay to settle."""
     inst = {"Iris inside light": 'off'}
     asyncio.run(ku.kasa_do(dev_map, inst))
     time.sleep(2)
 
 
 def toggle_roof(dev_map: dict) -> None:
+    """Power the roof motor, trigger the Shelly relay to move the roof, then power off.
+
+    The roof direction (open/close) depends on its current position — the relay
+    simply toggles. Waits 45 seconds for the roof to complete its travel.
+    """
     inst = {"Roof motor": 'on'}
     asyncio.run(ku.kasa_do(dev_map, inst))
     time.sleep(10)
@@ -106,13 +114,17 @@ def announce_roof_movement(text: str, speaker_name: str = "Observatory", volume:
 
 
 def get_status_with_lights() -> tuple[bool, bool, bool, Any]:
-
+    """Take a camera snapshot and return (parked, closed, open, mod_date) via vision safety."""
     parked, closed, open, mod_date = vision_safety.visual_status()
 
     return parked, closed, open, mod_date
 
 
 def open_roof_with_option(check: bool) -> bool:
+    """Open the observatory roof. If *check* is True, verify the scope is parked
+    and the roof is closed via vision safety before toggling. Returns True only
+    when the roof is confirmed open and the scope is still parked.
+    """
     dev_map = asyncio.run(ku.make_discovery_map())
     if check:
         parked, closed, open, mod_date = get_status_with_lights()
@@ -137,6 +149,11 @@ def open_roof_with_option(check: bool) -> bool:
 
 
 def unsafe_cmd(words: list[str], account: str) -> None:
+    """Mark conditions as unsafe — writes USER UNSAFE to safety.txt.
+
+    Any in-progress imaging run will abort at its next safety gate.
+    Mastodon command: ``stop!``
+    """
     social_server.post_social_message("User has stopped imaging")
     utils.set_install_dir()
     with open("safety.txt", "w") as file:
@@ -144,6 +161,12 @@ def unsafe_cmd(words: list[str], account: str) -> None:
 
 
 def safe_cmd(words: list[str], account: str) -> None:
+    """Mark conditions as safe for imaging — writes USER SAFE to safety.txt.
+
+    Must be issued before starting an imaging run; ``doit_cmd`` checks this
+    at multiple safety gates throughout the night.
+    Mastodon command: ``safe!``
+    """
     social_server.post_social_message("User has said imaging is safe")
     utils.set_install_dir()
     with open("safety.txt", "w") as file:
@@ -161,6 +184,11 @@ class ImagingState(Enum):
 
 
 def set_imaging_state(state: ImagingState) -> None:
+    """Persist the current imaging phase to imaging.txt and announce it on Mastodon.
+
+    External processes (NINA bat scripts) also call this via set_imaging_state.bat
+    to signal phase transitions like DONE_PRELUDE or DONE_FLATS.
+    """
     print (f"IMAGING_STATE {state.value}")
     utils.set_install_dir()
     with open("imaging.txt", "w") as file:
@@ -169,6 +197,7 @@ def set_imaging_state(state: ImagingState) -> None:
 
 
 def set_mode(mode: str) -> None:
+    """Write the scheduler mode (auto or manual) to mode.txt and announce on Mastodon."""
     utils.set_install_dir()
     with open("mode.txt", "w") as file:
         file.write(f"MODE {mode.upper()}")
@@ -176,6 +205,7 @@ def set_mode(mode: str) -> None:
 
 
 def mode_cmd(words: list[str], account: str) -> None:
+    """Set the scheduler to auto or manual mode. Mastodon command: ``mode auto|manual``"""
     if len(words) < 3 or words[2] not in ("auto", "manual"):
         social_server.post_social_message("Usage: mode auto|manual")
         return
@@ -183,6 +213,7 @@ def mode_cmd(words: list[str], account: str) -> None:
 
 
 def get_mode() -> str:
+    """Read the current scheduler mode from mode.txt. Returns 'auto' or 'manual'."""
     utils.set_install_dir()
     try:
         with open("mode.txt", "r") as file:
@@ -194,6 +225,12 @@ def get_mode() -> str:
     return "manual"
 
 def open_if_mount_off_cmd(words: list[str], account: str) -> None:
+    """Open the roof only if the telescope mount power is off.
+
+    Safety measure: refuses to toggle the roof if the mount is powered on,
+    since a powered mount may be tracking and the scope could be in the
+    path of the roof.
+    """
     dev_map = asyncio.run(ku.make_discovery_map())
     inst = {"Telescope mount": 'isoff'}
 
@@ -226,33 +263,44 @@ _SCRIPTS_DIR = os.path.join(os.path.abspath(os.path.join(os.path.dirname(__file_
 
 
 def on_nina(words: Optional[list[str]], account: Optional[str]) -> None:
+    """Launch the NINA prelude script (blocking).
+
+    Runs on_nina.bat which connects the mount, performs a meridian flip if
+    needed, runs autofocus, and slews to the target. Blocks until the bat
+    file exits.
+    """
     print("Starting Nina")
     subprocess.run([os.path.join(_SCRIPTS_DIR, "on_nina.bat")], shell=True)
     print("Done with Nina")
 
 
 def image_nina1(words: Optional[list[str]], account: Optional[str]) -> None:
+    """Launch the primary NINA imaging sequence (non-blocking Popen)."""
     print("Starting Nina")
     subprocess.Popen([os.path.join(_SCRIPTS_DIR, "image_nina1.bat")], shell=True)
     print("Done with Nina")
 
 def image_nina2(words: Optional[list[str]], account: Optional[str]) -> None:
+    """Launch the secondary NINA imaging sequence (non-blocking Popen)."""
     print("Starting Nina")
     subprocess.Popen([os.path.join(_SCRIPTS_DIR, "image_nina2.bat")], shell=True)
     print("Done with Nina")
 
 
 def home_and_park(words: Optional[list[str]], account: Optional[str]) -> None:
+    """Slew the scope home and park it via NINA (non-blocking Popen). No imaging."""
     print("Starting Nina home and park")
     subprocess.Popen([os.path.join(_SCRIPTS_DIR, "home_and_park.bat")], shell=True)
     print("Done with Nina home and park")
 
 
 def shutdown(words: list[str], account: str) -> None:
+    """Placeholder for a future shutdown command. Currently a no-op."""
     return
 
 
 def print_help(account: str) -> None:
+    """Post the list of available super-user commands to Mastodon. Only responds to super users."""
     if not is_super_user(account):
         return
     reply = "Available SU commands are\n"
@@ -263,31 +311,26 @@ def print_help(account: str) -> None:
 
 
 def dbb_cmd(words: list[str], account: str) -> None:
+    """Rehash and fully rebuild the imaging queue from scratch. Mastodon command: ``dbb``"""
     instructions.rehash_db()
     instructions.create_instructions_table(True)
 
 
 def dbr_cmd(words: list[str], account: str) -> None:
-    """
-    rehash db, example dbr
-    """
+    """Rehash the imaging queue and regenerate the instructions table. Mastodon command: ``dbr``"""
     instructions.rehash_db()
     instructions.create_instructions_table()
 
 
 def dbd_cmd(words: list[str], account: str) -> None:
-    """
-       delete a db entry, example dbd 12
-    """
+    """Delete an entry from the imaging queue by ID. Mastodon command: ``dbd <id>``"""
     instructions.delete_instruction_db(words[2])
 
     instructions.create_instructions_table()
 
 
 def dbc_cmd(words: list[str], account: str) -> None:
-    """
-       mark db entry as complete, example dbc 1
-        """
+    """Mark an imaging queue entry as completed by ID. Mastodon command: ``dbc <id>``"""
     logger = logging.getLogger(__name__)
     logger.info("db_cmd %s", words)
     instructions.set_completed_instruction_db(words[2])
@@ -380,6 +423,7 @@ def sequence_cmd(words: list[str], account: str) -> None:
 
 
 def get_super_user_commands() -> dict[str, Callable]:
+    """Return the command-name → handler mapping for all super-user Mastodon commands."""
     return {
         "dbr": dbr_cmd,
         "dbd": dbd_cmd,
@@ -398,6 +442,7 @@ def get_super_user_commands() -> dict[str, Callable]:
 
 
 def is_super_user(account: str) -> bool:
+    """Return True if *account* is in the configured Super Users list."""
     cfg = config.data()
 
     super_users = cfg["Super Users"]
@@ -408,6 +453,7 @@ def is_super_user(account: str) -> bool:
 
 
 def do_super_user_command(words: list[str], account: str) -> bool:
+    """Dispatch a super-user command. Returns True if a handler ran, False otherwise."""
     if not is_super_user(account):
         print("no auth")
         return False
@@ -423,6 +469,7 @@ def do_super_user_command(words: list[str], account: str) -> bool:
 
 
 def is_safe() -> bool:
+    """Return True if the observatory has been marked safe via ``safe!`` command."""
     utils.set_install_dir()
     try:
         with open("safety.txt", "r") as file:
@@ -447,6 +494,7 @@ def get_scheduler_state() -> dict:
 
 
 def get_imaging_state() -> ImagingState:
+    """Read the current imaging state from ``imaging.txt``. Returns NONE if missing."""
     utils.set_install_dir()
     try:
         with open("imaging.txt", "r") as file:
@@ -463,14 +511,20 @@ def get_imaging_state() -> ImagingState:
 
 
 def is_imaging() -> bool:
+    """Return True if any imaging activity is currently in progress."""
     return get_imaging_state() != ImagingState.NONE
 
 def image_cmd(words: list[str], account: str) -> None:
+    """Start a full imaging run in a background thread (non-blocking)."""
     if is_imaging():
         pushover.push_message("Already imaging, cannot restart")
     else:
-        doit_cmd(words, account)
-        set_imaging_state(ImagingState.NONE)
+        def _run():
+            try:
+                doit_cmd(words, account)
+            finally:
+                set_imaging_state(ImagingState.NONE)
+        threading.Thread(target=_run, daemon=True).start()
 
 
 
@@ -708,14 +762,17 @@ def do_flats() -> None:
 
 
 def doflats_cmd(words: list[str], account: str) -> None:
+    """Start a flat-frame capture sequence in a background thread (non-blocking)."""
     if is_imaging():
         pushover.push_message("Already imaging, cannot start flats")
         return
-    set_imaging_state(ImagingState.ACTIVE)
-    try:
-        do_flats()
-    finally:
-        set_imaging_state(ImagingState.NONE)
+    def _run():
+        set_imaging_state(ImagingState.ACTIVE)
+        try:
+            do_flats()
+        finally:
+            set_imaging_state(ImagingState.NONE)
+    threading.Thread(target=_run, daemon=True).start()
 
 
 def image_stats_cmd(words: list[str], account: str) -> None:

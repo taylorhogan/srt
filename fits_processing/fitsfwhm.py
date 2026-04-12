@@ -198,17 +198,18 @@ def display_fwhm(
             color = "yellow"
         ax.add_patch(Circle((x, y), radius=fwhm * 2.5, color=color, fill=False, linewidth=1.5))
 
+    mean_arcsec = mean_px * arcsec_per_pixel
     ax.set_title(
         f"{fits_path.name}  |  {len(stars)} stars  |  "
-        f"mean FWHM {mean_px:.2f} px  ({mean_px * arcsec_per_pixel:.2f}\")  |  "
+        f'mean FWHM {mean_arcsec:.2f}"  |  '
         f"mean ecc {mean_ecc:.3f}"
     )
     ax.set_xlabel("X (pixels)")
     ax.set_ylabel("Y (pixels)")
     ax.legend(handles=[
-        Patch(facecolor="none", edgecolor="green",  label=f"Good  (< {mean_px * 0.9:.1f} px / -{mean_px * arcsec_per_pixel * 0.1:.2f}\")"),
-        Patch(facecolor="none", edgecolor="yellow", label=f"OK    ({mean_px * 0.9:.1f} – {mean_px * 1.1:.1f} px)"),
-        Patch(facecolor="none", edgecolor="red",    label=f"Soft  (> {mean_px * 1.1:.1f} px / +{mean_px * arcsec_per_pixel * 0.1:.2f}\")"),
+        Patch(facecolor="none", edgecolor="green",  label=f'Good  (< {mean_arcsec * 0.9:.2f}")'),
+        Patch(facecolor="none", edgecolor="yellow", label=f'OK    ({mean_arcsec * 0.9:.2f} – {mean_arcsec * 1.1:.2f}")'),
+        Patch(facecolor="none", edgecolor="red",    label=f'Soft  (> {mean_arcsec * 1.1:.2f}")'),
     ], loc="upper right")
 
     plt.tight_layout()
@@ -249,9 +250,10 @@ def save_fwhm(
                 color = "yellow"
             ax.add_patch(Circle((x, y), radius=fwhm * 2.5, color=color, fill=False, linewidth=1.5))
 
+    mean_arcsec = mean_px * arcsec_per_pixel
     title = (
         f"{fits_path.name}  |  {len(stars)} stars  |  "
-        f"mean FWHM {mean_px:.2f} px  ({mean_px * arcsec_per_pixel:.2f}\")  |  "
+        f'mean FWHM {mean_arcsec:.2f}"  |  '
         f"mean ecc {mean_ecc:.3f}"
         if stars else f"{fits_path.name}  |  no stars detected"
     )
@@ -260,9 +262,9 @@ def save_fwhm(
     ax.set_ylabel("Y (pixels)")
     if annotate and stars:
         ax.legend(handles=[
-            Patch(facecolor="none", edgecolor="green",  label=f"Good  (< {mean_px * 0.9:.1f} px)"),
-            Patch(facecolor="none", edgecolor="yellow", label=f"OK    ({mean_px * 0.9:.1f} – {mean_px * 1.1:.1f} px)"),
-            Patch(facecolor="none", edgecolor="red",    label=f"Soft  (> {mean_px * 1.1:.1f} px)"),
+            Patch(facecolor="none", edgecolor="green",  label=f'Good  (< {mean_arcsec * 0.9:.2f}")'),
+            Patch(facecolor="none", edgecolor="yellow", label=f'OK    ({mean_arcsec * 0.9:.2f} – {mean_arcsec * 1.1:.2f}")'),
+            Patch(facecolor="none", edgecolor="red",    label=f'Soft  (> {mean_arcsec * 1.1:.2f}")'),
         ], loc="upper right")
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -371,13 +373,15 @@ def save_fwhm_heatmaps(
     # --- FWHM grid ---
     fwhm_grid = _make_grid(xs, ys, fwhms, img_h, img_w, n_cells)
     median_fwhm = float(np.median(fwhms))
+    median_fwhm_arcsec = median_fwhm * arcsec_per_pixel
+    fwhm_grid_arcsec = fwhm_grid * arcsec_per_pixel
     _render(
         fwhm_output_path, "FWHM",
-        fwhm_grid,
-        Normalize(vmin=np.nanmin(fwhm_grid), vmax=np.nanmax(fwhm_grid)),
-        "FWHM (px)",
+        fwhm_grid_arcsec,
+        Normalize(vmin=np.nanmin(fwhm_grid_arcsec), vmax=np.nanmax(fwhm_grid_arcsec)),
+        'FWHM (arcsec)',
         f"{fits_path.name}  |  FWHM grid  |  {len(stars)} stars  |  "
-        f"median {median_fwhm:.2f} px ({median_fwhm * arcsec_per_pixel:.2f}\")",
+        f'median {median_fwhm_arcsec:.2f}"',
     )
 
     # --- Eccentricity grid ---
@@ -417,26 +421,26 @@ def save_fwhm_vs_distance(
     else:
         cy, cx = data.shape[0] / 2.0, data.shape[1] / 2.0
         distances = np.array([np.hypot(s[0] - cx, s[1] - cy) for s in stars])
-        fwhms = np.array([s[2] for s in stars])
+        fwhms_arcsec = np.array([s[2] * arcsec_per_pixel for s in stars])
 
-        ax.scatter(distances, fwhms, s=18, alpha=0.7, color="steelblue", linewidths=0)
+        ax.scatter(distances, fwhms_arcsec, s=18, alpha=0.7, color="steelblue", linewidths=0)
 
         # Linear trend line
         if len(stars) >= 2:
-            coeffs = np.polyfit(distances, fwhms, 1)
+            coeffs = np.polyfit(distances, fwhms_arcsec, 1)
             x_line = np.linspace(distances.min(), distances.max(), 200)
             ax.plot(x_line, np.polyval(coeffs, x_line), color="tomato", linewidth=1.5,
-                    label=f"trend  slope={coeffs[0]:+.4f} px/px")
+                    label=f'trend  slope={coeffs[0]:+.4f}"/px')
             ax.legend(fontsize=9)
 
-        median_fwhm = float(np.median(fwhms))
-        ax.axhline(median_fwhm, color="gray", linewidth=1, linestyle="--",
-                   label=f"median {median_fwhm:.2f} px")
+        median_fwhm_arcsec = float(np.median(fwhms_arcsec))
+        ax.axhline(median_fwhm_arcsec, color="gray", linewidth=1, linestyle="--",
+                   label=f'median {median_fwhm_arcsec:.2f}"')
         ax.set_xlabel("Distance from centre (px)")
-        ax.set_ylabel(f"FWHM (px)   [1 px = {arcsec_per_pixel:.3f}\"]")
+        ax.set_ylabel('FWHM (arcsec)')
         ax.set_title(
             f"{fits_path.name}  |  FWHM vs distance  |  {len(stars)} stars  |  "
-            f"median {median_fwhm:.2f} px ({median_fwhm * arcsec_per_pixel:.2f}\")"
+            f'median {median_fwhm_arcsec:.2f}"'
         )
         ax.grid(True, alpha=0.3)
 
@@ -636,7 +640,7 @@ def save_optical_metrics_table(metrics: dict, output_path: Path) -> Path:
     ax.axis("off")
     ax.set_title(
         f"Optical Quality  |  {m['star_count']} stars  |  "
-        f"FWHM {m['median_fwhm_px']:.2f}px ({m['median_fwhm_arcsec']:.2f}\")  |  "
+        f"FWHM {m['median_fwhm_arcsec']:.2f}\"  |  "
         f"ecc {m['median_ecc']:.3f}",
         fontsize=11, pad=12,
     )
@@ -822,6 +826,6 @@ if __name__ == "__main__":
         path, arcsec_per_pixel=arcsec_per_pixel, threshold_sigma=threshold_sigma, min_snr=min_snr, max_ellipticity=max_ellipticity
     )
     print(f"Stars found      : {count}")
-    print(f"Mean FWHM        : {mean_pixels:.2f} px  ({mean_arcsec:.2f}\")")
+    print(f'Mean FWHM        : {mean_arcsec:.2f}"')
     print(f"Mean eccentricity: {mean_ecc:.3f}")
     display_fwhm(path, arcsec_per_pixel=arcsec_per_pixel, threshold_sigma=threshold_sigma, min_snr=min_snr, max_ellipticity=max_ellipticity)
