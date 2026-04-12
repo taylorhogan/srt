@@ -51,7 +51,7 @@ def determine_roof_state_visually(account):
 
 
 def _post_imaging_summary(imaging_start: datetime) -> None:
-    """Scan FITS files written since imaging_start and post quality metrics to Mastodon."""
+    """Scan FITS files written since imaging_start and post quality metrics to the web chat."""
     logger = utils.set_logger()
     cfg = config.data()
     image_dir = Path(cfg["nina"]["image_dir"])

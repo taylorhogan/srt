@@ -33,6 +33,22 @@ _MIN_SNR = 10.0
 # Ratio of the larger axis stddev to the smaller must not exceed this (1.0 = perfect circle)
 _MAX_ELLIPTICITY = 2.0
 
+_DARK_BG   = "#0d0d1a"
+_DARK_AXES = "#1a1a2e"
+
+
+def _apply_dark_theme(fig, *axes):
+    """Apply the standard dark observatory theme to a figure and its axes."""
+    fig.patch.set_facecolor(_DARK_BG)
+    for ax in axes:
+        ax.set_facecolor(_DARK_AXES)
+        ax.tick_params(colors="white")
+        ax.xaxis.label.set_color("white")
+        ax.yaxis.label.set_color("white")
+        ax.title.set_color("white")
+        for spine in ax.spines.values():
+            spine.set_edgecolor("#444466")
+
 
 def _fit_stars(
     fits_path: Path,
@@ -238,6 +254,7 @@ def save_fwhm(
     vmin, vmax = ZScaleInterval().get_limits(data)
 
     fig, ax = plt.subplots(figsize=(12, 12))
+    _apply_dark_theme(fig, ax)
     ax.imshow(data, origin="lower", cmap="gray", vmin=vmin, vmax=vmax, interpolation="nearest")
 
     if annotate:
@@ -261,15 +278,18 @@ def save_fwhm(
     ax.set_xlabel("X (pixels)")
     ax.set_ylabel("Y (pixels)")
     if annotate and stars:
-        ax.legend(handles=[
+        legend = ax.legend(handles=[
             Patch(facecolor="none", edgecolor="green",  label=f'Good  (< {mean_arcsec * 0.9:.2f}")'),
             Patch(facecolor="none", edgecolor="yellow", label=f'OK    ({mean_arcsec * 0.9:.2f} – {mean_arcsec * 1.1:.2f}")'),
             Patch(facecolor="none", edgecolor="red",    label=f'Soft  (> {mean_arcsec * 1.1:.2f}")'),
         ], loc="upper right")
+        legend.get_frame().set_facecolor(_DARK_AXES)
+        for text in legend.get_texts():
+            text.set_color("white")
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     plt.tight_layout()
-    plt.savefig(output_path, format="jpeg", dpi=150, bbox_inches="tight")
+    plt.savefig(output_path, format="jpeg", dpi=150, bbox_inches="tight", facecolor=fig.get_facecolor())
     plt.close(fig)
     return output_path, mean_px, mean_ecc
 
@@ -318,6 +338,7 @@ def save_fwhm_heatmaps(
 
     def _render(out_path, label, grid, norm, cbar_label, title):
         fig, ax = plt.subplots(figsize=(10, 10))
+        _apply_dark_theme(fig, ax)
         ax.imshow(data, origin="lower", cmap="gray", vmin=vmin, vmax=vmax,
                   interpolation="nearest", extent=[0, img_w, 0, img_h])
         # Draw each cell as a coloured rectangle; skip NaN cells
@@ -344,24 +365,27 @@ def save_fwhm_heatmaps(
                 )
         cb = plt.colorbar(ScalarMappable(norm=norm, cmap="RdYlGn_r"),
                           ax=ax, fraction=0.03, pad=0.02)
-        cb.set_label(cbar_label)
+        cb.set_label(cbar_label, color="white")
+        cb.ax.yaxis.set_tick_params(color="white")
+        plt.setp(cb.ax.yaxis.get_ticklabels(), color="white")
         ax.set_title(title)
         ax.set_xlabel("X (pixels)")
         ax.set_ylabel("Y (pixels)")
         out_path.parent.mkdir(parents=True, exist_ok=True)
         plt.tight_layout()
-        plt.savefig(out_path, format="jpeg", dpi=150, bbox_inches="tight")
+        plt.savefig(out_path, format="jpeg", dpi=150, bbox_inches="tight", facecolor=fig.get_facecolor())
         plt.close(fig)
 
     if not stars:
         for out_path, label in [(fwhm_output_path, "FWHM"), (ecc_output_path, "Eccentricity")]:
             fig, ax = plt.subplots(figsize=(10, 10))
+            _apply_dark_theme(fig, ax)
             ax.imshow(data, origin="lower", cmap="gray", vmin=vmin, vmax=vmax,
                       interpolation="nearest")
             ax.set_title(f"{fits_path.name}  |  {label} grid heatmap  |  no stars detected")
             out_path.parent.mkdir(parents=True, exist_ok=True)
             plt.tight_layout()
-            plt.savefig(out_path, format="jpeg", dpi=150, bbox_inches="tight")
+            plt.savefig(out_path, format="jpeg", dpi=150, bbox_inches="tight", facecolor=fig.get_facecolor())
             plt.close(fig)
         return fwhm_output_path, ecc_output_path
 
@@ -415,6 +439,7 @@ def save_fwhm_vs_distance(
     data, stars = _fit_stars(fits_path, threshold_sigma, min_snr, max_ellipticity)
 
     fig, ax = plt.subplots(figsize=(8, 6))
+    _apply_dark_theme(fig, ax)
 
     if not stars:
         ax.set_title(f"{fits_path.name}  |  FWHM vs distance  |  no stars detected")
@@ -446,7 +471,7 @@ def save_fwhm_vs_distance(
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     plt.tight_layout()
-    plt.savefig(output_path, format="jpeg", dpi=150, bbox_inches="tight")
+    plt.savefig(output_path, format="jpeg", dpi=150, bbox_inches="tight", facecolor=fig.get_facecolor())
     plt.close(fig)
     return output_path
 
@@ -470,6 +495,7 @@ def save_eccentricity_angle_map(
     vmin, vmax = ZScaleInterval().get_limits(data)
 
     fig, ax = plt.subplots(figsize=(10, 10))
+    _apply_dark_theme(fig, ax)
     ax.imshow(data, origin="lower", cmap="gray", vmin=vmin, vmax=vmax, interpolation="nearest")
 
     if not stars:
@@ -497,7 +523,9 @@ def save_eccentricity_angle_map(
 
         cb = plt.colorbar(ScalarMappable(norm=norm_ecc, cmap="RdYlGn_r"), ax=ax,
                           fraction=0.03, pad=0.02)
-        cb.set_label("Eccentricity (0=round, 1=elongated)")
+        cb.set_label("Eccentricity (0=round, 1=elongated)", color="white")
+        cb.ax.yaxis.set_tick_params(color="white")
+        plt.setp(cb.ax.yaxis.get_ticklabels(), color="white")
         mean_ecc = float(np.median(eccs))
         ax.set_title(
             f"{fits_path.name}  |  Elongation angle map  |  {len(stars)} stars  |  "
@@ -508,7 +536,7 @@ def save_eccentricity_angle_map(
     ax.set_ylabel("Y (pixels)")
     output_path.parent.mkdir(parents=True, exist_ok=True)
     plt.tight_layout()
-    plt.savefig(output_path, format="jpeg", dpi=150, bbox_inches="tight")
+    plt.savefig(output_path, format="jpeg", dpi=150, bbox_inches="tight", facecolor=fig.get_facecolor())
     plt.close(fig)
     return output_path
 
@@ -637,6 +665,7 @@ def save_optical_metrics_table(metrics: dict, output_path: Path) -> Path:
     cell_colors = [[cmap(s)] * 4 for s in scores]
 
     fig, ax = plt.subplots(figsize=(7, 3))
+    _apply_dark_theme(fig, ax)
     ax.axis("off")
     ax.set_title(
         f"Optical Quality  |  {m['star_count']} stars  |  "
@@ -664,7 +693,7 @@ def save_optical_metrics_table(metrics: dict, output_path: Path) -> Path:
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     plt.tight_layout()
-    plt.savefig(output_path, format="jpeg", dpi=150, bbox_inches="tight")
+    plt.savefig(output_path, format="jpeg", dpi=150, bbox_inches="tight", facecolor=fig.get_facecolor())
     plt.close(fig)
     return output_path
 

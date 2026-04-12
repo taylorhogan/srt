@@ -662,15 +662,17 @@ def best_object_tonight(instructions_path: Path | str) -> tuple[str, Optional[da
     n_cols = len(dark_hours)
 
     # Colour maps for symbols
-    ABOVE_COLOR   = "#d4f4d4"   # light green  — above horizon
-    BELOW_COLOR   = "#f4d4d4"   # light red    — below horizon
-    GOOD_WEATHER  = "#d4ecd4"   # light green  — good weather
-    BAD_WEATHER   = "#f0d0d0"   # light red    — bad weather
-    HEADER_COLOR  = "#dde8f0"   # blue-grey    — header row
+    ABOVE_COLOR   = "#1e5c1e"   # dark green   — above horizon
+    BELOW_COLOR   = "#5c1e1e"   # dark red     — below horizon
+    GOOD_WEATHER  = "#1e4a1e"   # dark green   — good weather
+    BAD_WEATHER   = "#4a1e1e"   # dark red     — bad weather
+    HEADER_COLOR  = "#1e2a3a"   # dark blue-grey — header row
 
     fig_w = max(10, 2 + n_cols * 0.45)
     fig_h = max(3,  1 + (n_obj + 2) * 0.35)
     fig, ax = plt.subplots(figsize=(fig_w, fig_h))
+    fig.patch.set_facecolor("#0d0d1a")
+    ax.set_facecolor("#0d0d1a")
     ax.axis("off")
 
     # Build cell text and colours row by row
@@ -687,7 +689,7 @@ def best_object_tonight(instructions_path: Path | str) -> tuple[str, Optional[da
     )
 
     # Object rows
-    PRIORITY_COLOR = "#fff3cd"   # amber — prioritized target
+    PRIORITY_COLOR = "#4a3a00"   # dark amber — prioritized target
     for name, symbols, alt_str, hrs_str, dso_type, priority in object_lines:
         display_name = f"★ {name}" if priority > 5 else name
         name_color = PRIORITY_COLOR if priority > 5 else HEADER_COLOR
@@ -709,12 +711,17 @@ def best_object_tonight(instructions_path: Path | str) -> tuple[str, Optional[da
     table.set_fontsize(9)
     table.auto_set_column_width(list(range(len(col_labels))))
 
-    ax.set_title("Tonight's Imaging Grid", fontsize=12, fontweight="bold", pad=10)
+    ax.set_title("Tonight's Imaging Grid", fontsize=12, fontweight="bold", pad=10, color="white")
+
+    # White text for all table cells
+    for (row, col), cell in table.get_celld().items():
+        cell.set_text_props(color="white")
+        cell.set_edgecolor("#2a3a4a")
 
     _project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
     png_path = os.path.join(_project_root, CFG["location"]["image_grid"])
     os.makedirs(os.path.dirname(png_path), exist_ok=True)
-    plt.savefig(png_path, bbox_inches="tight", dpi=150)
+    plt.savefig(png_path, bbox_inches="tight", dpi=150, facecolor=fig.get_facecolor())
     plt.clf()
     print(f"Grid saved to {png_path}")
 

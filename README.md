@@ -1,6 +1,6 @@
 # SRT Social Robotic Telescope
 The goal of this project is to remove/reduce human interaction in astronomy. Users interact with the system
-through a social messaging services (Currently Mastodon). Users request images of Deep Sky Objects and the system
+through a self-hosted web chat interface (accessible over Tailscale). Users request images of Deep Sky Objects and the system
 optimizes each night's imaging based on observability. When complete, the system adds the processed image to its catalog
 and alerts the user that it has completed. 
 Our goal is to have all this automated, We never want to be in the observatory. This all just happens. 
@@ -11,7 +11,7 @@ The only reason to open source this repo is to allow others using the Observator
 - **Architecture**
 
     - Social Server 
-      - Interaction with Social Media (Currently Mastodon)
+      - Web chat interface (FastAPI/WebSocket, with optional Mastodon mirroring)
     - Scheduler
       - Manages the day and evening tasks of the observatory
     - Vision Safety
@@ -23,14 +23,14 @@ The only reason to open source this repo is to allow others using the Observator
     - Servers communicate through mqtt
 - 
 
-The user adds a request to the system through Mastodon (`@tmhobservatory@mastodon.social`).For
+The user adds a request to the system through the web chat interface. For
 example  
 
-`@tmhobservatory image m31`  
+`image m31`  
 
 The User can also ask what is the best night for a specific DSO  
 
-`@tmhobservatory best m31`
+`best m31`
 
 Every night the system optimizes the night's imaging based on observability and weather. Below is a graph
 displayed to of the night given horizon, and weather conditions.  

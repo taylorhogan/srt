@@ -152,7 +152,7 @@ def unsafe_cmd(words: list[str], account: str) -> None:
     """Mark conditions as unsafe — writes USER UNSAFE to safety.txt.
 
     Any in-progress imaging run will abort at its next safety gate.
-    Mastodon command: ``stop!``
+    Command: ``stop!``
     """
     social_server.post_social_message("User has stopped imaging")
     utils.set_install_dir()
@@ -165,7 +165,7 @@ def safe_cmd(words: list[str], account: str) -> None:
 
     Must be issued before starting an imaging run; ``doit_cmd`` checks this
     at multiple safety gates throughout the night.
-    Mastodon command: ``safe!``
+    Command: ``safe!``
     """
     social_server.post_social_message("User has said imaging is safe")
     utils.set_install_dir()
@@ -184,7 +184,7 @@ class ImagingState(Enum):
 
 
 def set_imaging_state(state: ImagingState) -> None:
-    """Persist the current imaging phase to imaging.txt and announce it on Mastodon.
+    """Persist the current imaging phase to imaging.txt and announce it on the web chat.
 
     External processes (NINA bat scripts) also call this via set_imaging_state.bat
     to signal phase transitions like DONE_PRELUDE or DONE_FLATS.
@@ -197,7 +197,7 @@ def set_imaging_state(state: ImagingState) -> None:
 
 
 def set_mode(mode: str) -> None:
-    """Write the scheduler mode (auto or manual) to mode.txt and announce on Mastodon."""
+    """Write the scheduler mode (auto or manual) to mode.txt and announce on the web chat."""
     utils.set_install_dir()
     with open("mode.txt", "w") as file:
         file.write(f"MODE {mode.upper()}")
@@ -205,7 +205,7 @@ def set_mode(mode: str) -> None:
 
 
 def mode_cmd(words: list[str], account: str) -> None:
-    """Set the scheduler to auto or manual mode. Mastodon command: ``mode auto|manual``"""
+    """Set the scheduler to auto or manual mode. Command: ``mode auto|manual``"""
     if len(words) < 3 or words[2] not in ("auto", "manual"):
         social_server.post_social_message("Usage: mode auto|manual")
         return
@@ -320,7 +320,7 @@ def shutdown(words: list[str], account: str) -> None:
 
 
 def print_help(account: str) -> None:
-    """Post the list of available super-user commands to Mastodon. Only responds to super users."""
+    """Post the list of available super-user commands to the web chat. Only responds to super users."""
     if not is_super_user(account):
         return
     reply = "Available SU commands are\n"
@@ -331,26 +331,26 @@ def print_help(account: str) -> None:
 
 
 def dbb_cmd(words: list[str], account: str) -> None:
-    """Rehash and fully rebuild the imaging queue from scratch. Mastodon command: ``dbb``"""
+    """Rehash and fully rebuild the imaging queue from scratch. Command: ``dbb``"""
     instructions.rehash_db()
     instructions.create_instructions_table(True)
 
 
 def dbr_cmd(words: list[str], account: str) -> None:
-    """Rehash the imaging queue and regenerate the instructions table. Mastodon command: ``dbr``"""
+    """Rehash the imaging queue and regenerate the instructions table. Command: ``dbr``"""
     instructions.rehash_db()
     instructions.create_instructions_table()
 
 
 def dbd_cmd(words: list[str], account: str) -> None:
-    """Delete an entry from the imaging queue by ID. Mastodon command: ``dbd <id>``"""
+    """Delete an entry from the imaging queue by ID. Command: ``dbd <id>``"""
     instructions.delete_instruction_db(words[2])
 
     instructions.create_instructions_table()
 
 
 def dbc_cmd(words: list[str], account: str) -> None:
-    """Mark an imaging queue entry as completed by ID. Mastodon command: ``dbc <id>``"""
+    """Mark an imaging queue entry as completed by ID. Command: ``dbc <id>``"""
     logger = logging.getLogger(__name__)
     logger.info("db_cmd %s", words)
     instructions.set_completed_instruction_db(words[2])
@@ -443,7 +443,7 @@ def sequence_cmd(words: list[str], account: str) -> None:
 
 
 def get_super_user_commands() -> dict[str, Callable]:
-    """Return the command-name → handler mapping for all super-user Mastodon commands."""
+    """Return the command-name → handler mapping for all super-user commands."""
     return {
         "dbr": dbr_cmd,
         "dbd": dbd_cmd,
@@ -627,7 +627,7 @@ def doit_cmd(words: list[str], account: str) -> None:
 
     # ------------------------------------------------------------------ #
     # Safety gate 1: check before the initial wait.                        #
-    # The user must have previously issued "safe!" on Mastodon.            #
+    # The user must have previously issued "safe!" via the web chat.       #
     # ------------------------------------------------------------------ #
     pushover.push_message("Roof is closed, starting run in 1 min", inside_view)
     if not is_safe():

@@ -15,7 +15,7 @@ drive the observatory through a repeating daily cycle:
         → WAITING_FOR_NOON  (next day)
 
 At each gate the scheduler decides whether conditions justify imaging
-tonight, posts a status update to Mastodon, and advances (or retreats)
+tonight, posts a status update to the web chat, and advances (or retreats)
 to the next state.
 
 State descriptions
@@ -25,7 +25,7 @@ WAITING_FOR_NOON
 
 NOON_CHECK
     Recalculates DSO visibility for all queued targets, picks the best
-    one for tonight, posts the imaging grid and plan to Mastodon, and
+    one for tonight, posts the imaging grid and plan to the web chat, and
     decides whether tonight is worth imaging (≥ _MIN_GOOD_HOURS).
 
 WAITING_FOR_PRE_SUNSET
@@ -54,8 +54,9 @@ Inter-process communication
   shared state between this process, ``doit_cmd`` / ``end.py``, and the
   N.I.N.A Windows batch scripts.  The scheduler polls this file while
   waiting for an imaging run to complete.
-- **Mastodon**: all human-readable status updates are posted via
-  ``social_server.post_social_message``.
+- **Web chat**: all human-readable status updates are posted via
+  ``social_server.post_social_message`` (routed to the web chat, with
+  optional Mastodon mirroring).
 - **Pushover**: not used directly here; called downstream by
   ``super_user_commands.doit_cmd`` during the actual imaging run.
 
@@ -63,7 +64,7 @@ Dependencies (non-stdlib)
 -------------------------
 - ``iris_astronomy`` — DSO visibility, calendar, weather / sunset times.
 - ``control.instructions`` — JSON-backed DSO request queue.
-- ``cmd_processing.social_server`` — Mastodon posting.
+- ``cmd_processing.social_server`` — web chat server and message posting.
 - ``cmd_processing.super_user_commands`` — imaging state enum + image_cmd.
 - ``nina_gen.nina_sequence_gen`` — N.I.N.A sequence generator.
 - ``utils`` — MQTT helpers, logging.
@@ -150,7 +151,7 @@ def message_handling(client, userdata, msg):
 
     The social server publishes a message to ``utils.topic_to_sched``
     whenever it needs the current observatory state (e.g. to reply to a
-    Mastodon ``status`` command).  This handler serialises
+    ``status`` command).  This handler serialises
     ``observatory_state`` to JSON and publishes it back on
     ``iris/from_sched``.
 
@@ -274,7 +275,7 @@ def _get_best_object() -> tuple[str, int, datetime]:
 
 
 def _send_grid_to_mastodon():
-    """Post the nightly imaging grid image to Mastodon.
+    """Post the nightly imaging grid image to the web chat.
 
     Reads the pre-generated grid PNG from the path in config
     (``cfg["location"]["image_grid"]``) and posts it with a caption.
@@ -289,7 +290,7 @@ def _imaging_plan_message(dso_name: str, best_good_hours: float, best_start: dat
 
     Fetches today's sunset time and converts it (and *best_start*) to the
     observatory's configured timezone, then formats a three-line summary
-    suitable for posting to Mastodon.
+    suitable for posting to the web chat.
 
     Args:
         dso_name: The name of the target DSO (e.g. ``"M 31"``).
@@ -422,7 +423,7 @@ def _run_state_machine():
 
     This function never returns under normal operation.  Each iteration
     of the ``while True`` loop handles exactly one state transition.
-    Unhandled exceptions are caught, reported to Mastodon, and the
+    Unhandled exceptions are caught, reported to the web chat, and the
     machine falls back to ``WAITING_FOR_BOOT`` (a one-minute recovery
     pause) before resuming.
 
@@ -431,7 +432,7 @@ def _run_state_machine():
 
     **WAITING_FOR_BOOT**
         One-minute sleep used as a recovery buffer after an exception.
-        Gives external services (MQTT broker, Mastodon) time to
+        Gives external services (MQTT broker, web chat server) time to
         stabilise before the machine tries again.
 
     **WAITING_FOR_NOON**
@@ -441,8 +442,8 @@ def _run_state_machine():
     **NOON_CHECK**
         - Recalculates hours-above-horizon for every queued target.
         - Picks the best DSO via ``_get_best_object()``.
-        - Posts the imaging grid to Mastodon.
-        - Posts the current mode (``auto`` / ``manual``) to Mastodon.
+        - Posts the imaging grid to the web chat.
+        - Posts the current mode (``auto`` / ``manual``) to the web chat.
         - If ``best_good_hours >= _MIN_GOOD_HOURS``: posts a plan
           message, updates the calendar, and advances to
           ``WAITING_FOR_PRE_SUNSET``.
@@ -564,11 +565,11 @@ def _run_state_machine():
         except Exception:
             LOGGER.exception("Exception in state %s", state)
             try:
-                social_server.get_mastodon_instance().status_post(
+                social_server.post_social_message(
                     f"Oops I had a problem in state {state.name}"
                 )
             except Exception:
-                LOGGER.exception("Also failed to post exception notice to Mastodon")
+                LOGGER.exception("Also failed to post exception notice")
             state = State.WAITING_FOR_BOOT
 
 
@@ -585,7 +586,7 @@ def main():
         2. Reset imaging state to ``NONE`` (clears any stale ``imaging.txt``
            left by a previous crash).
         3. Force mode to ``manual`` — the operator must explicitly switch
-           to ``auto`` mode via Mastodon before any unattended imaging
+           to ``auto`` mode via the web chat before any unattended imaging
            will be triggered.
         4. Connect to the MQTT broker and subscribe to the inbound topic.
            If the broker is unavailable (e.g. running in development),

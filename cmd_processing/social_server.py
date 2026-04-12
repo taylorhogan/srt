@@ -11,8 +11,12 @@ import time
 import sys
 from typing import Any, Optional
 from bs4 import BeautifulSoup
-from mastodon import Mastodon, StreamListener
-from mastodon.streaming import CallbackStreamListener
+try:
+    from mastodon import Mastodon, StreamListener
+    from mastodon.streaming import CallbackStreamListener
+    _MASTODON_AVAILABLE = True
+except ImportError:
+    _MASTODON_AVAILABLE = False
 if __package__ is None or __package__ == "":
     project_root = os.path.abspath(os.path.join(os.path.dirname(__file__),  '..'))
     if project_root not in sys.path:
@@ -145,19 +149,20 @@ def status_cmd(words: list[str], index: int, m: Mastodon, account: str) -> None:
     end.determine_roof_state_visually(account)
 
     mode = su.get_mode()
-    safe = "safe" if su.is_safe() else "unsafe"
-    imaging = su.get_imaging_state().value
+    safe = "Safe" if su.is_safe() else "Unsafe"
+    imaging = su.get_imaging_state().value.replace("_", " ").title()
 
     sched = su.get_scheduler_state()
-    sched_str = (
-        f"Scheduler: {sched['state']} \n "
-        f"DSO: {sched['dso']} \n"
-        f"Image Tonight: {sched['will image tonight']}"
-    )
 
     post_social_message(
-        f"{sched_str}\n"
-        f"Mode: {mode} \n Safety: {safe} \n  Imaging: {imaging}"
+        f"━━ Observatory Status ━━\n"
+        f"Scheduler : {sched['state']}\n"
+        f"Target    : {sched['dso']}\n"
+        f"Imaging   : {sched['will image tonight']}\n"
+        f"━━ Control ━━\n"
+        f"Mode      : {mode.title()}\n"
+        f"Safety    : {safe}\n"
+        f"State     : {imaging}"
     )
 
 
@@ -432,9 +437,9 @@ def do_notification(notification: Any, m: Mastodon) -> None:
         logger.info('Problem')
         logger.exception("Exception")
         try:
-            m.status_post("Oops I had a problem processing a command")
+            post_social_message("Oops I had a problem processing a command")
         except Exception:
-            logger.exception("Failed to post error message to Mastodon")
+            logger.exception("Failed to post error message")
 
 
 class TheStreamListener(StreamListener):
