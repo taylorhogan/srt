@@ -442,6 +442,33 @@ def sequence_cmd(words: list[str], account: str) -> None:
         social_server.post_social_message(f"Failed to generate sequence for {dso_name}: {e}")
 
 
+_TODO_FILE = os.path.join(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")), "todo.txt")
+
+
+def todo_cmd(words: list[str], account: str) -> None:
+    """Add an idea to the todo list, or display all current items.
+
+    Usage:
+        todo                    — show all items
+        todo <text...>          — append a new item
+    """
+    if len(words) > 2:
+        item = " ".join(words[2:])
+        with open(_TODO_FILE, "a") as f:
+            f.write(f"- {item}\n")
+        social_server.post_social_message(f"Added: {item}")
+    else:
+        try:
+            with open(_TODO_FILE, "r") as f:
+                content = f.read().strip()
+            if content:
+                social_server.post_social_message(f"Todo list:\n{content}")
+            else:
+                social_server.post_social_message("Todo list is empty")
+        except FileNotFoundError:
+            social_server.post_social_message("Todo list is empty")
+
+
 def get_super_user_commands() -> dict[str, Callable]:
     """Return the command-name → handler mapping for all super-user commands."""
     return {
@@ -457,6 +484,7 @@ def get_super_user_commands() -> dict[str, Callable]:
         "mode": mode_cmd,
         "prioritize": prioritize_cmd,
         "doflats": doflats_cmd,
+        "todo": todo_cmd,
         "stats": image_stats_cmd,
     }
 
