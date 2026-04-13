@@ -361,6 +361,26 @@ def post_dso_preview(dso_name: str) -> None:
     threading.Thread(target=_watchdog, daemon=True).start()
 
 
+def log_cmd(words: list[str], index: int, m: Mastodon, account: str) -> None:
+    """Show last N lines of iris.log. example: log 50"""
+    n = 20
+    if len(words) > index + 1:
+        try:
+            n = int(words[index + 1])
+        except ValueError:
+            pass
+
+    _project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+    log_path = os.path.join(_project_root, "iris.log")
+    try:
+        with open(log_path, "r") as f:
+            lines = f.readlines()
+        tail = lines[-n:] if len(lines) >= n else lines
+        post_social_message("".join(tail))
+    except FileNotFoundError:
+        post_social_message("iris.log not found")
+
+
 def show_cmd(words: list[str], index: int, m: Mastodon, account: str) -> None:
     """
     Fetch and post a survey image of a DSO. example: show ngc 891
@@ -384,6 +404,7 @@ keywords = {
     "schedule": schedule_cmd,
     "calendar": calendar_cmd,
     "show": show_cmd,
+    "log": log_cmd,
     "help": help_cmd,
     "?": help_cmd
 }
