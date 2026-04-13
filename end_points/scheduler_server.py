@@ -270,19 +270,8 @@ def _get_best_object() -> tuple[str, int, datetime]:
         (may be ``None`` if no good hours exist).
     """
     instructions_path = os.path.join(_PROJECT_ROOT, CFG["location"]["instructions"])
-    best_name, best_start, best_good_hours, _grid_html = best_object_tonight(instructions_path)
-    return best_name, best_good_hours, best_start
-
-
-def _send_grid_to_mastodon():
-    """Post the nightly imaging grid image to the web chat.
-
-    Reads the pre-generated grid PNG from the path in config
-    (``cfg["location"]["image_grid"]``) and posts it with a caption.
-    Called at both NOON_CHECK and PRE_SUNSET_CHECK.
-    """
-    image_grid_path = os.path.join(_PROJECT_ROOT, CFG["location"]["image_grid"])
-    social_server.post_social_message("Tonight's imaging grid", image=image_grid_path)
+    best_name, best_start, best_good_hours, grid_html = best_object_tonight(instructions_path)
+    return best_name, best_good_hours, best_start, grid_html
 
 
 def _imaging_plan_message(dso_name: str, best_good_hours: float, best_start: datetime) -> str:
@@ -491,8 +480,7 @@ def _run_state_machine():
                 set_state(state)
                 # Refresh visibility metrics for all queued targets.
                 instructions.calc_and_store_hours_above_horizon()
-                best_name, best_good_hours, best_start = _get_best_object()
-                _send_grid_to_mastodon()
+                best_name, best_good_hours, best_start, grid_html = _get_best_object()
                 LOGGER.info("Noon check: best=%s good_hours=%d", best_name, best_good_hours)
 
                 mode = super_user_commands.get_mode()
@@ -507,7 +495,9 @@ def _run_state_machine():
                     set_state(state, best_name, True)
                     state = State.WAITING_FOR_PRE_SUNSET
                 else:
-                    # Not enough imaging time — skip tonight.
+                    # Not enough imaging time — skip tonight; still show the grid.
+                    if grid_html:
+                        social_server.post_html_message(grid_html)
                     social_server.post_social_message(
                         f"Not enough good imaging hours tonight ({best_good_hours}h), skipping"
                     )
@@ -525,8 +515,9 @@ def _run_state_machine():
             elif state == State.PRE_SUNSET_CHECK:
                 set_state(state)
                 # Re-check conditions now that we are closer to imaging time.
-                best_name, best_good_hours, best_start = _get_best_object()
-                _send_grid_to_mastodon()
+                best_name, best_good_hours, best_start, grid_html = _get_best_object()
+                if grid_html:
+                    social_server.post_html_message(grid_html)
                 LOGGER.info("Pre-sunset check: best=%s good_hours=%d", best_name, best_good_hours)
 
                 mode = super_user_commands.get_mode()
