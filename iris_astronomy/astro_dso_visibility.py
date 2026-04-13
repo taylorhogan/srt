@@ -668,8 +668,8 @@ def best_object_tonight(instructions_path: Path | str) -> tuple[str, Optional[da
     BAD_WEATHER   = "#4a1e1e"   # dark red     — bad weather
     HEADER_COLOR  = "#1e2a3a"   # dark blue-grey — header row
 
-    fig_w = max(10, 2 + n_cols * 0.45)
-    fig_h = max(3,  1 + (n_obj + 2) * 0.35)
+    fig_w = max(14, 2 + n_cols * 0.55)
+    fig_h = max(4,  1 + (n_obj + 2) * 0.50)
     fig, ax = plt.subplots(figsize=(fig_w, fig_h))
     fig.patch.set_facecolor("#0d0d1a")
     ax.set_facecolor("#0d0d1a")
@@ -708,7 +708,7 @@ def best_object_tonight(instructions_path: Path | str) -> tuple[str, Optional[da
         loc="center",
     )
     table.auto_set_font_size(False)
-    table.set_fontsize(9)
+    table.set_fontsize(11)
     table.auto_set_column_width(list(range(len(col_labels))))
 
     ax.set_title("Tonight's Imaging Grid", fontsize=12, fontweight="bold", pad=10, color="white")
@@ -721,7 +721,7 @@ def best_object_tonight(instructions_path: Path | str) -> tuple[str, Optional[da
     _project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
     png_path = os.path.join(_project_root, CFG["location"]["image_grid"])
     os.makedirs(os.path.dirname(png_path), exist_ok=True)
-    plt.savefig(png_path, bbox_inches="tight", dpi=150, facecolor=fig.get_facecolor())
+    plt.savefig(png_path, bbox_inches="tight", dpi=180, facecolor=fig.get_facecolor())
     plt.clf()
     print(f"Grid saved to {png_path}")
 
