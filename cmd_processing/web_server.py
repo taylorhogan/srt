@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Optional
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile, File, Form
-from fastapi.responses import RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from cmd_processing import message_bus
@@ -102,6 +102,7 @@ async def api_post(
     message: str = Form(""),
     image: Optional[UploadFile] = File(None),
     image_path: Optional[str] = Form(None),
+    html: Optional[str] = Form(None),
 ):
     """Cross-process message injection endpoint.
 
@@ -119,7 +120,7 @@ async def api_post(
     elif image_path:
         actual_image_path = image_path
 
-    message_bus.post_message(message, actual_image_path)
+    message_bus.post_message(message, actual_image_path, html=html or None)
     return {"ok": True}
 
 
@@ -133,6 +134,7 @@ async def api_ticker():
     """Return current observatory status metrics for the header ticker."""
     try:
         from cmd_processing import super_user_commands as su
+        from control import instructions
 
         mode = su.get_mode()
         safe = "Safe" if su.is_safe() else "Unsafe"
@@ -143,13 +145,17 @@ async def api_ticker():
         if isinstance(sched_state, str):
             sched_state = sched_state.replace("_", " ").title()
 
-        dso = sched.get("dso") or "—"
-
         tonight = sched.get("will image tonight", "—")
         if isinstance(tonight, bool):
             tonight = "Yes" if tonight else "No"
 
-        return {
+        # Read the live queue so reprioritisation is reflected immediately.
+        try:
+            dso = instructions.get_dso_object_tonight().get("dso", "—")
+        except Exception:
+            dso = sched.get("dso") or "—"
+
+        payload = {
             "ok": True,
             "metrics": [
                 {"label": "Scheduler", "value": sched_state},
@@ -162,4 +168,5 @@ async def api_ticker():
         }
     except Exception:
         _logger.exception("api_ticker error")
-        return {"ok": False, "metrics": []}
+        payload = {"ok": False, "metrics": []}
+    return JSONResponse(content=payload, headers={"Cache-Control": "no-store"})

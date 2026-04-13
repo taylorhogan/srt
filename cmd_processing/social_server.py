@@ -95,12 +95,10 @@ def tonight_cmd(words: list[str], index: int, m: Mastodon, account: str) -> bool
     _project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
     instructions_path = os.path.join(_project_root, cfg["location"]["instructions"])
 
-    best_name, best_start, best_good_hours = astro_dso_visibility.best_object_tonight(instructions_path)
-    image_grid_path = os.path.join(_project_root, cfg["location"]["image_grid"])
-    post_social_message(
-        f"Tonight's best object: {best_name} ({best_good_hours}h good imaging)",
-        image_grid_path
-    )
+    best_name, best_start, best_good_hours, grid_html = astro_dso_visibility.best_object_tonight(instructions_path)
+    post_social_message(f"Tonight's best object: {best_name} ({best_good_hours}h good imaging)")
+    if grid_html:
+        post_html_message(grid_html)
 
     if best_name:
         obj = astro_dso_visibility.is_a_dso_object(best_name)
@@ -253,7 +251,7 @@ def schedule_cmd(words: list[str], index: int, m: Mastodon, account: str) -> Non
     _project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
     instructions_path = os.path.join(_project_root, cfg["location"]["instructions"])
 
-    best_name, best_start, best_good_hours = astro_dso_visibility.best_object_tonight(instructions_path)
+    best_name, best_start, best_good_hours, _ = astro_dso_visibility.best_object_tonight(instructions_path)
     if not best_name:
         post_social_message("No suitable object found for tonight")
         return
@@ -461,6 +459,24 @@ def get_mastodon_instance() -> Mastodon:
     api_base_url = cfg["mastodon"]["api_base_url"]
     mastodon = Mastodon(access_token=access_token, api_base_url=api_base_url)
     return mastodon
+
+
+def post_html_message(html: str) -> None:
+    """Post an HTML-rendered message to the web chat (no Mastodon mirror)."""
+    logger = logging.getLogger(__name__)
+    cfg = config.data()
+    if message_bus.is_initialized():
+        message_bus.post_message("", html=html)
+    else:
+        try:
+            port = cfg.get("web_chat", {}).get("port", 8095)
+            _requests_lib.post(
+                f"http://localhost:{port}/api/post",
+                data={"message": "", "html": html},
+                timeout=30,
+            )
+        except Exception:
+            logger.exception("Failed to post HTML message via web chat API")
 
 
 def post_social_message(message: str, image: Optional[str] = None, vis: Optional[str] = None) -> None:

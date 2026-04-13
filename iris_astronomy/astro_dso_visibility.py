@@ -539,6 +539,113 @@ def best_day_for_dso(dso: FixedTarget) -> tuple[Optional[datetime.datetime], Opt
     return best_date, best_time, best_max_altitude
 
 
+def build_grid_html(
+    object_lines: list,
+    hour_header: list,
+    weather_syms: list,
+) -> str:
+    """Return a dark-themed HTML table for tonight's imaging grid."""
+    BG_MAIN     = "#0d1117"
+    BG_HDR      = "#161b22"
+    BG_ABOVE_OK = "#1a4d1a"   # above horizon + good weather
+    BG_ABOVE_WX = "#1a2e40"   # above horizon + bad weather
+    BG_BELOW    = "#131820"   # below horizon
+    BG_WX_GOOD  = "#1a4d1a"
+    BG_WX_BAD   = "#4d1a1a"
+    BG_PRIORITY = "#3d2e00"
+    CLR_TEXT    = "#c9d1d9"
+    CLR_DIM     = "#8b949e"
+    CLR_ACCENT  = "#58a6ff"
+    CLR_BORDER  = "#21262d"
+
+    def td(content, bg, color=CLR_DIM, extra=""):
+        return (
+            f'<td style="padding:4px 8px;border-bottom:1px solid {CLR_BORDER};'
+            f'border-right:1px solid {CLR_BORDER};background:{bg};'
+            f'color:{color};font-size:11px;text-align:center;'
+            f'white-space:nowrap;{extra}">{content}</td>'
+        )
+
+    def cell(bg):
+        return (
+            f'<td style="padding:0;border-bottom:1px solid {CLR_BORDER};'
+            f'border-right:1px solid {CLR_BORDER};background:{bg};'
+            f'width:22px;min-width:22px;"></td>'
+        )
+
+    th_base = (
+        f'padding:5px 8px;border-bottom:2px solid {CLR_BORDER};'
+        f'border-right:1px solid {CLR_BORDER};background:{BG_HDR};'
+        f'color:{CLR_DIM};font-size:10px;text-transform:uppercase;'
+        f'letter-spacing:0.06em;font-weight:600;text-align:center;white-space:nowrap;'
+    )
+    name_th = f'style="{th_base}text-align:left;padding:5px 10px;"'
+    hour_th = f'style="{th_base}width:22px;min-width:22px;padding:5px 3px;"'
+    col_th  = f'style="{th_base}"'
+
+    rows = []
+    rows.append(
+        f'<div style="font-size:13px;font-weight:600;color:{CLR_ACCENT};margin-bottom:8px;">'
+        f"Tonight's Imaging Grid</div>"
+    )
+    rows.append(
+        f'<div style="overflow-x:auto;border-radius:6px;border:1px solid {CLR_BORDER};">'
+        f'<table style="border-collapse:collapse;font-family:inherit;background:{BG_MAIN};">'
+    )
+
+    # Header
+    rows.append('<thead><tr>')
+    rows.append(f'<th {name_th}>Object</th>')
+    for h in hour_header:
+        rows.append(f'<th {hour_th}>{h}</th>')
+    rows.append(f'<th {col_th}>Alt</th><th {col_th}>Hrs</th><th {col_th}>Type</th>')
+    rows.append('</tr></thead><tbody>')
+
+    # Weather row
+    name_style = (
+        f'style="padding:4px 10px;border-bottom:1px solid {CLR_BORDER};'
+        f'border-right:1px solid {CLR_BORDER};background:{BG_HDR};'
+        f'color:{CLR_DIM};font-size:11px;white-space:nowrap;"'
+    )
+    rows.append('<tr>')
+    rows.append(f'<td {name_style}>weather</td>')
+    for sym in weather_syms:
+        good = sym == "$"
+        icon_color = "#3fb950" if good else "#f85149"
+        rows.append(
+            f'<td style="padding:0;border-bottom:1px solid {CLR_BORDER};'
+            f'border-right:1px solid {CLR_BORDER};background:{BG_WX_GOOD if good else BG_WX_BAD};'
+            f'width:22px;min-width:22px;text-align:center;font-size:9px;color:{icon_color};">{"✓" if good else "✕"}</td>'
+        )
+    for _ in range(3):
+        rows.append(f'<td style="padding:4px 8px;border-bottom:1px solid {CLR_BORDER};border-right:1px solid {CLR_BORDER};background:{BG_HDR};"></td>')
+    rows.append('</tr>')
+
+    # Object rows
+    for name, symbols, alt_str, hrs_str, dso_type, priority in object_lines:
+        is_pri = priority > 5
+        name_bg = BG_PRIORITY if is_pri else BG_HDR
+        display = f"★ {name}" if is_pri else name
+        rows.append('<tr>')
+        rows.append(
+            f'<td style="padding:4px 10px;border-bottom:1px solid {CLR_BORDER};'
+            f'border-right:1px solid {CLR_BORDER};background:{name_bg};'
+            f'color:{CLR_TEXT};font-size:12px;white-space:nowrap;">{display}</td>'
+        )
+        for i, sym in enumerate(symbols):
+            above = sym == "+"
+            wx_ok = weather_syms[i] == "$" if i < len(weather_syms) else False
+            bg = (BG_ABOVE_OK if wx_ok else BG_ABOVE_WX) if above else BG_BELOW
+            rows.append(cell(bg))
+        rows.append(td(alt_str.strip(), BG_HDR))
+        rows.append(td(hrs_str, BG_HDR))
+        rows.append(td(dso_type, BG_HDR, extra="text-align:left;"))
+        rows.append('</tr>')
+
+    rows.append('</tbody></table></div>')
+    return "".join(rows)
+
+
 def best_object_tonight(instructions_path: Path | str) -> tuple[str, Optional[datetime.datetime], int]:
     """
     Read a list of DSO objects from a JSON file, compute how many hours of
@@ -557,7 +664,7 @@ def best_object_tonight(instructions_path: Path | str) -> tuple[str, Optional[da
     print(f"DEBUG: waiting objects: {len(waiting)}")
     if not waiting:
         print("No waiting objects found.")
-        return "", None, 0
+        return "", None, 0, ""
 
     longitude = CFG["location"]["longitude"]
     latitude = CFG["location"]["latitude"]
@@ -593,7 +700,7 @@ def best_object_tonight(instructions_path: Path | str) -> tuple[str, Optional[da
 
     if not dark_hours:
         print("No dark hours found tonight.")
-        return "", None, 0
+        return "", None, 0, ""
 
     # Convert to astropy Time (UTC) for altaz calculations
     hour_times = Time(
@@ -725,10 +832,12 @@ def best_object_tonight(instructions_path: Path | str) -> tuple[str, Optional[da
     plt.clf()
     print(f"Grid saved to {png_path}")
 
+    grid_html = build_grid_html(object_lines, hour_header, weather_syms)
+
     if not rows:
-        return "", None, 0
+        return "", None, 0, ""
     best_name, best_good_count, _, _, best_start, _, _ = rows[0]
-    return best_name, best_start, best_good_count
+    return best_name, best_start, best_good_count, grid_html
 
 
 def test_me() -> None:

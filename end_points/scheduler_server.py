@@ -270,7 +270,7 @@ def _get_best_object() -> tuple[str, int, datetime]:
         (may be ``None`` if no good hours exist).
     """
     instructions_path = os.path.join(_PROJECT_ROOT, CFG["location"]["instructions"])
-    best_name, best_start, best_good_hours = best_object_tonight(instructions_path)
+    best_name, best_start, best_good_hours, _grid_html = best_object_tonight(instructions_path)
     return best_name, best_good_hours, best_start
 
 

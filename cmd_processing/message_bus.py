@@ -34,7 +34,7 @@ def is_initialized() -> bool:
     return _initialized
 
 
-def post_message(text: str, image_path: Optional[str] = None) -> dict:
+def post_message(text: str, image_path: Optional[str] = None, html: Optional[str] = None) -> dict:
     global _counter
     image_url = None
 
@@ -54,6 +54,7 @@ def post_message(text: str, image_path: Optional[str] = None) -> dict:
             "timestamp": time.time(),
             "text": text,
             "image_url": image_url,
+            "html": html,
         }
         _messages.append(msg)
 

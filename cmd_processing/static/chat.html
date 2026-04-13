@@ -234,11 +234,17 @@
     time.textContent = formatTime(msg.timestamp);
     div.appendChild(time);
 
-    const text = isUser ? msg.text.substring(2) : msg.text;
-    if (text) {
-      const span = document.createElement('span');
-      span.textContent = text;
-      div.appendChild(span);
+    if (msg.html) {
+      const wrapper = document.createElement('div');
+      wrapper.innerHTML = msg.html;
+      div.appendChild(wrapper);
+    } else {
+      const text = isUser ? msg.text.substring(2) : msg.text;
+      if (text) {
+        const span = document.createElement('span');
+        span.textContent = text;
+        div.appendChild(span);
+      }
     }
 
     if (msg.image_url) {
@@ -321,7 +327,7 @@
 
   async function fetchTicker() {
     try {
-      const resp = await fetch('/api/ticker');
+      const resp = await fetch('/api/ticker', { cache: 'no-store' });
       const data = await resp.json();
       if (data.ok && data.metrics && data.metrics.length > 0) {
         applyTicker(data.metrics);
