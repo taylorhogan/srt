@@ -19,17 +19,11 @@
   header {
     background: #161b22;
     border-bottom: 1px solid #30363d;
-    padding: 12px 20px;
+    padding: 10px 20px;
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: 12px;
     flex-shrink: 0;
-  }
-
-  header h1 {
-    font-size: 16px;
-    font-weight: 600;
-    color: #58a6ff;
   }
 
   .status-dot {
@@ -38,9 +32,60 @@
     border-radius: 50%;
     background: #f85149;
     transition: background 0.3s;
+    flex-shrink: 0;
   }
 
   .status-dot.connected { background: #3fb950; }
+
+  .ticker-wrap {
+    flex: 1;
+    overflow: hidden;
+    min-width: 0;
+    mask-image: linear-gradient(to right, transparent 0%, black 4%, black 96%, transparent 100%);
+    -webkit-mask-image: linear-gradient(to right, transparent 0%, black 4%, black 96%, transparent 100%);
+  }
+
+  #ticker-track {
+    display: inline-flex;
+    align-items: center;
+    white-space: nowrap;
+    will-change: transform;
+  }
+
+  @keyframes ticker-scroll {
+    from { transform: translateX(0); }
+    to   { transform: translateX(-50%); }
+  }
+
+  .t-item {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 5px;
+    padding: 0 18px;
+  }
+
+  .t-lbl {
+    font-size: 9px;
+    color: #484f58;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    font-weight: 600;
+  }
+
+  .t-val {
+    font-size: 13px;
+    color: #c9d1d9;
+  }
+
+  .t-val.safe    { color: #3fb950; }
+  .t-val.unsafe  { color: #f85149; }
+  .t-val.active  { color: #58a6ff; }
+
+  .t-sep {
+    color: #30363d;
+    font-size: 12px;
+    padding: 0 2px;
+  }
 
   #messages {
     flex: 1;
@@ -138,7 +183,9 @@
 <body>
   <header>
     <div class="status-dot" id="status-dot"></div>
-    <h1>Iris Observatory</h1>
+    <div class="ticker-wrap">
+      <div id="ticker-track"></div>
+    </div>
   </header>
 
   <div id="messages"></div>
@@ -246,6 +293,45 @@
   input.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') sendCommand();
   });
+
+  // ── Status ticker ─────────────────────────────────────────────
+  const tickerTrack = document.getElementById('ticker-track');
+
+  const ACTIVE_STATES = new Set(['In Flats', 'Active', 'In Process']);
+
+  function buildTickerHTML(metrics) {
+    const items = metrics.map(m => {
+      let cls = '';
+      if (m.label === 'Safety') cls = m.value === 'Safe' ? ' safe' : ' unsafe';
+      else if (m.label === 'State' && ACTIVE_STATES.has(m.value)) cls = ' active';
+      return `<span class="t-item"><span class="t-lbl">${m.label}</span><span class="t-val${cls}">${m.value}</span></span>`;
+    }).join('<span class="t-sep">·</span>');
+    return items + '<span class="t-sep">·</span>' + items + '<span class="t-sep">·</span>';
+  }
+
+  function applyTicker(metrics) {
+    tickerTrack.innerHTML = buildTickerHTML(metrics);
+    // Restart animation with duration proportional to content width
+    tickerTrack.style.animation = 'none';
+    void tickerTrack.offsetWidth; // force reflow
+    const halfWidth = tickerTrack.scrollWidth / 2;
+    const duration = Math.max(12, halfWidth / 55); // ~55 px/s
+    tickerTrack.style.animation = `ticker-scroll ${duration.toFixed(1)}s linear infinite`;
+  }
+
+  async function fetchTicker() {
+    try {
+      const resp = await fetch('/api/ticker');
+      const data = await resp.json();
+      if (data.ok && data.metrics && data.metrics.length > 0) {
+        applyTicker(data.metrics);
+      }
+    } catch (_) {}
+  }
+
+  fetchTicker();
+  setInterval(fetchTicker, 30000);
+  // ──────────────────────────────────────────────────────────────
 
   connect();
   input.focus();

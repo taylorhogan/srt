@@ -126,3 +126,40 @@ async def api_post(
 @app.get("/api/history")
 async def api_history():
     return {"messages": message_bus.get_history()}
+
+
+@app.get("/api/ticker")
+async def api_ticker():
+    """Return current observatory status metrics for the header ticker."""
+    try:
+        from cmd_processing import super_user_commands as su
+
+        mode = su.get_mode()
+        safe = "Safe" if su.is_safe() else "Unsafe"
+        imaging = su.get_imaging_state().value.replace("_", " ").title()
+        sched = su.get_scheduler_state()
+
+        sched_state = sched.get("state", "—")
+        if isinstance(sched_state, str):
+            sched_state = sched_state.replace("_", " ").title()
+
+        dso = sched.get("dso") or "—"
+
+        tonight = sched.get("will image tonight", "—")
+        if isinstance(tonight, bool):
+            tonight = "Yes" if tonight else "No"
+
+        return {
+            "ok": True,
+            "metrics": [
+                {"label": "Scheduler", "value": sched_state},
+                {"label": "Target",    "value": str(dso)},
+                {"label": "Tonight",   "value": str(tonight)},
+                {"label": "Mode",      "value": mode.title()},
+                {"label": "Safety",    "value": safe},
+                {"label": "State",     "value": imaging},
+            ],
+        }
+    except Exception:
+        _logger.exception("api_ticker error")
+        return {"ok": False, "metrics": []}
