@@ -142,6 +142,39 @@
 
   .msg img:hover { opacity: 0.85; }
 
+  #lightbox {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.92);
+    z-index: 1000;
+    align-items: center;
+    justify-content: center;
+  }
+
+  #lightbox.open { display: flex; }
+
+  #lightbox img {
+    max-width: 95vw;
+    max-height: 92vh;
+    border-radius: 6px;
+    object-fit: contain;
+  }
+
+  #lightbox-close {
+    position: fixed;
+    top: 14px;
+    right: 18px;
+    font-size: 28px;
+    color: #c9d1d9;
+    cursor: pointer;
+    line-height: 1;
+    user-select: none;
+    z-index: 1001;
+  }
+
+  #lightbox-close:hover { color: #fff; }
+
   #input-area {
     background: #161b22;
     border-top: 1px solid #30363d;
@@ -198,6 +231,11 @@
     </div>
   </header>
 
+  <div id="lightbox">
+    <span id="lightbox-close">×</span>
+    <img id="lightbox-img" src="" alt="Full size image">
+  </div>
+
   <div id="messages"></div>
 
   <div id="input-area">
@@ -211,7 +249,23 @@
   const input = document.getElementById('cmd-input');
   const sendBtn = document.getElementById('send-btn');
   const statusDot = document.getElementById('status-dot');
+  const lightbox = document.getElementById('lightbox');
+  const lightboxImg = document.getElementById('lightbox-img');
   let ws = null;
+
+  function openLightbox(url) {
+    lightboxImg.src = url;
+    lightbox.classList.add('open');
+  }
+
+  function closeLightbox() {
+    lightbox.classList.remove('open');
+    lightboxImg.src = '';
+  }
+
+  document.getElementById('lightbox-close').addEventListener('click', closeLightbox);
+  lightbox.addEventListener('click', (e) => { if (e.target === lightbox) closeLightbox(); });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeLightbox(); });
   let reconnectDelay = 1000;
   let lastSeenId = 0;
   let autoScroll = true;
@@ -271,7 +325,7 @@
       const img = document.createElement('img');
       img.src = msg.image_url;
       img.alt = 'Response image';
-      img.onclick = () => window.open(msg.image_url, '_blank');
+      img.onclick = () => openLightbox(msg.image_url);
       div.appendChild(img);
     }
 
