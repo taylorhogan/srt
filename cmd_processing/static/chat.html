@@ -298,7 +298,9 @@
     if (!text || !ws || ws.readyState !== WebSocket.OPEN) return;
     ws.send(JSON.stringify({ type: 'command', command: text }));
     input.value = '';
-    startSpinner(); // idempotent — no-ops if already spinning for a queued command
+    // Render the echo locally so the spinner isn't killed by the server-side echo message
+    renderMessage({ id: null, timestamp: Date.now() / 1000, text: '> ' + text, image_url: null, html: null });
+    startSpinner();
   }
 
   sendBtn.addEventListener('click', sendCommand);

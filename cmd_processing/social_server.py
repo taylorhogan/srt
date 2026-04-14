@@ -568,7 +568,7 @@ def start_interface() -> None:
         except Exception:
             logging.getLogger(__name__).exception("Failed to start Mastodon listener")
 
-    uvicorn.run(web_server.app, host=host, port=port, log_level="info")
+    uvicorn.run(web_server.app, host=host, port=port, log_level="info", loop="asyncio")
 
 
 def main() -> None:

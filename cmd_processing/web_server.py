@@ -63,8 +63,6 @@ async def websocket_endpoint(websocket: WebSocket):
                 data = await websocket.receive_json()
                 if data.get("type") == "command":
                     cmd_text = data["command"]
-                    # Post the user's command as a message so it shows in chat
-                    message_bus.post_message(f"> {cmd_text}")
                     # Dispatch in background thread
                     threading.Thread(
                         target=_dispatch_command, args=(cmd_text,), daemon=True
