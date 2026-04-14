@@ -56,6 +56,38 @@ def remove_hash():
         f.writelines(json.dumps(instructions, indent=4))
 
 
+def _normalize_dso(name: str) -> str:
+    return name.lower().replace(" ", "")
+
+
+def normalize_and_deduplicate_db() -> int:
+    """Normalize all DSO names (lowercase, no spaces) and remove duplicates.
+
+    For each set of entries that share a normalized name, the highest-priority
+    entry (first in sort order) is kept and the rest are removed.
+    Returns the number of entries removed.
+    """
+    with open(_INSTRUCTIONS_PATH, 'r') as f:
+        instructions = json.load(f)
+
+    for instruction in instructions:
+        instruction["dso"] = _normalize_dso(instruction["dso"])
+
+    sorted_instructions = sorted(instructions, key=functools.cmp_to_key(compare))
+    seen: set[str] = set()
+    deduped = []
+    for instruction in sorted_instructions:
+        key = instruction["dso"]
+        if key not in seen:
+            seen.add(key)
+            deduped.append(instruction)
+
+    removed = len(instructions) - len(deduped)
+    with open(_INSTRUCTIONS_PATH, 'w') as f:
+        f.writelines(json.dumps(deduped, indent=4))
+    return removed
+
+
 def rehash_db():
     remove_hash()
     next_hash = 0

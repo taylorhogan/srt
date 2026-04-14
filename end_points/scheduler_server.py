@@ -80,6 +80,7 @@ from enum import Enum, auto
 from pathlib import Path
 
 import numpy as np
+from prefect import flow, task
 
 if __package__ is None or __package__ == "":
     project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
@@ -404,164 +405,125 @@ def _initial_state() -> State:
 
 
 # ---------------------------------------------------------------------------
-# State machine
+# Prefect tasks — one per stage of the nightly cycle
 # ---------------------------------------------------------------------------
 
-def _run_state_machine():
-    """Drive the scheduler through its nightly cycle indefinitely.
+@task(name="noon-check")
+def noon_check_task() -> tuple[str, int, datetime, str]:
+    """Refresh visibility data, pick tonight's best target, and decide whether to image."""
+    set_state(State.NOON_CHECK)
+    instructions.calc_and_store_hours_above_horizon()
+    best_name, best_good_hours, best_start, grid_html = _get_best_object()
+    LOGGER.info("Noon check: best=%s good_hours=%d", best_name, best_good_hours)
 
-    This function never returns under normal operation.  Each iteration
-    of the ``while True`` loop handles exactly one state transition.
-    Unhandled exceptions are caught, reported to the web chat, and the
-    machine falls back to ``WAITING_FOR_BOOT`` (a one-minute recovery
-    pause) before resuming.
+    mode = super_user_commands.get_mode()
+    social_server.post_social_message(f"Imaging mode: {mode}")
 
-    State details
-    ~~~~~~~~~~~~~
+    if best_good_hours >= _MIN_GOOD_HOURS:
+        social_server.tonight_cmd(["me", "tonight", best_name], 2, "", "")
+        social_server.post_social_message(
+            f"Planning to image tonight\n{_imaging_plan_message(best_name, best_good_hours, best_start)}"
+        )
+        obs_calendar.set_today_stat('image', best_name)
+        set_state(State.NOON_CHECK, best_name, True)
+    else:
+        if grid_html:
+            social_server.post_html_message(grid_html)
+        social_server.post_social_message(
+            f"Not enough good imaging hours tonight ({best_good_hours}h), skipping"
+        )
+        obs_calendar.set_today_stat('weather', best_name)
+        set_state(State.NOON_CHECK, best_name, False)
 
-    **WAITING_FOR_BOOT**
-        One-minute sleep used as a recovery buffer after an exception.
-        Gives external services (MQTT broker, web chat server) time to
-        stabilise before the machine tries again.
+    return best_name, best_good_hours, best_start, grid_html
 
-    **WAITING_FOR_NOON**
-        Calls ``_next_noon()`` and sleeps via ``_wait_until``.  After
-        waking, advances to ``NOON_CHECK``.
 
-    **NOON_CHECK**
-        - Recalculates hours-above-horizon for every queued target.
-        - Picks the best DSO via ``_get_best_object()``.
-        - Posts the imaging grid to the web chat.
-        - Posts the current mode (``auto`` / ``manual``) to the web chat.
-        - If ``best_good_hours >= _MIN_GOOD_HOURS``: posts a plan
-          message, updates the calendar, and advances to
-          ``WAITING_FOR_PRE_SUNSET``.
-        - Otherwise: posts a skip notice, records a weather-block in the
-          calendar, and loops back to ``WAITING_FOR_NOON``.
+@task(name="wait-for-pre-sunset")
+def wait_for_pre_sunset_task():
+    """Sleep until one hour before today's sunset."""
+    set_state(State.WAITING_FOR_PRE_SUNSET)
+    target = _one_hour_before_sunset()
+    LOGGER.info("Waiting for 1h before sunset at %s", target)
+    _wait_until(target)
 
-    **WAITING_FOR_PRE_SUNSET**
-        Sleeps until one hour before today's sunset, then advances to
-        ``PRE_SUNSET_CHECK``.
 
-    **PRE_SUNSET_CHECK**
-        Re-evaluates best object and good hours.  If still adequate,
-        generates the N.I.N.A sequence file and advances to ``IMAGING``.
-        Otherwise skips tonight and loops back to ``WAITING_FOR_NOON``.
+@task(name="pre-sunset-check")
+def pre_sunset_check_task() -> tuple[str, int]:
+    """Re-evaluate conditions close to sunset and post the updated imaging grid."""
+    set_state(State.PRE_SUNSET_CHECK)
+    best_name, best_good_hours, best_start, grid_html = _get_best_object()
+    if grid_html:
+        social_server.post_html_message(grid_html)
+    LOGGER.info("Pre-sunset check: best=%s good_hours=%d", best_name, best_good_hours)
 
-    **IMAGING**
-        - In ``auto`` mode: calls ``image_cmd(["", "image!!", "1"],
-          "iris")`` which launches the full observatory run
-          (safety checks → roof open → NINA prelude → NINA main).
-          ``image_cmd`` uses ``subprocess.Popen`` internally so this
-          call returns quickly; the scheduler then **polls
-          ``get_imaging_state()`` every 60 seconds** until ``end.py``
-          resets the state to ``ImagingState.NONE``, confirming the run
-          has truly finished before cycling back to ``WAITING_FOR_NOON``.
-        - In ``manual`` mode: posts a skip notice and immediately
-          advances to ``WAITING_FOR_NOON``.
+    mode = super_user_commands.get_mode()
+    social_server.post_social_message(f"Imaging mode: {mode}")
+
+    if best_good_hours >= _MIN_GOOD_HOURS:
+        social_server.post_social_message(
+            f"Confirmed — generating sequence\n{_imaging_plan_message(best_name, best_good_hours, best_start)}"
+        )
+        social_server.post_dso_preview(best_name)
+        set_state(State.PRE_SUNSET_CHECK, best_name, True)
+    else:
+        social_server.post_social_message(
+            f"Conditions not good enough at sunset ({best_good_hours}h), skipping tonight"
+        )
+        set_state(State.PRE_SUNSET_CHECK, best_name, False)
+
+    return best_name, best_good_hours
+
+
+@task(name="generate-nina-sequence")
+def generate_sequence_task(dso_name: str):
+    """Resolve DSO coordinates and write the N.I.N.A sequence file to disk."""
+    _generate_nina_sequence(dso_name)
+
+
+@task(name="run-imaging", timeout_seconds=9 * 60 * 60)
+def imaging_task():
+    """Launch the full observatory imaging run and wait for it to complete."""
+    set_state(State.IMAGING)
+    LOGGER.info("Starting imaging run")
+    if super_user_commands.get_mode() == "auto":
+        super_user_commands.image_cmd(["", "image!!", "1"], "iris")
+        LOGGER.info("Waiting for imaging state to return to NONE")
+        while super_user_commands.get_imaging_state() != super_user_commands.ImagingState.NONE:
+            time.sleep(60)
+        LOGGER.info("Imaging state is NONE — run complete")
+    else:
+        social_server.post_social_message("Mode is manual — skipping auto imaging")
+
+
+# ---------------------------------------------------------------------------
+# Prefect flow — one complete nightly cycle
+# ---------------------------------------------------------------------------
+
+@flow(name="nightly-imaging-cycle")
+def nightly_cycle():
+    """Drive the observatory through one complete nightly cycle.
+
+    Noon check → (if good) wait for pre-sunset → pre-sunset re-check →
+    (if still good) generate NINA sequence → imaging run.
+    Returns early without imaging if conditions don't meet the threshold
+    at either check point.
     """
-    state = _initial_state()
+    best_name, good_hours, best_start, grid_html = noon_check_task()
 
-    while True:
-        try:
-            if state == State.WAITING_FOR_BOOT:
-                set_state(state)
-                time.sleep(60)
-                state = State.WAITING_FOR_NOON
+    if good_hours < _MIN_GOOD_HOURS:
+        LOGGER.info("Skipping tonight — not enough good hours (%d)", good_hours)
+        return
 
-            elif state == State.WAITING_FOR_NOON:
-                set_state(state)
-                target = _next_noon()
-                LOGGER.info("Waiting for noon at %s", target)
-                _wait_until(target)
-                state = State.NOON_CHECK
+    wait_for_pre_sunset_task()
 
-            elif state == State.NOON_CHECK:
-                set_state(state)
-                # Refresh visibility metrics for all queued targets.
-                instructions.calc_and_store_hours_above_horizon()
-                best_name, best_good_hours, best_start, grid_html = _get_best_object()
-                LOGGER.info("Noon check: best=%s good_hours=%d", best_name, best_good_hours)
+    best_name, good_hours = pre_sunset_check_task()
 
-                mode = super_user_commands.get_mode()
-                social_server.post_social_message(f"Imaging mode: {mode}")
-                if best_good_hours >= _MIN_GOOD_HOURS:
-                    # Good night — announce the plan and proceed.
-                    social_server.tonight_cmd(["me", "tonight", best_name], 2, "", "")
-                    social_server.post_social_message(
-                        f"Planning to image tonight\n{_imaging_plan_message(best_name, best_good_hours, best_start)}"
-                    )
-                    obs_calendar.set_today_stat('image', best_name)
-                    set_state(state, best_name, True)
-                    state = State.WAITING_FOR_PRE_SUNSET
-                else:
-                    # Not enough imaging time — skip tonight; still show the grid.
-                    if grid_html:
-                        social_server.post_html_message(grid_html)
-                    social_server.post_social_message(
-                        f"Not enough good imaging hours tonight ({best_good_hours}h), skipping"
-                    )
-                    obs_calendar.set_today_stat('weather', best_name)
-                    set_state(state, best_name, False)
-                    state = State.WAITING_FOR_NOON
+    if good_hours < _MIN_GOOD_HOURS:
+        LOGGER.info("Conditions degraded at sunset — skipping tonight")
+        return
 
-            elif state == State.WAITING_FOR_PRE_SUNSET:
-                set_state(state)
-                target = _one_hour_before_sunset()
-                LOGGER.info("Waiting for 1h before sunset at %s", target)
-                _wait_until(target)
-                state = State.PRE_SUNSET_CHECK
-
-            elif state == State.PRE_SUNSET_CHECK:
-                set_state(state)
-                # Re-check conditions now that we are closer to imaging time.
-                best_name, best_good_hours, best_start, grid_html = _get_best_object()
-                if grid_html:
-                    social_server.post_html_message(grid_html)
-                LOGGER.info("Pre-sunset check: best=%s good_hours=%d", best_name, best_good_hours)
-
-                mode = super_user_commands.get_mode()
-                social_server.post_social_message(f"Imaging mode: {mode}")
-                if best_good_hours >= _MIN_GOOD_HOURS:
-                    social_server.post_social_message(
-                        f"Confirmed — generating sequence\n{_imaging_plan_message(best_name, best_good_hours, best_start)}"
-                    )
-                    social_server.post_dso_preview(best_name)
-                    set_state(state, best_name, True)
-                    # Write the N.I.N.A sequence to disk before NINA starts.
-                    _generate_nina_sequence(best_name)
-                    state = State.IMAGING
-                else:
-                    social_server.post_social_message(
-                        f"Conditions not good enough at sunset ({best_good_hours}h), skipping tonight"
-                    )
-                    set_state(state, best_name, False)
-                    state = State.WAITING_FOR_NOON
-
-            elif state == State.IMAGING:
-                set_state(state)
-                LOGGER.info("Starting imaging run")
-                if super_user_commands.get_mode() == "auto":
-                    super_user_commands.image_cmd(["", "image!!", "1"], "iris")
-                    # image_cmd launches NINA via Popen (non-blocking); wait here
-                    # until end.py or the NINA bat resets the state to NONE.
-                    LOGGER.info("Waiting for imaging state to return to NONE")
-                    while super_user_commands.get_imaging_state() != super_user_commands.ImagingState.NONE:
-                        time.sleep(60)
-                    LOGGER.info("Imaging state is NONE — run complete")
-                else:
-                    social_server.post_social_message("Mode is manual — skipping auto imaging")
-                state = State.WAITING_FOR_NOON
-
-        except Exception:
-            LOGGER.exception("Exception in state %s", state)
-            try:
-                social_server.post_social_message(
-                    f"Oops I had a problem in state {state.name}"
-                )
-            except Exception:
-                LOGGER.exception("Also failed to post exception notice")
-            state = State.WAITING_FOR_BOOT
+    generate_sequence_task(best_name)
+    imaging_task()
 
 
 # ---------------------------------------------------------------------------
@@ -569,21 +531,17 @@ def _run_state_machine():
 # ---------------------------------------------------------------------------
 
 def main():
-    """Initialise subsystems and start the scheduling loop.
+    """Initialise subsystems and run the nightly scheduling loop.
 
     Startup sequence:
-        1. Write ``safety.txt`` as ``USER SAFE`` so the run can proceed
-           if mode is ``auto`` (``safe_cmd`` does this).
-        2. Reset imaging state to ``NONE`` (clears any stale ``imaging.txt``
-           left by a previous crash).
-        3. Force mode to ``manual`` — the operator must explicitly switch
-           to ``auto`` mode via the web chat before any unattended imaging
-           will be triggered.
-        4. Connect to the MQTT broker and subscribe to the inbound topic.
-           If the broker is unavailable (e.g. running in development),
-           the scheduler continues without MQTT — it simply won't respond
-           to status queries.
-        5. Enter ``_run_state_machine()``, which never returns.
+        1. Write ``safety.txt`` as ``USER SAFE``.
+        2. Reset imaging state to ``NONE`` (clears any stale ``imaging.txt``).
+        3. Force mode to ``manual`` — operator must switch to ``auto`` via
+           the web chat before unattended imaging is triggered.
+        4. Connect to the MQTT broker (continues without it if unavailable).
+        5. Enter the ``while True`` loop: wait for noon, run ``nightly_cycle()``.
+           Each nightly run is recorded by Prefect as a named flow run with
+           per-task states, timing, and logs.
     """
     print("Starting Scheduler Server")
     super_user_commands.safe_cmd(None, None)
@@ -597,7 +555,28 @@ def main():
         client.loop_start()
     except ConnectionRefusedError:
         LOGGER.warning("MQTT broker not available — continuing without it")
-    _run_state_machine()
+
+    # If restarted after noon but before pre-sunset, skip straight to the
+    # noon-check flow instead of waiting until tomorrow's noon.
+    skip_first_wait = (_initial_state() == State.NOON_CHECK)
+
+    while True:
+        try:
+            if not skip_first_wait:
+                set_state(State.WAITING_FOR_NOON)
+                target = _next_noon()
+                LOGGER.info("Waiting for noon at %s", target)
+                _wait_until(target)
+            skip_first_wait = False
+            nightly_cycle()
+        except Exception:
+            LOGGER.exception("Unhandled exception in scheduler loop")
+            try:
+                social_server.post_social_message("Oops — scheduler had a problem, recovering")
+            except Exception:
+                LOGGER.exception("Also failed to post exception notice")
+            set_state(State.WAITING_FOR_BOOT)
+            time.sleep(60)
 
 
 if __name__ == '__main__':

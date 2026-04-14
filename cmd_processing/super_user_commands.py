@@ -133,8 +133,19 @@ def open_roof_with_option(check: bool) -> bool:
                 social_server.post_social_message("Vision Safety says roof is closed, opening roof")
                 toggle_roof(dev_map)
                 time.sleep(30)
-                parked, closed, open, mod_date = get_status_with_lights()
-                return open and parked
+                MAX_ROOF_CHECKS = 3
+                for attempt in range(MAX_ROOF_CHECKS):
+                    parked, closed, is_open, mod_date = get_status_with_lights()
+                    if is_open and parked:
+                        return True
+                    if attempt < MAX_ROOF_CHECKS - 1:
+                        msg = f"Roof open not confirmed (attempt {attempt + 1}/{MAX_ROOF_CHECKS}), waiting 5 min"
+                        social_server.post_social_message(msg)
+                        _logger.warning(msg)
+                        time.sleep(5 * 60)
+                social_server.post_social_message("Roof could not be confirmed open after 3 attempts, stopping")
+                _logger.warning("Roof open check failed after %d attempts", MAX_ROOF_CHECKS)
+                return False
 
             else:
                 social_server.post_social_message("Vision Safety says roof is NOT closed, therefore will not open")
@@ -338,6 +349,9 @@ def dbb_cmd(words: list[str], account: str) -> None:
 
 def dbr_cmd(words: list[str], account: str) -> None:
     """Rehash the imaging queue and regenerate the instructions table. Command: ``dbr``"""
+    removed = instructions.normalize_and_deduplicate_db()
+    if removed:
+        social_server.post_social_message(f"Normalized DSO names, removed {removed} duplicate(s)")
     instructions.rehash_db()
     instructions.create_instructions_table()
 
