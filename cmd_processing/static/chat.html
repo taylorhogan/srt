@@ -226,8 +226,8 @@
   }
 
   function renderMessage(msg) {
-    if (msg.id <= lastSeenId) return;
-    lastSeenId = msg.id;
+    if (msg.id !== null && msg.id <= lastSeenId) return;
+    if (msg.id !== null) lastSeenId = msg.id;
 
     const div = document.createElement('div');
     const isUser = msg.text && msg.text.startsWith('> ');

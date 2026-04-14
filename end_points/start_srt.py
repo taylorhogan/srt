@@ -12,6 +12,8 @@ from cmd_processing import social_server
 import scheduler_server
 
 if __name__ == "__main__":
+    os.environ.setdefault("PREFECT_API_URL", "http://127.0.0.1:4200/api")
+
     # Create two processes
     p1 = Process(target=social_server.main)
     p2 = Process(target=scheduler_server.main)
