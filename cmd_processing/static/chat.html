@@ -231,6 +231,16 @@
     return new Date(ts * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
   }
 
+  function linkify(text) {
+    const escaped = text
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+    return escaped.replace(/(https?:\/\/[^\s]+)/g,
+      '<a href="$1" target="_blank" rel="noopener noreferrer" style="color:#58a6ff;">$1</a>');
+  }
+
   function renderMessage(msg) {
     if (msg.id !== null && msg.id <= lastSeenId) return;
     if (msg.id !== null) lastSeenId = msg.id;
@@ -252,7 +262,7 @@
       const text = isUser ? msg.text.substring(2) : msg.text;
       if (text) {
         const span = document.createElement('span');
-        span.textContent = text;
+        span.innerHTML = linkify(text);
         div.appendChild(span);
       }
     }
