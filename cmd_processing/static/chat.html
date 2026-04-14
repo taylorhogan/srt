@@ -162,9 +162,9 @@
   #cmd-input::placeholder { color: #484f58; }
 
   #send-btn {
-    background: #238636;
-    color: #fff;
-    border: none;
+    background: #1f3a5f;
+    color: #a8d4ff;
+    border: 1px solid #2d5a8e;
     border-radius: 6px;
     padding: 0;
     width: 40px;
@@ -177,7 +177,7 @@
     justify-content: center;
   }
 
-  #send-btn:hover { background: #2ea043; }
+  #send-btn:hover { background: #264a7a; }
 
   #messages::-webkit-scrollbar { width: 6px; }
   #messages::-webkit-scrollbar-track { background: transparent; }
@@ -309,7 +309,7 @@
   });
 
   // ── Working spinner ────────────────────────────────────────────
-  const SPIN_CHARS = ['🌑','🌒','🌓','🌔','🌕','🌖','🌗','🌘'];
+  const SPIN_CHARS = ['·', '⋆', '✦', '✶', '✷', '✸', '✷', '✶', '✦', '⋆'];
   let spinnerInterval = null;
   let spinIdx = 0;
 
