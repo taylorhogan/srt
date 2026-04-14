@@ -55,6 +55,15 @@ The system has two long-running processes launched by `end_points/start_srt.py`:
 
 They communicate via **MQTT** (`paho-mqtt`). Admin push notifications go via **Pushover** (`utils/pushover.py`, rate-limited to 6/min).
 
+## Hardware Safety Rules
+
+These rules are absolute and must be enforced in any code that moves observatory hardware:
+
+- **Never move the scope (mount) unless the roof is confirmed open.** Moving the mount while the roof is closed risks a collision that could destroy the telescope.
+- **Never move the roof unless the scope is confirmed parked.** Toggling the roof motor while the mount is tracking or slewing risks the scope intersecting the roof travel path.
+
+Before writing any code that calls `toggle_roof()`, `pwi4.mount_park()`, `pwi4.mount_goto()`, or any other hardware-moving function, verify the precondition is met — either via `vision_safety.visual_status()` or `pwi4_utils.get_is_parked()` — and abort with a logged warning if it is not.
+
 ### Key Subsystems
 
 - **`configs/config.py`** — Merges `PublicConfig` + `PrivateConfig`. Every module calls `config.data()` to get a flat dict. Private credentials live in `configs/config_private.py` (gitignored).

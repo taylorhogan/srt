@@ -283,6 +283,7 @@
       if (data.type === 'history') {
         data.messages.forEach(renderMessage);
       } else if (data.type === 'message') {
+        stopSpinner();
         renderMessage(data.data);
       }
     };
@@ -293,12 +294,35 @@
     if (!text || !ws || ws.readyState !== WebSocket.OPEN) return;
     ws.send(JSON.stringify({ type: 'command', command: text }));
     input.value = '';
+    startSpinner(); // idempotent — no-ops if already spinning for a queued command
   }
 
   sendBtn.addEventListener('click', sendCommand);
   input.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') sendCommand();
   });
+
+  // ── Working spinner ────────────────────────────────────────────
+  const SPIN_CHARS = ['⠋','⠙','⠹','⠸','⠼','⠴','⠦','⠧','⠇','⠏'];
+  let spinnerInterval = null;
+  let spinIdx = 0;
+
+  function startSpinner() {
+    if (spinnerInterval) return; // already spinning
+    spinIdx = 0;
+    spinnerInterval = setInterval(() => {
+      sendBtn.textContent = SPIN_CHARS[spinIdx % SPIN_CHARS.length];
+      spinIdx++;
+    }, 80);
+  }
+
+  function stopSpinner() {
+    if (!spinnerInterval) return;
+    clearInterval(spinnerInterval);
+    spinnerInterval = null;
+    sendBtn.textContent = 'Send';
+  }
+  // ──────────────────────────────────────────────────────────────
 
   // ── Status ticker ─────────────────────────────────────────────
   const tickerTrack = document.getElementById('ticker-track');
