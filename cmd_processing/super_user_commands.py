@@ -20,7 +20,6 @@ if __package__ is None or __package__ == "":
 from configs import config
 from control import instructions
 from hardware_control import kasa_utils as ku
-from hardware_control import pwi4_utils
 from hardware_control import sonos_utils
 from cmd_processing import social_server
 from utils import utils, pushover
@@ -791,35 +790,23 @@ def do_flats() -> None:
     asyncio.run(ku.kasa_do(dev_map, {"Telescope mount": 'on'}))
     _logger.info("Mount powered on")
 
-    # Ensure mount is parked before taking flats.
-    _logger.info("Checking mount park state before flats")
-    if not pwi4_utils.get_is_parked():
-        social_server.post_social_message("Parking mount before flats")
-        _logger.info("Mount not parked — parking now")
-        pwi4_utils.park_scope()
-    _logger.info("Mount is parked")
-
-    # Ensure roof is closed before taking flats.
-    _logger.info("Checking roof state before flats")
+    # Visually verify mount is parked and roof is closed before flats.
+    # Only checks — does not move the scope or roof.
+    _logger.info("Visual safety check before flats")
     turn_inside_light_on(dev_map)
     parked, closed, is_open, mod_date = get_status_with_lights()
     turn_inside_light_off(dev_map)
-    if not closed:
-        social_server.post_social_message("Roof is not closed — closing before flats")
-        _logger.info("Roof not closed — toggling to close")
-        announce_roof_movement("The roof will be closing in one minute")
-        toggle_roof(dev_map)
-        turn_inside_light_on(dev_map)
-        parked, closed, is_open, mod_date = get_status_with_lights()
-        turn_inside_light_off(dev_map)
-        if closed:
-            social_server.post_social_message("Roof confirmed closed — proceeding with flats")
-            _logger.info("Roof confirmed closed after toggle")
-        else:
-            social_server.post_social_message("WARNING: Roof may not be fully closed")
-            _logger.warning("Roof close not confirmed by vision safety before flats")
+
+    if parked:
+        _logger.info("Visual check: mount is parked")
     else:
-        _logger.info("Roof already closed")
+        social_server.post_social_message("WARNING: Mount does not appear parked before flats")
+        _logger.warning("Visual check: mount does not appear parked before flats")
+    if closed:
+        _logger.info("Visual check: roof is closed")
+    else:
+        social_server.post_social_message("WARNING: Roof does not appear closed before flats")
+        _logger.warning("Visual check: roof does not appear closed before flats")
 
     set_imaging_state(ImagingState.IN_FLATS)
 
