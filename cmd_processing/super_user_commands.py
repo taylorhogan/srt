@@ -793,9 +793,7 @@ def do_flats() -> None:
     # Visually verify mount is parked and roof is closed before flats.
     # Only checks — does not move the scope or roof.
     _logger.info("Visual safety check before flats")
-    turn_inside_light_on(dev_map)
     parked, closed, is_open, mod_date = get_status_with_lights()
-    turn_inside_light_off(dev_map)
 
     if parked:
         _logger.info("Visual check: mount is parked")
