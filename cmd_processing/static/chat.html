@@ -307,7 +307,7 @@
   });
 
   // ── Working spinner ────────────────────────────────────────────
-  const SPIN_CHARS = ['⠋','⠙','⠹','⠸','⠼','⠴','⠦','⠧','⠇','⠏'];
+  const SPIN_CHARS = ['🌑','🌒','🌓','🌔','🌕','🌖','🌗','🌘'];
   let spinnerInterval = null;
   let spinIdx = 0;
 
@@ -317,7 +317,7 @@
     spinnerInterval = setInterval(() => {
       sendBtn.textContent = SPIN_CHARS[spinIdx % SPIN_CHARS.length];
       spinIdx++;
-    }, 80);
+    }, 150);
   }
 
   function stopSpinner() {
