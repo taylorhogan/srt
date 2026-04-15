@@ -75,22 +75,30 @@ if __name__ == "__main__":
     unity_url = _get_unity_url()
     print(f"Querying Pegasus Unity at {unity_url}\n")
 
-    print("--- Device discovery ---")
-    name, key = _get_driver_info()
-    print(f"  Driver name: {name}")
-    print(f"  Driver key:  {key}")
+    print("--- Device discovery (raw) ---")
+    try:
+        r = requests.get(f"{unity_url}/Server/DeviceManager/Connected", timeout=5)
+        print(f"  Status: {r.status_code}")
+        print(f"  Body:   {r.text[:1000]}")
+    except requests.RequestException as e:
+        print(f"  Error: {e}")
 
-    if name and key:
-        # Probe the environment endpoint and print raw response for debugging
-        url = f"{unity_url}/Driver/{name}/Report/Environment?DriverUniqueKey={key}"
-        print(f"\n--- Raw environment response ---")
-        print(f"  PUT {url}")
-        try:
-            r = requests.put(url, timeout=5)
-            print(f"  Status: {r.status_code}")
-            print(f"  Body:   {r.text[:500]}")
-        except requests.RequestException as e:
-            print(f"  Error: {e}")
+    name, key = _get_driver_info()
+    print(f"\n  Parsed driver name: {name}")
+    print(f"  Parsed driver key:  {key!r}")
+
+    if name:
+        # Try environment endpoint with and without key
+        for suffix in ([f"?DriverUniqueKey={key}"] if key else []) + [""]:
+            url = f"{unity_url}/Driver/{name}/Report/Environment{suffix}"
+            print(f"\n--- Raw environment response ---")
+            print(f"  PUT {url}")
+            try:
+                r = requests.put(url, timeout=5)
+                print(f"  Status: {r.status_code}")
+                print(f"  Body:   {r.text[:500]}")
+            except requests.RequestException as e:
+                print(f"  Error: {e}")
 
     print("\n--- Temperature / Humidity ---")
     result = get_temperature_humidity()
