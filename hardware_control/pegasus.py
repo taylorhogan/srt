@@ -59,17 +59,16 @@ def get_temperature_humidity():
     if driver_key:
         url += f"?DriverUniqueKey={driver_key}"
 
-    for method in (requests.get, requests.post):
-        try:
-            r = method(url, timeout=5)
-            if r.status_code == 200:
-                data = r.json()
-                return {
-                    "temperature": float(data["temperature"]),
-                    "humidity": float(data["humidity"]),
-                }
-        except (requests.RequestException, KeyError, ValueError, TypeError):
-            continue
+    try:
+        r = requests.get(url, timeout=5)
+        if r.status_code == 200:
+            msg = r.json()["data"]["message"]
+            return {
+                "temperature": float(msg["temperature"]),
+                "humidity": float(msg["humidity"]),
+            }
+    except (requests.RequestException, KeyError, ValueError, TypeError):
+        pass
 
     return None
 
@@ -101,13 +100,12 @@ if __name__ == "__main__":
         suffix = f"?DriverUniqueKey={key}" if key else ""
         url = f"{unity_url}/Driver/{name}/Report/Environment{suffix}"
         print(f"\n--- Raw environment response ---")
-        for method in (requests.get, requests.post, requests.put):
-            print(f"  {method.__name__.upper()} {url}")
-            try:
-                r = method(url, timeout=5)
-                print(f"  Status: {r.status_code}  Body: {r.text[:300]}")
-            except requests.RequestException as e:
-                print(f"  Error: {e}")
+        print(f"  GET {url}")
+        try:
+            r = requests.get(url, timeout=5)
+            print(f"  Status: {r.status_code}  Body: {r.text[:300]}")
+        except requests.RequestException as e:
+            print(f"  Error: {e}")
 
     print("\n--- Temperature / Humidity ---")
     result = get_temperature_humidity()
