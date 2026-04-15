@@ -421,7 +421,7 @@
     tickerTrack.style.animation = 'none';
     void tickerTrack.offsetWidth; // force reflow
     const halfWidth = tickerTrack.scrollWidth / 2;
-    const duration = Math.max(12, halfWidth / 55); // ~55 px/s
+    const duration = Math.max(8, halfWidth / 90); // ~90 px/s
     tickerTrack.style.animation = `ticker-scroll ${duration.toFixed(1)}s linear infinite`;
   }
 
