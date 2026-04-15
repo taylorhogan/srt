@@ -153,17 +153,26 @@ async def api_ticker():
         except Exception:
             dso = sched.get("dso") or "—"
 
-        payload = {
-            "ok": True,
-            "metrics": [
-                {"label": "Scheduler", "value": sched_state},
-                {"label": "Target",    "value": str(dso)},
-                {"label": "Tonight",   "value": str(tonight)},
-                {"label": "Mode",      "value": mode.title()},
-                {"label": "Safety",    "value": safe},
-                {"label": "State",     "value": imaging},
-            ],
-        }
+        metrics = [
+            {"label": "Scheduler", "value": sched_state},
+            {"label": "Target",    "value": str(dso)},
+            {"label": "Tonight",   "value": str(tonight)},
+            {"label": "Mode",      "value": mode.title()},
+            {"label": "Safety",    "value": safe},
+            {"label": "State",     "value": imaging},
+        ]
+
+        # Append Pegasus environment data if available
+        try:
+            from hardware_control.pegasus import get_temperature_humidity
+            env = await asyncio.to_thread(get_temperature_humidity)
+            if env:
+                metrics.append({"label": "Temp",     "value": f"{env['temperature_f']}°F"})
+                metrics.append({"label": "Humidity", "value": f"{env['humidity']}%"})
+        except Exception:
+            pass  # Unity not running or device unavailable
+
+        payload = {"ok": True, "metrics": metrics}
     except Exception:
         _logger.exception("api_ticker error")
         payload = {"ok": False, "metrics": []}
