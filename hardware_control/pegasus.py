@@ -59,17 +59,17 @@ def get_temperature_humidity():
     if driver_key:
         url += f"?DriverUniqueKey={driver_key}"
 
-    try:
-        # Unity uses PUT for report endpoints
-        r = requests.put(url, timeout=5)
-        if r.status_code == 200:
-            data = r.json()
-            return {
-                "temperature": float(data["temperature"]),
-                "humidity": float(data["humidity"]),
-            }
-    except (requests.RequestException, KeyError, ValueError, TypeError):
-        pass
+    for method in (requests.get, requests.post):
+        try:
+            r = method(url, timeout=5)
+            if r.status_code == 200:
+                data = r.json()
+                return {
+                    "temperature": float(data["temperature"]),
+                    "humidity": float(data["humidity"]),
+                }
+        except (requests.RequestException, KeyError, ValueError, TypeError):
+            continue
 
     return None
 
@@ -98,15 +98,14 @@ if __name__ == "__main__":
     print(f"  Parsed driver key:  {key!r}")
 
     if name:
-        # Try environment endpoint with and without key
-        for suffix in ([f"?DriverUniqueKey={key}"] if key else []) + [""]:
-            url = f"{unity_url}/Driver/{name}/Report/Environment{suffix}"
-            print(f"\n--- Raw environment response ---")
-            print(f"  PUT {url}")
+        suffix = f"?DriverUniqueKey={key}" if key else ""
+        url = f"{unity_url}/Driver/{name}/Report/Environment{suffix}"
+        print(f"\n--- Raw environment response ---")
+        for method in (requests.get, requests.post, requests.put):
+            print(f"  {method.__name__.upper()} {url}")
             try:
-                r = requests.put(url, timeout=5)
-                print(f"  Status: {r.status_code}")
-                print(f"  Body:   {r.text[:500]}")
+                r = method(url, timeout=5)
+                print(f"  Status: {r.status_code}  Body: {r.text[:300]}")
             except requests.RequestException as e:
                 print(f"  Error: {e}")
 
