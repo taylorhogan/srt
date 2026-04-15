@@ -81,6 +81,10 @@ class PublicConfig():
             "destination": "~/Desktop"
         },
 
+        "pegasus": {
+            "com_port": "",  # e.g. "COM3" on Windows or "/dev/ttyUSB0" on Linux; blank = auto-discover
+        },
+
     })
 
     def data(self):

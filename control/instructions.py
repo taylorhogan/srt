@@ -293,12 +293,17 @@ def set_priority_instruction_db(dso_name: str, priority: int) -> bool:
 
 
 def add_dso_object_instruction(dso_name, recipe, requestor, priority=5):
+    normalized = dso_name.lower().replace(" ", "")
     now = datetime.now()
     formatted_date = now.strftime("%Y-%m-%d")
     with open(_INSTRUCTIONS_PATH, 'r') as f:
         instructions = json.load(f)
+    for instruction in instructions:
+        if (instruction["dso"].lower().replace(" ", "") == normalized
+                and instruction["status"] != "completed"):
+            return False
     new_instruction = {
-        "dso": dso_name,
+        "dso": normalized,
         "uuid": "1",
         "recipe": recipe,
         "requestor": requestor,
@@ -309,6 +314,7 @@ def add_dso_object_instruction(dso_name, recipe, requestor, priority=5):
     instructions.append(new_instruction)
     with open(_INSTRUCTIONS_PATH, 'w') as f:
         f.writelines(json.dumps(instructions, indent=4))
+    return True
 
 
 def get_sorted_instructions():

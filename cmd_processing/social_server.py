@@ -60,8 +60,10 @@ def image_cmd(words: list[str], index: int, m: Mastodon, account: str) -> None:
     if dso_name is not None:
         object = astro_dso_visibility.is_a_dso_object(dso_name)
         if object is not None:
-            instructions.add_dso_object_instruction(dso_name, "", account)
-            post_social_message(dso_name + " Added to list of objects to image\n")
+            if instructions.add_dso_object_instruction(dso_name, "", account):
+                post_social_message(dso_name + " Added to list of objects to image\n")
+            else:
+                post_social_message(dso_name + " Already in the queue\n")
         else:
             post_social_message(dso_name + " Not a known object\n")
 
