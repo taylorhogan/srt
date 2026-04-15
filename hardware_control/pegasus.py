@@ -22,6 +22,12 @@ def _send_command(ser, cmd):
     return ser.readline().decode(errors="replace").strip()
 
 
+def _is_pegasus_response(response):
+    """Return True if the response looks like it came from a Pegasus device."""
+    upper = response.upper()
+    return upper.startswith("UPB") or upper.startswith("PA:")
+
+
 def discover_com_port():
     """Scan all serial ports and return the first one that responds as a Pegasus device.
 
@@ -33,7 +39,7 @@ def discover_com_port():
             with serial.Serial(port, _BAUD_RATE, timeout=_TIMEOUT) as ser:
                 time.sleep(0.5)  # allow USB-serial adapter to settle
                 response = _send_command(ser, "PA")
-                if response.upper().startswith("UPB"):
+                if _is_pegasus_response(response):
                     return port
         except (serial.SerialException, OSError):
             continue
@@ -52,16 +58,14 @@ def _get_com_port():
 def get_temperature_humidity(com_port=None):
     """Query the Pegasus power box for temperature and humidity.
 
+    Tries the SE (sensor/environment) command first (PPB-family devices),
+    then falls back to parsing the PA status line (UPBv2).
+
     Args:
         com_port: Serial port string. If None, uses config or auto-discovers.
 
     Returns:
         dict with keys 'temperature' (°C) and 'humidity' (%), or None on failure.
-
-    The Pegasus UPBv2 'PA' response format (colon-delimited fields after 'UPB2_fw:'):
-        u1,u2,u3,u4,adj_out,dew1,dew2,focus,autodew,voltage,current,
-        temperature,humidity,dewpoint,auto_adj,pwm
-    Index (0-based after splitting on ','): temperature=11, humidity=12
     """
     if com_port is None:
         com_port = _get_com_port()
@@ -70,24 +74,39 @@ def get_temperature_humidity(com_port=None):
 
     try:
         with serial.Serial(com_port, _BAUD_RATE, timeout=_TIMEOUT) as ser:
-            response = _send_command(ser, "PA")
+            time.sleep(0.5)
+            se_response = _send_command(ser, "SE")
+            pa_response = _send_command(ser, "PA")
     except (serial.SerialException, OSError):
         return None
 
-    # Response looks like: UPB2_3.15:1,1,1,1,1,0,0,0,0,12.1,0.4,22.5,55.0,13.2,0,100
-    if ":" not in response:
-        return None
+    # SE response: SE:[temp]:[humidity]:[dewpoint]  (PPB / PPBA)
+    if se_response.upper().startswith("SE:"):
+        fields = se_response.split(":")[1:]
+        try:
+            return {"temperature": float(fields[0]), "humidity": float(fields[1])}
+        except (IndexError, ValueError):
+            pass
 
-    fields_str = response.split(":", 1)[1]
-    fields = fields_str.split(",")
+    # PA response (colon-delimited PPB/PPBA):
+    # PA:[U1]:[U2]:[U3]:[U4]:[Dew1]:[Dew2]:[AutoDew]:[Voltage]:[Current]:[Temp]:[Humidity]
+    if pa_response.upper().startswith("PA:"):
+        fields = pa_response.split(":")[1:]
+        try:
+            return {"temperature": float(fields[9]), "humidity": float(fields[10])}
+        except (IndexError, ValueError):
+            pass
 
-    try:
-        temperature = float(fields[11])
-        humidity = float(fields[12])
-    except (IndexError, ValueError):
-        return None
+    # PA response (comma-delimited UPBv2):
+    # UPB2_fw:[u1,u2,...,temp,humidity,...]  temperature=index 11, humidity=12
+    if ":" in pa_response:
+        fields = pa_response.split(":", 1)[1].split(",")
+        try:
+            return {"temperature": float(fields[11]), "humidity": float(fields[12])}
+        except (IndexError, ValueError):
+            pass
 
-    return {"temperature": temperature, "humidity": humidity}
+    return None
 
 
 if __name__ == "__main__":
@@ -101,8 +120,10 @@ if __name__ == "__main__":
         try:
             with serial.Serial(port, _BAUD_RATE, timeout=_TIMEOUT) as ser:
                 time.sleep(0.5)
-                raw = _send_command(ser, "PA")
-                print(f"  Response: {repr(raw)}")
+                raw_pa = _send_command(ser, "PA")
+                raw_se = _send_command(ser, "SE")
+                print(f"  PA: {repr(raw_pa)}")
+                print(f"  SE: {repr(raw_se)}")
         except (serial.SerialException, OSError) as e:
             print(f"  Error: {e}")
 
