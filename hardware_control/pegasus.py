@@ -75,18 +75,9 @@ def get_temperature_humidity(com_port=None):
     try:
         with serial.Serial(com_port, _BAUD_RATE, timeout=_TIMEOUT) as ser:
             time.sleep(0.5)
-            se_response = _send_command(ser, "SE")
             pa_response = _send_command(ser, "PA")
     except (serial.SerialException, OSError):
         return None
-
-    # SE response: SE:[temp]:[humidity]:[dewpoint]  (PPB / PPBA)
-    if se_response.upper().startswith("SE:"):
-        fields = se_response.split(":")[1:]
-        try:
-            return {"temperature": float(fields[0]), "humidity": float(fields[1])}
-        except (IndexError, ValueError):
-            pass
 
     # PA response (colon-delimited PPB/PPBA):
     # PA:[U1]:[U2]:[U3]:[U4]:[Dew1]:[Dew2]:[AutoDew]:[Voltage]:[Current]:[Temp]:[Humidity]
