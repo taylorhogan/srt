@@ -23,12 +23,15 @@ def _get_driver_info():
         r = requests.get(f"{unity_url}/Server/DeviceManager/Connected", timeout=5)
         r.raise_for_status()
         data = r.json()
-        # Response: {"data": [{"name": "UPBv3", "id": "<key>", ...}]}
         devices = data.get("data") or data.get("devices") or []
         if isinstance(devices, list) and devices:
             device = devices[0]
             name = device.get("name", "")
-            key = device.get("id") or device.get("driverUniqueKey") or device.get("uuid") or ""
+            # Try all plausible key field names
+            key = (device.get("uniqueId") or device.get("uniqueID")
+                   or device.get("uniqueKey") or device.get("uuid")
+                   or device.get("DriverUniqueKey") or device.get("driverUniqueKey")
+                   or device.get("uid") or device.get("id") or "")
             return name, key
     except (requests.RequestException, ValueError, KeyError):
         pass
@@ -79,7 +82,14 @@ if __name__ == "__main__":
     try:
         r = requests.get(f"{unity_url}/Server/DeviceManager/Connected", timeout=5)
         print(f"  Status: {r.status_code}")
-        print(f"  Body:   {r.text[:1000]}")
+        print(f"  Body:   {r.text}")  # full body
+        # Print each field of the first device
+        data = r.json()
+        devices = data.get("data") or data.get("devices") or []
+        if isinstance(devices, list) and devices:
+            print("\n  Device fields:")
+            for k, v in devices[0].items():
+                print(f"    {k!r}: {v!r}")
     except requests.RequestException as e:
         print(f"  Error: {e}")
 
