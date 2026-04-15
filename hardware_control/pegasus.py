@@ -1,8 +1,6 @@
 import os
 import sys
-import time
-import serial
-import serial.tools.list_ports
+import requests
 
 if __package__ is None or __package__ == "":
     project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
@@ -11,122 +9,84 @@ if __package__ is None or __package__ == "":
 
 from configs import config
 
-_BAUD_RATE = 9600
-_TIMEOUT = 2
+# Pegasus Unity runs a local HTTP server on this port
+_UNITY_URL = "http://localhost:32000"
+# Driver names to probe during discovery (Powerbox v3, UPBv2, PPBA fallbacks)
+_DRIVER_NAMES = ["PBV3", "PBAV3", "PowerboxV3", "UPBv2", "PPBA"]
 
 
-def _send_command(ser, cmd):
-    """Send a command and return the stripped response line."""
-    ser.reset_input_buffer()
-    ser.write((cmd + "\r\n").encode())
-    return ser.readline().decode(errors="replace").strip()
+def discover_driver_key(unity_url=None):
+    """Query the Unity device manager to find the active Pegasus driver key.
 
-
-def _is_pegasus_response(response):
-    """Return True if the response looks like it came from a Pegasus device."""
-    upper = response.upper()
-    return upper.startswith("UPB") or upper.startswith("PA:")
-
-
-def discover_com_port():
-    """Scan all serial ports and return the first one that responds as a Pegasus device.
-
-    Returns the port name (e.g. 'COM3' or '/dev/ttyUSB0'), or None if not found.
+    Returns (driver_name, driver_key) or (None, None) if not found.
     """
-    for port_info in serial.tools.list_ports.comports():
-        port = port_info.device
+    if unity_url is None:
+        unity_url = config.data().get("pegasus", {}).get("unity_url", _UNITY_URL)
+
+    # Try the device manager endpoint to list connected drivers
+    try:
+        r = requests.get(f"{unity_url}/Server/DeviceManager/Connected", timeout=5)
+        print(f"DeviceManager response ({r.status_code}): {r.text[:500]}")
+    except requests.RequestException as e:
+        print(f"Could not reach Unity at {unity_url}: {e}")
+        return None, None
+
+    # Try environment endpoint for each known driver name
+    for driver in _DRIVER_NAMES:
         try:
-            with serial.Serial(port, _BAUD_RATE, timeout=_TIMEOUT) as ser:
-                time.sleep(0.5)  # allow USB-serial adapter to settle
-                response = _send_command(ser, "PA")
-                if _is_pegasus_response(response):
-                    return port
-        except (serial.SerialException, OSError):
-            continue
-    return None
+            url = f"{unity_url}/Driver/{driver}/Report/Environment"
+            r = requests.get(url, timeout=5)
+            print(f"  {driver}: {r.status_code} {r.text[:200]}")
+            if r.status_code == 200:
+                return driver, None  # no key needed
+        except requests.RequestException:
+            pass
+
+    return None, None
 
 
-def _get_com_port():
-    """Return the configured COM port, discovering it if the config entry is blank."""
-    cfg = config.data()
-    port = cfg.get("pegasus", {}).get("com_port", "")
-    if not port:
-        port = discover_com_port()
-    return port
-
-
-def get_temperature_humidity(com_port=None):
-    """Query the Pegasus power box for temperature and humidity.
-
-    Tries the SE (sensor/environment) command first (PPB-family devices),
-    then falls back to parsing the PA status line (UPBv2).
-
-    Args:
-        com_port: Serial port string. If None, uses config or auto-discovers.
+def get_temperature_humidity():
+    """Query the Pegasus Powerbox via the Unity local HTTP API.
 
     Returns:
         dict with keys 'temperature' (°C) and 'humidity' (%), or None on failure.
     """
-    if com_port is None:
-        com_port = _get_com_port()
-    if com_port is None:
-        return None
+    cfg = config.data().get("pegasus", {})
+    unity_url = cfg.get("unity_url", _UNITY_URL)
+    driver_key = cfg.get("driver_key", "")
 
-    try:
-        with serial.Serial(com_port, _BAUD_RATE, timeout=_TIMEOUT) as ser:
-            time.sleep(0.5)
-            pa_response = _send_command(ser, "PA")
-    except (serial.SerialException, OSError):
-        return None
-
-    # PA response (colon-delimited PPB/PPBA):
-    # PA:[U1]:[U2]:[U3]:[U4]:[Dew1]:[Dew2]:[AutoDew]:[Voltage]:[Current]:[Temp]:[Humidity]
-    if pa_response.upper().startswith("PA:"):
-        fields = pa_response.split(":")[1:]
+    for driver in _DRIVER_NAMES:
+        url = f"{unity_url}/Driver/{driver}/Report/Environment"
+        if driver_key:
+            url += f"?DriverUniqueKey={driver_key}"
         try:
-            return {"temperature": float(fields[9]), "humidity": float(fields[10])}
-        except (IndexError, ValueError):
-            pass
-
-    # PA response (comma-delimited UPBv2):
-    # UPB2_fw:[u1,u2,...,temp,humidity,...]  temperature=index 11, humidity=12
-    if ":" in pa_response:
-        fields = pa_response.split(":", 1)[1].split(",")
-        try:
-            return {"temperature": float(fields[11]), "humidity": float(fields[12])}
-        except (IndexError, ValueError):
-            pass
+            r = requests.get(url, timeout=5)
+            if r.status_code != 200:
+                continue
+            data = r.json()
+            return {
+                "temperature": float(data["temperature"]),
+                "humidity": float(data["humidity"]),
+            }
+        except (requests.RequestException, KeyError, ValueError, TypeError):
+            continue
 
     return None
 
 
 if __name__ == "__main__":
-    # Diagnostic: show every port and its raw response before attempting discovery
-    ports = list(serial.tools.list_ports.comports())
-    if not ports:
-        print("No serial ports found at all.")
-    for port_info in ports:
-        port = port_info.device
-        print(f"\nProbing {port} ({port_info.description}) ...")
-        try:
-            with serial.Serial(port, _BAUD_RATE, timeout=_TIMEOUT) as ser:
-                time.sleep(0.5)
-                raw_pa = _send_command(ser, "PA")
-                raw_se = _send_command(ser, "SE")
-                print(f"  PA: {repr(raw_pa)}")
-                print(f"  SE: {repr(raw_se)}")
-        except (serial.SerialException, OSError) as e:
-            print(f"  Error: {e}")
+    cfg = config.data().get("pegasus", {})
+    unity_url = cfg.get("unity_url", _UNITY_URL)
 
-    print("\n--- Discovery ---")
-    port = discover_com_port()
-    if port:
-        print(f"Pegasus found on {port}")
-        result = get_temperature_humidity(port)
-        if result:
-            print(f"Temperature: {result['temperature']} °C")
-            print(f"Humidity:    {result['humidity']} %")
-        else:
-            print("Failed to parse environment data.")
+    print(f"Querying Pegasus Unity at {unity_url}\n")
+    print("--- Driver discovery ---")
+    discover_driver_key(unity_url)
+
+    print("\n--- Temperature / Humidity ---")
+    result = get_temperature_humidity()
+    if result:
+        print(f"Temperature: {result['temperature']} °C")
+        print(f"Humidity:    {result['humidity']} %")
     else:
-        print("No Pegasus device found.")
+        print("Failed to read environment data.")
+        print("\nHint: run discover_driver_key() output above to find the right driver name and key.")

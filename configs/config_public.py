@@ -82,7 +82,8 @@ class PublicConfig():
         },
 
         "pegasus": {
-            "com_port": "",  # e.g. "COM3" on Windows or "/dev/ttyUSB0" on Linux; blank = auto-discover
+            "unity_url": "http://localhost:32000",
+            "driver_key": "",  # DriverUniqueKey from Unity; blank = auto-discover
         },
 
     })
