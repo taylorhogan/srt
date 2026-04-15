@@ -63,8 +63,10 @@ def get_temperature_humidity():
         r = requests.get(url, timeout=5)
         if r.status_code == 200:
             msg = r.json()["data"]["message"]
+            temp_c = float(msg["temperature"])
             return {
-                "temperature": float(msg["temperature"]),
+                "temperature_f": round(temp_c * 9 / 5 + 32, 1),
+                "temperature_c": temp_c,
                 "humidity": float(msg["humidity"]),
             }
     except (requests.RequestException, KeyError, ValueError, TypeError):
@@ -110,7 +112,7 @@ if __name__ == "__main__":
     print("\n--- Temperature / Humidity ---")
     result = get_temperature_humidity()
     if result:
-        print(f"Temperature: {result['temperature']} °C")
+        print(f"Temperature: {result['temperature_f']} °F ({result['temperature_c']} °C)")
         print(f"Humidity:    {result['humidity']} %")
     else:
         print("Failed to read environment data.")
