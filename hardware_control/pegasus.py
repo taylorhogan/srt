@@ -1,5 +1,6 @@
 import os
 import sys
+import time
 import serial
 import serial.tools.list_ports
 
@@ -17,7 +18,7 @@ _TIMEOUT = 2
 def _send_command(ser, cmd):
     """Send a command and return the stripped response line."""
     ser.reset_input_buffer()
-    ser.write((cmd + "\n").encode())
+    ser.write((cmd + "\r\n").encode())
     return ser.readline().decode(errors="replace").strip()
 
 
@@ -30,6 +31,7 @@ def discover_com_port():
         port = port_info.device
         try:
             with serial.Serial(port, _BAUD_RATE, timeout=_TIMEOUT) as ser:
+                time.sleep(0.5)  # allow USB-serial adapter to settle
                 response = _send_command(ser, "PA")
                 if response.upper().startswith("UPB"):
                     return port
@@ -89,6 +91,22 @@ def get_temperature_humidity(com_port=None):
 
 
 if __name__ == "__main__":
+    # Diagnostic: show every port and its raw response before attempting discovery
+    ports = list(serial.tools.list_ports.comports())
+    if not ports:
+        print("No serial ports found at all.")
+    for port_info in ports:
+        port = port_info.device
+        print(f"\nProbing {port} ({port_info.description}) ...")
+        try:
+            with serial.Serial(port, _BAUD_RATE, timeout=_TIMEOUT) as ser:
+                time.sleep(0.5)
+                raw = _send_command(ser, "PA")
+                print(f"  Response: {repr(raw)}")
+        except (serial.SerialException, OSError) as e:
+            print(f"  Error: {e}")
+
+    print("\n--- Discovery ---")
     port = discover_com_port()
     if port:
         print(f"Pegasus found on {port}")
@@ -97,6 +115,6 @@ if __name__ == "__main__":
             print(f"Temperature: {result['temperature']} °C")
             print(f"Humidity:    {result['humidity']} %")
         else:
-            print("Failed to read environment data.")
+            print("Failed to parse environment data.")
     else:
         print("No Pegasus device found.")
