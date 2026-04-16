@@ -3,7 +3,7 @@
   git pull
 
   REM Launch Pegasus Unity in the background and wait for it to be ready
-  start "" "C:\Program Files\Pegasus Astro\Unity Platform\UnityPlatform.exe"
+  start "" "C:\Program Files (x86)\Pegasus Astro\Unity Platform\Peg.UI.exe"
   :WAIT_UNITY
   curl -s -o NUL http://localhost:32000/Server/DeviceManager/Connected
   IF %ERRORLEVEL% NEQ 0 (
