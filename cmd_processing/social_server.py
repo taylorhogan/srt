@@ -439,7 +439,16 @@ def speedtest_cmd(words: list[str], index: int, m: Mastodon, account: str) -> No
 
     def _run():
         from sentry.internet_classify import get_speed
-        result = get_speed()
+        from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
+
+        with ThreadPoolExecutor(max_workers=1) as ex:
+            future = ex.submit(get_speed)
+            try:
+                result = future.result(timeout=120)
+            except FuturesTimeout:
+                post_social_message("Speed test timed out after 2 minutes — check network")
+                return
+
         if result:
             post_social_message(
                 f"━━ Speed Test ━━\n"

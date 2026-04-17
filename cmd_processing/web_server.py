@@ -169,7 +169,6 @@ async def api_ticker():
         metrics = [
             {"label": "Scheduler", "value": sched_state},
             {"label": "Target",    "value": str(dso)},
-            {"label": "Tonight",   "value": str(tonight)},
             {"label": "Mode",      "value": mode.title()},
             {"label": "Safety",    "value": safe},
             {"label": "State",     "value": imaging},
