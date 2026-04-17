@@ -86,6 +86,8 @@
   .t-val.safe    { color: #3fb950; }
   .t-val.unsafe  { color: #f85149; }
   .t-val.active  { color: #58a6ff; }
+  .t-val.waxing  { color: #3fb950; }
+  .t-val.waning  { color: #d29922; }
 
   .t-sep {
     color: #30363d;
@@ -410,6 +412,7 @@
       let cls = '';
       if (m.label === 'Safety') cls = m.value === 'Safe' ? ' safe' : ' unsafe';
       else if (m.label === 'State' && ACTIVE_STATES.has(m.value)) cls = ' active';
+      else if (m.label === 'Moon') cls = m.value.endsWith('+') ? ' waxing' : ' waning';
       return `<span class="t-item"><span class="t-lbl">${m.label}</span><span class="t-val${cls}">${m.value}</span></span>`;
     }).join('<span class="t-sep">·</span>');
     return items + '<span class="t-sep">·</span>' + items + '<span class="t-sep">·</span>';

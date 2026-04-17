@@ -172,6 +172,18 @@ async def api_ticker():
         except Exception:
             pass  # Unity not running or device unavailable
 
+        # Moon phase
+        try:
+            import math
+            from datetime import date
+            from astral import moon
+            phase_days = moon.phase(date.today())   # 0–29.53 days
+            illumination = round(50 * (1 - math.cos(2 * math.pi * phase_days / 29.53)))
+            direction = "+" if phase_days < 14.765 else "-"
+            metrics.append({"label": "Moon", "value": f"{illumination}% {direction}"})
+        except Exception:
+            pass
+
         payload = {"ok": True, "metrics": metrics}
     except Exception:
         _logger.exception("api_ticker error")
