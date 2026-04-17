@@ -342,6 +342,7 @@
     ws.onopen = () => {
       statusDot.classList.add('connected');
       reconnectDelay = 1000;
+      stopSpinner();  // clear any stale spinner from before disconnect
     };
 
     ws.onclose = () => {
@@ -357,6 +358,7 @@
     ws.onmessage = (event) => {
       const data = JSON.parse(event.data);
       if (data.type === 'history') {
+        lastSeenId = 0;  // server restarted — reset so new IDs aren't filtered out
         data.messages.forEach(renderMessage);
       } else if (data.type === 'message') {
         stopSpinner();
