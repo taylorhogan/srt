@@ -395,6 +395,27 @@ def show_cmd(words: list[str], index: int, m: Mastodon, account: str) -> None:
     post_dso_preview(dso_name)
 
 
+def speedtest_cmd(words: list[str], index: int, m: Mastodon, account: str) -> None:
+    """Run an internet speed test. example: speedtest"""
+    post_social_message("Running speed test, this takes about 30-60 seconds…")
+
+    def _run():
+        from sentry.internet_classify import get_speed
+        result = get_speed()
+        if result:
+            post_social_message(
+                f"━━ Speed Test ━━\n"
+                f"Download : {result['download_mbps']} Mbps\n"
+                f"Upload   : {result['upload_mbps']} Mbps\n"
+                f"Ping     : {result['ping_ms']} ms\n"
+                f"Server   : {result['server']}"
+            )
+        else:
+            post_social_message("Speed test failed — check internet connection")
+
+    threading.Thread(target=_run, daemon=True).start()
+
+
 keywords = {
     "tonight": tonight_cmd,
     "best": best_cmd,
@@ -407,6 +428,7 @@ keywords = {
     "calendar": calendar_cmd,
     "show": show_cmd,
     "log": log_cmd,
+    "speedtest": speedtest_cmd,
     "help": help_cmd,
     "?": help_cmd
 }

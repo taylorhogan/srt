@@ -2,50 +2,43 @@ import speedtest
 import time
 
 
-def run_speed_test():
+def get_speed():
+    """Run a speed test and return results as a dict.
+
+    Returns:
+        dict with keys 'download_mbps', 'upload_mbps', 'ping_ms', 'server'
+        or None on failure.
+    """
     try:
-        print("Initializing speed test (this may take 30-60 seconds)...\n")
-
         st = speedtest.Speedtest()
-
-        print("Finding the best server...")
-        st.get_best_server()
-        server_info = st.get_best_server()
-        print(f"Best server: {server_info['sponsor']} ({server_info['name']}, {server_info['country']})")
-        print(f"Initial ping to server: {st.results.ping:.2f} ms\n")
-
-        print("Testing download speed...")
-        download_bits = st.download()
-        download_mbps = download_bits / 1_000_000
-        print(f"Download speed: {download_mbps:.2f} Mbps")
-
-        print("Testing upload speed...")
-        upload_bits = st.upload()
-        upload_mbps = upload_bits / 1_000_000
-        print(f"Upload speed: {upload_mbps:.2f} Mbps")
-
-        final_ping = st.results.ping
-        print(f"\nFinal results:")
-        print(f"   Download: {download_mbps:.2f} Mbps")
-        print(f"   Upload:   {upload_mbps:.2f} Mbps")
-        print(f"   Ping:     {final_ping:.2f} ms")
-
-        # Optional: generate a shareable results image link
-        try:
-            share_url = st.results.share()
-            print(f"\nShareable results image: {share_url}")
-        except:
-            print("\nCould not generate share link (sometimes blocked by network settings).")
-
-    except speedtest.ConfigRetrievalError:
-        print("Error: Could not retrieve speedtest configuration (check internet connection).")
-    except speedtest.NoMatchedServers:
-        print("Error: No suitable speedtest servers found.")
+        server = st.get_best_server()
+        download_mbps = st.download() / 1_000_000
+        upload_mbps = st.upload() / 1_000_000
+        return {
+            "download_mbps": round(download_mbps, 1),
+            "upload_mbps":   round(upload_mbps, 1),
+            "ping_ms":       round(st.results.ping, 1),
+            "server":        f"{server['sponsor']} ({server['name']})",
+        }
     except Exception as e:
-        print(f"Unexpected error: {e}")
+        print(f"Speed test error: {e}")
+        return None
+
+
+def run_speed_test():
+    """Run a speed test and print results (standalone use)."""
+    print("Running speed test (30-60 seconds)…")
+    result = get_speed()
+    if result:
+        print(f"Download : {result['download_mbps']} Mbps")
+        print(f"Upload   : {result['upload_mbps']} Mbps")
+        print(f"Ping     : {result['ping_ms']} ms")
+        print(f"Server   : {result['server']}")
+    else:
+        print("Speed test failed.")
 
 
 if __name__ == "__main__":
     start_time = time.time()
     run_speed_test()
-    print(f"\nTest completed in {time.time() - start_time:.1f} seconds.")
+    print(f"\nCompleted in {time.time() - start_time:.1f} seconds.")
