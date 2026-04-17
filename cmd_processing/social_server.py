@@ -1,5 +1,6 @@
 import asyncio
 import multiprocessing
+import subprocess
 import threading
 from pathlib import Path
 import datetime
@@ -35,6 +36,9 @@ from utils.utils import topic_to_sched
 from utils import utils
 
 _PREVIEW_MP_CONTEXT = multiprocessing.get_context("spawn")
+
+# Exit code used to signal start_srt.py to git pull and restart
+RESTART_EXIT_CODE = 42
 
 
 
@@ -395,6 +399,40 @@ def show_cmd(words: list[str], index: int, m: Mastodon, account: str) -> None:
     post_dso_preview(dso_name)
 
 
+def update_cmd(words: list[str], index: int, m: Optional[Any], account: str) -> None:
+    """Pull latest code from git and restart the server. example: update"""
+    imaging_state = su.get_imaging_state()
+    if imaging_state != su.ImagingState.NONE:
+        post_social_message(
+            f"Cannot update while imaging is active (state: {imaging_state.value}). "
+            f"Issue stop! first, then retry."
+        )
+        return
+
+    post_social_message("Update requested — pulling latest code…")
+
+    def _do_update() -> None:
+        _project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+        result = subprocess.run(
+            ["git", "-C", _project_root, "pull"],
+            capture_output=True, text=True,
+        )
+        output = (result.stdout + result.stderr).strip()
+        if len(output) > 500:
+            output = "…" + output[-500:]
+
+        if result.returncode != 0:
+            post_social_message(f"git pull failed — aborting restart:\n{output}")
+            return
+
+        post_social_message(f"git pull succeeded:\n{output}")
+        post_social_message("Restarting in 2 seconds…")
+        time.sleep(2)
+        os._exit(RESTART_EXIT_CODE)
+
+    threading.Thread(target=_do_update, daemon=True).start()
+
+
 def speedtest_cmd(words: list[str], index: int, m: Mastodon, account: str) -> None:
     """Run an internet speed test. example: speedtest"""
     post_social_message("Running speed test, this takes about 30-60 seconds…")
@@ -429,6 +467,7 @@ keywords = {
     "show": show_cmd,
     "log": log_cmd,
     "speedtest": speedtest_cmd,
+    "update": update_cmd,
     "help": help_cmd,
     "?": help_cmd
 }
