@@ -27,6 +27,19 @@ app = FastAPI()
 _static_dir = os.path.join(os.path.dirname(__file__), "static")
 app.mount("/static", StaticFiles(directory=_static_dir), name="static")
 
+
+@app.on_event("startup")
+async def _on_startup():
+    """Send a Pushover notification when the server is ready to accept connections."""
+    try:
+        from configs import config
+        from utils.pushover import push_message
+        cfg = config.data()
+        version = cfg.get("version", {}).get("date", "unknown")
+        await asyncio.to_thread(push_message, f"Iris online — v{version}")
+    except Exception:
+        _logger.exception("Failed to send startup Pushover notification")
+
 # Images dir is set at startup via init()
 _images_dir: Optional[str] = None
 
