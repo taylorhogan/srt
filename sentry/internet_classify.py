@@ -10,10 +10,16 @@ def get_speed():
         or None on failure.
     """
     try:
+        print("Speed test: initializing Speedtest()")
         st = speedtest.Speedtest()
+        print("Speed test: Speedtest() OK, getting best server…")
         server = st.get_best_server()
+        print(f"Speed test: server selected: {server}")
+        print("Speed test: running download…")
         download_mbps = st.download() / 1_000_000
+        print(f"Speed test: download {download_mbps:.1f} Mbps, running upload…")
         upload_mbps = st.upload() / 1_000_000
+        print(f"Speed test: upload {upload_mbps:.1f} Mbps — done")
         return {
             "download_mbps": round(download_mbps, 1),
             "upload_mbps":   round(upload_mbps, 1),
@@ -21,7 +27,9 @@ def get_speed():
             "server":        f"{server['sponsor']} ({server['name']})",
         }
     except Exception as e:
-        print(f"Speed test error: {e}")
+        import traceback
+        print(f"Speed test error: {type(e).__name__}: {e}")
+        traceback.print_exc()
         return None
 
 
