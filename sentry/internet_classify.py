@@ -13,8 +13,13 @@ def get_speed():
     """
     try:
         print("Speed test: launching speedtest-cli --json …")
+        import shutil
+        exe = shutil.which("speedtest") or shutil.which("speedtest-cli")
+        if not exe:
+            print("Speed test: speedtest-cli not found in PATH")
+            return None
         result = subprocess.run(
-            [sys.executable, "-m", "speedtest", "--json"],
+            [exe, "--json"],
             capture_output=True, text=True, timeout=120
         )
         print(f"Speed test: exit code {result.returncode}")
