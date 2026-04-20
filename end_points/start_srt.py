@@ -16,6 +16,9 @@ import scheduler_server
 if __name__ == "__main__":
     os.environ.setdefault("PREFECT_API_URL", "http://127.0.0.1:4200/api")
 
+    from sentry.internet_classify import run_speed_test
+    run_speed_test()
+
     while True:
         p1 = Process(target=social_server.main)
         p2 = Process(target=scheduler_server.main)
