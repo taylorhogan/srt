@@ -483,6 +483,57 @@ def todo_cmd(words: list[str], account: str) -> None:
             social_server.post_social_message("Todo list is empty")
 
 
+def log_cmd(words: list[str], account: str) -> None:
+    """Show last N lines of iris.log. example: log 50"""
+    n = 20
+    if len(words) > 2:
+        try:
+            n = int(words[2])
+        except ValueError:
+            pass
+    _project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+    log_path = os.path.join(_project_root, "iris.log")
+    try:
+        with open(log_path, "r") as f:
+            lines = f.readlines()
+        tail = lines[-n:] if len(lines) >= n else lines
+        social_server.post_social_message("".join(tail))
+    except FileNotFoundError:
+        social_server.post_social_message("iris.log not found")
+
+
+def update_cmd(words: list[str], account: str) -> None:
+    """Pull latest code from git and restart the server. example: update"""
+    imaging_state = get_imaging_state()
+    if imaging_state != ImagingState.NONE:
+        social_server.post_social_message(
+            f"Cannot update while imaging is active (state: {imaging_state.value}). "
+            f"Issue stop! first, then retry."
+        )
+        return
+
+    social_server.post_social_message("Update requested — pulling latest code…")
+
+    def _do_update() -> None:
+        _project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+        result = subprocess.run(
+            ["git", "-C", _project_root, "pull"],
+            capture_output=True, text=True,
+        )
+        output = (result.stdout + result.stderr).strip()
+        if len(output) > 500:
+            output = "…" + output[-500:]
+        if result.returncode != 0:
+            social_server.post_social_message(f"git pull failed — aborting restart:\n{output}")
+            return
+        social_server.post_social_message(f"git pull succeeded:\n{output}")
+        social_server.post_social_message("Restarting in 2 seconds…")
+        time.sleep(2)
+        os._exit(social_server.RESTART_EXIT_CODE)
+
+    threading.Thread(target=_do_update, daemon=True).start()
+
+
 def get_super_user_commands() -> dict[str, Callable]:
     """Return the command-name → handler mapping for all super-user commands."""
     return {
@@ -500,6 +551,8 @@ def get_super_user_commands() -> dict[str, Callable]:
         "doflats": doflats_cmd,
         "todo": todo_cmd,
         "stats": image_stats_cmd,
+        "log": log_cmd,
+        "update": update_cmd,
     }
 
 
