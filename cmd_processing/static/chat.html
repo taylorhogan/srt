@@ -433,6 +433,7 @@
       if (data.type === 'history') {
         lastSeenId = 0;  // server restarted — reset so new IDs aren't filtered out
         data.messages.forEach(renderMessage);
+        requestAnimationFrame(() => { messagesDiv.scrollTop = messagesDiv.scrollHeight; });
       } else if (data.type === 'message') {
         stopSpinner();
         renderMessage(data.data);
