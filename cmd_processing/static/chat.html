@@ -161,7 +161,13 @@
     max-height: 92vh;
     border-radius: 6px;
     object-fit: contain;
+    touch-action: none;
+    will-change: transform;
+    cursor: grab;
+    transition: transform 0.04s linear;
   }
+
+  #lightbox img.grabbing { cursor: grabbing; }
 
   #lightbox-close {
     position: fixed;
@@ -255,13 +261,80 @@
   const lightboxImg = document.getElementById('lightbox-img');
   let ws = null;
 
+  // ── Lightbox pinch-to-zoom ─────────────────────────────────────
+  let lbScale = 1, lbX = 0, lbY = 0;
+  let lbLastTap = 0;
+  let lbPinchStartDist = 0, lbPinchStartScale = 1;
+  let lbDragStart = null;
+
+  function lbApplyTransform() {
+    lightboxImg.style.transform = `translate(${lbX}px,${lbY}px) scale(${lbScale})`;
+  }
+
+  function lbReset() {
+    lbScale = 1; lbX = 0; lbY = 0;
+    lightboxImg.style.transform = '';
+  }
+
+  function pinchDist(t) {
+    const dx = t[0].clientX - t[1].clientX;
+    const dy = t[0].clientY - t[1].clientY;
+    return Math.hypot(dx, dy);
+  }
+
+  lightboxImg.addEventListener('touchstart', (e) => {
+    e.preventDefault();
+    if (e.touches.length === 2) {
+      lbPinchStartDist = pinchDist(e.touches);
+      lbPinchStartScale = lbScale;
+      lbDragStart = null;
+    } else if (e.touches.length === 1) {
+      const t = e.touches[0];
+      // Double-tap detection
+      const now = Date.now();
+      if (now - lbLastTap < 300) {
+        lbLastTap = 0;
+        if (lbScale > 1) { lbReset(); }
+        else { lbScale = 2.5; lbApplyTransform(); }
+        return;
+      }
+      lbLastTap = now;
+      lbDragStart = { x: t.clientX - lbX, y: t.clientY - lbY };
+      lightboxImg.classList.add('grabbing');
+    }
+  }, { passive: false });
+
+  lightboxImg.addEventListener('touchmove', (e) => {
+    e.preventDefault();
+    if (e.touches.length === 2) {
+      const newDist = pinchDist(e.touches);
+      lbScale = Math.min(5, Math.max(1, lbPinchStartScale * (newDist / lbPinchStartDist)));
+      lbApplyTransform();
+    } else if (e.touches.length === 1 && lbDragStart && lbScale > 1) {
+      const t = e.touches[0];
+      lbX = t.clientX - lbDragStart.x;
+      lbY = t.clientY - lbDragStart.y;
+      lbApplyTransform();
+    }
+  }, { passive: false });
+
+  lightboxImg.addEventListener('touchend', (e) => {
+    e.preventDefault();
+    lightboxImg.classList.remove('grabbing');
+    if (lbScale < 1.05) lbReset(); // snap back if barely zoomed
+    lbDragStart = null;
+  }, { passive: false });
+  // ──────────────────────────────────────────────────────────────
+
   function openLightbox(url) {
+    lbReset();
     lightboxImg.src = url;
     lightbox.classList.add('open');
   }
 
   function closeLightbox() {
     lightbox.classList.remove('open');
+    lbReset();
     lightboxImg.src = '';
   }
 
