@@ -18,7 +18,7 @@ if __package__ is None or __package__ == "":
 
 from configs import config
 
-from fits_processing import fitsfwhm
+from fits_processing import fitsfwhm, sky_brightness as sb
 from hardware_control import pwi4_utils, kasa_utils as ku
 from cmd_processing import super_user_commands, social_server
 from sentry import vision_safety
@@ -80,9 +80,12 @@ def _post_imaging_summary(imaging_start: datetime) -> None:
         f"Processing {len(fits_files)} FITS files, first: {fits_files[0].name}"
     )
     fwhm_px_list, fwhm_arcsec_list, star_count_list, ecc_list = [], [], [], []
+    sky_adu_per_s_list, sky_mag_list, sky_gradient_list = [], [], []
 
     def _analyse(f):
-        return fitsfwhm.calculate_fwhm(f, arcsec_per_pixel=arcsec_per_pixel)
+        fwhm_result = fitsfwhm.calculate_fwhm(f, arcsec_per_pixel=arcsec_per_pixel)
+        sky_result  = sb.measure_sky(f, arcsec_per_pixel=arcsec_per_pixel)
+        return fwhm_result, sky_result
 
     total = len(fits_files)
     max_workers = min(8, total)
@@ -93,14 +96,19 @@ def _post_imaging_summary(imaging_start: datetime) -> None:
             for n, fut in enumerate(as_completed(futures), start=1):
                 logger.info("Analysing frames: %d/%d", n, total)
                 try:
-                    mean_px, mean_arcsec, star_count, mean_ecc = fut.result()
+                    (mean_px, mean_arcsec, star_count, mean_ecc), sky = fut.result()
                     if star_count > 0:
                         fwhm_px_list.append(mean_px)
                         fwhm_arcsec_list.append(mean_arcsec)
                         star_count_list.append(star_count)
                         ecc_list.append(mean_ecc)
+                    if sky:
+                        sky_adu_per_s_list.append(sky["sky_adu_per_s"])
+                        if sky.get("sky_mag_arcsec2") is not None:
+                            sky_mag_list.append(sky["sky_mag_arcsec2"])
+                        sky_gradient_list.append(sky["sky_gradient_rms"])
                 except Exception:
-                    logger.exception("FWHM analysis failed for %s", futures[fut])
+                    logger.exception("Frame analysis failed for %s", futures[fut])
 
     if not fwhm_px_list:
         social_server.post_social_message(
@@ -113,12 +121,27 @@ def _post_imaging_summary(imaging_start: datetime) -> None:
     median_stars       = float(np.median(star_count_list))
     median_ecc         = float(np.median(ecc_list))
 
-    social_server.post_social_message(
+    summary = (
         f"Imaging complete — {len(fits_files)} frames ({len(fwhm_px_list)} with stars)\n"
         f'Median FWHM: {median_fwhm_arcsec:.2f}"\n'
         f"Median stars/frame: {median_stars:.0f}\n"
         f"Median eccentricity: {median_ecc:.3f}"
     )
+
+    if sky_adu_per_s_list:
+        median_sky_adu_per_s  = float(np.median(sky_adu_per_s_list))
+        median_sky_gradient   = float(np.median(sky_gradient_list))
+        summary += f"\nMedian sky: {median_sky_adu_per_s:.2f} ADU/s"
+        if sky_mag_list:
+            median_sky_mag = float(np.median(sky_mag_list))
+            summary += f"  ({median_sky_mag:.2f} instr mag/arcsec²)"
+        summary += f"\nMedian sky gradient: ±{median_sky_gradient:.1f} ADU RMS"
+        logger.info(
+            "Sky summary: median sky=%.2f ADU/s, gradient=%.1f ADU RMS",
+            median_sky_adu_per_s, median_sky_gradient,
+        )
+
+    social_server.post_social_message(summary)
     logger.info(
         "Imaging summary: %d frames, median FWHM=%.2f px (%.2f\"), stars=%.0f, ecc=%.3f",
         len(fits_files), median_fwhm_px, median_fwhm_arcsec, median_stars, median_ecc,

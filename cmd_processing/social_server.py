@@ -27,7 +27,7 @@ import requests as _requests_lib
 from iris_astronomy import astro_dso_visibility, obs_calendar, show_dso
 from configs import config
 from end_points import end
-from fits_processing import fitstojpg, fitsfwhm
+from fits_processing import fitstojpg, fitsfwhm, sky_brightness as sb
 from control import instructions
 from cmd_processing import super_user_commands as su
 from cmd_processing import message_bus
@@ -247,6 +247,14 @@ def latest_cmd(words: list[str], index: int, m: Mastodon, account: str) -> None:
         arcsec_per_pixel=cfg["nina"]["arc_sec_per_pixel"]
     )
     post_social_message("Elongation angle map", str(angle_out))
+
+    sky_map_path = Path(os.path.join(scratch_dir, "sky_map.jpg"))
+    sky_out, sky_data = sb.save_sky_map(
+        Path(str(latest_fits)), sky_map_path,
+        arcsec_per_pixel=cfg["nina"]["arc_sec_per_pixel"]
+    )
+    if sky_data:
+        post_social_message(sb.sky_summary_text(sky_data), str(sky_out))
 
 
 def schedule_cmd(words: list[str], index: int, m: Mastodon, account: str) -> None:
