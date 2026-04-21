@@ -183,7 +183,8 @@ def measure_sky(
     sky_mag_arcsec2:     Optional[float] = None
     if gain is not None and sky_adu_per_s_arcsec2 > 0:
         sky_e_per_s_arcsec2 = sky_adu_per_s_arcsec2 * gain
-        sky_mag_arcsec2     = -2.5 * math.log10(sky_e_per_s_arcsec2)
+        if sky_e_per_s_arcsec2 > 0:
+            sky_mag_arcsec2 = -2.5 * math.log10(sky_e_per_s_arcsec2)
 
     # --- Sky gradient across frame ---
     cell_grid = _cell_sky(data) - offset           # offset-correct each cell
