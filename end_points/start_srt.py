@@ -14,7 +14,7 @@ from cmd_processing.social_server import RESTART_EXIT_CODE
 import scheduler_server
 
 if __name__ == "__main__":
-    os.environ.setdefault("PREFECT_API_URL", "http://127.0.0.1:4200/api")
+    os.environ.setdefault("PREFECT_API_URL", "")
 
     import threading
     from sentry.internet_classify import run_speed_test
