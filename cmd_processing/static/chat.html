@@ -518,6 +518,20 @@
   setInterval(fetchTicker, 30000);
   // ──────────────────────────────────────────────────────────────
 
+  function reconnectNow() {
+    if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
+    reconnectDelay = 1000;
+    connect();
+  }
+
+  // BFCache restore: browser froze the page while navigating away — WS is dead but onclose never fired.
+  window.addEventListener('pageshow', (e) => { if (e.persisted) reconnectNow(); });
+
+  // Tab/app foregrounded after sleep or background: socket may have quietly died.
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') reconnectNow();
+  });
+
   connect();
   input.focus();
 })();
