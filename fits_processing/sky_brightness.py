@@ -321,6 +321,95 @@ def save_sky_map(
     return output_path, sky_data
 
 
+def save_sky_heatmap(
+    fits_path: Path,
+    output_path: Path,
+    arcsec_per_pixel: float = 0.26,
+    n_cells: int = _GRID_N,
+) -> Path:
+    """
+    Render a sky brightness heatmap in the same visual style as the FWHM and
+    eccentricity heatmaps.  Each cell shows sky background in ADU/s;
+    green = dark sky (good), red = bright sky (bad).
+
+    Returns (output_path, sky_data_dict).  sky_data_dict is None on failure.
+    """
+    fits_path   = Path(fits_path)
+    output_path = Path(output_path)
+
+    sky_data = measure_sky(fits_path, arcsec_per_pixel)
+    if sky_data is None:
+        return output_path, None
+
+    try:
+        with fits.open(fits_path) as hdul:
+            raw = hdul[0].data.astype(float)
+    except Exception as exc:
+        print(f"sky_brightness: failed to open {fits_path.name}: {exc}")
+        return output_path, None
+
+    data = np.squeeze(raw)
+    img_h, img_w = data.shape
+    vmin, vmax   = ZScaleInterval().get_limits(data)
+
+    exptime   = sky_data["exptime"]
+    cell_grid = sky_data["cell_grid"]           # offset-corrected ADU per cell
+    # Convert each cell to ADU/s for the display metric
+    adu_per_s_grid = cell_grid / max(exptime, 1e-6)
+
+    valid  = adu_per_s_grid[np.isfinite(adu_per_s_grid)]
+    norm   = Normalize(vmin=float(valid.min()), vmax=float(valid.max()))
+    cmap   = plt.get_cmap("RdYlGn_r")
+    cell_w = img_w / n_cells
+    cell_h = img_h / n_cells
+
+    fig, ax = plt.subplots(figsize=(10, 10))
+    _apply_dark_theme(fig, ax)
+    ax.imshow(data, origin="lower", cmap="gray", vmin=vmin, vmax=vmax,
+              interpolation="nearest", extent=[0, img_w, 0, img_h])
+
+    for r in range(n_cells):
+        for c in range(n_cells):
+            val = adu_per_s_grid[r, c]
+            if not np.isfinite(val):
+                continue
+            color = cmap(norm(val))
+            rect  = plt.Rectangle(
+                (c * cell_w, r * cell_h), cell_w, cell_h,
+                facecolor=(*color[:3], 0.55), edgecolor="white", linewidth=0.8,
+            )
+            ax.add_patch(rect)
+            ax.text(
+                c * cell_w + cell_w / 2, r * cell_h + cell_h / 2,
+                f"{val:.2f}",
+                ha="center", va="center",
+                fontsize=9, color="white", fontweight="bold",
+            )
+
+    cb = plt.colorbar(ScalarMappable(norm=norm, cmap="RdYlGn_r"),
+                      ax=ax, fraction=0.03, pad=0.02)
+    cb.set_label("Sky ADU/s  (lower = darker)", color="white")
+    cb.ax.yaxis.set_tick_params(color="white")
+    plt.setp(cb.ax.yaxis.get_ticklabels(), color="white")
+
+    title = (
+        f"{fits_path.name}  |  Sky brightness grid  |  "
+        f"{sky_data['sky_adu_per_s']:.2f} ADU/s"
+    )
+    if sky_data.get("sky_mag_arcsec2") is not None:
+        title += f'  |  {sky_data["sky_mag_arcsec2"]:.2f} instr mag/arcsec²'
+    ax.set_title(title, color="white")
+    ax.set_xlabel("X (pixels)")
+    ax.set_ylabel("Y (pixels)")
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    plt.tight_layout()
+    plt.savefig(output_path, format="jpeg", dpi=150, bbox_inches="tight",
+                facecolor=fig.get_facecolor())
+    plt.close(fig)
+    return output_path, sky_data
+
+
 def sky_summary_text(sky_data: dict) -> str:
     """Format a sky_data dict into a short human-readable string."""
     lines = [

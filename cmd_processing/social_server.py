@@ -248,13 +248,13 @@ def latest_cmd(words: list[str], index: int, m: Mastodon, account: str) -> None:
     )
     post_social_message("Elongation angle map", str(angle_out))
 
-    sky_map_path = Path(os.path.join(scratch_dir, "sky_map.jpg"))
-    sky_out, sky_data = sb.save_sky_map(
-        Path(str(latest_fits)), sky_map_path,
+    sky_heatmap_path = Path(os.path.join(scratch_dir, "sky_heatmap.jpg"))
+    sky_heatmap_out, sky_data = sb.save_sky_heatmap(
+        Path(str(latest_fits)), sky_heatmap_path,
         arcsec_per_pixel=cfg["nina"]["arc_sec_per_pixel"]
     )
     if sky_data:
-        post_social_message(sb.sky_summary_text(sky_data), str(sky_out))
+        post_social_message(sb.sky_summary_text(sky_data), str(sky_heatmap_out))
 
 
 def schedule_cmd(words: list[str], index: int, m: Mastodon, account: str) -> None:
