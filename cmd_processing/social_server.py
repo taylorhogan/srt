@@ -27,7 +27,7 @@ import requests as _requests_lib
 from iris_astronomy import astro_dso_visibility, obs_calendar, show_dso
 from configs import config
 from end_points import end
-from fits_processing import fitstojpg, fitsfwhm, sky_brightness as sb
+from fits_processing import fitstojpg, fitsfwhm, sky_brightness as sb, session_stats as ss
 from control import instructions
 from cmd_processing import super_user_commands as su
 from cmd_processing import message_bus
@@ -200,6 +200,25 @@ def help_cmd(words: list[str], index: int, m: Mastodon, account: str) -> None:
     reply += "\nFull docs: https://github.com/taylorhogan/srt/blob/main/docs/commands.md"
     post_social_message(reply)
     su.print_help(account)
+
+
+def _last_sunset(cfg: dict) -> datetime.datetime:
+    """Return the datetime of the most recent sunset (naive, local time)."""
+    from astral import LocationInfo
+    from astral.sun import sun as _sun
+    loc  = cfg["location"]
+    city = LocationInfo(loc["city"], "USA", loc["timezone"],
+                        loc["latitude"], loc["longitude"])
+    now  = datetime.datetime.now()
+    # Today's sunset — if it hasn't happened yet, use yesterday's
+    today_sun    = _sun(city.observer, date=now.date())
+    today_sunset = today_sun["sunset"].replace(tzinfo=None)
+    if today_sunset > now:
+        import datetime as _dt
+        yesterday    = now.date() - _dt.timedelta(days=1)
+        yest_sun     = _sun(city.observer, date=yesterday)
+        return yest_sun["sunset"].replace(tzinfo=None)
+    return today_sunset
 
 
 def latest_cmd(words: list[str], index: int, m: Mastodon, account: str) -> None:
