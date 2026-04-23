@@ -904,7 +904,12 @@ def doflats_cmd(words: list[str], account: str) -> None:
 
 
 def image_stats_cmd(words: list[str], account: str) -> None:
-    """Post per-frame FWHM/eccentricity graph.
+    """Post per-frame FWHM/eccentricity graph in a background thread (non-blocking)."""
+    threading.Thread(target=_image_stats_run, args=(words, account), daemon=True).start()
+
+
+def _image_stats_run(words: list[str], account: str) -> None:
+    """Worker for image_stats_cmd.
 
     Usage:
         stats        — frames since yesterday's sunset
@@ -920,39 +925,55 @@ def image_stats_cmd(words: list[str], account: str) -> None:
 
     mode = words[2] if len(words) > 2 else "recent"
 
+    social_server.post_social_message("Stats: scanning for FITS files…")
+
+    def _is_light(f: Path) -> bool:
+        return f.parent.name.upper() == "LIGHT"
+
     if mode == "full":
-        # Find the most recently modified FITS, then collect all LIGHT frames
-        # under the same DSO root directory.
-        all_fits = sorted(image_dir.rglob("*.fits"), key=lambda f: f.stat().st_mtime)
+        # Find the most recently modified LIGHT frame, then collect all LIGHT
+        # frames under the same DSO root directory.
+        # Structure: Targets/<DSO>/<scope>/<date>/LIGHT/<file>.fits
+        all_fits = sorted(
+            (f for f in image_dir.rglob("*.fits") if _is_light(f)),
+            key=lambda f: f.stat().st_mtime,
+        )
         if not all_fits:
-            social_server.post_social_message("No FITS files found")
+            social_server.post_social_message("No LIGHT frames found")
             return
         latest = all_fits[-1]
         # Walk up to find the DSO-level directory (parent of scope/date/LIGHT).
-        # Structure: Targets/<DSO>/<scope>/<date>/LIGHT/<file>.fits
         dso_dir = latest.parent
         while dso_dir.parent != image_dir and dso_dir.parent != dso_dir:
             dso_dir = dso_dir.parent
-        fits_files = sorted(dso_dir.rglob("*.fits"), key=lambda f: f.stat().st_mtime)
+        fits_files = sorted(
+            (f for f in dso_dir.rglob("*.fits") if _is_light(f)),
+            key=lambda f: f.stat().st_mtime,
+        )
         social_server.post_social_message(
-            f"Stats (full) for {dso_dir.name}: {len(fits_files)} frames"
+            f"Stats (full) for {dso_dir.name}: {len(fits_files)} light frames found, analysing…"
         )
     else:
         loc = cfg["location"]
         city = LocationInfo(loc["city"], "USA", loc["timezone"], loc["latitude"], loc["longitude"])
-        yesterday = datetime.now() - timedelta(days=1)
-        sunset = sun(city.observer, date=yesterday)["sunset"]
-        start_ts = sunset.replace(tzinfo=None).timestamp()
-        social_server.post_social_message(
-            f"Stats since {sunset.strftime('%Y-%m-%d %H:%M')}"
-        )
+        yesterday_date = (datetime.now() - timedelta(days=1)).date()
+        sunset = sun(city.observer, date=yesterday_date)["sunset"]
+        # sunset is UTC-aware; .timestamp() converts correctly without stripping tzinfo
+        start_ts = sunset.timestamp()
+        # convert to local time only for the display string
+        sunset_local = sunset.astimezone()
         fits_files = sorted(
-            (f for f in image_dir.rglob("*.fits") if f.stat().st_mtime >= start_ts),
+            (f for f in image_dir.rglob("*.fits")
+             if _is_light(f) and f.stat().st_mtime >= start_ts),
             key=lambda f: f.stat().st_mtime,
+        )
+        social_server.post_social_message(
+            f"Stats since {sunset_local.strftime('%Y-%m-%d %H:%M')}: "
+            f"{len(fits_files)} light frames found, analysing…"
         )
 
     if not fits_files:
-        social_server.post_social_message("No FITS files found for the requested period")
+        social_server.post_social_message("No LIGHT frames found for the requested period")
         return
 
     _project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))

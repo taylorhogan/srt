@@ -732,28 +732,51 @@ def save_stats_plot(
     min_snr: float = _MIN_SNR,
     max_ellipticity: float = _MAX_ELLIPTICITY,
 ) -> tuple[Path, int]:
-    """Produce a two-panel plot of per-frame FWHM and eccentricity.
+    """Produce a three-panel plot of per-frame FWHM, eccentricity, and sky brightness vs time.
 
     Each frame is a dot coloured by filter. Median lines are drawn across.
 
     Returns (output_path, frames_with_stars).
     """
     import warnings
+    from datetime import datetime as _dt
     from concurrent.futures import ThreadPoolExecutor, as_completed
+    import matplotlib.dates as mdates
+    from fits_processing import sky_brightness as _sb
 
     filters = [_extract_filter(f) for f in fits_files]
+
+    def _obs_time(f: Path) -> _dt:
+        """Read DATE-OBS from header (UTC) and return as naive local datetime."""
+        from datetime import timezone as _utc
+        try:
+            hdr = fits.getheader(f)
+            date_obs = hdr.get("DATE-OBS")
+            if date_obs:
+                utc_dt = _dt.fromisoformat(date_obs.rstrip("Z")).replace(tzinfo=_utc.utc)
+                return utc_dt.astimezone().replace(tzinfo=None)
+        except Exception:
+            pass
+        return _dt.fromtimestamp(f.stat().st_mtime)
 
     def _analyse(f):
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             _, stars = _fit_stars(f, threshold_sigma, min_snr, max_ellipticity)
-        if not stars:
-            return 0.0, 0.0, 0
-        return (
-            float(np.mean([s[2] for s in stars])),
-            float(np.mean([s[3] for s in stars])),
-            len(stars),
-        )
+        fwhm = float(np.mean([s[2] for s in stars])) if stars else 0.0
+        ecc  = float(np.mean([s[3] for s in stars])) if stars else 0.0
+
+        sky = _sb.measure_sky(f, arcsec_per_pixel=arcsec_per_pixel)
+        sky_val = None
+        use_mag = False
+        if sky:
+            if sky.get("sky_mag_arcsec2") is not None:
+                sky_val = sky["sky_mag_arcsec2"]
+                use_mag = True
+            elif sky.get("sky_adu_per_s") is not None:
+                sky_val = sky["sky_adu_per_s"]
+
+        return fwhm, ecc, len(stars), sky_val, use_mag, _obs_time(f)
 
     results = [None] * len(fits_files)
     max_workers = min(8, len(fits_files))
@@ -764,48 +787,72 @@ def save_stats_plot(
             try:
                 results[idx] = fut.result()
             except Exception:
-                results[idx] = (0.0, 0.0, 0)
+                results[idx] = (0.0, 0.0, 0, None, False, _dt.fromtimestamp(fits_files[idx].stat().st_mtime))
 
-    # Filter to frames with detected stars, keeping original index for x-axis.
-    indices, fwhms, eccs, frame_filters = [], [], [], []
-    for i, (fwhm, ecc, count) in enumerate(results):
+    # Separate star and sky data; x-axis is observation time.
+    times, fwhms, eccs, frame_filters = [], [], [], []
+    sky_times, sky_vals, sky_filters = [], [], []
+    use_mag = False
+    for i, (fwhm, ecc, count, sky_val, is_mag, obs_time) in enumerate(results):
         if count > 0:
-            indices.append(i)
+            times.append(obs_time)
             fwhms.append(fwhm)
             eccs.append(ecc)
             frame_filters.append(filters[i])
+        if sky_val is not None:
+            sky_times.append(obs_time)
+            sky_vals.append(sky_val)
+            sky_filters.append(filters[i])
+            if is_mag:
+                use_mag = True
 
     if not fwhms:
         return output_path, 0
 
     fwhms_arcsec = [f * arcsec_per_pixel for f in fwhms]
-    fwhms_arr = np.array(fwhms_arcsec)
-    eccs_arr = np.array(eccs)
-    median_fwhm = float(np.median(fwhms_arr))
-    median_ecc = float(np.median(eccs_arr))
+    median_fwhm = float(np.median(fwhms_arcsec))
+    median_ecc  = float(np.median(eccs))
 
-    # Assign colours by filter.
-    unique_filters = sorted(set(frame_filters))
-    colors = [_FILTER_COLORS.get(f, "#f39c12") for f in frame_filters]
+    unique_filters = sorted(set(frame_filters) | set(sky_filters))
+    star_colors = [_FILTER_COLORS.get(f, "#f39c12") for f in frame_filters]
+    sky_colors  = [_FILTER_COLORS.get(f, "#f39c12") for f in sky_filters]
 
-    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 7), sharex=True)
+    fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(12, 10), sharex=True)
 
-    ax1.scatter(indices, fwhms_arcsec, c=colors, s=30, zorder=3)
+    # --- FWHM panel ---
+    ax1.scatter(times, fwhms_arcsec, c=star_colors, s=30, zorder=3)
     ax1.axhline(median_fwhm, color="white", linestyle="--", linewidth=1, alpha=0.8)
-    ax1.text(len(fits_files) * 0.01, median_fwhm, f' median {median_fwhm:.2f}"',
+    ax1.text(times[0], median_fwhm, f' median {median_fwhm:.2f}"',
              va="bottom", color="white", fontsize=9)
     ax1.set_ylabel('FWHM (arcsec)')
-    ax1.set_facecolor("#1a1a2e")
-    ax1.grid(True, alpha=0.2)
 
-    ax2.scatter(indices, eccs, c=colors, s=30, zorder=3)
+    # --- Eccentricity panel ---
+    ax2.scatter(times, eccs, c=star_colors, s=30, zorder=3)
     ax2.axhline(median_ecc, color="white", linestyle="--", linewidth=1, alpha=0.8)
-    ax2.text(len(fits_files) * 0.01, median_ecc, f" median {median_ecc:.3f}",
+    ax2.text(times[0], median_ecc, f" median {median_ecc:.3f}",
              va="bottom", color="white", fontsize=9)
     ax2.set_ylabel("Eccentricity")
-    ax2.set_xlabel("Frame")
-    ax2.set_facecolor("#1a1a2e")
-    ax2.grid(True, alpha=0.2)
+
+    # --- Sky brightness panel ---
+    if sky_vals:
+        median_sky = float(np.median(sky_vals))
+        ax3.scatter(sky_times, sky_vals, c=sky_colors, s=30, zorder=3)
+        ax3.axhline(median_sky, color="white", linestyle="--", linewidth=1, alpha=0.8)
+        ax3.text(sky_times[0], median_sky, f" median {median_sky:.2f}",
+                 va="bottom", color="white", fontsize=9)
+        if use_mag:
+            ax3.invert_yaxis()
+            ax3.set_ylabel("Sky (mag/arcsec²)\nhigher = darker")
+        else:
+            ax3.set_ylabel("Sky (ADU/s)\nlower = darker")
+    else:
+        ax3.text(0.5, 0.5, "No sky data", transform=ax3.transAxes,
+                 ha="center", va="center", color="#aaaaaa", fontsize=10)
+        ax3.set_ylabel("Sky brightness")
+
+    ax3.set_xlabel("Time (local)")
+    ax3.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
+    plt.setp(ax3.xaxis.get_majorticklabels(), rotation=30, ha="right")
 
     # Legend for filters.
     handles = []
@@ -815,18 +862,19 @@ def save_stats_plot(
                                   markersize=8, label=f))
     ax1.legend(handles=handles, loc="upper right", fontsize=9, framealpha=0.7)
 
+    title = f"{len(fwhms)}/{len(fits_files)} frames with stars"
+    ax1.set_title(title, color="white")
+
     fig.patch.set_facecolor("#0d0d1a")
-    ax1.tick_params(colors="white")
-    ax2.tick_params(colors="white")
-    for ax in (ax1, ax2):
+    for ax in (ax1, ax2, ax3):
+        ax.set_facecolor("#1a1a2e")
+        ax.tick_params(colors="white")
+        ax.grid(True, alpha=0.2)
         ax.xaxis.label.set_color("white")
         ax.yaxis.label.set_color("white")
         ax.title.set_color("white")
         for spine in ax.spines.values():
             spine.set_color("#444")
-
-    title = f"{len(fwhms)}/{len(fits_files)} frames with stars"
-    ax1.set_title(title, color="white")
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     plt.tight_layout()
