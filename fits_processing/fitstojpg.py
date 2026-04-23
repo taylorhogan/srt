@@ -47,8 +47,10 @@ def get_latest_file(directory, extension):
     latest_file = None
     latest_time = 0
 
-    # Recursively search for files with the given extension
+    # Recursively search for files with the given extension, LIGHT frames only
     for file_path in Path(directory).rglob(f"*.{extension}"):
+        if file_path.parent.name.upper() != "LIGHT":
+            continue
         file_mod_time = file_path.stat().st_mtime
         # Update latest file if this file is more recent
         if file_mod_time > latest_time:
