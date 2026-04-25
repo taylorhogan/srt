@@ -634,10 +634,17 @@ def image_cmd(words: list[str], account: str) -> None:
     if is_imaging():
         pushover.push_message("Already imaging, cannot restart")
     else:
+        from fits_processing import frame_watcher
+        cfg = config.data()
+        frame_watcher.start(
+            Path(cfg["nina"]["image_dir"]),
+            cfg["nina"]["arc_sec_per_pixel"],
+        )
         def _run():
             try:
                 doit_cmd(words, account)
             finally:
+                frame_watcher.stop()
                 set_imaging_state(ImagingState.NONE)
         threading.Thread(target=_run, daemon=True).start()
 
@@ -914,10 +921,19 @@ def _image_stats_run(words: list[str], account: str) -> None:
     Usage:
         stats        — frames since yesterday's sunset
         stats full   — all LIGHT frames for the same DSO (same root dir)
+
+    For each FITS file in scope the path is looked up in <dso_dir>/frame_stats.json.
+    Cached entries are used as-is; only files missing from the cache are opened and
+    analysed.  Newly analysed frames are written back to the cache so subsequent
+    runs skip them too.
     """
+    import json as _json
+    import warnings as _warnings
+    from concurrent.futures import ThreadPoolExecutor, as_completed
     from astral import LocationInfo
     from astral.sun import sun
     from fits_processing import fitsfwhm
+    from fits_processing import sky_brightness as sb
 
     cfg = config.data()
     image_dir = Path(cfg["nina"]["image_dir"])
@@ -930,10 +946,16 @@ def _image_stats_run(words: list[str], account: str) -> None:
     def _is_light(f: Path) -> bool:
         return f.parent.name.upper() == "LIGHT"
 
+    def _find_dso_dir(fits_path: Path) -> Optional[Path]:
+        d = fits_path.parent
+        while d.parent != image_dir and d.parent != d:
+            d = d.parent
+        return d if d.parent == image_dir else None
+
+    start_ts: Optional[float] = None
+    dso_dir: Optional[Path] = None
+
     if mode == "full":
-        # Find the most recently modified LIGHT frame, then collect all LIGHT
-        # frames under the same DSO root directory.
-        # Structure: Targets/<DSO>/<scope>/<date>/LIGHT/<file>.fits
         all_fits = sorted(
             (f for f in image_dir.rglob("*.fits") if _is_light(f)),
             key=lambda f: f.stat().st_mtime,
@@ -941,48 +963,134 @@ def _image_stats_run(words: list[str], account: str) -> None:
         if not all_fits:
             social_server.post_social_message("No LIGHT frames found")
             return
-        latest = all_fits[-1]
-        # Walk up to find the DSO-level directory (parent of scope/date/LIGHT).
-        dso_dir = latest.parent
-        while dso_dir.parent != image_dir and dso_dir.parent != dso_dir:
-            dso_dir = dso_dir.parent
+        dso_dir = _find_dso_dir(all_fits[-1])
         fits_files = sorted(
             (f for f in dso_dir.rglob("*.fits") if _is_light(f)),
             key=lambda f: f.stat().st_mtime,
-        )
+        ) if dso_dir else all_fits
         social_server.post_social_message(
-            f"Stats (full) for {dso_dir.name}: {len(fits_files)} light frames found, analysing…"
+            f"Stats (full) for {dso_dir.name if dso_dir else '?'}: "
+            f"{len(fits_files)} light frames found…"
         )
     else:
         loc = cfg["location"]
         city = LocationInfo(loc["city"], "USA", loc["timezone"], loc["latitude"], loc["longitude"])
         yesterday_date = (datetime.now() - timedelta(days=1)).date()
         sunset = sun(city.observer, date=yesterday_date)["sunset"]
-        # sunset is UTC-aware; .timestamp() converts correctly without stripping tzinfo
         start_ts = sunset.timestamp()
-        # convert to local time only for the display string
         sunset_local = sunset.astimezone()
         fits_files = sorted(
             (f for f in image_dir.rglob("*.fits")
              if _is_light(f) and f.stat().st_mtime >= start_ts),
             key=lambda f: f.stat().st_mtime,
         )
+        if fits_files:
+            dso_dir = _find_dso_dir(fits_files[-1])
         social_server.post_social_message(
             f"Stats since {sunset_local.strftime('%Y-%m-%d %H:%M')}: "
-            f"{len(fits_files)} light frames found, analysing…"
+            f"{len(fits_files)} light frames found…"
         )
 
     if not fits_files:
         social_server.post_social_message("No LIGHT frames found for the requested period")
         return
 
+    # ── Load existing cache (keyed by normalised path string) ──────────────
+    cache_path: Optional[Path] = (dso_dir / "frame_stats.json") if dso_dir else None
+    cached_by_path: dict[str, dict] = {}
+    if cache_path and cache_path.exists():
+        try:
+            with open(cache_path) as f:
+                existing = _json.load(f)
+            if isinstance(existing, list):
+                for entry in existing:
+                    if "path" in entry:
+                        cached_by_path[str(Path(entry["path"]))] = entry
+        except Exception:
+            pass
+
+    # ── Analyse only files not already in the cache ─────────────────────────
+    def _analyse_fits(fits_path: Path) -> dict:
+        from astropy.io import fits as _fits
+        try:
+            with _fits.open(fits_path) as hdul:
+                hdr = hdul[0].header
+            date_obs = hdr.get("DATE-OBS")
+            try:
+                obs_dt = datetime.fromisoformat(date_obs.rstrip("Z")) if date_obs else None
+            except (ValueError, AttributeError):
+                obs_dt = None
+            if obs_dt is None:
+                obs_dt = datetime.fromtimestamp(fits_path.stat().st_mtime)
+            filter_name = str(hdr.get("FILTER", "Unknown")).strip()
+            with _warnings.catch_warnings():
+                _warnings.simplefilter("ignore")
+                _, fwhm_arcsec, star_count, ecc = fitsfwhm.calculate_fwhm(
+                    fits_path, arcsec_per_pixel=arcsec_per_pixel
+                )
+            if star_count == 0:
+                hfr = hdr.get("HFR")
+                fwhm_arcsec = float(hfr) * 2.0 * arcsec_per_pixel if hfr else None
+                ecc = None
+            else:
+                fwhm_arcsec = round(float(fwhm_arcsec), 3)
+                ecc = round(float(ecc), 3)
+            sky = sb.measure_sky(fits_path, arcsec_per_pixel=arcsec_per_pixel)
+            return {
+                "path":            str(fits_path),
+                "time":            obs_dt.isoformat(),
+                "filter":          filter_name,
+                "fwhm_arcsec":     fwhm_arcsec,
+                "eccentricity":    ecc,
+                "sky_adu_per_s":   round(sky["sky_adu_per_s"], 2)       if sky else None,
+                "sky_mag_arcsec2": round(sky["sky_mag_arcsec2"], 2)
+                                   if sky and sky.get("sky_mag_arcsec2") is not None else None,
+            }
+        except Exception as exc:
+            _logger.warning("stats: could not analyse %s: %s", fits_path.name, exc)
+            return {"path": str(fits_path), "time": "", "filter": "Unknown",
+                    "fwhm_arcsec": None, "eccentricity": None,
+                    "sky_adu_per_s": None, "sky_mag_arcsec2": None}
+
+    need_analysis = [f for f in fits_files if str(f) not in cached_by_path]
+    cached_count  = len(fits_files) - len(need_analysis)
+
+    if need_analysis:
+        social_server.post_social_message(
+            f"{cached_count} cached, {len(need_analysis)} new — analysing…"
+        )
+        new_entries: list[dict] = [None] * len(need_analysis)
+        max_workers = min(8, len(need_analysis))
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            future_map = {pool.submit(_analyse_fits, f): i for i, f in enumerate(need_analysis)}
+            for fut in as_completed(future_map):
+                new_entries[future_map[fut]] = fut.result()
+
+        # Merge new entries into the cache and save
+        for entry in new_entries:
+            cached_by_path[str(Path(entry["path"]))] = entry
+        if cache_path:
+            tmp = cache_path.with_suffix(".tmp")
+            try:
+                with open(tmp, "w") as f:
+                    _json.dump(list(cached_by_path.values()), f, default=str, indent=2)
+                tmp.replace(cache_path)
+            except Exception:
+                try:
+                    tmp.unlink(missing_ok=True)
+                except Exception:
+                    pass
+    else:
+        social_server.post_social_message(f"All {cached_count} frames served from cache")
+
+    # Build the ordered frame list matching the original fits_files order
+    frames = [cached_by_path[str(f)] for f in fits_files if str(f) in cached_by_path]
+
     _project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
     scratch_dir = os.path.join(_project_root, cfg["scratch"]["directory"])
     output_path = Path(os.path.join(scratch_dir, "stats_plot.jpg"))
 
-    plot_path, frames_with_stars = fitsfwhm.save_stats_plot(
-        fits_files, output_path, arcsec_per_pixel=arcsec_per_pixel
-    )
+    plot_path, frames_with_stars = fitsfwhm.save_stats_plot_from_cache(frames, output_path)
 
     if frames_with_stars == 0:
         social_server.post_social_message(

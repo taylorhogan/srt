@@ -247,9 +247,9 @@ def do_main():
     cfg = config.data()
     loc = cfg["location"]
     city = LocationInfo(loc["city"], "USA", loc["timezone"], loc["latitude"], loc["longitude"])
-    yesterday = datetime.now() - timedelta(days=1)
+    yesterday = (datetime.now() - timedelta(days=1)).date()
     sunset = sun(city.observer, date=yesterday)["sunset"]
-    _post_imaging_summary(sunset.replace(tzinfo=None))
+    _post_imaging_summary(sunset)
     logger.info('End End Sequence')
     super_user_commands.set_imaging_state(super_user_commands.ImagingState.NONE)
 

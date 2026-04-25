@@ -883,6 +883,118 @@ def save_stats_plot(
     return output_path, len(fwhms)
 
 
+def save_stats_plot_from_cache(
+    frames: list[dict],
+    output_path: Path,
+) -> tuple[Path, int]:
+    """Same 3-panel plot as save_stats_plot but from pre-computed frame dicts.
+
+    Each dict must have keys: time (ISO str), filter, fwhm_arcsec, eccentricity,
+    sky_adu_per_s, sky_mag_arcsec2.  Returns (output_path, frames_with_stars).
+    """
+    import matplotlib.dates as mdates
+    from datetime import datetime as _dt
+
+    output_path = Path(output_path)
+    times, fwhms, eccs, frame_filters = [], [], [], []
+    sky_times, sky_vals, sky_filters = [], [], []
+    use_mag = False
+
+    for d in frames:
+        try:
+            t = _dt.fromisoformat(d["time"])
+        except Exception:
+            continue
+        filt = d.get("filter", "Unknown")
+        fwhm = d.get("fwhm_arcsec")
+        ecc  = d.get("eccentricity")
+        if fwhm is not None:
+            times.append(t)
+            fwhms.append(float(fwhm))
+            eccs.append(float(ecc) if ecc is not None else 0.0)
+            frame_filters.append(filt)
+        mag = d.get("sky_mag_arcsec2")
+        adu = d.get("sky_adu_per_s")
+        if mag is not None:
+            sky_times.append(t)
+            sky_vals.append(float(mag))
+            sky_filters.append(filt)
+            use_mag = True
+        elif adu is not None:
+            sky_times.append(t)
+            sky_vals.append(float(adu))
+            sky_filters.append(filt)
+
+    if not fwhms:
+        return output_path, 0
+
+    median_fwhm = float(np.median(fwhms))
+    median_ecc  = float(np.median(eccs))
+    unique_filters = sorted(set(frame_filters) | set(sky_filters))
+    star_colors = [_FILTER_COLORS.get(f, "#f39c12") for f in frame_filters]
+    sky_colors  = [_FILTER_COLORS.get(f, "#f39c12") for f in sky_filters]
+
+    fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(12, 10), sharex=True)
+
+    ax1.scatter(times, fwhms, c=star_colors, s=30, zorder=3)
+    ax1.axhline(median_fwhm, color="white", linestyle="--", linewidth=1, alpha=0.8)
+    ax1.text(times[0], median_fwhm, f' median {median_fwhm:.2f}"',
+             va="bottom", color="white", fontsize=9)
+    ax1.set_ylabel('FWHM (arcsec)')
+
+    ax2.scatter(times, eccs, c=star_colors, s=30, zorder=3)
+    ax2.axhline(median_ecc, color="white", linestyle="--", linewidth=1, alpha=0.8)
+    ax2.text(times[0], median_ecc, f" median {median_ecc:.3f}",
+             va="bottom", color="white", fontsize=9)
+    ax2.set_ylabel("Eccentricity")
+
+    if sky_vals:
+        median_sky = float(np.median(sky_vals))
+        ax3.scatter(sky_times, sky_vals, c=sky_colors, s=30, zorder=3)
+        ax3.axhline(median_sky, color="white", linestyle="--", linewidth=1, alpha=0.8)
+        ax3.text(sky_times[0], median_sky, f" median {median_sky:.2f}",
+                 va="bottom", color="white", fontsize=9)
+        if use_mag:
+            ax3.invert_yaxis()
+            ax3.set_ylabel("Sky (mag/arcsec²)\nhigher = darker")
+        else:
+            ax3.set_ylabel("Sky (ADU/s)\nlower = darker")
+    else:
+        ax3.text(0.5, 0.5, "No sky data", transform=ax3.transAxes,
+                 ha="center", va="center", color="#aaaaaa", fontsize=10)
+        ax3.set_ylabel("Sky brightness")
+
+    ax3.set_xlabel("Time (local)")
+    ax3.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
+    plt.setp(ax3.xaxis.get_majorticklabels(), rotation=30, ha="right")
+
+    handles = [
+        plt.Line2D([0], [0], marker="o", color="none",
+                   markerfacecolor=_FILTER_COLORS.get(f, "#f39c12"), markersize=8, label=f)
+        for f in unique_filters
+    ]
+    ax1.legend(handles=handles, loc="upper right", fontsize=9, framealpha=0.7)
+    ax1.set_title(f"{len(fwhms)} frames", color="white")
+
+    fig.patch.set_facecolor("#0d0d1a")
+    for ax in (ax1, ax2, ax3):
+        ax.set_facecolor("#1a1a2e")
+        ax.tick_params(colors="white")
+        ax.grid(True, alpha=0.2)
+        ax.xaxis.label.set_color("white")
+        ax.yaxis.label.set_color("white")
+        ax.title.set_color("white")
+        for spine in ax.spines.values():
+            spine.set_color("#444")
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    plt.tight_layout()
+    plt.savefig(output_path, format="jpeg", dpi=150,
+                bbox_inches="tight", facecolor=fig.get_facecolor())
+    plt.close(fig)
+    return output_path, len(fwhms)
+
+
 if __name__ == "__main__":
     import sys
     import os

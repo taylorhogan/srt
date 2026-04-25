@@ -201,3 +201,21 @@ async def api_ticker():
         _logger.exception("api_ticker error")
         payload = {"ok": False, "metrics": []}
     return JSONResponse(content=payload, headers={"Cache-Control": "no-store"})
+
+
+@app.get("/api/imaging_ticker")
+async def api_imaging_ticker():
+    """Return live per-frame imaging stats for the second ticker bar."""
+    try:
+        from fits_processing import frame_watcher
+        data = frame_watcher.get_ticker()
+        return JSONResponse(
+            content={"ok": True, **data},
+            headers={"Cache-Control": "no-store"},
+        )
+    except Exception:
+        _logger.exception("api_imaging_ticker error")
+        return JSONResponse(
+            content={"ok": False, "active": False, "frame_count": 0, "last_frame": None},
+            headers={"Cache-Control": "no-store"},
+        )

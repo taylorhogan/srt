@@ -229,6 +229,69 @@
   #messages::-webkit-scrollbar { width: 6px; }
   #messages::-webkit-scrollbar-track { background: transparent; }
   #messages::-webkit-scrollbar-thumb { background: #30363d; border-radius: 3px; }
+
+  /* ── Imaging activity bar ─────────────────────────────── */
+  #imaging-bar {
+    background: #0d1f14;
+    border-bottom: 1px solid #1a3a24;
+    padding: 4px 20px;
+    display: none;
+    align-items: center;
+    gap: 12px;
+    flex-shrink: 0;
+  }
+
+  #imaging-bar .live-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: #3fb950;
+    flex-shrink: 0;
+    animation: live-pulse 1.4s ease-in-out infinite;
+  }
+
+  @keyframes live-pulse {
+    0%, 100% { opacity: 1; }
+    50%       { opacity: 0.3; }
+  }
+
+  #imaging-bar .ticker-wrap {
+    mask-image: linear-gradient(to right, transparent 0%, black 4%, black 96%, transparent 100%);
+    -webkit-mask-image: linear-gradient(to right, transparent 0%, black 4%, black 96%, transparent 100%);
+  }
+
+  #imaging-track {
+    display: inline-flex;
+    align-items: center;
+    white-space: nowrap;
+    will-change: transform;
+  }
+
+  .it-item {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 5px;
+    padding: 0 16px;
+  }
+
+  .it-lbl {
+    font-size: 10px;
+    color: #4a7a55;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    font-weight: 600;
+  }
+
+  .it-val {
+    font-size: 12px;
+    color: #7ee89a;
+  }
+
+  .it-sep {
+    color: #1a3a24;
+    font-size: 12px;
+    padding: 0 2px;
+  }
 </style>
 </head>
 <body>
@@ -238,6 +301,13 @@
       <div id="ticker-track"></div>
     </div>
   </header>
+
+  <div id="imaging-bar">
+    <div class="live-dot"></div>
+    <div class="ticker-wrap" style="flex:1;overflow:hidden;min-width:0;">
+      <div id="imaging-track"></div>
+    </div>
+  </div>
 
   <div id="lightbox">
     <span id="lightbox-close">×</span>
@@ -516,6 +586,55 @@
 
   fetchTicker();
   setInterval(fetchTicker, 30000);
+  // ──────────────────────────────────────────────────────────────
+
+  // ── Imaging activity ticker ────────────────────────────────────
+  const imagingBar   = document.getElementById('imaging-bar');
+  const imagingTrack = document.getElementById('imaging-track');
+
+  function buildImagingHTML(data) {
+    const lf = data.last_frame || {};
+    const items = [
+      { label: 'Frames',  value: String(data.frame_count) },
+      { label: 'Filter',  value: lf.filter  || '—' },
+      { label: 'FWHM',    value: lf.fwhm_arcsec  != null ? lf.fwhm_arcsec.toFixed(2) + '"'  : '—' },
+      { label: 'Ecc',     value: lf.eccentricity != null ? lf.eccentricity.toFixed(3)        : '—' },
+      { label: 'Sky',     value: lf.sky_mag_arcsec2 != null
+                                   ? lf.sky_mag_arcsec2.toFixed(2) + ' mag'
+                                   : lf.sky_adu_per_s != null
+                                       ? lf.sky_adu_per_s.toFixed(1) + ' ADU/s'
+                                       : '—' },
+    ];
+    const inner = items.map(m =>
+      `<span class="it-item"><span class="it-lbl">${m.label}</span><span class="it-val">${m.value}</span></span>`
+    ).join('<span class="it-sep">·</span>');
+    return inner + '<span class="it-sep">·</span>' + inner + '<span class="it-sep">·</span>';
+  }
+
+  function applyImagingTicker(data) {
+    imagingTrack.innerHTML = buildImagingHTML(data);
+    imagingTrack.style.animation = 'none';
+    void imagingTrack.offsetWidth;
+    const halfWidth = imagingTrack.scrollWidth / 2;
+    const duration  = Math.max(8, halfWidth / 80);
+    imagingTrack.style.animation = `ticker-scroll ${duration.toFixed(1)}s linear infinite`;
+  }
+
+  async function fetchImagingTicker() {
+    try {
+      const resp = await fetch('/api/imaging_ticker', { cache: 'no-store' });
+      const data = await resp.json();
+      if (data.ok && data.active) {
+        imagingBar.style.display = 'flex';
+        applyImagingTicker(data);
+      } else {
+        imagingBar.style.display = 'none';
+      }
+    } catch (_) {}
+  }
+
+  fetchImagingTicker();
+  setInterval(fetchImagingTicker, 5000);
   // ──────────────────────────────────────────────────────────────
 
   function reconnectNow() {
