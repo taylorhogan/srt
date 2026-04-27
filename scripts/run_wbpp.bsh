@@ -1,0 +1,9 @@
+#!/bin/bash
+CAL_DIR="${1:-$HOME/Desktop/Targets/cdk}"
+OUT_DIR="${2:-$HOME/Desktop/Output}"
+
+/Applications/PixInsight/PixInsight.app/Contents/MacOS/PixInsight \
+  --no-interface \
+  --run="$(dirname "$0")/wbpp_auto.js" \
+  "$CAL_DIR" \
+  "$OUT_DIR"
