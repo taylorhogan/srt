@@ -133,7 +133,7 @@ def open_roof_with_option(check: bool) -> bool:
                 social_server.post_social_message("Vision Safety says roof is closed, opening roof")
                 toggle_roof(dev_map)
                 time.sleep(30)
-                MAX_ROOF_CHECKS = 3
+                MAX_ROOF_CHECKS = 5
                 for attempt in range(MAX_ROOF_CHECKS):
                     parked, closed, is_open, mod_date = get_status_with_lights()
                     if is_open and parked:
@@ -143,7 +143,7 @@ def open_roof_with_option(check: bool) -> bool:
                         social_server.post_social_message(msg)
                         _logger.warning(msg)
                         time.sleep(5 * 60)
-                social_server.post_social_message("Roof could not be confirmed open after 3 attempts, stopping")
+                social_server.post_social_message(f"Roof could not be confirmed open after {MAX_ROOF_CHECKS} attempts, stopping")
                 _logger.warning("Roof open check failed after %d attempts", MAX_ROOF_CHECKS)
                 return False
 
@@ -273,24 +273,21 @@ def open_if_mount_off_cmd(words: list[str], account: str) -> None:
 _SCRIPTS_DIR = os.path.join(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')), "scripts")
 
 
-def _wait_for_nina_exit(poll_interval: int = 30, timeout: int = 600) -> None:
-    """Block until no NINA.exe process is running.
+def _kill_nina() -> None:
+    """Forcefully terminate any running NINA.exe process.
 
-    Polls every *poll_interval* seconds. Gives up after *timeout* seconds
-    and logs a warning, but does not raise — the caller can proceed anyway.
+    Uses taskkill /F so the kill is unconditional — no prompt, no grace period.
+    Safe to call when NINA is not running (taskkill exits silently).
     """
-    start = time.time()
-    while time.time() - start < timeout:
-        result = subprocess.run(
-            ["tasklist", "/FI", "IMAGENAME eq NINA.exe"],
-            capture_output=True, text=True, shell=True,
-        )
-        if "NINA.exe" not in result.stdout:
-            _logger.info("NINA process has exited")
-            return
-        _logger.info("NINA still running, waiting %ds", poll_interval)
-        time.sleep(poll_interval)
-    _logger.warning("Timed out waiting for NINA to exit after %ds", timeout)
+    result = subprocess.run(
+        ["taskkill", "/F", "/IM", "NINA.exe"],
+        capture_output=True, text=True, shell=True,
+    )
+    if "SUCCESS" in result.stdout or "success" in result.stdout.lower():
+        _logger.info("NINA.exe forcefully terminated")
+        social_server.post_social_message("NINA process terminated")
+    else:
+        _logger.info("NINA.exe was not running (nothing to kill)")
 
 
 def on_nina(words: Optional[list[str]], account: Optional[str]) -> None:
@@ -666,7 +663,7 @@ def doit_cmd(words: list[str], account: str) -> None:
         ACTIVE → IN_PRELUDE   (just before on_nina.bat launches)
         IN_PRELUDE → DONE_PRELUDE   (written externally by NINA/bat when prelude ends)
         DONE_PRELUDE → IN_MAIN   (just before image_nina bat launches)
-        IN_MAIN → NONE   (written by image_cmd when doit_cmd returns, or by NINA bat)
+        IN_MAIN → NONE   (written by the NINA main sequence via an External Script step calling set_imaging_state.bat NONE)
 
     Safety checks ("safe!" / "unsafe!") are read from safety.txt and must be
     explicitly set by a super-user before and during the run. Any failed check
@@ -839,10 +836,11 @@ def doit_cmd(words: list[str], account: str) -> None:
             time.sleep(60)
         _logger.info("Imaging state is NONE — main phase complete")
 
-        # Wait for NINA to fully exit before starting flats.
-        _logger.info("Waiting for NINA process to exit")
-        social_server.post_social_message("Waiting for NINA to exit before flats")
-        _wait_for_nina_exit()
+        # Kill NINA before starting flats so there is no leftover process
+        # from the main sequence holding a lock or confusing the new instance.
+        _logger.info("Terminating NINA before starting flats")
+        social_server.post_social_message("Terminating NINA before flats")
+        _kill_nina()
         do_flats()
 
 
@@ -886,8 +884,14 @@ def do_flats() -> None:
     subprocess.Popen([bat_path], shell=True)
     _logger.info("nina_flats.bat launched")
 
-    _logger.info("Waiting for flats to complete (state = DONE_FLATS)")
+    _logger.info("Waiting for flats to complete (state = DONE_FLATS, timeout 30 min)")
+    deadline = time.time() + 1800  # 30 minutes
     while get_imaging_state() != ImagingState.DONE_FLATS:
+        if time.time() > deadline:
+            _logger.warning("Flats timed out after 30 minutes — terminating NINA")
+            social_server.post_social_message("WARNING: Flats timed out after 30 min, terminating NINA")
+            _kill_nina()
+            break
         time.sleep(30)
 
     _logger.info("Flats complete")

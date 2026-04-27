@@ -242,18 +242,10 @@ def _next_noon() -> datetime:
     return noon
 
 
-def _one_hour_before_sunset() -> datetime:
-    """Return the datetime that is one hour before today's sunset.
-
-    Delegates to ``weather.get_sunrise_sunset()`` which calls the
-    Open-Meteo API.  The returned datetime may be tz-aware (UTC or
-    local, depending on the weather module implementation).
-
-    Returns:
-        A ``datetime`` one hour before today's sunset.
-    """
+def _pre_sunset_time() -> datetime:
+    """Return the datetime that is 10 minutes before today's sunset."""
     _, sunset = weather.get_sunrise_sunset()
-    return sunset - timedelta(hours=1)
+    return sunset - timedelta(minutes=10)
 
 
 def _get_best_object() -> tuple[str, int, datetime]:
@@ -387,7 +379,7 @@ def _initial_state() -> State:
         return State.WAITING_FOR_NOON
 
     try:
-        pre_sunset = _one_hour_before_sunset()
+        pre_sunset = _pre_sunset_time()
         # pre_sunset may be tz-aware; normalise for comparison
         if pre_sunset.tzinfo is not None:
             now_cmp = datetime.now(pre_sunset.tzinfo)
@@ -395,7 +387,7 @@ def _initial_state() -> State:
             now_cmp = now
 
         if now_cmp < pre_sunset:
-            LOGGER.info("Starting after noon but before 1h before sunset — entering NOON_CHECK")
+            LOGGER.info("Starting after noon but before 10 min before sunset — entering NOON_CHECK")
             return State.NOON_CHECK
     except Exception:
         LOGGER.warning("Could not determine sunset time at startup, defaulting to WAITING_FOR_NOON")
@@ -440,10 +432,17 @@ def noon_check_task() -> tuple[str, int, datetime, str]:
 
 @task(name="wait-for-pre-sunset")
 def wait_for_pre_sunset_task():
-    """Sleep until one hour before today's sunset."""
+    """Sleep until 10 minutes before today's sunset."""
     set_state(State.WAITING_FOR_PRE_SUNSET)
-    target = _one_hour_before_sunset()
-    LOGGER.info("Waiting for 1h before sunset at %s", target)
+    target = _pre_sunset_time()
+    LOGGER.info("Waiting until 10 min before sunset at %s", target)
+    try:
+        from zoneinfo import ZoneInfo
+        tz = ZoneInfo(CFG["location"]["timezone"])
+        target_local = target.astimezone(tz) if target.tzinfo else target.replace(tzinfo=tz)
+        social_server.post_social_message(f"Imaging check at {target_local.strftime('%H:%M %Z')} (10 min before sunset)")
+    except Exception:
+        social_server.post_social_message("Waiting until 10 min before sunset for imaging check")
     _wait_until(target)
 
 
