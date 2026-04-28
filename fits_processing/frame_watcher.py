@@ -37,21 +37,24 @@ _active = False
 _frame_count    = 0
 _last_frame: Optional[dict] = None
 _stop_event: Optional[threading.Event] = None
+_ticker_path: Optional[Path] = None  # file-based IPC so other processes can read state
 
 
 # ── public API ────────────────────────────────────────────────────────────────
 
 def start(image_dir: Path, arcsec_per_pixel: float) -> None:
     """Start the watcher thread.  No-op if already running."""
-    global _active, _frame_count, _last_frame, _stop_event
+    global _active, _frame_count, _last_frame, _stop_event, _ticker_path
     with _lock:
         if _active:
             return
         _active      = True
         _frame_count = 0
         _last_frame  = None
+        _ticker_path = Path(image_dir) / "frame_ticker.json"
 
     _stop_event = threading.Event()
+    _write_ticker(True)
     threading.Thread(
         target=_run,
         args=(Path(image_dir), arcsec_per_pixel, _stop_event),
@@ -67,6 +70,7 @@ def stop() -> None:
         _active = False
     if _stop_event:
         _stop_event.set()
+    _write_ticker(False)
 
 
 def get_ticker() -> dict:
@@ -80,6 +84,27 @@ def get_ticker() -> dict:
 
 
 # ── internal helpers ──────────────────────────────────────────────────────────
+
+def _write_ticker(active: bool) -> None:
+    """Write ticker state to a file so other processes (web server) can read it."""
+    if _ticker_path is None:
+        return
+    with _lock:
+        count = _frame_count
+        last  = dict(_last_frame) if _last_frame else None
+    tmp = _ticker_path.with_suffix(".tmp")
+    try:
+        with open(tmp, "w") as f:
+            json.dump({
+                "active":         active,
+                "frame_count":    count,
+                "last_frame":     last,
+                "last_heartbeat": datetime.utcnow().isoformat(),
+            }, f, default=str)
+        tmp.replace(_ticker_path)
+    except Exception:
+        pass
+
 
 def _is_light(p: Path) -> bool:
     return p.parent.name.upper() == "LIGHT"
@@ -225,4 +250,5 @@ def _run(image_dir: Path, arcsec_per_pixel: float, stop_event: threading.Event) 
         except Exception as exc:
             print(f"frame_watcher: poll error: {exc}")
 
+        _write_ticker(True)  # heartbeat so the web server can detect staleness
         stop_event.wait(timeout=_POLL_SECONDS)

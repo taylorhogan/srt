@@ -207,8 +207,27 @@ async def api_ticker():
 async def api_imaging_ticker():
     """Return live per-frame imaging stats for the second ticker bar."""
     try:
-        from fits_processing import frame_watcher
-        data = frame_watcher.get_ticker()
+        from configs import config
+        from datetime import datetime
+        cfg = config.data()
+        ticker_path = Path(cfg["nina"]["image_dir"]) / "frame_ticker.json"
+        if not ticker_path.exists():
+            return JSONResponse(
+                content={"ok": True, "active": False, "frame_count": 0, "last_frame": None},
+                headers={"Cache-Control": "no-store"},
+            )
+        with open(ticker_path) as f:
+            data = json.load(f)
+        # Treat as inactive if the heartbeat is stale (watcher died without calling stop)
+        if data.get("active"):
+            hb = data.get("last_heartbeat")
+            if hb:
+                try:
+                    age = (datetime.utcnow() - datetime.fromisoformat(hb)).total_seconds()
+                    if age > 120:
+                        data["active"] = False
+                except Exception:
+                    pass
         return JSONResponse(
             content={"ok": True, **data},
             headers={"Cache-Control": "no-store"},

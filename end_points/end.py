@@ -1,5 +1,5 @@
 import asyncio
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 import logging
 import os
@@ -51,19 +51,32 @@ def determine_roof_state_visually(account):
 
 
 def _post_imaging_summary(imaging_start: datetime) -> None:
-    """Scan FITS files written since imaging_start and post quality metrics to the web chat."""
+    """Post end-of-night quality metrics, reading from the frame_watcher cache first."""
+    import json as _json
+
     logger = utils.set_logger()
     cfg = config.data()
     image_dir = Path(cfg["nina"]["image_dir"])
     arcsec_per_pixel = cfg["nina"]["arc_sec_per_pixel"]
     start_ts = imaging_start.timestamp()
+
     social_server.post_social_message(
         f"Scanning for FITS since {imaging_start.strftime('%Y-%m-%d %H:%M')}"
     )
 
+    def _is_light(f: Path) -> bool:
+        return f.parent.name.upper() == "LIGHT"
+
+    def _dso_dir(fits_path: Path) -> Path | None:
+        d = fits_path.parent
+        while d.parent != image_dir and d.parent != d:
+            d = d.parent
+        return d if d.parent == image_dir else None
+
     try:
         fits_files = sorted(
-            (f for f in image_dir.rglob("*.fits") if f.stat().st_mtime >= start_ts),
+            (f for f in image_dir.rglob("*.fits")
+             if _is_light(f) and f.stat().st_mtime >= start_ts),
             key=lambda f: f.stat().st_mtime,
         )
     except Exception:
@@ -76,75 +89,111 @@ def _post_imaging_summary(imaging_start: datetime) -> None:
         return
 
     logger.info("Found %d FITS files since imaging start", len(fits_files))
-    social_server.post_social_message(
-        f"Processing {len(fits_files)} FITS files, first: {fits_files[0].name}"
-    )
-    fwhm_px_list, fwhm_arcsec_list, star_count_list, ecc_list = [], [], [], []
-    sky_adu_per_s_list, sky_mag_list, sky_gradient_list = [], [], []
 
-    def _analyse(f):
-        fwhm_result = fitsfwhm.calculate_fwhm(f, arcsec_per_pixel=arcsec_per_pixel)
-        sky_result  = sb.measure_sky(f, arcsec_per_pixel=arcsec_per_pixel)
-        return fwhm_result, sky_result
+    # Load the per-frame cache written by frame_watcher during imaging
+    dso_dir = _dso_dir(fits_files[-1])
+    cached: dict[str, dict] = {}
+    cache_path: Path | None = (dso_dir / "frame_stats.json") if dso_dir else None
+    if cache_path and cache_path.exists():
+        try:
+            with open(cache_path) as f:
+                entries = _json.load(f)
+            if isinstance(entries, list):
+                for e in entries:
+                    if "path" in e:
+                        cached[str(Path(e["path"]))] = e
+        except Exception:
+            pass
 
-    total = len(fits_files)
-    max_workers = min(8, total)
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        with ThreadPoolExecutor(max_workers=max_workers) as pool:
-            futures = {pool.submit(_analyse, f): f for f in fits_files}
-            for n, fut in enumerate(as_completed(futures), start=1):
-                logger.info("Analysing frames: %d/%d", n, total)
+    # Analyse only frames missing from the cache (should be rare)
+    need_analysis = [f for f in fits_files if str(f) not in cached]
+    if need_analysis:
+        social_server.post_social_message(
+            f"{len(cached)} cached, {len(need_analysis)} new — analysing…"
+        )
+
+        def _analyse(fits_path: Path) -> dict:
+            from astropy.io import fits as _fits
+            try:
+                with _fits.open(fits_path) as hdul:
+                    hdr = hdul[0].header
+                filter_name = str(hdr.get("FILTER", "Unknown")).strip()
+                date_obs = hdr.get("DATE-OBS")
                 try:
-                    (mean_px, mean_arcsec, star_count, mean_ecc), sky = fut.result()
-                    if star_count > 0:
-                        fwhm_px_list.append(mean_px)
-                        fwhm_arcsec_list.append(mean_arcsec)
-                        star_count_list.append(star_count)
-                        ecc_list.append(mean_ecc)
-                    if sky:
-                        sky_adu_per_s_list.append(sky["sky_adu_per_s"])
-                        if sky.get("sky_mag_arcsec2") is not None:
-                            sky_mag_list.append(sky["sky_mag_arcsec2"])
-                        sky_gradient_list.append(sky["sky_gradient_rms"])
-                except Exception:
-                    logger.exception("Frame analysis failed for %s", futures[fut])
+                    obs_dt = datetime.fromisoformat(date_obs.rstrip("Z")) if date_obs else None
+                except (ValueError, AttributeError):
+                    obs_dt = None
+                if obs_dt is None:
+                    obs_dt = datetime.fromtimestamp(fits_path.stat().st_mtime)
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore")
+                    _, fwhm_arcsec, star_count, ecc = fitsfwhm.calculate_fwhm(
+                        fits_path, arcsec_per_pixel=arcsec_per_pixel
+                    )
+                if star_count == 0:
+                    hfr = hdr.get("HFR")
+                    fwhm_arcsec = float(hfr) * 2.0 * arcsec_per_pixel if hfr else None
+                    ecc = None
+                else:
+                    fwhm_arcsec = round(float(fwhm_arcsec), 3)
+                    ecc = round(float(ecc), 3)
+                sky = sb.measure_sky(fits_path, arcsec_per_pixel=arcsec_per_pixel)
+                return {
+                    "path":            str(fits_path),
+                    "time":            obs_dt.isoformat(),
+                    "filter":          filter_name,
+                    "fwhm_arcsec":     fwhm_arcsec,
+                    "eccentricity":    ecc,
+                    "sky_adu_per_s":   round(sky["sky_adu_per_s"], 2) if sky else None,
+                    "sky_mag_arcsec2": round(sky["sky_mag_arcsec2"], 2)
+                                       if sky and sky.get("sky_mag_arcsec2") is not None else None,
+                }
+            except Exception as exc:
+                logger.warning("Could not analyse %s: %s", fits_path.name, exc)
+                return {"path": str(fits_path), "fwhm_arcsec": None, "eccentricity": None,
+                        "sky_adu_per_s": None, "sky_mag_arcsec2": None}
 
-    if not fwhm_px_list:
+        with ThreadPoolExecutor(max_workers=min(8, len(need_analysis))) as pool:
+            for entry in pool.map(_analyse, need_analysis):
+                cached[str(Path(entry["path"]))] = entry
+
+        if cache_path:
+            tmp = cache_path.with_suffix(".tmp")
+            try:
+                with open(tmp, "w") as f:
+                    _json.dump(list(cached.values()), f, default=str, indent=2)
+                tmp.replace(cache_path)
+            except Exception:
+                pass
+    else:
+        social_server.post_social_message(f"All {len(fits_files)} frames loaded from cache")
+
+    frames = [cached[str(f)] for f in fits_files if str(f) in cached]
+    fwhm_list    = [float(e["fwhm_arcsec"])     for e in frames if e.get("fwhm_arcsec")     is not None]
+    ecc_list     = [float(e["eccentricity"])     for e in frames if e.get("eccentricity")    is not None]
+    sky_adu_list = [float(e["sky_adu_per_s"])    for e in frames if e.get("sky_adu_per_s")   is not None]
+    sky_mag_list = [float(e["sky_mag_arcsec2"])  for e in frames if e.get("sky_mag_arcsec2") is not None]
+
+    if not fwhm_list:
         social_server.post_social_message(
             f"Imaging complete — {len(fits_files)} frames, no stars detected in any frame"
         )
         return
 
-    median_fwhm_px     = float(np.median(fwhm_px_list))
-    median_fwhm_arcsec = float(np.median(fwhm_arcsec_list))
-    median_stars       = float(np.median(star_count_list))
-    median_ecc         = float(np.median(ecc_list))
-
     summary = (
-        f"Imaging complete — {len(fits_files)} frames ({len(fwhm_px_list)} with stars)\n"
-        f'Median FWHM: {median_fwhm_arcsec:.2f}"\n'
-        f"Median stars/frame: {median_stars:.0f}\n"
-        f"Median eccentricity: {median_ecc:.3f}"
+        f"Imaging complete — {len(fits_files)} frames ({len(fwhm_list)} with stars)\n"
+        f'Median FWHM: {float(np.median(fwhm_list)):.2f}"\n'
+        f"Median eccentricity: {float(np.median(ecc_list)):.3f}"
     )
-
-    if sky_adu_per_s_list:
-        median_sky_adu_per_s  = float(np.median(sky_adu_per_s_list))
-        median_sky_gradient   = float(np.median(sky_gradient_list))
-        summary += f"\nMedian sky: {median_sky_adu_per_s:.2f} ADU/s"
-        if sky_mag_list:
-            median_sky_mag = float(np.median(sky_mag_list))
-            summary += f"  ({median_sky_mag:.2f} instr mag/arcsec²)"
-        summary += f"\nMedian sky gradient: ±{median_sky_gradient:.1f} ADU RMS"
-        logger.info(
-            "Sky summary: median sky=%.2f ADU/s, gradient=%.1f ADU RMS",
-            median_sky_adu_per_s, median_sky_gradient,
-        )
+    if sky_mag_list:
+        summary += f"\nMedian sky: {float(np.median(sky_mag_list)):.2f} mag/arcsec²"
+    elif sky_adu_list:
+        summary += f"\nMedian sky: {float(np.median(sky_adu_list)):.2f} ADU/s"
 
     social_server.post_social_message(summary)
     logger.info(
-        "Imaging summary: %d frames, median FWHM=%.2f px (%.2f\"), stars=%.0f, ecc=%.3f",
-        len(fits_files), median_fwhm_px, median_fwhm_arcsec, median_stars, median_ecc,
+        "Imaging summary: %d frames, median FWHM=%.2f\", ecc=%.3f",
+        len(fits_files), float(np.median(fwhm_list)), float(np.median(ecc_list)),
     )
 
 

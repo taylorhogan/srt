@@ -531,6 +531,62 @@ def update_cmd(words: list[str], account: str) -> None:
     threading.Thread(target=_do_update, daemon=True).start()
 
 
+def optics_cmd(words: list[str], account: str) -> None:
+    """Post optical quality diagnostic plots for the latest FITS frame."""
+    threading.Thread(target=_optics_run, daemon=True).start()
+
+
+def _optics_run() -> None:
+    from fits_processing import fitstojpg, fitsfwhm, sky_brightness as sb
+
+    cfg = config.data()
+    _project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+    image_dir = cfg["nina"]["image_dir"]
+    arcsec_per_pixel = cfg["nina"]["arc_sec_per_pixel"]
+    scratch_dir = os.path.join(_project_root, cfg["scratch"]["directory"])
+
+    latest_fits = fitstojpg.get_latest_file(image_dir, "fits")
+    if latest_fits is None:
+        social_server.post_social_message("No FITS frames found")
+        return
+
+    fits_path = Path(str(latest_fits))
+
+    metrics = fitsfwhm.compute_optical_metrics(fits_path, arcsec_per_pixel=arcsec_per_pixel)
+    if metrics:
+        metrics_table_path = Path(os.path.join(scratch_dir, "optical_metrics_table.jpg"))
+        fitsfwhm.save_optical_metrics_table(metrics, metrics_table_path)
+        social_server.post_social_message("Optical quality metrics", str(metrics_table_path))
+
+    fwhm_heatmap_path = Path(os.path.join(scratch_dir, "fwhm_heatmap.jpg"))
+    ecc_heatmap_path  = Path(os.path.join(scratch_dir, "ecc_heatmap.jpg"))
+    fwhm_out, ecc_out = fitsfwhm.save_fwhm_heatmaps(
+        fits_path, fwhm_heatmap_path, ecc_heatmap_path,
+        arcsec_per_pixel=arcsec_per_pixel,
+    )
+    social_server.post_social_message("FWHM heatmap", str(fwhm_out))
+    social_server.post_social_message("Eccentricity heatmap", str(ecc_out))
+
+    dist_plot_path = Path(os.path.join(scratch_dir, "fwhm_vs_distance.jpg"))
+    dist_out = fitsfwhm.save_fwhm_vs_distance(
+        fits_path, dist_plot_path, arcsec_per_pixel=arcsec_per_pixel,
+    )
+    social_server.post_social_message("FWHM vs distance from centre", str(dist_out))
+
+    angle_map_path = Path(os.path.join(scratch_dir, "ecc_angle_map.jpg"))
+    angle_out = fitsfwhm.save_eccentricity_angle_map(
+        fits_path, angle_map_path, arcsec_per_pixel=arcsec_per_pixel,
+    )
+    social_server.post_social_message("Elongation angle map", str(angle_out))
+
+    sky_heatmap_path = Path(os.path.join(scratch_dir, "sky_heatmap.jpg"))
+    sky_heatmap_out, sky_data = sb.save_sky_heatmap(
+        fits_path, sky_heatmap_path, arcsec_per_pixel=arcsec_per_pixel,
+    )
+    if sky_data:
+        social_server.post_social_message(sb.sky_summary_text(sky_data), str(sky_heatmap_out))
+
+
 def get_super_user_commands() -> dict[str, Callable]:
     """Return the command-name → handler mapping for all super-user commands."""
     return {
@@ -550,6 +606,7 @@ def get_super_user_commands() -> dict[str, Callable]:
         "stats": image_stats_cmd,
         "log": log_cmd,
         "update": update_cmd,
+        "optics": optics_cmd,
     }
 
 
@@ -923,8 +980,8 @@ def _image_stats_run(words: list[str], account: str) -> None:
     """Worker for image_stats_cmd.
 
     Usage:
-        stats        — frames since yesterday's sunset
-        stats full   — all LIGHT frames for the same DSO (same root dir)
+        stats           — all LIGHT frames for the DSO currently being imaged
+        stats <dso>     — all LIGHT frames for the named DSO
 
     For each FITS file in scope the path is looked up in <dso_dir>/frame_stats.json.
     Cached entries are used as-is; only files missing from the cache are opened and
@@ -934,8 +991,6 @@ def _image_stats_run(words: list[str], account: str) -> None:
     import json as _json
     import warnings as _warnings
     from concurrent.futures import ThreadPoolExecutor, as_completed
-    from astral import LocationInfo
-    from astral.sun import sun
     from fits_processing import fitsfwhm
     from fits_processing import sky_brightness as sb
 
@@ -943,7 +998,7 @@ def _image_stats_run(words: list[str], account: str) -> None:
     image_dir = Path(cfg["nina"]["image_dir"])
     arcsec_per_pixel = cfg["nina"]["arc_sec_per_pixel"]
 
-    mode = words[2] if len(words) > 2 else "recent"
+    dso_arg = " ".join(words[2:]).strip() if len(words) > 2 else None
 
     social_server.post_social_message("Stats: scanning for FITS files…")
 
@@ -956,10 +1011,32 @@ def _image_stats_run(words: list[str], account: str) -> None:
             d = d.parent
         return d if d.parent == image_dir else None
 
-    start_ts: Optional[float] = None
+    def _find_dso_dir_by_name(name: str) -> Optional[Path]:
+        target = name.lower().replace(" ", "").replace("_", "")
+        candidates = [
+            d for d in image_dir.iterdir()
+            if d.is_dir() and target in d.name.lower().replace(" ", "").replace("_", "")
+        ]
+        if not candidates:
+            return None
+        if len(candidates) == 1:
+            return candidates[0]
+        # Multiple matches — pick the one with the most recent LIGHT frame
+        def _latest(d: Path) -> float:
+            try:
+                return max(f.stat().st_mtime for f in d.rglob("*.fits") if _is_light(f))
+            except ValueError:
+                return 0.0
+        return max(candidates, key=_latest)
+
     dso_dir: Optional[Path] = None
 
-    if mode == "full":
+    if dso_arg:
+        dso_dir = _find_dso_dir_by_name(dso_arg)
+        if dso_dir is None:
+            social_server.post_social_message(f"No image directory found for '{dso_arg}'")
+            return
+    else:
         all_fits = sorted(
             (f for f in image_dir.rglob("*.fits") if _is_light(f)),
             key=lambda f: f.stat().st_mtime,
@@ -968,32 +1045,15 @@ def _image_stats_run(words: list[str], account: str) -> None:
             social_server.post_social_message("No LIGHT frames found")
             return
         dso_dir = _find_dso_dir(all_fits[-1])
-        fits_files = sorted(
-            (f for f in dso_dir.rglob("*.fits") if _is_light(f)),
-            key=lambda f: f.stat().st_mtime,
-        ) if dso_dir else all_fits
-        social_server.post_social_message(
-            f"Stats (full) for {dso_dir.name if dso_dir else '?'}: "
-            f"{len(fits_files)} light frames found…"
-        )
-    else:
-        loc = cfg["location"]
-        city = LocationInfo(loc["city"], "USA", loc["timezone"], loc["latitude"], loc["longitude"])
-        yesterday_date = (datetime.now() - timedelta(days=1)).date()
-        sunset = sun(city.observer, date=yesterday_date)["sunset"]
-        start_ts = sunset.timestamp()
-        sunset_local = sunset.astimezone()
-        fits_files = sorted(
-            (f for f in image_dir.rglob("*.fits")
-             if _is_light(f) and f.stat().st_mtime >= start_ts),
-            key=lambda f: f.stat().st_mtime,
-        )
-        if fits_files:
-            dso_dir = _find_dso_dir(fits_files[-1])
-        social_server.post_social_message(
-            f"Stats since {sunset_local.strftime('%Y-%m-%d %H:%M')}: "
-            f"{len(fits_files)} light frames found…"
-        )
+
+    fits_files = sorted(
+        (f for f in dso_dir.rglob("*.fits") if _is_light(f)),
+        key=lambda f: f.stat().st_mtime,
+    ) if dso_dir else []
+    social_server.post_social_message(
+        f"Stats for {dso_dir.name if dso_dir else '?'}: "
+        f"{len(fits_files)} light frames found…"
+    )
 
     if not fits_files:
         social_server.post_social_message("No LIGHT frames found for the requested period")

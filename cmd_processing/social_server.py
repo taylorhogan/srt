@@ -227,53 +227,32 @@ def latest_cmd(words: list[str], index: int, m: Mastodon, account: str) -> None:
 
     image_dir = cfg["nina"]["image_dir"]
     latest_fits = fitstojpg.get_latest_file(image_dir, "fits")
+    if latest_fits is None:
+        post_social_message("No FITS frames found")
+        return
 
     scratch_dir = os.path.join(_project_root, cfg["scratch"]["directory"])
     output_path = Path(os.path.join(scratch_dir, cfg["scratch"]["latest_jpg"]))
+    arcsec_per_pixel = cfg["nina"]["arc_sec_per_pixel"]
 
-    latest_jpg, mean_px, mean_ecc = fitsfwhm.save_fwhm(Path(str(latest_fits)), output_path, arcsec_per_pixel=cfg["nina"]["arc_sec_per_pixel"], annotate=False)
-    arcsec = mean_px * cfg["nina"]["arc_sec_per_pixel"]
-    caption = f'Latest  |  FWHM {arcsec:.2f}"  |  ecc {mean_ecc:.3f}'
-    post_social_message(caption, str(latest_jpg))
+    filter_name = None
+    try:
+        from astropy.io import fits as _fits
+        with _fits.open(latest_fits) as hdul:
+            filter_name = str(hdul[0].header.get("FILTER", "")).strip() or None
+    except Exception:
+        pass
 
-    metrics = fitsfwhm.compute_optical_metrics(
-        Path(str(latest_fits)), arcsec_per_pixel=cfg["nina"]["arc_sec_per_pixel"]
+    sky_data = sb.measure_sky(Path(str(latest_fits)), arcsec_per_pixel=arcsec_per_pixel)
+
+    latest_jpg, _mean_px, _mean_ecc = fitsfwhm.save_fwhm(
+        Path(str(latest_fits)), output_path,
+        arcsec_per_pixel=arcsec_per_pixel,
+        annotate=False,
+        filter_name=filter_name,
+        sky_data=sky_data,
     )
-    if metrics:
-        metrics_table_path = Path(os.path.join(scratch_dir, "optical_metrics_table.jpg"))
-        fitsfwhm.save_optical_metrics_table(metrics, metrics_table_path)
-        post_social_message("Optical quality metrics", str(metrics_table_path))
-
-    fwhm_heatmap_path = Path(os.path.join(scratch_dir, "fwhm_heatmap.jpg"))
-    ecc_heatmap_path = Path(os.path.join(scratch_dir, "ecc_heatmap.jpg"))
-    fwhm_out, ecc_out = fitsfwhm.save_fwhm_heatmaps(
-        Path(str(latest_fits)), fwhm_heatmap_path, ecc_heatmap_path,
-        arcsec_per_pixel=cfg["nina"]["arc_sec_per_pixel"]
-    )
-    post_social_message("FWHM heatmap", str(fwhm_out))
-    post_social_message("Eccentricity heatmap", str(ecc_out))
-
-    dist_plot_path = Path(os.path.join(scratch_dir, "fwhm_vs_distance.jpg"))
-    dist_out = fitsfwhm.save_fwhm_vs_distance(
-        Path(str(latest_fits)), dist_plot_path,
-        arcsec_per_pixel=cfg["nina"]["arc_sec_per_pixel"]
-    )
-    post_social_message("FWHM vs distance from centre", str(dist_out))
-
-    angle_map_path = Path(os.path.join(scratch_dir, "ecc_angle_map.jpg"))
-    angle_out = fitsfwhm.save_eccentricity_angle_map(
-        Path(str(latest_fits)), angle_map_path,
-        arcsec_per_pixel=cfg["nina"]["arc_sec_per_pixel"]
-    )
-    post_social_message("Elongation angle map", str(angle_out))
-
-    sky_heatmap_path = Path(os.path.join(scratch_dir, "sky_heatmap.jpg"))
-    sky_heatmap_out, sky_data = sb.save_sky_heatmap(
-        Path(str(latest_fits)), sky_heatmap_path,
-        arcsec_per_pixel=cfg["nina"]["arc_sec_per_pixel"]
-    )
-    if sky_data:
-        post_social_message(sb.sky_summary_text(sky_data), str(sky_heatmap_out))
+    post_social_message("Latest frame", str(latest_jpg))
 
 
 def schedule_cmd(words: list[str], index: int, m: Mastodon, account: str) -> None:

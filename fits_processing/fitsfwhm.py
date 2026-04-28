@@ -240,6 +240,8 @@ def save_fwhm(
     min_snr: float = _MIN_SNR,
     max_ellipticity: float = _MAX_ELLIPTICITY,
     annotate: bool = True,
+    filter_name: str | None = None,
+    sky_data: dict | None = None,
 ) -> Path:
     """
     Annotate a FITS image with detected stars and save it as a JPG.
@@ -268,12 +270,30 @@ def save_fwhm(
             ax.add_patch(Circle((x, y), radius=fwhm * 2.5, color=color, fill=False, linewidth=1.5))
 
     mean_arcsec = mean_px * arcsec_per_pixel
-    title = (
-        f"{fits_path.name}  |  {len(stars)} stars  |  "
-        f'mean FWHM {mean_arcsec:.2f}"  |  '
-        f"mean ecc {mean_ecc:.3f}"
-        if stars else f"{fits_path.name}  |  no stars detected"
-    )
+
+    if filter_name or sky_data:
+        parts = []
+        if filter_name:
+            parts.append(filter_name)
+        if stars:
+            parts.append(f'FWHM {mean_arcsec:.2f}"')
+            parts.append(f"ecc {mean_ecc:.3f}")
+            parts.append(f"{len(stars)} stars")
+        else:
+            parts.append("no stars detected")
+        if sky_data:
+            if sky_data.get("sky_mag_arcsec2") is not None:
+                parts.append(f'sky {sky_data["sky_mag_arcsec2"]:.2f} mag/arcsec²')
+            elif sky_data.get("sky_adu_per_s") is not None:
+                parts.append(f'sky {sky_data["sky_adu_per_s"]:.1f} ADU/s')
+        title = "  |  ".join(parts)
+    else:
+        title = (
+            f"{fits_path.name}  |  {len(stars)} stars  |  "
+            f'mean FWHM {mean_arcsec:.2f}"  |  '
+            f"mean ecc {mean_ecc:.3f}"
+            if stars else f"{fits_path.name}  |  no stars detected"
+        )
     ax.set_title(title)
     ax.set_xlabel("X (pixels)")
     ax.set_ylabel("Y (pixels)")
@@ -887,72 +907,97 @@ def save_stats_plot_from_cache(
     frames: list[dict],
     output_path: Path,
 ) -> tuple[Path, int]:
-    """Same 3-panel plot as save_stats_plot but from pre-computed frame dicts.
+    """3-panel (FWHM / eccentricity / sky) plot from pre-computed frame dicts.
 
-    Each dict must have keys: time (ISO str), filter, fwhm_arcsec, eccentricity,
-    sky_adu_per_s, sky_mag_arcsec2.  Returns (output_path, frames_with_stars).
+    X-axis is frame number 1-N.  Background bands lightly shade each calendar
+    day so multi-night runs are easy to read.  Returns (output_path, frames_with_stars).
     """
-    import matplotlib.dates as mdates
     from datetime import datetime as _dt
 
     output_path = Path(output_path)
-    times, fwhms, eccs, frame_filters = [], [], [], []
-    sky_times, sky_vals, sky_filters = [], [], []
+
+    # Assign sequential frame numbers across all frames (preserving order)
+    n_total = len(frames)
+    fwhm_nums, fwhms, eccs, star_colors = [], [], [], []
+    sky_nums, sky_vals, sky_colors = [], [], []
+    frame_dates: list = []   # date per frame (may be None)
     use_mag = False
 
-    for d in frames:
+    for i, d in enumerate(frames, 1):
         try:
             t = _dt.fromisoformat(d["time"])
+            frame_dates.append(t.date())
         except Exception:
-            continue
+            frame_dates.append(None)
+
         filt = d.get("filter", "Unknown")
         fwhm = d.get("fwhm_arcsec")
         ecc  = d.get("eccentricity")
         if fwhm is not None:
-            times.append(t)
+            fwhm_nums.append(i)
             fwhms.append(float(fwhm))
             eccs.append(float(ecc) if ecc is not None else 0.0)
-            frame_filters.append(filt)
+            star_colors.append(_FILTER_COLORS.get(filt, "#f39c12"))
+
         mag = d.get("sky_mag_arcsec2")
         adu = d.get("sky_adu_per_s")
         if mag is not None:
-            sky_times.append(t)
+            sky_nums.append(i)
             sky_vals.append(float(mag))
-            sky_filters.append(filt)
+            sky_colors.append(_FILTER_COLORS.get(filt, "#f39c12"))
             use_mag = True
         elif adu is not None:
-            sky_times.append(t)
+            sky_nums.append(i)
             sky_vals.append(float(adu))
-            sky_filters.append(filt)
+            sky_colors.append(_FILTER_COLORS.get(filt, "#f39c12"))
 
     if not fwhms:
         return output_path, 0
 
+    # Build contiguous date bands for background shading
+    def _day_bands(dates):
+        bands = []
+        if not dates:
+            return bands
+        current, start, idx = dates[0], 1, 0
+        for i, d in enumerate(dates[1:], 2):
+            if d != current:
+                bands.append((start, i - 1, idx))
+                current, start, idx = d, i, 1 - idx
+        bands.append((start, len(dates), idx))
+        return bands
+
+    day_bands = _day_bands(frame_dates)
+
     median_fwhm = float(np.median(fwhms))
     median_ecc  = float(np.median(eccs))
-    unique_filters = sorted(set(frame_filters) | set(sky_filters))
-    star_colors = [_FILTER_COLORS.get(f, "#f39c12") for f in frame_filters]
-    sky_colors  = [_FILTER_COLORS.get(f, "#f39c12") for f in sky_filters]
 
     fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(12, 10), sharex=True)
 
-    ax1.scatter(times, fwhms, c=star_colors, s=30, zorder=3)
+    # Day shading — odd-indexed bands get a subtle tint
+    for ax in (ax1, ax2, ax3):
+        for start, end, shade_idx in day_bands:
+            if shade_idx == 1:
+                ax.axvspan(start - 0.5, end + 0.5, color="#5080b0", alpha=0.12, zorder=0)
+
+    ax1.scatter(fwhm_nums, fwhms, c=star_colors, s=30, zorder=3)
     ax1.axhline(median_fwhm, color="white", linestyle="--", linewidth=1, alpha=0.8)
-    ax1.text(times[0], median_fwhm, f' median {median_fwhm:.2f}"',
+    ax1.text(fwhm_nums[0], median_fwhm, f' median {median_fwhm:.2f}"',
              va="bottom", color="white", fontsize=9)
     ax1.set_ylabel('FWHM (arcsec)')
+    ax1.set_title(f"{len(fwhms)} frames · {dso_label(frames)}", color="white")
 
-    ax2.scatter(times, eccs, c=star_colors, s=30, zorder=3)
+    ax2.scatter(fwhm_nums, eccs, c=star_colors, s=30, zorder=3)
     ax2.axhline(median_ecc, color="white", linestyle="--", linewidth=1, alpha=0.8)
-    ax2.text(times[0], median_ecc, f" median {median_ecc:.3f}",
+    ax2.text(fwhm_nums[0], median_ecc, f" median {median_ecc:.3f}",
              va="bottom", color="white", fontsize=9)
     ax2.set_ylabel("Eccentricity")
 
     if sky_vals:
         median_sky = float(np.median(sky_vals))
-        ax3.scatter(sky_times, sky_vals, c=sky_colors, s=30, zorder=3)
+        ax3.scatter(sky_nums, sky_vals, c=sky_colors, s=30, zorder=3)
         ax3.axhline(median_sky, color="white", linestyle="--", linewidth=1, alpha=0.8)
-        ax3.text(sky_times[0], median_sky, f" median {median_sky:.2f}",
+        ax3.text(sky_nums[0], median_sky, f" median {median_sky:.2f}",
                  va="bottom", color="white", fontsize=9)
         if use_mag:
             ax3.invert_yaxis()
@@ -964,17 +1009,8 @@ def save_stats_plot_from_cache(
                  ha="center", va="center", color="#aaaaaa", fontsize=10)
         ax3.set_ylabel("Sky brightness")
 
-    ax3.set_xlabel("Time (local)")
-    ax3.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
-    plt.setp(ax3.xaxis.get_majorticklabels(), rotation=30, ha="right")
-
-    handles = [
-        plt.Line2D([0], [0], marker="o", color="none",
-                   markerfacecolor=_FILTER_COLORS.get(f, "#f39c12"), markersize=8, label=f)
-        for f in unique_filters
-    ]
-    ax1.legend(handles=handles, loc="upper right", fontsize=9, framealpha=0.7)
-    ax1.set_title(f"{len(fwhms)} frames", color="white")
+    ax3.set_xlabel("Frame")
+    ax3.set_xlim(0.5, n_total + 0.5)
 
     fig.patch.set_facecolor("#0d0d1a")
     for ax in (ax1, ax2, ax3):
@@ -993,6 +1029,21 @@ def save_stats_plot_from_cache(
                 bbox_inches="tight", facecolor=fig.get_facecolor())
     plt.close(fig)
     return output_path, len(fwhms)
+
+
+def dso_label(frames: list[dict]) -> str:
+    """Extract a date-range label from the frame list for the plot title."""
+    from datetime import datetime as _dt
+    dates = set()
+    for d in frames:
+        try:
+            dates.add(_dt.fromisoformat(d["time"]).date())
+        except Exception:
+            pass
+    if not dates:
+        return ""
+    lo, hi = min(dates), max(dates)
+    return str(lo) if lo == hi else f"{lo} – {hi}"
 
 
 if __name__ == "__main__":
