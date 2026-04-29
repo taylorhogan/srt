@@ -531,13 +531,25 @@ def convergence_curve(
     ys = np.array(mean_residuals)
     errs = np.array(std_residuals)
 
+    # Fit a line to the tail (last ~40% of points, min 3) to quantify the linear decline.
+    tail_n = max(3, round(len(xs) * 0.4))
+    xs_tail = xs[-tail_n:]
+    ys_tail = ys[-tail_n:]
+    tail_slope, tail_intercept = np.polyfit(xs_tail, ys_tail, 1)
+    tail_fit = np.polyval([tail_slope, tail_intercept], xs_tail)
+    slope_pct = tail_slope * 100  # convert fraction/frame → %/frame
+
     fig, ax = plt.subplots(figsize=(10, 5))
     ax.plot(xs, ys, "o-", color="steelblue", label="Mean residual")
     ax.fill_between(xs, np.maximum(ys - errs, 0), ys + errs,
                     alpha=0.25, color="steelblue", label="±1 σ  (trial spread)")
+    ax.plot(xs_tail, tail_fit, "--", color="tomato", linewidth=1.5,
+            label=f"Tail slope: {slope_pct:+.4f}% / frame")
     ax.set_xlabel("Frames stacked")
     ax.set_ylabel("Normalised RMSE  (vs golden stack)")
     ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"{v:.1%}"))
+    ax.set_xticks(xs)
+    ax.set_xticklabels([str(int(x)) for x in xs], rotation=45 if len(xs) > 8 else 0, ha="right")
     title = "Stack convergence vs golden"
     if filter_name:
         title += f"  [{filter_name}]"
