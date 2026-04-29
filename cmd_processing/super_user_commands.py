@@ -604,6 +604,7 @@ def get_super_user_commands() -> dict[str, Callable]:
         "doflats": doflats_cmd,
         "todo": todo_cmd,
         "stats": image_stats_cmd,
+        "snr": snr_cmd,
         "log": log_cmd,
         "update": update_cmd,
         "optics": optics_cmd,
@@ -969,6 +970,120 @@ def doflats_cmd(words: list[str], account: str) -> None:
         finally:
             set_imaging_state(ImagingState.NONE)
     threading.Thread(target=_run, daemon=True).start()
+
+
+def snr_cmd(words: list[str], account: str) -> None:
+    """Post stack-convergence curve in a background thread (non-blocking)."""
+    threading.Thread(target=_snr_run, args=(words,), daemon=True).start()
+
+
+def _snr_run(words: list[str]) -> None:
+    """Worker for snr_cmd.
+
+    Usage:
+        snr           — convergence curve for the DSO currently being / last imaged
+        snr <dso>     — convergence curve for the named DSO
+
+    Loads all LIGHT frames, groups by filter, and posts one convergence plot per
+    filter showing normalised RMSE vs Fibonacci-spaced frame counts.
+    """
+    from astropy.io import fits as _fits
+    from stacking import stacker
+
+    cfg = config.data()
+    image_dir = Path(cfg["nina"]["image_dir"])
+
+    dso_arg = " ".join(words[2:]).strip() if len(words) > 2 else None
+
+    social_server.post_social_message("Convergence: scanning for FITS files…")
+
+    def _is_light(f: Path) -> bool:
+        return f.parent.name.upper() == "LIGHT"
+
+    def _find_dso_dir(fits_path: Path) -> Optional[Path]:
+        d = fits_path.parent
+        while d.parent != image_dir and d.parent != d:
+            d = d.parent
+        return d if d.parent == image_dir else None
+
+    def _find_dso_dir_by_name(name: str) -> Optional[Path]:
+        target = name.lower().replace(" ", "").replace("_", "")
+        candidates = [
+            d for d in image_dir.iterdir()
+            if d.is_dir() and target in d.name.lower().replace(" ", "").replace("_", "")
+        ]
+        if not candidates:
+            return None
+        if len(candidates) == 1:
+            return candidates[0]
+        def _latest(d: Path) -> float:
+            try:
+                return max(f.stat().st_mtime for f in d.rglob("*.fits") if _is_light(f))
+            except ValueError:
+                return 0.0
+        return max(candidates, key=_latest)
+
+    dso_dir: Optional[Path] = None
+
+    if dso_arg:
+        dso_dir = _find_dso_dir_by_name(dso_arg)
+        if dso_dir is None:
+            social_server.post_social_message(f"No image directory found for '{dso_arg}'")
+            return
+    else:
+        all_fits = sorted(
+            (f for f in image_dir.rglob("*.fits") if _is_light(f)),
+            key=lambda f: f.stat().st_mtime,
+        )
+        if not all_fits:
+            social_server.post_social_message("No LIGHT frames found")
+            return
+        dso_dir = _find_dso_dir(all_fits[-1])
+
+    fits_files = sorted(
+        (f for f in dso_dir.rglob("*.fits") if _is_light(f)),
+        key=lambda f: f.stat().st_mtime,
+    ) if dso_dir else []
+
+    if not fits_files:
+        social_server.post_social_message("No LIGHT frames found for the requested target")
+        return
+
+    social_server.post_social_message(
+        f"Convergence for {dso_dir.name}: {len(fits_files)} light frames — loading…"
+    )
+
+    # Group by filter
+    by_filter: dict[str, list[Path]] = {}
+    for f in fits_files:
+        try:
+            with _fits.open(f) as hdul:
+                filter_name = str(hdul[0].header.get("FILTER", "Unknown")).strip()
+        except Exception:
+            filter_name = "Unknown"
+        by_filter.setdefault(filter_name, []).append(f)
+
+    _project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    scratch_dir = os.path.join(_project_root, cfg["scratch"]["directory"])
+
+    for filter_name, paths in by_filter.items():
+        try:
+            frames = [stacker._load_fits_2d(p) for p in paths]
+        except Exception as exc:
+            social_server.post_social_message(f"Convergence [{filter_name}]: failed to load frames — {exc}")
+            continue
+
+        output_path = Path(scratch_dir) / f"convergence_{filter_name}.jpg"
+        try:
+            stacker.convergence_curve(frames, filter_name=filter_name, output_path=output_path)
+        except Exception as exc:
+            social_server.post_social_message(f"Convergence [{filter_name}]: plot failed — {exc}")
+            continue
+
+        social_server.post_social_message(
+            f"Stack convergence vs golden — {filter_name}  ({len(paths)} frames)",
+            str(output_path),
+        )
 
 
 def image_stats_cmd(words: list[str], account: str) -> None:

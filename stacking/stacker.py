@@ -463,56 +463,82 @@ def _save_jpg(data: np.ndarray, output_path: Path, title: str = "") -> Path:
 
 
 # ---------------------------------------------------------------------------
-# SNR curve
+# Convergence curve
 # ---------------------------------------------------------------------------
 
-def snr_curve(
+def _fib_counts(max_n: int) -> list[int]:
+    """Fibonacci-spaced frame counts from 1 up to max_n, always including max_n."""
+    a, b = 1, 2
+    counts = [1]
+    while b < max_n:
+        counts.append(b)
+        a, b = b, a + b
+    counts.append(max_n)
+    return counts
+
+
+def convergence_curve(
     frames: list[np.ndarray],
     filter_name: str = "",
     output_path: Optional[Path] = None,
+    n_trials: int = 20,
 ) -> tuple[list[int], list[float]]:
     """
-    Stack frames incrementally and measure SNR at each step.
+    Measure how quickly stacking converges to the golden (all-frames) stack.
 
-    SNR is estimated as median / sigma_clipped_std of the stacked image.
-    The background noise should fall as 1/√N; this function plots both the
-    measured curve and the theoretical expectation so you can see how close
-    reality is.
+    For each Fibonacci-spaced count k, draws n_trials random subsets of k frames,
+    mean-stacks each, and computes RMSE against the golden stack.  RMSE is
+    normalised by the golden stack's sigma-clipped median so the y-axis is a
+    dimensionless fraction (0 = identical to golden).
 
     Args:
-        frames:      Calibrated (and registered) 2-D arrays in stacking order.
+        frames:      Calibrated 2-D arrays (any order — subsets are drawn randomly).
         filter_name: Label used in the plot title.
         output_path: If given, save the plot as a JPEG to this path.
+        n_trials:    Random subsets to average per frame count (default 20).
 
     Returns:
-        (counts, snr_values) — lists of frame counts and corresponding SNR.
+        (counts, mean_residuals) — Fibonacci frame counts and mean normalised RMSE.
     """
     from astropy.stats import sigma_clipped_stats
     import matplotlib.pyplot as plt
 
-    counts: list[int] = []
-    snr_values: list[float] = []
+    rng = np.random.default_rng()
+    n = len(frames)
+    arr = np.stack(frames, axis=0)  # (N, H, W)
 
-    for n in range(1, len(frames) + 1):
-        stack = np.mean(np.stack(frames[:n], axis=0), axis=0)
-        _, median, std = sigma_clipped_stats(stack, sigma=3.0)
-        snr = float(median / std) if std > 0 else 0.0
-        counts.append(n)
-        snr_values.append(snr)
+    golden = arr.mean(axis=0)
+    _, golden_median, _ = sigma_clipped_stats(golden, sigma=3.0)
+    if golden_median <= 0:
+        golden_median = 1.0
 
-    if not snr_values:
-        return counts, snr_values
+    counts = _fib_counts(n)
+    mean_residuals: list[float] = []
+    std_residuals: list[float] = []
 
-    # Theoretical curve: SNR ∝ √N, normalised to the first measured point
-    snr0 = snr_values[0]
-    theoretical = [snr0 * (n ** 0.5) for n in counts]
+    for k in counts:
+        actual_trials = n_trials if k < n else 1
+        trial_rmses: list[float] = []
+        for _ in range(actual_trials):
+            idx = rng.choice(n, size=k, replace=False)
+            subset_stack = arr[idx].mean(axis=0)
+            rmse = float(np.sqrt(np.mean((subset_stack - golden) ** 2)))
+            trial_rmses.append(rmse / golden_median)
+        mean_residuals.append(float(np.mean(trial_rmses)))
+        std_residuals.append(float(np.std(trial_rmses)))
+
+    xs = np.array(counts)
+    ys = np.array(mean_residuals)
+    errs = np.array(std_residuals)
 
     fig, ax = plt.subplots(figsize=(10, 5))
-    ax.plot(counts, snr_values, "o-", color="steelblue", label="Measured SNR")
-    ax.plot(counts, theoretical, "--", color="orange", label="Theoretical √N")
+    ax.plot(xs, ys, "o-", color="steelblue", label="Mean residual")
+    ax.fill_between(xs, np.maximum(ys - errs, 0), ys + errs,
+                    alpha=0.25, color="steelblue", label="±1 σ  (trial spread)")
     ax.set_xlabel("Frames stacked")
-    ax.set_ylabel("SNR  (median / background σ)")
-    title = f"SNR vs frames stacked"
+    ax.set_ylabel("Normalised RMSE  (vs golden stack)")
+    ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"{v:.1%}"))
+    title = "Stack convergence vs golden"
     if filter_name:
         title += f"  [{filter_name}]"
     ax.set_title(title)
@@ -526,7 +552,7 @@ def snr_curve(
     else:
         plt.show()
 
-    return counts, snr_values
+    return counts, mean_residuals
 
 
 # ---------------------------------------------------------------------------
@@ -614,8 +640,7 @@ def stack_directory(
         results[filter_name] = (out, info)
 
         if snr_demo:
-            snr_jpg = out.with_name(out.stem + "_snr.jpg")
-            # Reload calibrated frames for incremental SNR measurement
+            conv_jpg = out.with_name(out.stem + "_convergence.jpg")
             master_bias = build_master_bias(bias_paths)
             master_dark = build_master_dark(dark_paths, master_bias)
             master_flat = build_master_flat(flat_paths, master_bias, master_dark)
@@ -623,8 +648,8 @@ def stack_directory(
                           for p in group_paths]
             if register:
                 calibrated = _register_frames(calibrated)
-            snr_curve(calibrated, filter_name=filter_name, output_path=snr_jpg)
-            _logger.info("SNR curve → %s", snr_jpg)
+            convergence_curve(calibrated, filter_name=filter_name, output_path=conv_jpg)
+            _logger.info("Convergence curve → %s", conv_jpg)
 
     return results
 
