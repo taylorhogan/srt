@@ -505,7 +505,11 @@ def convergence_curve(
 
     rng = np.random.default_rng()
     n = len(frames)
-    arr = np.stack(frames, axis=0)  # (N, H, W)
+    h, w = frames[0].shape[:2]
+    scale = max(1, min(h, w) // 512)
+    if scale > 1:
+        frames = [f[::scale, ::scale] for f in frames]
+    arr = np.stack(frames, axis=0)  # (N, H//scale, W//scale)
 
     golden = arr.mean(axis=0)
     _, golden_median, _ = sigma_clipped_stats(golden, sigma=3.0)
