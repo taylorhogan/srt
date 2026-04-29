@@ -226,6 +226,25 @@
 
   #send-btn:hover { background: #264a7a; }
 
+  #photo-btn {
+    background: #161b22;
+    color: #8b949e;
+    border: 1px solid #30363d;
+    border-radius: 6px;
+    padding: 0;
+    width: 40px;
+    height: 40px;
+    font-size: 18px;
+    cursor: pointer;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  #photo-btn:hover { background: #1f2937; }
+  #photo-btn:disabled { opacity: 0.4; cursor: default; }
+
   #messages::-webkit-scrollbar { width: 6px; }
   #messages::-webkit-scrollbar-track { background: transparent; }
   #messages::-webkit-scrollbar-thumb { background: #30363d; border-radius: 3px; }
@@ -317,7 +336,9 @@
   <div id="messages"></div>
 
   <div id="input-area">
+    <input type="file" id="photo-input" accept="image/*" style="display:none">
     <input type="text" id="cmd-input" placeholder="Type a command... (e.g. tonight, status, help)" autocomplete="off">
+    <button id="photo-btn" title="Upload photo">🔭</button>
     <button id="send-btn">↑</button>
   </div>
 
@@ -525,6 +546,35 @@
   input.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') sendCommand();
   });
+
+  // ── Photo upload ───────────────────────────────────────────────
+  const photoBtn   = document.getElementById('photo-btn');
+  const photoInput = document.getElementById('photo-input');
+
+  photoBtn.addEventListener('click', () => photoInput.click());
+
+  photoInput.addEventListener('change', async () => {
+    const file = photoInput.files[0];
+    if (!file) return;
+    photoInput.value = '';  // reset so same file can be re-selected
+
+    photoBtn.disabled = true;
+    renderMessage({ id: null, timestamp: Date.now() / 1000, text: `> 🔭 ${file.name}`, image_url: null, html: null });
+
+    const formData = new FormData();
+    formData.append('message', `🔭 ${file.name}`);
+    formData.append('image', file);
+
+    try {
+      const resp = await fetch('/api/post', { method: 'POST', body: formData });
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    } catch (err) {
+      renderMessage({ id: null, timestamp: Date.now() / 1000, text: `Upload failed: ${err.message}`, image_url: null, html: null });
+    } finally {
+      photoBtn.disabled = false;
+    }
+  });
+  // ──────────────────────────────────────────────────────────────
 
   // ── Working spinner ────────────────────────────────────────────
   const SPIN_CHARS = ['·', '⋆', '✦', '✶', '✷', '✸', '✷', '✶', '✦', '⋆'];

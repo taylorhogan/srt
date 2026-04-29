@@ -95,14 +95,31 @@ def _dispatch_command(cmd_text: str):
     """Run a command through the existing social_server.do_command dispatch."""
     try:
         from configs import config
-        from cmd_processing import social_server
+        from cmd_processing import social_server, cmd_history
 
         cfg = config.data()
-        # Use the first super user account for web commands
         super_users = cfg.get("Super Users", {})
         account = next(iter(super_users), "web_user")
-        sentence = f"@iris {cmd_text}"
-        social_server.do_command(sentence, None, account)
+
+        cmd_text = cmd_text.strip()
+
+        # !n — expand to the nth history entry and re-run it
+        if cmd_text.startswith("!"):
+            raw = cmd_text[1:]
+            try:
+                n = int(raw)
+            except ValueError:
+                message_bus.post_message(f"history: '{raw}' is not a valid number")
+                return
+            resolved = cmd_history.get_nth(n)
+            if resolved is None:
+                message_bus.post_message(f"history: no entry #{n}")
+                return
+            message_bus.post_message(f"!{n} → {resolved}")
+            cmd_text = resolved
+
+        cmd_history.record(cmd_text)
+        social_server.do_command(f"@iris {cmd_text}", None, account)
     except Exception:
         _logger.exception("Command dispatch failed for: %s", cmd_text)
         message_bus.post_message(f"Error processing command: {cmd_text}")

@@ -18,6 +18,7 @@ safety.txt
 imaging.txt
 mode.txt
 iris.log
+cmd_history.json
 local/
 scratch/
 

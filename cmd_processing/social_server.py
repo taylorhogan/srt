@@ -187,6 +187,20 @@ def calendar_cmd(words: list[str], index: int, m: Mastodon, account: str) -> Non
     post_social_message("", "cal.png")
 
 
+def history_cmd(words: list[str], index: int, m: Mastodon, account: str) -> None:
+    """
+    Show recent command history. example: history  or  history 10
+    """
+    from cmd_processing import cmd_history
+    n = 20
+    if len(words) > index + 1:
+        try:
+            n = int(words[index + 1])
+        except ValueError:
+            pass
+    post_social_message(cmd_history.format_history(n))
+
+
 def help_cmd(words: list[str], index: int, m: Mastodon, account: str) -> None:
     reply = "Available commands are\n"
     for word in keywords:
@@ -429,6 +443,7 @@ keywords = {
     "calendar": calendar_cmd,
     "show": show_cmd,
     "speedtest": speedtest_cmd,
+    "history": history_cmd,
     "help": help_cmd,
     "?": help_cmd
 }
