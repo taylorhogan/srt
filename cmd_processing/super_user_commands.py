@@ -500,25 +500,107 @@ def update_cmd(words: list[str], account: str) -> None:
 
 
 def optics_cmd(words: list[str], account: str) -> None:
-    """Post optical quality diagnostic plots for the latest FITS frame."""
-    threading.Thread(target=_optics_run, daemon=True).start()
+    """Post optical quality diagnostic plots for a FITS frame.
+
+    Usage:
+        optics              — latest frame of the last-imaged DSO
+        optics <dso>        — latest frame of the named DSO
+        optics * <n>        — frame n of the last-imaged DSO
+        optics <dso> <n>    — frame n of the named DSO
+    """
+    threading.Thread(target=_optics_run, args=(words,), daemon=True).start()
 
 
-def _optics_run() -> None:
-    from fits_processing import fitstojpg, fitsfwhm, sky_brightness as sb
+def _optics_run(words: list[str]) -> None:
+    from fits_processing import fitsfwhm, sky_brightness as sb
 
     cfg = config.data()
     _project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
-    image_dir = cfg["nina"]["image_dir"]
+    image_dir = Path(cfg["nina"]["image_dir"])
     arcsec_per_pixel = cfg["nina"]["arc_sec_per_pixel"]
     scratch_dir = os.path.join(_project_root, cfg["scratch"]["directory"])
 
-    latest_fits = fitstojpg.get_latest_file(image_dir, "fits")
-    if latest_fits is None:
-        social_server.post_social_message("No FITS frames found")
+    # Parse optional args: [dso_name] [frame_number]
+    args = words[2:]
+    frame_num: Optional[int] = None
+    dso_arg: Optional[str] = None
+    if args:
+        if args[-1].isdigit():
+            frame_num = int(args[-1])
+            dso_arg = " ".join(args[:-1]).strip() or None
+        else:
+            dso_arg = " ".join(args).strip()
+    if dso_arg == "*":
+        dso_arg = None
+
+    def _is_light(f: Path) -> bool:
+        return f.parent.name.upper() == "LIGHT"
+
+    def _find_dso_dir(fits_path: Path) -> Optional[Path]:
+        d = fits_path.parent
+        while d.parent != image_dir and d.parent != d:
+            d = d.parent
+        return d if d.parent == image_dir else None
+
+    def _find_dso_dir_by_name(name: str) -> Optional[Path]:
+        target = name.lower().replace(" ", "").replace("_", "")
+        candidates = [
+            d for d in image_dir.iterdir()
+            if d.is_dir() and target in d.name.lower().replace(" ", "").replace("_", "")
+        ]
+        if not candidates:
+            return None
+        if len(candidates) == 1:
+            return candidates[0]
+        def _latest(d: Path) -> float:
+            try:
+                return max(f.stat().st_mtime for f in d.rglob("*.fits") if _is_light(f))
+            except ValueError:
+                return 0.0
+        return max(candidates, key=_latest)
+
+    dso_dir: Optional[Path] = None
+
+    if dso_arg:
+        dso_dir = _find_dso_dir_by_name(dso_arg)
+        if dso_dir is None:
+            social_server.post_social_message(f"No image directory found for '{dso_arg}'")
+            return
+    else:
+        all_fits = sorted(
+            (f for f in image_dir.rglob("*.fits") if _is_light(f)),
+            key=lambda f: f.stat().st_mtime,
+        )
+        if not all_fits:
+            social_server.post_social_message("No FITS frames found")
+            return
+        dso_dir = _find_dso_dir(all_fits[-1])
+
+    fits_files = sorted(
+        (f for f in dso_dir.rglob("*.fits") if _is_light(f)),
+        key=lambda f: f.stat().st_mtime,
+    ) if dso_dir else []
+
+    if not fits_files:
+        social_server.post_social_message("No LIGHT frames found")
         return
 
-    fits_path = Path(str(latest_fits))
+    total_frames = len(fits_files)
+    if frame_num is None:
+        fits_path = fits_files[-1]
+        frame_idx = total_frames
+    else:
+        if frame_num < 1 or frame_num > total_frames:
+            social_server.post_social_message(
+                f"Frame {frame_num} out of range — {dso_dir.name} has {total_frames} frames"
+            )
+            return
+        fits_path = fits_files[frame_num - 1]
+        frame_idx = frame_num
+
+    social_server.post_social_message(
+        f"Optics for {dso_dir.name} frame {frame_idx}/{total_frames}"
+    )
 
     metrics = fitsfwhm.compute_optical_metrics(fits_path, arcsec_per_pixel=arcsec_per_pixel)
     if metrics:
@@ -594,6 +676,131 @@ def active_cmd(words: list[str], account: str) -> None:
     social_server.post_social_message("\n".join(lines))
 
 
+def drift_cmd(words: list[str], account: str) -> None:
+    """Post ZScale-stretched difference images: first-k-frames stack vs golden (L filter only).
+
+    Usage:
+        drift           — L frames of the last-imaged DSO
+        drift <dso>     — L frames of the named DSO
+        drift *         — same as bare drift (last DSO)
+    """
+    threading.Thread(target=_drift_run, args=(words,), daemon=True).start()
+
+
+def _drift_run(words: list[str]) -> None:
+    import numpy as np
+    from astropy.io import fits as _fits
+    from astropy.visualization import ZScaleInterval
+    import matplotlib.pyplot as plt
+    from stacking import stacker
+
+    cfg = config.data()
+    image_dir = Path(cfg["nina"]["image_dir"])
+    _project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+    scratch_dir = Path(os.path.join(_project_root, cfg["scratch"]["directory"]))
+
+    dso_arg = " ".join(words[2:]).strip() if len(words) > 2 else None
+    if dso_arg == "*":
+        dso_arg = None
+
+    def _is_light(f: Path) -> bool:
+        return f.parent.name.upper() == "LIGHT"
+
+    def _find_dso_dir(fits_path: Path) -> Optional[Path]:
+        d = fits_path.parent
+        while d.parent != image_dir and d.parent != d:
+            d = d.parent
+        return d if d.parent == image_dir else None
+
+    def _find_dso_dir_by_name(name: str) -> Optional[Path]:
+        target = name.lower().replace(" ", "").replace("_", "")
+        candidates = [
+            d for d in image_dir.iterdir()
+            if d.is_dir() and target in d.name.lower().replace(" ", "").replace("_", "")
+        ]
+        if not candidates:
+            return None
+        if len(candidates) == 1:
+            return candidates[0]
+        def _latest(d: Path) -> float:
+            try:
+                return max(f.stat().st_mtime for f in d.rglob("*.fits") if _is_light(f))
+            except ValueError:
+                return 0.0
+        return max(candidates, key=_latest)
+
+    dso_dir: Optional[Path] = None
+
+    if dso_arg:
+        dso_dir = _find_dso_dir_by_name(dso_arg)
+        if dso_dir is None:
+            social_server.post_social_message(f"No image directory found for '{dso_arg}'")
+            return
+    else:
+        all_fits = sorted(
+            (f for f in image_dir.rglob("*.fits") if _is_light(f)),
+            key=lambda f: f.stat().st_mtime,
+        )
+        if not all_fits:
+            social_server.post_social_message("No LIGHT frames found")
+            return
+        dso_dir = _find_dso_dir(all_fits[-1])
+
+    fits_files = sorted(
+        (f for f in dso_dir.rglob("*.fits") if _is_light(f)),
+        key=lambda f: f.stat().st_mtime,
+    ) if dso_dir else []
+
+    if not fits_files:
+        social_server.post_social_message("No LIGHT frames found")
+        return
+
+    l_files = [
+        f for f in fits_files
+        if stacker.read_filter(f).upper() in ("L", "LUMINANCE", "LUMA")
+    ]
+    if not l_files:
+        social_server.post_social_message(f"{dso_dir.name}: no L filter frames found")
+        return
+
+    n = len(l_files)
+    social_server.post_social_message(f"Drift for {dso_dir.name}: {n} L frames — loading…")
+
+    frames = []
+    for p in l_files:
+        with _fits.open(p) as hdul:
+            frames.append(np.squeeze(hdul[0].data).astype(np.float32))
+
+    h, w = frames[0].shape[:2]
+    scale = max(1, min(h, w) // 512)
+    if scale > 1:
+        frames = [f[::scale, ::scale] for f in frames]
+
+    arr = np.stack(frames, axis=0)
+    golden = arr.mean(axis=0)
+
+    counts = stacker._fib_counts(n)
+
+    for k in counts:
+        diff = np.abs(arr[:k].mean(axis=0) - golden)
+        try:
+            vmin, vmax = ZScaleInterval().get_limits(diff)
+        except Exception:
+            vmin, vmax = float(np.percentile(diff, 1)), float(np.percentile(diff, 99))
+
+        fig, ax = plt.subplots(figsize=(8, 8))
+        ax.imshow(diff, origin="lower", cmap="gray", vmin=vmin, vmax=vmax, interpolation="nearest")
+        ax.axis("off")
+        ax.set_title(f"{dso_dir.name}  L  {k}/{n} frames vs golden", fontsize=10)
+        fig.tight_layout(pad=0.5)
+
+        out_path = scratch_dir / f"drift_L_{k:04d}of{n:04d}.jpg"
+        fig.savefig(out_path, format="jpeg", dpi=120, bbox_inches="tight")
+        plt.close(fig)
+
+        social_server.post_social_message(f"L  {k}/{n} frames vs golden", str(out_path))
+
+
 def get_super_user_commands() -> dict[str, Callable]:
     """Return the command-name → handler mapping for all super-user commands."""
     return {
@@ -616,6 +823,7 @@ def get_super_user_commands() -> dict[str, Callable]:
         "log": log_cmd,
         "update": update_cmd,
         "optics": optics_cmd,
+        "drift": drift_cmd,
     }
 
 
