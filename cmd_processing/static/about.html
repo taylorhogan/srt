@@ -41,20 +41,6 @@
     letter-spacing: 0.04em;
   }
 
-  header nav {
-    margin-left: auto;
-    display: flex;
-    gap: 20px;
-  }
-
-  header nav a {
-    color: #8b949e;
-    text-decoration: none;
-    font-size: 0.82rem;
-    transition: color 0.2s;
-  }
-
-  header nav a:hover { color: #58a6ff; }
 
   .hero {
     background: linear-gradient(180deg, #161b22 0%, #0d1117 100%);
@@ -296,10 +282,6 @@
 <header>
   <div class="iris-dot"></div>
   <h1>Iris Observatory</h1>
-  <nav>
-    <a href="/static/chat.html">Chat</a>
-    <a href="/static/about.html">About</a>
-  </nav>
 </header>
 
 <div class="hero">
@@ -406,6 +388,46 @@
   </div>
 
   <div class="section">
+    <h3>Optical quality analysis</h3>
+    <p style="font-size:0.8rem;color:#8b949e;margin-bottom:14px;line-height:1.6;">
+      The <code style="color:#79c0ff;">optics</code> command runs a full per-star analysis on any LIGHT frame and posts diagnostic plots and a scalar scorecard to the chat.
+      Each star is fitted with a 2-D Gaussian to extract its position, FWHM, eccentricity, and major-axis angle.
+    </p>
+    <div class="cards">
+      <div class="card">
+        <span class="card-icon">🔬</span>
+        <h4>FWHM &amp; field uniformity</h4>
+        <p>Median full-width at half-maximum across all detected stars, in arcseconds. A grid heatmap shows whether sharpness degrades toward the edges — a sign of field curvature or focus tilt.</p>
+      </div>
+      <div class="card">
+        <span class="card-icon">⭕</span>
+        <h4>Eccentricity</h4>
+        <p>How elongated each star is (0 = perfect circle, 1 = line). High eccentricity across the whole field indicates poor collimation, mirror shift, or tracking error.</p>
+      </div>
+      <div class="card">
+        <span class="card-icon">🌀</span>
+        <h4>Coma score</h4>
+        <p>Pearson correlation between eccentricity and distance from the image centre. A high score means stars get progressively more elongated toward the edges — the classic signature of coma.</p>
+      </div>
+      <div class="card">
+        <span class="card-icon">🧭</span>
+        <h4>Collimation score</h4>
+        <p>Measures whether elongated stars point radially outward from the centre (coma/collimation) or in a consistent direction across the frame (tilt or flexure). Uses the mean cos² of the angle between each star's elongation axis and its radial direction.</p>
+      </div>
+      <div class="card">
+        <span class="card-icon">📐</span>
+        <h4>Tilt score</h4>
+        <p>Fits a plane to the FWHM values across the sensor. The gradient magnitude, normalised by image diagonal and median FWHM, reveals focus-plane tilt — one side sharp, the other soft.</p>
+      </div>
+      <div class="card">
+        <span class="card-icon">📏</span>
+        <h4>FWHM vs radius plot</h4>
+        <p>Scatter plot of FWHM against distance from the image centre. Flat = good optics. A rising slope indicates field curvature; a U-shape suggests the best focus is off-axis.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="section">
     <h3>Safety rules</h3>
     <div class="safety-box">
       <span class="safety-icon">⚠️</span>
@@ -414,6 +436,45 @@
         <strong> The roof will never move unless the scope is confirmed parked.</strong>
         Every hardware action is gated by a computer-vision check of the observatory camera. If the camera image is stale or ambiguous, the action is aborted and a push notification is sent.
       </p>
+    </div>
+  </div>
+
+  <div class="section">
+    <h3>Audio anomaly detection</h3>
+    <p style="font-size:0.8rem;color:#8b949e;margin-bottom:14px;line-height:1.6;">
+      A microphone in the observatory runs a continuous listen loop. Any sound above the RMS threshold — a motor stall, a mechanical bang, an unexpected relay click — triggers a 10-second capture, which is converted to a mel spectrogram and compared against a library of known-good reference sounds.
+    </p>
+    <div class="cards">
+      <div class="card">
+        <span class="card-icon">🎙️</span>
+        <h4>Continuous listening</h4>
+        <p>Audio is sampled at 44 100 Hz in 1 024-sample chunks. The RMS level of each chunk is checked against a configurable threshold. Below threshold the system is silent; above it a capture begins immediately.</p>
+      </div>
+      <div class="card">
+        <span class="card-icon">🌈</span>
+        <h4>Mel spectrogram fingerprint</h4>
+        <p>Each 10-second capture is rendered as a 128-band mel spectrogram image using a fixed figure size, DPI, and colour map so all images are pixel-comparable regardless of when they were recorded.</p>
+      </div>
+      <div class="card">
+        <span class="card-icon">📚</span>
+        <h4>Library matching</h4>
+        <p>The new spectrogram is compared to every PNG in the reference library using mean-squared error. The closest match and its similarity score are identified. The library is built by saving spectrograms of known sounds — roof motor running, normal ambient noise, etc.</p>
+      </div>
+      <div class="card">
+        <span class="card-icon">🚨</span>
+        <h4>Push notification on new sounds</h4>
+        <p>A Pushover notification is sent whenever a new distinct sound is detected — i.e. the best-match label differs from the previous event. Repeated instances of the same sound are suppressed to avoid alert fatigue. The spectrogram image is attached to the notification.</p>
+      </div>
+      <div class="card">
+        <span class="card-icon">🏠</span>
+        <h4>Hardware covered</h4>
+        <p>The microphone is positioned to hear the roof motor, the mount drive, and the observatory door. Unusual sounds during an imaging run — a motor stall mid-travel, a mechanical impact, or unexpected silence where motor noise should be — are flagged in real time.</p>
+      </div>
+      <div class="card">
+        <span class="card-icon">💾</span>
+        <h4>Detected archive</h4>
+        <p>Every triggered capture is saved as both a PNG spectrogram and a WAV file in <code style="color:#79c0ff;">detected_spectrograms/</code>, creating a full audit trail of every acoustic event the observatory experienced during a run.</p>
+      </div>
     </div>
   </div>
 
