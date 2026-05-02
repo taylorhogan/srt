@@ -74,43 +74,11 @@ def toggle_roof(dev_map: dict) -> None:
 
 
 def announce_roof_movement(text: str, speaker_name: str = "Observatory", volume: int = 40) -> None:
-    """Blink observatory lights for 30 sec and say text on Sonos."""
-    light_names = ["Iris inside light", "Iris landscape lights", "Observatory strip", "Iris door light"]
-
-    dev_map = asyncio.run(ku.make_discovery_map())
-    original_states = asyncio.run(ku.kasa_get_states(dev_map, light_names))
-
-    async def _blink_async():
-        end_time = asyncio.get_event_loop().time() + 30
-        state = True
-        while asyncio.get_event_loop().time() < end_time:
-            inst = {k: ("on" if state else "off") for k in light_names}
-            try:
-                await ku.kasa_do(dev_map, inst)
-            except Exception as e:
-                _logger.warning("Blink step failed: %s", e)
-            state = not state
-            await asyncio.sleep(5)
-        try:
-            await ku.kasa_do(dev_map, original_states)
-        except Exception as e:
-            _logger.warning("Blink restore failed: %s", e)
-
-    def blink():
-        asyncio.run(_blink_async())
-
-    def announce():
-        try:
-            sonos_utils.sonos_say(text, speaker_name, volume)
-        except Exception as e:
-            _logger.error("Sonos announcement failed: %s", e)
-
-    blink_thread = threading.Thread(target=blink, daemon=True)
-    sonos_thread = threading.Thread(target=announce, daemon=True)
-    blink_thread.start()
-    sonos_thread.start()
-    blink_thread.join()
-    sonos_thread.join()
+    """Announce upcoming roof movement via Sonos."""
+    try:
+        sonos_utils.sonos_say(text, speaker_name, volume)
+    except Exception as e:
+        _logger.error("Sonos announcement failed: %s", e)
 
 
 def get_status_with_lights() -> tuple[bool, bool, bool, Any]:
@@ -587,6 +555,45 @@ def _optics_run() -> None:
         social_server.post_social_message(sb.sky_summary_text(sky_data), str(sky_heatmap_out))
 
 
+def active_cmd(words: list[str], account: str) -> None:
+    """List all DSOs that have LIGHT frames, with sub counts per filter."""
+    cfg = config.data()
+    image_dir = Path(cfg["nina"]["image_dir"])
+
+    if not image_dir.exists():
+        social_server.post_social_message("Image directory not found")
+        return
+
+    try:
+        dso_dirs = sorted(d for d in image_dir.iterdir() if d.is_dir())
+    except Exception as exc:
+        social_server.post_social_message(f"active: scan failed — {exc}")
+        return
+
+    results: dict[str, dict[str, int]] = {}
+    for dso_dir in dso_dirs:
+        by_filter: dict[str, int] = {}
+        for f in dso_dir.rglob("*.fits"):
+            if f.parent.name.upper() != "LIGHT":
+                continue
+            filter_name = f.parent.parent.name
+            by_filter[filter_name] = by_filter.get(filter_name, 0) + 1
+        if by_filter:
+            results[dso_dir.name] = by_filter
+
+    if not results:
+        social_server.post_social_message("No LIGHT frames found in image directory")
+        return
+
+    lines = []
+    for dso, filters in sorted(results.items()):
+        total = sum(filters.values())
+        filter_str = "  ".join(f"{k}: {v}" for k, v in sorted(filters.items()))
+        lines.append(f"{dso} ({total})  {filter_str}")
+
+    social_server.post_social_message("\n".join(lines))
+
+
 def get_super_user_commands() -> dict[str, Callable]:
     """Return the command-name → handler mapping for all super-user commands."""
     return {
@@ -603,6 +610,7 @@ def get_super_user_commands() -> dict[str, Callable]:
         "prioritize": prioritize_cmd,
         "doflats": doflats_cmd,
         "todo": todo_cmd,
+        "active": active_cmd,
         "stats": image_stats_cmd,
         "snr": snr_cmd,
         "log": log_cmd,

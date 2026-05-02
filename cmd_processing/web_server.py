@@ -245,6 +245,38 @@ async def api_imaging_ticker():
                         data["active"] = False
                 except Exception:
                     pass
+        remaining_seconds = None
+        try:
+            import json as _json
+            import datetime as _dt
+            import pytz
+            from iris_astronomy import astro_dso_visibility
+            from astropy.time import Time as _AstroTime
+
+            cfg2 = config.data()
+            instr_path = os.path.join(
+                os.path.abspath(os.path.join(os.path.dirname(__file__), "..")),
+                cfg2["location"]["instructions"],
+            )
+            with open(instr_path) as f:
+                instructions = _json.load(f)
+            in_proc = next((i for i in instructions if i.get("status") == "in process"), None)
+            if in_proc:
+                dso = astro_dso_visibility.is_a_dso_object(in_proc["dso"])
+                if dso:
+                    finish = astro_dso_visibility.get_finish_time(dso, _AstroTime.now())
+                    if finish is not None:
+                        local_tz = pytz.timezone("America/New_York")
+                        now_local = _dt.datetime.now(local_tz)
+                        if finish.tzinfo is None:
+                            finish = local_tz.localize(finish)
+                        secs = int((finish - now_local).total_seconds())
+                        if secs > 0:
+                            remaining_seconds = secs
+        except Exception:
+            pass
+        data["remaining_seconds"] = remaining_seconds
+
         return JSONResponse(
             content={"ok": True, **data},
             headers={"Cache-Control": "no-store"},

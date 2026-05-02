@@ -193,6 +193,7 @@ def _analyse(fits_path: Path, arcsec_per_pixel: float) -> Optional[dict]:
             "filter":          filter_name,
             "fwhm_arcsec":     fwhm_arcsec,
             "eccentricity":    ecc,
+            "star_count":      star_count,
             "sky_adu_per_s":   round(sky["sky_adu_per_s"], 2)       if sky else None,
             "sky_mag_arcsec2": round(sky["sky_mag_arcsec2"], 2)
                                if sky and sky.get("sky_mag_arcsec2") is not None else None,

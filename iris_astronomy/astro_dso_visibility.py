@@ -398,6 +398,20 @@ def get_above_horizon_time(dso: FixedTarget, time: Time) -> tuple[Optional[datet
     return elapsed_time, max_altitude
 
 
+def get_finish_time(dso: FixedTarget, time: Time) -> Optional[datetime.datetime]:
+    """Return when dso drops below the custom horizon tonight (local tz), or None."""
+    longitude = CFG["location"]["longitude"]
+    latitude  = CFG["location"]["latitude"]
+    elevation = CFG["location"]["elevation"]
+    location  = EarthLocation.from_geodetic(longitude * u.deg, latitude * u.deg, elevation * u.m)
+    my_observatory = Observer(location=location, name=CFG["location"]["observatory_name"], timezone="US/Eastern")
+
+    sunset_tonight = my_observatory.sun_set_time(time, which='nearest')
+    observe_time   = sunset_tonight + np.linspace(-1, 14, 55) * u.hour
+    _, _, _, _, finish_time, _, _ = find_alt_az_horizon_times(dso, my_observatory, observe_time)
+    return finish_time
+
+
 def air_mass(altitude: float) -> float:
     h = math.sin(math.radians(altitude))
     if h == 0:

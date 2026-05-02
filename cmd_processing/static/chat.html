@@ -649,11 +649,19 @@
       { label: 'Filter',  value: lf.filter  || '—' },
       { label: 'FWHM',    value: lf.fwhm_arcsec  != null ? lf.fwhm_arcsec.toFixed(2) + '"'  : '—' },
       { label: 'Ecc',     value: lf.eccentricity != null ? lf.eccentricity.toFixed(3)        : '—' },
+      { label: 'Stars',   value: lf.star_count != null ? String(lf.star_count) : '—' },
       { label: 'Sky',     value: lf.sky_mag_arcsec2 != null
                                    ? lf.sky_mag_arcsec2.toFixed(2) + ' mag'
                                    : lf.sky_adu_per_s != null
                                        ? lf.sky_adu_per_s.toFixed(1) + ' ADU/s'
                                        : '—' },
+      { label: 'Time left', value: data.remaining_seconds != null
+                                     ? (() => {
+                                         const h = Math.floor(data.remaining_seconds / 3600);
+                                         const m = Math.floor((data.remaining_seconds % 3600) / 60);
+                                         return h > 0 ? `${h}h ${m}m` : `${m}m`;
+                                       })()
+                                     : '—' },
     ];
     const inner = items.map(m =>
       `<span class="it-item"><span class="it-lbl">${m.label}</span><span class="it-val">${m.value}</span></span>`
