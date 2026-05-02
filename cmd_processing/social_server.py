@@ -593,7 +593,7 @@ def start_interface() -> None:
     port = web_cfg.get("port", 8095)
 
     _project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
-    images_dir = os.path.join(_project_root, "iris_astronomy", "scratch", "chat_images")
+    images_dir = os.path.join(_project_root, web_cfg.get("upload_dir", "saved_dso"))
     web_server.init(images_dir)
 
     post_social_message("Starting Version " + cfg["version"]["date"])
@@ -630,7 +630,7 @@ def main() -> None:
 
     # Initialize the message bus
     _project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
-    images_dir = os.path.join(_project_root, "iris_astronomy", "scratch", "chat_images")
+    images_dir = os.path.join(_project_root, web_cfg.get("upload_dir", "saved_dso"))
     message_bus.init(images_dir, max_history=web_cfg.get("max_history", 500))
 
     mqtt_client = utils.connect_mqtt()

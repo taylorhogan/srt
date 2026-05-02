@@ -907,7 +907,7 @@ def save_stats_plot_from_cache(
     frames: list[dict],
     output_path: Path,
 ) -> tuple[Path, int]:
-    """3-panel (FWHM / eccentricity / sky) plot from pre-computed frame dicts.
+    """4-panel (FWHM / eccentricity / sky / star count) plot from pre-computed frame dicts.
 
     X-axis is frame number 1-N.  Background bands lightly shade each calendar
     day so multi-night runs are easy to read.  Returns (output_path, frames_with_stars).
@@ -920,6 +920,7 @@ def save_stats_plot_from_cache(
     n_total = len(frames)
     fwhm_nums, fwhms, eccs, star_colors = [], [], [], []
     sky_nums, sky_vals, sky_colors = [], [], []
+    star_nums, star_counts, star_count_colors = [], [], []
     frame_dates: list = []   # date per frame (may be None)
     use_mag = False
 
@@ -951,6 +952,12 @@ def save_stats_plot_from_cache(
             sky_vals.append(float(adu))
             sky_colors.append(_FILTER_COLORS.get(filt, "#f39c12"))
 
+        sc = d.get("star_count")
+        if sc is not None:
+            star_nums.append(i)
+            star_counts.append(int(sc))
+            star_count_colors.append(_FILTER_COLORS.get(filt, "#f39c12"))
+
     if not fwhms:
         return output_path, 0
 
@@ -972,10 +979,10 @@ def save_stats_plot_from_cache(
     median_fwhm = float(np.median(fwhms))
     median_ecc  = float(np.median(eccs))
 
-    fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(12, 10), sharex=True)
+    fig, (ax1, ax2, ax3, ax4) = plt.subplots(4, 1, figsize=(12, 13), sharex=True)
 
     # Day shading — odd-indexed bands get a subtle tint
-    for ax in (ax1, ax2, ax3):
+    for ax in (ax1, ax2, ax3, ax4):
         for start, end, shade_idx in day_bands:
             if shade_idx == 1:
                 ax.axvspan(start - 0.5, end + 0.5, color="#5080b0", alpha=0.12, zorder=0)
@@ -1009,11 +1016,23 @@ def save_stats_plot_from_cache(
                  ha="center", va="center", color="#aaaaaa", fontsize=10)
         ax3.set_ylabel("Sky brightness")
 
-    ax3.set_xlabel("Frame")
-    ax3.set_xlim(0.5, n_total + 0.5)
+    if star_counts:
+        median_stars = float(np.median(star_counts))
+        ax4.scatter(star_nums, star_counts, c=star_count_colors, s=30, zorder=3)
+        ax4.axhline(median_stars, color="white", linestyle="--", linewidth=1, alpha=0.8)
+        ax4.text(star_nums[0], median_stars, f" median {median_stars:.0f}",
+                 va="bottom", color="white", fontsize=9)
+        ax4.set_ylabel("Stars detected")
+    else:
+        ax4.text(0.5, 0.5, "No star count data", transform=ax4.transAxes,
+                 ha="center", va="center", color="#aaaaaa", fontsize=10)
+        ax4.set_ylabel("Stars detected")
+
+    ax4.set_xlabel("Frame")
+    ax4.set_xlim(0.5, n_total + 0.5)
 
     fig.patch.set_facecolor("#0d0d1a")
-    for ax in (ax1, ax2, ax3):
+    for ax in (ax1, ax2, ax3, ax4):
         ax.set_facecolor("#1a1a2e")
         ax.tick_params(colors="white")
         ax.grid(True, alpha=0.2)

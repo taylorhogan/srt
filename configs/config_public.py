@@ -7,7 +7,7 @@ class PublicConfig():
 
         },
         "version": {
-            "date": "2026.5.2.2"
+            "date": "2026.5.2.3"
         },
 
         "logger": {
@@ -73,6 +73,7 @@ class PublicConfig():
             "host": "0.0.0.0",
             "mastodon_mirror": False,
             "max_history": 500,
+            "upload_dir": "saved_dso",
         },
 
         "sync": {
