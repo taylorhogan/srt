@@ -298,7 +298,7 @@
       <div class="card">
         <span class="card-icon">💬</span>
         <h4>Chat-driven requests</h4>
-        <p>Users submit deep-sky object (DSO) requests through a web chat interface accessible over Tailscale. The system queues, prioritises, and schedules them automatically.</p>
+        <p>Users submit deep-sky object (DSO) requests through a web chat interface accessible over Tailscale — works very well from a phone. The system queues, prioritises, and schedules them automatically.</p>
       </div>
       <div class="card">
         <span class="card-icon">📅</span>
@@ -370,7 +370,7 @@
   </div>
 
   <div class="section">
-    <h3>Chat commands</h3>
+    <h3>Some chat commands</h3>
     <div class="cmd-list">
       <div class="cmd"><code>image &lt;dso&gt;</code><span>Queue a DSO for imaging</span></div>
       <div class="cmd"><code>best</code><span>Best target for tonight</span></div>
@@ -428,18 +428,6 @@
   </div>
 
   <div class="section">
-    <h3>Safety rules</h3>
-    <div class="safety-box">
-      <span class="safety-icon">⚠️</span>
-      <p>
-        <strong>The mount will never move unless the roof is confirmed open.</strong>
-        <strong> The roof will never move unless the scope is confirmed parked.</strong>
-        Every hardware action is gated by a computer-vision check of the observatory camera. If the camera image is stale or ambiguous, the action is aborted and a push notification is sent.
-      </p>
-    </div>
-  </div>
-
-  <div class="section">
     <h3>Audio anomaly detection</h3>
     <p style="font-size:0.8rem;color:#8b949e;margin-bottom:14px;line-height:1.6;">
       A microphone in the observatory runs a continuous listen loop. Any sound above the RMS threshold — a motor stall, a mechanical bang, an unexpected relay click — triggers a 10-second capture, which is converted to a mel spectrogram and compared against a library of known-good reference sounds.
@@ -468,7 +456,7 @@
       <div class="card">
         <span class="card-icon">🏠</span>
         <h4>Hardware covered</h4>
-        <p>The microphone is positioned to hear the roof motor, the mount drive, and the observatory door. Unusual sounds during an imaging run — a motor stall mid-travel, a mechanical impact, or unexpected silence where motor noise should be — are flagged in real time.</p>
+        <p>The microphone is positioned to hear the roof motor, the mount drive, and the observatory roof. Unusual sounds during an imaging run — a motor stall mid-travel, a mechanical impact, or unexpected silence where motor noise should be — are flagged in real time.</p>
       </div>
       <div class="card">
         <span class="card-icon">💾</span>
@@ -520,6 +508,25 @@
         <div class="ss-label">Notifications</div>
         <div class="ss-name">pushover.py</div>
         <div class="ss-desc">Rate-limited admin push notifications via Pushover</div>
+      </div>
+      <div class="subsystem">
+        <div class="ss-label">Audio safety</div>
+        <div class="ss-name">audio_classify.py</div>
+        <div class="ss-desc">Mel spectrogram anomaly detection — monitors roof motor, mount drive, and observatory roof</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="section">
+    <h3>Future enhancements</h3>
+    <div class="cards">
+      <div class="card">
+        <span class="card-icon">🧠</span>
+        <h4>CNN-based noise removal</h4>
+        <p>
+          Because Iris images the same targets repeatedly under consistent optics and sky conditions, it can train a dedicated convolutional neural network to remove noise from subframes using only noisy pairs — no clean reference needed.
+          This approach, inspired by the <a href="https://arxiv.org/abs/1803.04189" target="_blank" style="color:#58a6ff;">Noise2Noise paper</a> (Lehtinen et al., 2018), should outperform general-purpose AI denoisers that have never seen this telescope's specific PSF, sensor noise profile, or typical sky background.
+        </p>
       </div>
     </div>
   </div>

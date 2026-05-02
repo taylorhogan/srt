@@ -1,113 +1,185 @@
-# SRT Social Robotic Telescope
-The goal of this project is to remove/reduce human interaction in astronomy. Users interact with the system
-through a self-hosted web chat interface (accessible over Tailscale). Users request images of Deep Sky Objects and the system
-optimizes each night's imaging based on observability. When complete, the system adds the processed image to its catalog
-and alerts the user that it has completed. 
-Our goal is to have all this automated, We never want to be in the observatory. This all just happens. 
-For now this is very very specific to our observatory, but we hope to generalize it in the future.
-The only reason to open source this repo is to allow others using the Observatory to contribute.
+# Iris Observatory — Social Robotic Telescope
 
+Iris is a fully autonomous deep-sky observatory. Users request objects through a chat interface; the system plans the night, controls the hardware, monitors safety, and delivers calibrated images — all without anyone in the observatory.
 
-- **Architecture**
+---
 
-    - Social Server 
-      - Web chat interface (FastAPI/WebSocket, with optional Mastodon mirroring)
-    - Scheduler
-      - Manages the day and evening tasks of the observatory
-    - Vision Safety
-      - Cameras look for the state of the roof and telescope
-    - Audio Safety
-      - Microphones compare known good sounds to what is being heard to understand if there is a problem
-    - Image Processing
-      - Transforming raw images to a pretty picture
-    - Servers communicate through mqtt
-- 
+## What it does
 
-The user adds a request to the system through the web chat interface. For
-example  
+**Chat-driven requests**
+Users submit deep-sky object (DSO) requests through a web chat interface accessible over Tailscale — works very well from a phone. The system queues, prioritises, and schedules them automatically.
 
-`image m31`  
+**Nightly planning**
+Each day at noon the scheduler scores every queued target by visibility window, air mass, and priority, then selects the best object for that night.
 
-The User can also ask what is the best night for a specific DSO  
+**Hardware control**
+Controls the roof motor, mount, focuser, and smart plugs. Sequences power-on, slew, autofocus, imaging, flats, park, and roof-close without human intervention.
 
-`best m31`
+**Safety monitoring**
+Computer vision checks the indoor camera before every hardware move. If the scope isn't parked the roof won't move; if the roof isn't open the mount won't slew.
 
-Every night the system optimizes the night's imaging based on observability and weather. Below is a graph
-displayed to of the night given horizon, and weather conditions.  
-![image](doc/tonight.jpeg)
-The system stops imaging a DSO once the evolution of changes reaches some stopping condition, usually about 20 hours.
-A combination of manual and automatic image processing is done, and the resulting image is uploaded to
-a [website](https://taylorhogan.github.io) for public viewing. An AI is used to add text to the image to explain the astrophysical context.
+**Live frame analysis**
+Every incoming FITS frame is analysed for FWHM, eccentricity, star count, and sky brightness. Results stream to the chat ticker in real time.
 
-There are redundant systems to insure the state of the observatory. This includes cameras, and ultrasonic devices.
-Below is a picture of the push notification to the system administrator.
+**Image delivery**
+Finished frames are converted to JPEG and posted back to the chat. Per-session stats plots, convergence curves, and sky heatmaps are generated on demand.
 
-![image](doc/feedback.jpeg)
-The goal is to have this system run 24/7. Mechanical failures are expected, but these can be mitigated by the use of
-automation to analyze the audio and current draw of various components and compare to known
-good signatures. Below is a spectrogram of the audio of the mount motors compared to the known good audio.
-![image](doc/mount.jpeg)
+---
 
+## A night in the life
 
+1. **Noon check** — The scheduler wakes up, recalculates visibility for every queued DSO, picks tonight's best target, and generates a N.I.N.A imaging sequence for it.
 
+2. **Pre-sunset checks** — Weather forecast, safety file, and camera snapshot are verified. A Sonos announcement warns anyone in the observatory that the roof is about to open.
 
+3. **Roof opens, prelude runs** — Vision safety confirms the scope is parked before toggling the roof motor. N.I.N.A runs a prelude sequence: cool camera, slew, plate-solve, and autofocus.
 
-## My Hardware Block Diagram (very dated)
+4. **Main imaging sequence** — N.I.N.A captures light frames across all configured filters. The frame watcher analyses each sub as it arrives and streams quality metrics to the chat.
+
+5. **Flats and shutdown** — At the end of the imaging window, flat frames are captured for calibration. The mount parks, the roof closes, the dehumidifier turns on, and a summary is posted to chat.
+
+---
+
+## Some chat commands
+
+| Command | Description |
+|---|---|
+| `image <dso>` | Queue a DSO for imaging |
+| `best` | Best target for tonight |
+| `tonight` | Full tonight's plan |
+| `status` | Observatory status |
+| `latest` | Most recent image |
+| `stats` | Per-frame quality plots |
+| `active` | All DSOs with frame counts |
+| `calendar` | Imaging history |
+| `schedule` | Generate tonight's sequence |
+| `sequence <dso>` | Generate sequence for DSO |
+| `log` | Recent log entries |
+| `safe! / stop!` | Mark safe or abort |
+
+---
+
+## Optical quality analysis
+
+The `optics` command runs a full per-star analysis on any LIGHT frame and posts diagnostic plots and a scalar scorecard to the chat. Each star is fitted with a 2-D Gaussian to extract its position, FWHM, eccentricity, and major-axis angle.
+
+**FWHM & field uniformity**
+Median full-width at half-maximum across all detected stars, in arcseconds. A grid heatmap shows whether sharpness degrades toward the edges — a sign of field curvature or focus tilt.
+
+**Eccentricity**
+How elongated each star is (0 = perfect circle, 1 = line). High eccentricity across the whole field indicates poor collimation, mirror shift, or tracking error.
+
+**Coma score**
+Pearson correlation between eccentricity and distance from the image centre. A high score means stars get progressively more elongated toward the edges — the classic signature of coma.
+
+**Collimation score**
+Measures whether elongated stars point radially outward from the centre (coma/collimation) or in a consistent direction across the frame (tilt or flexure). Uses the mean cos² of the angle between each star's elongation axis and its radial direction.
+
+**Tilt score**
+Fits a plane to the FWHM values across the sensor. The gradient magnitude, normalised by image diagonal and median FWHM, reveals focus-plane tilt — one side sharp, the other soft.
+
+**FWHM vs radius plot**
+Scatter plot of FWHM against distance from the image centre. Flat = good optics. A rising slope indicates field curvature; a U-shape suggests the best focus is off-axis.
+
+---
+
+## Audio anomaly detection
+
+A microphone in the observatory runs a continuous listen loop. Any sound above the RMS threshold — a motor stall, a mechanical bang, an unexpected relay click — triggers a 10-second capture, which is converted to a mel spectrogram and compared against a library of known-good reference sounds.
+
+**Continuous listening**
+Audio is sampled at 44 100 Hz in 1 024-sample chunks. The RMS level of each chunk is checked against a configurable threshold. Below threshold the system is silent; above it a capture begins immediately.
+
+**Mel spectrogram fingerprint**
+Each 10-second capture is rendered as a 128-band mel spectrogram image using a fixed figure size, DPI, and colour map so all images are pixel-comparable regardless of when they were recorded.
+
+**Library matching**
+The new spectrogram is compared to every PNG in the reference library using mean-squared error. The closest match and its similarity score are identified. The library is built by saving spectrograms of known sounds — roof motor running, normal ambient noise, etc.
+
+**Push notification on new sounds**
+A Pushover notification is sent whenever a new distinct sound is detected — i.e. the best-match label differs from the previous event. Repeated instances of the same sound are suppressed to avoid alert fatigue. The spectrogram image is attached to the notification.
+
+**Hardware covered**
+The microphone is positioned to hear the roof motor, the mount drive, and the observatory roof. Unusual sounds during an imaging run — a motor stall mid-travel, a mechanical impact, or unexpected silence where motor noise should be — are flagged in real time.
+
+**Detected archive**
+Every triggered capture is saved as both a PNG spectrogram and a WAV file in `detected_spectrograms/`, creating a full audit trail of every acoustic event the observatory experienced during a run.
+
+---
+
+## Key subsystems
+
+| Module | Role |
+|---|---|
+| `scheduler_server.py` | State machine: noon check → pre-sunset → imaging → shutdown |
+| `social_server.py` | FastAPI/WebSocket chat server on port 8095 |
+| `nina_sequence_gen.py` | Patches N.I.N.A JSON templates with target coords and filter plans |
+| `vision_safety.py` | OpenCV template matching — parked / roof open / roof closed |
+| `frame_watcher.py` | Background thread: FWHM, eccentricity, sky brightness per frame |
+| `kasa_utils` / `pwi4` | TP-Link Kasa smart plugs, Shelly relay, PlaneWave mount |
+| `astro_dso_visibility.py` | Visibility windows, air mass, weather via Open-Meteo |
+| `pushover.py` | Rate-limited admin push notifications via Pushover |
+| `audio_classify.py` | Mel spectrogram anomaly detection — monitors roof motor, mount drive, and observatory roof |
+
+---
+
+## Future enhancements
+
+**CNN-based noise removal**
+Because Iris images the same targets repeatedly under consistent optics and sky conditions, it can train a dedicated convolutional neural network to remove noise from subframes using only noisy pairs — no clean reference needed. This approach, inspired by the [Noise2Noise paper](https://arxiv.org/abs/1803.04189) (Lehtinen et al., 2018), should outperform general-purpose AI denoisers that have never seen this telescope's specific PSF, sensor noise profile, or typical sky background.
+
+---
+
+## Hardware block diagram
+
 ![block diagram](doc/iris.png)
-## Appreciation for others
-This work rest heavily on others
-- Allsky
-- Astroplan
-- Astropy
-- Mastodon
-- N.I.N.A
-- Pixinsight
 
-## How to build on linux/mac
-Install uv ( a package manager for Python, similar to pip) 
-https://uv.readthedocs.io/en/latest/installation.html 
+---
 
-`curl -LsSf https://astral.sh/uv/install.sh | sh`
+## Setup
 
-Exit shell and reopen new shell, otherwise uv will not be in your path   
-Download the repo in a location of your choosing
+```bash
+# Install uv (once)
+curl -LsSf https://astral.sh/uv/install.sh | sh
 
-`git clone https://github.com/taylorhogan/srt.git`  
+# Clone the repo
+git clone https://github.com/taylorhogan/srt.git
+cd srt
 
-go into the repo
+# Create and activate virtualenv
+uv venv venv
+source venv/bin/activate
 
-`cd srt`  
+# Install dependencies
+uv pip install -r requirements.txt
 
-Create a virtual environment (only needed once)  
+# Create private config (required before running anything)
+cp configs/config_blank_private.py configs/config_private.py
+# Then fill in API keys/tokens in config_private.py
+```
 
-`uv venv venv`   
+## Running
 
-Activate the virtual environment   
-follow the commands from uv above to activate the virtual environment
+```bash
+# Start both Social Server and Scheduler together
+python end_points/start_srt.py
 
-`source venv/bin/activate`
+# Or run individually:
+python end_points/scheduler_server.py   # Nightly state machine
+python cmd_processing/social_server.py  # Web chat server
+```
 
-Install the requirements (dragons be here)
+---
 
-`uv pip install -r requirements.txt`
+## Appreciation
 
-copy the blank private config file, utlimately this will be a private config file
+This work rests heavily on others:
+- [Astropy](https://www.astropy.org)
+- [Astroplan](https://astroplan.readthedocs.io)
+- [N.I.N.A](https://nighttime-imaging.eu)
+- [PixInsight](https://pixinsight.com)
+- [Allsky](https://github.com/thomasjacquin/allsky)
 
-`cd configs`
+---
 
-`cp configs_blank_private.py configs_private.py`
-
-to test the sound compare feature
-
-`cd sentry`
-
-`python audio_compare.py`
-
-now make some noise for 10 seconds
-
-
-
-
-
-
-
+*Iris Observatory · Social Robotic Telescope · fully unattended operation*
