@@ -726,9 +726,13 @@
   // ──────────────────────────────────────────────────────────────
 
   function reconnectNow() {
-    if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
     clearTimeout(reconnectTimer);
     reconnectDelay = 1000;
+    if (ws) {
+      ws.onclose = null;  // prevent deferred close from spawning a duplicate reconnect
+      ws.onerror = null;
+      ws.close();
+    }
     connect();
   }
 
