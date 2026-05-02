@@ -433,6 +433,7 @@
   lightbox.addEventListener('click', (e) => { if (e.target === lightbox) closeLightbox(); });
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeLightbox(); });
   let reconnectDelay = 1000;
+  let reconnectTimer = null;
   let lastSeenId = 0;
   let autoScroll = true;
 
@@ -507,11 +508,12 @@
       statusDot.classList.add('connected');
       reconnectDelay = 1000;
       stopSpinner();  // clear any stale spinner from before disconnect
+      messagesDiv.scrollTop = messagesDiv.scrollHeight;
     };
 
     ws.onclose = () => {
       statusDot.classList.remove('connected');
-      setTimeout(() => {
+      reconnectTimer = setTimeout(() => {
         reconnectDelay = Math.min(reconnectDelay * 2, 30000);
         connect();
       }, reconnectDelay);
@@ -697,6 +699,7 @@
 
   function reconnectNow() {
     if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
+    clearTimeout(reconnectTimer);
     reconnectDelay = 1000;
     connect();
   }
@@ -706,7 +709,11 @@
 
   // Tab/app foregrounded after sleep or background: socket may have quietly died.
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible') reconnectNow();
+    if (document.visibilityState === 'visible') {
+      reconnectNow();
+      fetchTicker();
+      fetchImagingTicker();
+    }
   });
 
   connect();
