@@ -436,6 +436,7 @@
   let reconnectTimer = null;
   let lastSeenId = 0;
   let autoScroll = true;
+  let pendingRename = null;
 
   messagesDiv.addEventListener('scroll', () => {
     const atBottom = messagesDiv.scrollHeight - messagesDiv.scrollTop - messagesDiv.clientHeight < 40;
@@ -536,7 +537,28 @@
 
   function sendCommand() {
     const text = input.value.trim();
-    if (!text || !ws || ws.readyState !== WebSocket.OPEN) return;
+    if (!text) return;
+
+    if (pendingRename) {
+      const oldFilename = pendingRename;
+      pendingRename = null;
+      input.value = '';
+      renderMessage({ id: null, timestamp: Date.now() / 1000, text: '> ' + text, image_url: null, html: null });
+      const fd = new FormData();
+      fd.append('old_filename', oldFilename);
+      fd.append('new_name', text);
+      fetch('/api/rename_upload', { method: 'POST', body: fd })
+        .then(r => r.json())
+        .then(d => renderMessage({ id: null, timestamp: Date.now() / 1000,
+                                   text: d.ok ? `Saved as ${d.filename}` : `Rename failed: ${d.error}`,
+                                   image_url: null, html: null }))
+        .catch(err => renderMessage({ id: null, timestamp: Date.now() / 1000,
+                                      text: `Rename failed: ${err.message}`,
+                                      image_url: null, html: null }));
+      return;
+    }
+
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
     ws.send(JSON.stringify({ type: 'command', command: text }));
     input.value = '';
     // Render the echo locally so the spinner isn't killed by the server-side echo message
@@ -570,6 +592,12 @@
     try {
       const resp = await fetch('/api/post', { method: 'POST', body: formData });
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const data = await resp.json();
+      if (data.filename) {
+        pendingRename = data.filename;
+        renderMessage({ id: null, timestamp: Date.now() / 1000, text: 'What DSO is this?', image_url: null, html: null });
+        input.focus();
+      }
     } catch (err) {
       renderMessage({ id: null, timestamp: Date.now() / 1000, text: `Upload failed: ${err.message}`, image_url: null, html: null });
     } finally {

@@ -139,17 +139,31 @@ async def api_post(
     """
     actual_image_path = None
 
+    saved_filename = None
     if image and image.filename:
         # File was uploaded directly
         dest = Path(_images_dir) / image.filename
         with open(dest, "wb") as f:
             shutil.copyfileobj(image.file, f)
         actual_image_path = str(dest)
+        saved_filename = image.filename
     elif image_path:
         actual_image_path = image_path
 
     message_bus.post_message(message, actual_image_path, html=html or None)
-    return {"ok": True}
+    return {"ok": True, "filename": saved_filename}
+
+
+@app.post("/api/rename_upload")
+async def api_rename_upload(old_filename: str = Form(...), new_name: str = Form(...)):
+    """Rename a previously uploaded file to a normalised DSO name."""
+    normalized = new_name.strip().lower().replace(" ", "") + ".jpg"
+    old_path = Path(_images_dir) / old_filename
+    new_path = Path(_images_dir) / normalized
+    if not old_path.exists():
+        return JSONResponse(content={"ok": False, "error": "file not found"}, status_code=404)
+    old_path.rename(new_path)
+    return JSONResponse(content={"ok": True, "filename": normalized})
 
 
 @app.get("/api/history")
