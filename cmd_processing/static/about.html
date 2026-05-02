@@ -1,0 +1,473 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>About Iris — Social Robotic Telescope</title>
+<meta name="theme-color" content="#161b22">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: 'SF Mono', 'Cascadia Code', 'Consolas', monospace;
+    background: #0d1117;
+    color: #c9d1d9;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+
+  header {
+    background: #161b22;
+    border-bottom: 1px solid #30363d;
+    padding: 12px 24px;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+  }
+
+  header .iris-dot {
+    width: 10px; height: 10px;
+    border-radius: 50%;
+    background: #3fb950;
+    box-shadow: 0 0 8px #3fb95088;
+    flex-shrink: 0;
+  }
+
+  header h1 {
+    font-size: 1rem;
+    font-weight: 600;
+    color: #e6edf3;
+    letter-spacing: 0.04em;
+  }
+
+  header nav {
+    margin-left: auto;
+    display: flex;
+    gap: 20px;
+  }
+
+  header nav a {
+    color: #8b949e;
+    text-decoration: none;
+    font-size: 0.82rem;
+    transition: color 0.2s;
+  }
+
+  header nav a:hover { color: #58a6ff; }
+
+  .hero {
+    background: linear-gradient(180deg, #161b22 0%, #0d1117 100%);
+    border-bottom: 1px solid #30363d;
+    padding: 60px 24px 48px;
+    text-align: center;
+  }
+
+  .hero .scope-icon {
+    font-size: 3rem;
+    margin-bottom: 16px;
+    display: block;
+    filter: drop-shadow(0 0 20px #58a6ff44);
+  }
+
+  .hero h2 {
+    font-size: 1.7rem;
+    font-weight: 700;
+    color: #e6edf3;
+    margin-bottom: 12px;
+    letter-spacing: -0.01em;
+  }
+
+  .hero p {
+    color: #8b949e;
+    font-size: 0.92rem;
+    max-width: 540px;
+    margin: 0 auto;
+    line-height: 1.7;
+  }
+
+  main {
+    max-width: 860px;
+    margin: 0 auto;
+    padding: 40px 24px 60px;
+    width: 100%;
+  }
+
+  .section {
+    margin-bottom: 40px;
+  }
+
+  .section h3 {
+    font-size: 0.72rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    color: #58a6ff;
+    margin-bottom: 16px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid #21262d;
+  }
+
+  .cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    gap: 14px;
+  }
+
+  .card {
+    background: #161b22;
+    border: 1px solid #30363d;
+    border-radius: 8px;
+    padding: 18px;
+    transition: border-color 0.2s;
+  }
+
+  .card:hover { border-color: #58a6ff44; }
+
+  .card .card-icon {
+    font-size: 1.3rem;
+    margin-bottom: 10px;
+    display: block;
+  }
+
+  .card h4 {
+    font-size: 0.88rem;
+    font-weight: 600;
+    color: #e6edf3;
+    margin-bottom: 6px;
+  }
+
+  .card p {
+    font-size: 0.78rem;
+    color: #8b949e;
+    line-height: 1.6;
+  }
+
+  .flow {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+  }
+
+  .flow-step {
+    display: flex;
+    gap: 16px;
+    align-items: flex-start;
+  }
+
+  .flow-step .step-left {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    flex-shrink: 0;
+  }
+
+  .step-num {
+    width: 28px; height: 28px;
+    border-radius: 50%;
+    background: #1f2937;
+    border: 1px solid #30363d;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 0.72rem;
+    font-weight: 700;
+    color: #58a6ff;
+    flex-shrink: 0;
+  }
+
+  .step-line {
+    width: 1px;
+    flex: 1;
+    min-height: 20px;
+    background: #21262d;
+    margin: 4px 0;
+  }
+
+  .flow-step:last-child .step-line { display: none; }
+
+  .step-body {
+    padding: 2px 0 20px;
+  }
+
+  .step-body h4 {
+    font-size: 0.88rem;
+    font-weight: 600;
+    color: #e6edf3;
+    margin-bottom: 4px;
+  }
+
+  .step-body p {
+    font-size: 0.78rem;
+    color: #8b949e;
+    line-height: 1.6;
+  }
+
+  .cmd-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .cmd {
+    background: #161b22;
+    border: 1px solid #30363d;
+    border-radius: 6px;
+    padding: 6px 12px;
+    font-size: 0.78rem;
+  }
+
+  .cmd code {
+    color: #79c0ff;
+    font-family: inherit;
+  }
+
+  .cmd span {
+    color: #8b949e;
+    margin-left: 6px;
+    font-size: 0.73rem;
+  }
+
+  .safety-box {
+    background: #1a0a0a;
+    border: 1px solid #f8514944;
+    border-radius: 8px;
+    padding: 16px 18px;
+    display: flex;
+    gap: 12px;
+    align-items: flex-start;
+  }
+
+  .safety-box .safety-icon { font-size: 1.1rem; flex-shrink: 0; margin-top: 1px; }
+
+  .safety-box p {
+    font-size: 0.78rem;
+    color: #ffa198;
+    line-height: 1.6;
+  }
+
+  .safety-box p strong { color: #ff7b72; }
+
+  .subsystem-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 10px;
+  }
+
+  .subsystem {
+    background: #161b22;
+    border: 1px solid #30363d;
+    border-radius: 6px;
+    padding: 12px 14px;
+  }
+
+  .subsystem .ss-label {
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: #3fb950;
+    margin-bottom: 4px;
+  }
+
+  .subsystem .ss-name {
+    font-size: 0.82rem;
+    color: #e6edf3;
+    font-weight: 600;
+    margin-bottom: 3px;
+  }
+
+  .subsystem .ss-desc {
+    font-size: 0.72rem;
+    color: #8b949e;
+    line-height: 1.5;
+  }
+
+  footer {
+    margin-top: auto;
+    background: #161b22;
+    border-top: 1px solid #30363d;
+    padding: 14px 24px;
+    text-align: center;
+    font-size: 0.72rem;
+    color: #484f58;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="iris-dot"></div>
+  <h1>Iris Observatory</h1>
+  <nav>
+    <a href="/static/chat.html">Chat</a>
+    <a href="/static/about.html">About</a>
+  </nav>
+</header>
+
+<div class="hero">
+  <span class="scope-icon">🔭</span>
+  <h2>Social Robotic Telescope</h2>
+  <p>Iris is a fully autonomous deep-sky observatory. Users request objects through a chat interface; the system plans the night, controls the hardware, monitors safety, and delivers calibrated images — all without anyone in the observatory.</p>
+</div>
+
+<main>
+
+  <div class="section">
+    <h3>What it does</h3>
+    <div class="cards">
+      <div class="card">
+        <span class="card-icon">💬</span>
+        <h4>Chat-driven requests</h4>
+        <p>Users submit deep-sky object (DSO) requests through a web chat interface accessible over Tailscale. The system queues, prioritises, and schedules them automatically.</p>
+      </div>
+      <div class="card">
+        <span class="card-icon">📅</span>
+        <h4>Nightly planning</h4>
+        <p>Each day at noon the scheduler scores every queued target by visibility window, air mass, and priority, then selects the best object for that night.</p>
+      </div>
+      <div class="card">
+        <span class="card-icon">⚙️</span>
+        <h4>Hardware control</h4>
+        <p>Controls the roof motor, mount, focuser, and smart plugs. Sequences power-on, slew, autofocus, imaging, flats, park, and roof-close without human intervention.</p>
+      </div>
+      <div class="card">
+        <span class="card-icon">🛡️</span>
+        <h4>Safety monitoring</h4>
+        <p>Computer vision checks the indoor camera before every hardware move. If the scope isn't parked the roof won't move; if the roof isn't open the mount won't slew.</p>
+      </div>
+      <div class="card">
+        <span class="card-icon">📊</span>
+        <h4>Live frame analysis</h4>
+        <p>Every incoming FITS frame is analysed for FWHM, eccentricity, star count, and sky brightness. Results stream to the chat ticker in real time.</p>
+      </div>
+      <div class="card">
+        <span class="card-icon">🖼️</span>
+        <h4>Image delivery</h4>
+        <p>Finished frames are converted to JPEG and posted back to the chat. Per-session stats plots, convergence curves, and sky heatmaps are generated on demand.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="section">
+    <h3>A night in the life</h3>
+    <div class="flow">
+      <div class="flow-step">
+        <div class="step-left"><div class="step-num">1</div><div class="step-line"></div></div>
+        <div class="step-body">
+          <h4>Noon check</h4>
+          <p>The scheduler wakes up, recalculates visibility for every queued DSO, picks tonight's best target, and generates a N.I.N.A imaging sequence for it.</p>
+        </div>
+      </div>
+      <div class="flow-step">
+        <div class="step-left"><div class="step-num">2</div><div class="step-line"></div></div>
+        <div class="step-body">
+          <h4>Pre-sunset checks</h4>
+          <p>Weather forecast, safety file, and camera snapshot are verified. A Sonos announcement warns anyone in the observatory that the roof is about to open.</p>
+        </div>
+      </div>
+      <div class="flow-step">
+        <div class="step-left"><div class="step-num">3</div><div class="step-line"></div></div>
+        <div class="step-body">
+          <h4>Roof opens, prelude runs</h4>
+          <p>Vision safety confirms the scope is parked before toggling the roof motor. N.I.N.A runs a prelude sequence: cool camera, slew, plate-solve, and autofocus.</p>
+        </div>
+      </div>
+      <div class="flow-step">
+        <div class="step-left"><div class="step-num">4</div><div class="step-line"></div></div>
+        <div class="step-body">
+          <h4>Main imaging sequence</h4>
+          <p>N.I.N.A captures light frames across all configured filters. The frame watcher analyses each sub as it arrives and streams quality metrics to the chat.</p>
+        </div>
+      </div>
+      <div class="flow-step">
+        <div class="step-left"><div class="step-num">5</div><div class="step-line"></div></div>
+        <div class="step-body">
+          <h4>Flats and shutdown</h4>
+          <p>At the end of the imaging window, flat frames are captured for calibration. The mount parks, the roof closes, the dehumidifier turns on, and a summary is posted to chat.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="section">
+    <h3>Chat commands</h3>
+    <div class="cmd-list">
+      <div class="cmd"><code>image &lt;dso&gt;</code><span>Queue a DSO for imaging</span></div>
+      <div class="cmd"><code>best</code><span>Best target for tonight</span></div>
+      <div class="cmd"><code>tonight</code><span>Full tonight's plan</span></div>
+      <div class="cmd"><code>status</code><span>Observatory status</span></div>
+      <div class="cmd"><code>latest</code><span>Most recent image</span></div>
+      <div class="cmd"><code>stats</code><span>Per-frame quality plots</span></div>
+      <div class="cmd"><code>active</code><span>All DSOs with frame counts</span></div>
+      <div class="cmd"><code>calendar</code><span>Imaging history</span></div>
+      <div class="cmd"><code>schedule</code><span>Generate tonight's sequence</span></div>
+      <div class="cmd"><code>sequence &lt;dso&gt;</code><span>Generate sequence for DSO</span></div>
+      <div class="cmd"><code>log</code><span>Recent log entries</span></div>
+      <div class="cmd"><code>safe! / stop!</code><span>Mark safe or abort</span></div>
+    </div>
+  </div>
+
+  <div class="section">
+    <h3>Safety rules</h3>
+    <div class="safety-box">
+      <span class="safety-icon">⚠️</span>
+      <p>
+        <strong>The mount will never move unless the roof is confirmed open.</strong>
+        <strong> The roof will never move unless the scope is confirmed parked.</strong>
+        Every hardware action is gated by a computer-vision check of the observatory camera. If the camera image is stale or ambiguous, the action is aborted and a push notification is sent.
+      </p>
+    </div>
+  </div>
+
+  <div class="section">
+    <h3>Key subsystems</h3>
+    <div class="subsystem-grid">
+      <div class="subsystem">
+        <div class="ss-label">Scheduler</div>
+        <div class="ss-name">scheduler_server.py</div>
+        <div class="ss-desc">State machine: noon check → pre-sunset → imaging → shutdown</div>
+      </div>
+      <div class="subsystem">
+        <div class="ss-label">Chat server</div>
+        <div class="ss-name">social_server.py</div>
+        <div class="ss-desc">FastAPI/WebSocket server on port 8095</div>
+      </div>
+      <div class="subsystem">
+        <div class="ss-label">Sequence gen</div>
+        <div class="ss-name">nina_sequence_gen.py</div>
+        <div class="ss-desc">Patches N.I.N.A JSON templates with target coords and filter plans</div>
+      </div>
+      <div class="subsystem">
+        <div class="ss-label">Vision safety</div>
+        <div class="ss-name">vision_safety.py</div>
+        <div class="ss-desc">OpenCV template matching — parked / roof open / roof closed</div>
+      </div>
+      <div class="subsystem">
+        <div class="ss-label">Frame watcher</div>
+        <div class="ss-name">frame_watcher.py</div>
+        <div class="ss-desc">Background thread: FWHM, eccentricity, sky brightness per frame</div>
+      </div>
+      <div class="subsystem">
+        <div class="ss-label">Hardware</div>
+        <div class="ss-name">kasa_utils / pwi4</div>
+        <div class="ss-desc">TP-Link Kasa smart plugs, Shelly relay, PlaneWave mount</div>
+      </div>
+      <div class="subsystem">
+        <div class="ss-label">Astronomy</div>
+        <div class="ss-name">astro_dso_visibility.py</div>
+        <div class="ss-desc">Visibility windows, air mass, weather via Open-Meteo</div>
+      </div>
+      <div class="subsystem">
+        <div class="ss-label">Notifications</div>
+        <div class="ss-name">pushover.py</div>
+        <div class="ss-desc">Rate-limited admin push notifications via Pushover</div>
+      </div>
+    </div>
+  </div>
+
+</main>
+
+<footer>
+  Iris Observatory · Social Robotic Telescope · fully unattended operation
+</footer>
+
+</body>
+</html>
