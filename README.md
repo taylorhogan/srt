@@ -7,7 +7,7 @@ Iris is a fully autonomous deep-sky observatory. Users request objects through a
 ## What it does
 
 **Chat-driven requests**
-Users submit deep-sky object (DSO) requests through a web chat interface accessible over Tailscale — works very well from a phone. The system queues, prioritises, and schedules them automatically.
+Users submit deep-sky object (DSO) requests through social media or a home-hosted private server — the latter offering a much richer experience including live imaging stats, frame previews, and interactive commands. Works very well from a phone. The system queues, prioritises, and schedules them automatically.
 
 **Nightly planning**
 Each day at noon the scheduler scores every queued target by visibility window, air mass, and priority, then selects the best object for that night.
