@@ -180,11 +180,7 @@ def measure_sky(
     sky_adu_per_s_arcsec2  = sky_adu_per_s / plate_scale_sq
 
     sky_e_per_s_arcsec2: Optional[float] = None
-    sky_mag_arcsec2:     Optional[float] = None
-    if gain is not None and sky_adu_per_s_arcsec2 > 0:
-        sky_e_per_s_arcsec2 = sky_adu_per_s_arcsec2 * gain
-        if sky_e_per_s_arcsec2 > 0:
-            sky_mag_arcsec2 = -2.5 * math.log10(sky_e_per_s_arcsec2)
+    sky_mag_arcsec2:     Optional[float] = None  # not computed — no calibrated zero point
 
     # --- Sky gradient across frame ---
     cell_grid = _cell_sky(data) - offset           # offset-correct each cell
@@ -196,8 +192,7 @@ def measure_sky(
         "sky_adu":               float(sky_signal),
         "sky_adu_per_s":         float(sky_adu_per_s),
         "sky_adu_per_s_arcsec2": float(sky_adu_per_s_arcsec2),
-        "sky_e_per_s_arcsec2":   sky_e_per_s_arcsec2,
-        "sky_mag_arcsec2":       sky_mag_arcsec2,
+        "sky_mag_arcsec2":       None,
         "sky_gradient_rms":      sky_gradient_rms,
         "sky_gradient_ptp":      sky_gradient_ptp,
         "exptime":               exptime,

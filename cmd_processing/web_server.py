@@ -288,7 +288,7 @@ async def api_imaging_ticker():
                         if secs > 0:
                             remaining_seconds = secs
         except Exception:
-            pass
+            _logger.exception("remaining_seconds calculation failed")
         data["remaining_seconds"] = remaining_seconds
 
         return JSONResponse(
