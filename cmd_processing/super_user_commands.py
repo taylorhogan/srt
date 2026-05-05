@@ -1115,8 +1115,36 @@ def doit_cmd(words: list[str], account: str) -> None:
         _logger.info("Terminating NINA before starting flats")
         social_server.post_social_message("Terminating NINA before flats")
         _kill_nina()
+        threading.Thread(target=_compute_end_of_night_convergence, daemon=True).start()
         do_flats()
 
+
+
+def _compute_end_of_night_convergence() -> None:
+    """Compute and persist convergence data for the DSO imaged tonight."""
+    try:
+        from fits_processing import convergence as _conv
+
+        cfg = config.data()
+        image_dir = Path(cfg["nina"]["image_dir"])
+
+        instr = instructions.get_dso_object_tonight()
+        dso_name = instr.get("dso") if instr else None
+        if not dso_name:
+            _logger.warning("_compute_end_of_night_convergence: no active DSO found")
+            return
+
+        social_server.post_social_message(f"Computing convergence for {dso_name}…")
+        results = _conv.compute_dso_convergence(dso_name, image_dir)
+        if not results:
+            social_server.post_social_message(f"Convergence: no LIGHT frames found for {dso_name}")
+            return
+
+        _conv.save_convergence(dso_name, results)
+        parts = [f"{f} {v['tail_slope_pct']:+.4f}%/f ({v['frame_count']}f)" for f, v in results.items()]
+        social_server.post_social_message(f"Convergence: {dso_name} — " + ", ".join(parts))
+    except Exception:
+        _logger.exception("_compute_end_of_night_convergence failed")
 
 
 def do_flats() -> None:
@@ -1282,6 +1310,9 @@ def _snr_run(words: list[str]) -> None:
     _project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
     scratch_dir = os.path.join(_project_root, cfg["scratch"]["directory"])
 
+    from fits_processing import convergence as _conv
+
+    saved: dict[str, dict] = {}
     for filter_name, paths in by_filter.items():
         try:
             frames = [stacker._load_fits_2d(p) for p in paths]
@@ -1291,15 +1322,28 @@ def _snr_run(words: list[str]) -> None:
 
         output_path = Path(scratch_dir) / f"convergence_{filter_name}.jpg"
         try:
-            stacker.convergence_curve(frames, filter_name=filter_name, output_path=output_path)
+            _, _, slope_pct = stacker.convergence_curve(frames, filter_name=filter_name, output_path=output_path)
         except Exception as exc:
             social_server.post_social_message(f"Convergence [{filter_name}]: plot failed — {exc}")
             continue
 
+        from datetime import date as _date
+        saved[filter_name] = {
+            "tail_slope_pct": round(slope_pct, 6),
+            "frame_count": len(paths),
+            "updated": _date.today().isoformat(),
+        }
+
         social_server.post_social_message(
-            f"Stack convergence vs golden — {filter_name}  ({len(paths)} frames)",
+            f"Stack convergence vs golden — {filter_name}  ({len(paths)} frames)  slope {slope_pct:+.4f}%/frame",
             str(output_path),
         )
+
+    if saved and dso_dir is not None:
+        try:
+            _conv.save_convergence(dso_dir.name, saved)
+        except Exception:
+            _logger.exception("_snr_run: failed to save convergence for %s", dso_dir.name)
 
 
 def image_stats_cmd(words: list[str], account: str) -> None:

@@ -7,7 +7,7 @@ class PublicConfig():
 
         },
         "version": {
-            "date": "2026.5.3.1"
+            "date": "2026.5.5.1"
         },
 
         "logger": {
@@ -85,6 +85,12 @@ class PublicConfig():
         "pegasus": {
             "unity_url": "http://localhost:32000",
             "driver_key": "",  # DriverUniqueKey from Unity; blank = auto-discover
+        },
+
+        "convergence": {
+            "tail_slope_threshold": 0.40,   # %/frame — abs(slope) below this = done
+            "min_frames_per_filter": 20,    # don't evaluate until this many frames
+            "file": "local/convergence.json",
         },
 
     })

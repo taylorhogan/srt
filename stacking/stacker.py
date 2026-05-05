@@ -482,7 +482,7 @@ def convergence_curve(
     filter_name: str = "",
     output_path: Optional[Path] = None,
     n_trials: int = 20,
-) -> tuple[list[int], list[float]]:
+) -> tuple[list[int], list[float], float]:
     """
     Measure how quickly stacking converges to the golden (all-frames) stack.
 
@@ -498,7 +498,8 @@ def convergence_curve(
         n_trials:    Random subsets to average per frame count (default 20).
 
     Returns:
-        (counts, mean_residuals) — Fibonacci frame counts and mean normalised RMSE.
+        (counts, mean_residuals, slope_pct) — Fibonacci frame counts, mean normalised RMSE,
+        and tail slope in %/frame (negative means improving).
     """
     from astropy.stats import sigma_clipped_stats
     import matplotlib.pyplot as plt
@@ -568,7 +569,7 @@ def convergence_curve(
     else:
         plt.show()
 
-    return counts, mean_residuals
+    return counts, mean_residuals, slope_pct
 
 
 # ---------------------------------------------------------------------------

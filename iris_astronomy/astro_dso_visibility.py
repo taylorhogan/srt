@@ -612,7 +612,7 @@ def build_grid_html(
     rows.append(f'<th {name_th}>Object</th>')
     for h in hour_header:
         rows.append(f'<th {hour_th}>{h}</th>')
-    rows.append(f'<th {col_th}>Alt</th><th {col_th}>Hrs</th><th {col_th}>Type</th>')
+    rows.append(f'<th {col_th}>Alt</th><th {col_th}>Hrs</th><th {col_th}>Need</th><th {col_th}>Type</th>')
     rows.append('</tr></thead><tbody>')
 
     # Weather row
@@ -631,12 +631,12 @@ def build_grid_html(
             f'border-right:1px solid {CLR_BORDER};background:{BG_WX_GOOD if good else BG_WX_BAD};'
             f'width:22px;min-width:22px;text-align:center;font-size:9px;color:{icon_color};">{"✓" if good else "✕"}</td>'
         )
-    for _ in range(3):
+    for _ in range(4):
         rows.append(f'<td style="padding:4px 8px;border-bottom:1px solid {CLR_BORDER};border-right:1px solid {CLR_BORDER};background:{BG_HDR};"></td>')
     rows.append('</tr>')
 
     # Object rows
-    for name, symbols, alt_str, hrs_str, dso_type, priority in object_lines:
+    for name, symbols, alt_str, hrs_str, dso_type, priority, need_str in object_lines:
         is_pri = priority > 5
         name_bg = BG_PRIORITY if is_pri else BG_HDR
         display = f"★ {name}" if is_pri else name
@@ -653,6 +653,7 @@ def build_grid_html(
             rows.append(cell(bg))
         rows.append(td(alt_str.strip(), BG_HDR))
         rows.append(td(hrs_str, BG_HDR))
+        rows.append(td(need_str, BG_HDR))
         rows.append(td(dso_type, BG_HDR, extra="text-align:left;"))
         rows.append('</tr>')
 
@@ -765,8 +766,25 @@ def best_object_tonight(instructions_path: Path | str) -> tuple[str, Optional[da
 
     hour_header   = [f"{dt.hour:02d}" for dt in dark_hours]
     weather_syms  = ["$" if weather_by_hour.get(dt.hour, False) else "*" for dt in dark_hours]
+    try:
+        from fits_processing.convergence import load_convergence, is_dso_done, frames_needed_estimate
+        _conv_data = load_convergence()
+    except Exception:
+        _conv_data = None
+
+    def _need_str(name: str) -> str:
+        if _conv_data is None:
+            return ""
+        key = name.lower().replace(" ", "")
+        if key not in _conv_data:
+            return ""
+        if is_dso_done(name):
+            return "Done"
+        est = frames_needed_estimate(name)
+        return str(est) if est is not None else ""
+
     object_lines  = [
-        (name, symbols, f"{max_alt:5.1f}°", f"{good_count}h", dso_type, priority)
+        (name, symbols, f"{max_alt:5.1f}°", f"{good_count}h", dso_type, priority, _need_str(name))
         for name, good_count, max_alt, dso_type, _start, symbols, priority in rows
     ]
 
@@ -774,9 +792,10 @@ def best_object_tonight(instructions_path: Path | str) -> tuple[str, Optional[da
     print("\n--- Tonight's Imaging Grid ---")
     print(" " * label_width + "".join(f"{h:>{col}s}" for h in hour_header))
     print(f"{'weather':<{label_width}}" + "".join(f"{s:>{col}s}" for s in weather_syms))
-    for name, symbols, alt_str, hrs_str, dso_type, priority in object_lines:
+    for name, symbols, alt_str, hrs_str, dso_type, priority, need_str in object_lines:
         marker = "* " if priority > 5 else ""
-        print(f"{marker}{name:<{label_width}}" + "".join(f"{s:>{col}s}" for s in symbols) + f"  {alt_str}  {hrs_str}  {dso_type}")
+        need_part = f"  need:{need_str}" if need_str else ""
+        print(f"{marker}{name:<{label_width}}" + "".join(f"{s:>{col}s}" for s in symbols) + f"  {alt_str}  {hrs_str}  {dso_type}{need_part}")
 
     # --- PNG ---
     n_obj  = len(object_lines)
@@ -797,28 +816,28 @@ def best_object_tonight(instructions_path: Path | str) -> tuple[str, Optional[da
     ax.axis("off")
 
     # Build cell text and colours row by row
-    col_labels = ["object"] + hour_header + ["alt", "hrs", "type"]
+    col_labels = ["object"] + hour_header + ["alt", "hrs", "need", "type"]
     cell_text: list[list[str]] = []
     cell_colors: list[list[str]] = []
 
     # Weather row
-    cell_text.append(["weather"] + weather_syms + ["", "", ""])
+    cell_text.append(["weather"] + weather_syms + ["", "", "", ""])
     cell_colors.append(
         [HEADER_COLOR]
         + [GOOD_WEATHER if s == "$" else BAD_WEATHER for s in weather_syms]
-        + [HEADER_COLOR, HEADER_COLOR, HEADER_COLOR]
+        + [HEADER_COLOR, HEADER_COLOR, HEADER_COLOR, HEADER_COLOR]
     )
 
     # Object rows
     PRIORITY_COLOR = "#4a3a00"   # dark amber — prioritized target
-    for name, symbols, alt_str, hrs_str, dso_type, priority in object_lines:
+    for name, symbols, alt_str, hrs_str, dso_type, priority, need_str in object_lines:
         display_name = f"★ {name}" if priority > 5 else name
         name_color = PRIORITY_COLOR if priority > 5 else HEADER_COLOR
-        cell_text.append([display_name] + symbols + [alt_str.strip(), hrs_str, dso_type])
+        cell_text.append([display_name] + symbols + [alt_str.strip(), hrs_str, need_str, dso_type])
         cell_colors.append(
             [name_color]
             + [ABOVE_COLOR if s == "+" else BELOW_COLOR for s in symbols]
-            + [HEADER_COLOR, HEADER_COLOR, HEADER_COLOR]
+            + [HEADER_COLOR, HEADER_COLOR, HEADER_COLOR, HEADER_COLOR]
         )
 
     table = ax.table(

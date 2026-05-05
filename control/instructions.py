@@ -318,11 +318,23 @@ def add_dso_object_instruction(dso_name, recipe, requestor, priority=5):
 
 
 def get_sorted_instructions():
+    from fits_processing.convergence import is_dso_done
+
     with open(_INSTRUCTIONS_PATH, 'r') as f:
         instructions = json.load(f)
 
-    sorted_l = sorted(instructions, key=functools.cmp_to_key(compare))
-    return sorted_l
+    scored = []
+    for instr in instructions:
+        d = dict(instr)
+        if d.get("status") == "waiting":
+            try:
+                if is_dso_done(d["dso"]):
+                    d["status"] = "completed"
+            except Exception:
+                pass
+        scored.append(d)
+
+    return sorted(scored, key=functools.cmp_to_key(compare))
 
 
 def get_dso_object_tonight():

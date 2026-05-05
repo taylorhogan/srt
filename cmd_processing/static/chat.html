@@ -680,10 +680,10 @@
       { label: 'FWHM',    value: lf.fwhm_arcsec  != null ? lf.fwhm_arcsec.toFixed(2) + '"'  : '—' },
       { label: 'Ecc',     value: lf.eccentricity != null ? lf.eccentricity.toFixed(3)        : '—' },
       { label: 'Stars',   value: lf.star_count != null ? String(lf.star_count) : '—' },
-      { label: 'Sky',     value: lf.sky_mag_arcsec2 != null
-                                   ? lf.sky_mag_arcsec2.toFixed(2) + ' mag'
-                                   : lf.sky_adu_per_s != null
-                                       ? lf.sky_adu_per_s.toFixed(1) + ' ADU/s'
+      { label: 'Sky ADU/s', value: lf.sky_adu_per_s != null
+                                       ? lf.sky_adu_per_s.toFixed(1)
+                                       : lf.sky_mag_arcsec2 != null
+                                           ? lf.sky_mag_arcsec2.toFixed(2) + ' mag'
                                        : '—' },
       { label: 'Time left', value: data.remaining_seconds != null
                                      ? (() => {
