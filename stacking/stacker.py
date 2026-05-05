@@ -564,6 +564,7 @@ def convergence_curve(
     fig.tight_layout()
 
     if output_path is not None:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
         fig.savefig(output_path, format="jpeg", dpi=150, bbox_inches="tight")
         plt.close(fig)
     else:
