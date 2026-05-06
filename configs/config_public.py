@@ -7,7 +7,7 @@ class PublicConfig():
 
         },
         "version": {
-            "date": "2026.5.5.1"
+            "date": "2026.5.6.2"
         },
 
         "logger": {
@@ -91,6 +91,23 @@ class PublicConfig():
             "tail_slope_threshold": 0.40,   # %/frame — abs(slope) below this = done
             "min_frames_per_filter": 20,    # don't evaluate until this many frames
             "file": "local/convergence.json",
+        },
+
+        "machine": {
+            "spark-3129": {
+                "subs_dir": "/home/taylor/Desktop/Targets",
+            },
+        },
+
+        "nn": {
+            "models_dir": "local/models",
+            "patch_size": 256,
+            "pairs_per_epoch": 2000,
+            "epochs": 60,
+            "batch_size": 8,
+            "min_frames_to_train": 20,
+            "tile_size": 512,
+            "tile_overlap": 64,
         },
 
     })
