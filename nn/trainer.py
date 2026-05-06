@@ -34,6 +34,14 @@ class N2NDataset(Dataset):
         self.pairs_per_epoch = pairs_per_epoch
         self.rng = np.random.default_rng()
 
+        # Precompute per-frame stats so patch normalization matches inference
+        # (inference normalizes each frame globally, so training must too)
+        self.frame_stats: list[tuple[float, float]] = []
+        for f in frames:
+            p1  = float(np.percentile(f, 1))
+            p99 = float(np.percentile(f, 99))
+            self.frame_stats.append((p1, max(p99 - p1, 1.0)))
+
         # Build (i, j) pairs restricted to within the same DSO group
         if group_ids is not None:
             groups: dict[str, list[int]] = {}
@@ -71,11 +79,12 @@ class N2NDataset(Dataset):
         pa = fa[y0:y0 + ps, x0:x0 + ps]
         pb = fb[y0:y0 + ps, x0:x0 + ps]
 
-        # Normalise using input frame's percentiles
-        p1, p99 = float(np.percentile(pa, 1)), float(np.percentile(pa, 99))
-        scale = max(p99 - p1, 1.0)
-        pa = (pa - p1) / scale
-        pb = (pb - p1) / scale
+        # Normalise each patch by its own frame's global stats — same scheme
+        # as inference so training and inference see identical value ranges
+        p1a, scale_a = self.frame_stats[i]
+        p1b, scale_b = self.frame_stats[j]
+        pa = (pa - p1a) / scale_a
+        pb = (pb - p1b) / scale_b
 
         inp = torch.from_numpy(pa[None].astype(np.float32))
         tgt = torch.from_numpy(pb[None].astype(np.float32))
