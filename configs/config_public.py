@@ -7,7 +7,7 @@ class PublicConfig():
 
         },
         "version": {
-            "date": "2026.5.6.2"
+            "date": "2026.5.6.3"
         },
 
         "logger": {
@@ -103,7 +103,7 @@ class PublicConfig():
             "models_dir": "local/models",
             "patch_size": 256,
             "pairs_per_epoch": 2000,
-            "epochs": 60,
+            "epochs": 150,
             "batch_size": 8,
             "min_frames_to_train": 20,
             "tile_size": 512,
