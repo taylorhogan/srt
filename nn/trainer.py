@@ -86,8 +86,18 @@ class N2NDataset(Dataset):
         pa = (pa - p1a) / scale_a
         pb = (pb - p1b) / scale_b
 
-        inp = torch.from_numpy(pa[None].astype(np.float32))
-        tgt = torch.from_numpy(pb[None].astype(np.float32))
+        # Augment: same random flip/rotation applied to both patches so they
+        # stay aligned — 8 possible orientations (flips × 90° rotations)
+        if self.rng.integers(2):
+            pa, pb = np.fliplr(pa), np.fliplr(pb)
+        if self.rng.integers(2):
+            pa, pb = np.flipud(pa), np.flipud(pb)
+        k = int(self.rng.integers(4))
+        if k:
+            pa, pb = np.rot90(pa, k), np.rot90(pb, k)
+
+        inp = torch.from_numpy(pa.copy()[None].astype(np.float32))
+        tgt = torch.from_numpy(pb.copy()[None].astype(np.float32))
         return inp, tgt
 
 
