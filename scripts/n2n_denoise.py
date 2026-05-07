@@ -151,8 +151,8 @@ def main() -> None:
     model_cache: dict[int, object] = {}
     missing_models: set[int] = set()
 
-    out_dir = dso_dir / "denoised"
-    out_dir.mkdir(exist_ok=True)
+    out_dir = dso_dir / "denoised" / filter_name
+    out_dir.mkdir(parents=True, exist_ok=True)
 
     t_total = time.time()
     done = skipped = 0
