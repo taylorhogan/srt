@@ -3,6 +3,10 @@
 Input/output: (B, 1, H, W) float32 tensors.
 ~7 M parameters — enough to learn camera noise structure, small enough to
 train in minutes on a consumer GPU.
+
+Reference:
+    Lehtinen et al., "Noise2Noise: Learning Image Restoration without Clean Data",
+    ICML 2018. https://arxiv.org/abs/1803.04189
 """
 
 import torch

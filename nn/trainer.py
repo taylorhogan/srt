@@ -1,4 +1,9 @@
-"""Noise2Noise training: dataset, training loop, checkpoint management."""
+"""Noise2Noise training: dataset, training loop, checkpoint management.
+
+Reference:
+    Lehtinen et al., "Noise2Noise: Learning Image Restoration without Clean Data",
+    ICML 2018. https://arxiv.org/abs/1803.04189
+"""
 
 import os
 import time
