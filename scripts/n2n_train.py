@@ -18,6 +18,7 @@ The trained model is saved to local/models/n2n_{filter}_{seconds}s.pt.
 """
 
 import os
+import shutil
 import socket
 import sys
 import time
@@ -29,7 +30,7 @@ if _root not in sys.path:
     sys.path.insert(0, _root)
 
 from configs import config
-from nn import denoiser, trainer
+from nn import denoiser, registration, trainer
 
 
 def main() -> None:
@@ -59,6 +60,20 @@ def main() -> None:
         print(f"Error: subs_dir does not exist: {subs_dir}")
         sys.exit(1)
 
+    # Clear old artefacts so stale results don't accumulate
+    model_path_early = denoiser.get_model_path(filter_name, exptime_s)
+    if model_path_early.exists():
+        model_path_early.unlink()
+        print(f"Cleared old model: {model_path_early.name}")
+    denoised_dir = subs_dir / "denoised" / f"{filter_name}_{exptime_s}s"
+    if denoised_dir.exists():
+        shutil.rmtree(denoised_dir)
+        print(f"Cleared old denoised frames: {denoised_dir}")
+    tb_dir = Path(_root) / "local" / "runs" / f"n2n_{filter_name}_{exptime_s}s"
+    if tb_dir.exists():
+        shutil.rmtree(tb_dir)
+        print(f"Cleared TensorBoard logs: {tb_dir}")
+
     nn_cfg = cfg.get("nn", {})
     min_frames   = int(nn_cfg.get("min_frames_to_train", 20))
     epochs       = int(nn_cfg.get("epochs", 60))
@@ -79,6 +94,9 @@ def main() -> None:
     if len(frames) < min_frames:
         print(f"Error: need at least {min_frames} frames to train, found {len(frames)}")
         sys.exit(1)
+
+    print("Registering frames to correct for dithering…")
+    frames = registration.register_frames(frames, dso_names, progress_cb=print)
 
     model_path = denoiser.get_model_path(filter_name, exptime_s)
     print(f"Model will be saved to: {model_path}")
