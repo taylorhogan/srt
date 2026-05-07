@@ -139,7 +139,7 @@ def main() -> None:
     compare_saved: set[str] = set()
 
     for i, (fp, dso_dir) in enumerate(all_frames, 1):
-        out_dir = dso_dir / "denoised" / filter_name
+        out_dir = subs_dir / "denoised" / f"{filter_name}_{exptime_s}s"
         out_dir.mkdir(parents=True, exist_ok=True)
         out_path = out_dir / fp.name
 
@@ -162,11 +162,11 @@ def main() -> None:
 
         elapsed = time.time() - t0
         rel = fp.relative_to(dso_dir)
-        print(f"  [{i}/{len(all_frames)}] {dso_dir.name}/{rel} → denoised/{filter_name}/{fp.name}  ({elapsed:.1f}s)")
+        print(f"  [{i}/{len(all_frames)}] {dso_dir.name}/{rel} → denoised/{filter_name}_{exptime_s}s/{fp.name}  ({elapsed:.1f}s)")
         done += 1
 
         if compare and dso_dir.name not in compare_saved:
-            cmp_path = out_dir / f"compare_{filter_name}.jpg"
+            cmp_path = out_dir / f"compare_{dso_dir.name}.jpg"
             _save_comparison(raw, denoised_arr, cmp_path,
                              f"{dso_dir.name}  {filter_name} {exptime_s}s")
             compare_saved.add(dso_dir.name)
