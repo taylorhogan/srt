@@ -130,7 +130,7 @@ def train(
     model = UNet().to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
-    criterion = nn.MSELoss()
+    criterion = nn.L1Loss()
 
     best_val_loss = float("inf")
     model_path.parent.mkdir(parents=True, exist_ok=True)
