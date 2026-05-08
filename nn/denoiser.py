@@ -51,31 +51,50 @@ def denoise_frame(
 ) -> np.ndarray:
     """Denoise a single 2-D float32 FITS frame using tiled inference.
 
-    The frame is normalised once using global percentiles before tiling so all
-    tiles share the same scale — this prevents seam artefacts. Edge tiles are
-    zero-padded to tile_size and the padding is discarded after inference.
-    Tiles are blended with a raised-cosine weight for smooth transitions.
-    Input and output are in the original ADU scale.
+    Background (vignetting gradient) is estimated with sep and subtracted
+    before tiling so every tile sees a flat sky — this eliminates the tile-
+    boundary seam artefacts caused by per-tile DC-level disagreement.  The
+    background is added back after inference.
+
+    Edge tiles are zero-padded to tile_size and the padding is discarded after
+    inference.  Tiles are blended with a raised-cosine weight for smooth
+    transitions.  Input and output are in the original ADU scale.
     """
     if device is None:
         device = best_device()
     model = model.to(device)
 
-    # Normalise the whole frame once — keeps all tiles on the same scale
-    p1  = float(np.percentile(frame, 1))
-    p99 = float(np.percentile(frame, 99))
+    # Estimate and subtract smooth sky background so all tiles see a flat sky.
+    # sep.Background uses a mesh of box medians interpolated to full resolution;
+    # it handles vignetting gradients that would otherwise shift each tile's DC
+    # level and create visible seams after inference.
+    import sep
+    background = np.array(sep.Background(frame.astype(np.float64))).astype(np.float32)
+    frame_sub = frame - background
+
+    # Normalise the background-subtracted frame once — keeps all tiles on the
+    # same scale.
+    p1  = float(np.percentile(frame_sub, 1))
+    p99 = float(np.percentile(frame_sub, 99))
     scale = max(p99 - p1, 1.0)
-    norm_frame = ((frame - p1) / scale).astype(np.float32)
+    norm_frame = ((frame_sub - p1) / scale).astype(np.float32)
 
     h, w = frame.shape
     step = tile_size - overlap
     output = np.zeros((h, w), dtype=np.float64)
     weight = np.zeros((h, w), dtype=np.float64)
 
-    # 1-D raised cosine window → 2-D blend weight
+    # Tukey (cosine-tapered) window: flat 1.0 in the centre, cosine roll-off
+    # over exactly `overlap` pixels at each end.  With step = tile_size - overlap
+    # this puts the 50/50 cross-over point at the seam midpoint, giving seamless
+    # blending regardless of per-tile DC differences.
     def _window1d(n: int) -> np.ndarray:
-        x = np.linspace(0, np.pi, n)
-        return 0.5 - 0.5 * np.cos(x)
+        win = np.ones(n, dtype=np.float32)
+        for i in range(overlap):
+            w = 0.5 - 0.5 * np.cos(np.pi * i / overlap)
+            win[i] = w
+            win[n - overlap + i] = 1.0 - w
+        return win
 
     win2d = np.outer(_window1d(tile_size), _window1d(tile_size)).astype(np.float32)
 
@@ -111,8 +130,8 @@ def denoise_frame(
     weight = np.where(weight == 0, 1.0, weight)
     norm_output = (output / weight).astype(np.float32)
 
-    # Denormalise using the same global scale
-    return norm_output * scale + p1
+    # Denormalise and restore the background
+    return norm_output * scale + p1 + background
 
 
 def collect_all_frames(

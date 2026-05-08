@@ -1,0 +1,163 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mxfile host="app.diagrams.net" version="21.0.0">
+  <diagram name="N2N Processing Flow" id="n2n-flow">
+    <mxGraphModel dx="1422" dy="762" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="900" pageHeight="1300" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <!-- ── NINA ── -->
+        <mxCell id="2" value="&lt;b&gt;NINA&lt;/b&gt; — Windows Observatory Machine&lt;br&gt;dithered 300 s exposures per session" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="300" y="40" width="300" height="60" as="geometry" />
+        </mxCell>
+
+        <mxCell id="3" value="rsync / Tailscale" style="edgeStyle=orthogonalEdgeStyle;html=1;fontSize=10;" edge="1" source="2" target="4" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- ── Raw FITS ── -->
+        <mxCell id="4" value="Raw FITS Frames&lt;br&gt;per-session subdirectories&lt;br&gt;L filter · 300 s · uncalibrated" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="300" y="150" width="300" height="70" as="geometry" />
+        </mxCell>
+
+        <mxCell id="5" value="" style="edgeStyle=orthogonalEdgeStyle;html=1;" edge="1" source="4" target="6" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- ── Registration ── -->
+        <mxCell id="6" value="&lt;b&gt;Registration&lt;/b&gt; — nn/registration.py&lt;br&gt;SEP source extraction (thresh=3σ)&lt;br&gt;nearest-neighbour centroid match&lt;br&gt;median Δ(y,x) · max_dist = 200 px" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="270" y="275" width="360" height="90" as="geometry" />
+        </mxCell>
+
+        <!-- ── TRAINING branch ── -->
+        <mxCell id="7" value="registered&lt;br&gt;frames" style="edgeStyle=orthogonalEdgeStyle;html=1;fontSize=10;exitX=0;exitY=0.5;exitDx=0;exitDy=0;" edge="1" source="6" target="10" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="110" y="320" />
+              <mxPoint x="110" y="430" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+        <mxCell id="10" value="&lt;b&gt;TRAINING — n2n_train.py&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=12;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="20" y="415" width="195" height="40" as="geometry" />
+        </mxCell>
+
+        <mxCell id="11" value="" style="edgeStyle=orthogonalEdgeStyle;html=1;" edge="1" source="10" target="12" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="12" value="N2NDataset&lt;br&gt;random 256×256 patch pairs&lt;br&gt;same DSO group only&lt;br&gt;2 000 pairs / epoch" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="20" y="495" width="195" height="80" as="geometry" />
+        </mxCell>
+
+        <mxCell id="13" value="" style="edgeStyle=orthogonalEdgeStyle;html=1;" edge="1" source="12" target="14" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="14" value="U-Net (~7 M params)&lt;br&gt;L1 loss · Adam · cosine LR&lt;br&gt;20 % validation holdout&lt;br&gt;save best checkpoint" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="20" y="620" width="195" height="80" as="geometry" />
+        </mxCell>
+
+        <mxCell id="15" value="" style="edgeStyle=orthogonalEdgeStyle;html=1;" edge="1" source="14" target="16" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="16" value="n2n_L_300s.pt&lt;br&gt;(best val loss)" style="shape=cylinder3;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="45" y="745" width="145" height="65" as="geometry" />
+        </mxCell>
+
+        <!-- ── INFERENCE branch ── -->
+        <mxCell id="20" value="raw frames" style="edgeStyle=orthogonalEdgeStyle;html=1;fontSize=10;exitX=1;exitY=0.5;exitDx=0;exitDy=0;" edge="1" source="6" target="21" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="790" y="320" />
+              <mxPoint x="790" y="430" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+        <mxCell id="21" value="&lt;b&gt;INFERENCE — n2n_denoise.py&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=12;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="685" y="415" width="195" height="40" as="geometry" />
+        </mxCell>
+
+        <mxCell id="22" value="" style="edgeStyle=orthogonalEdgeStyle;html=1;" edge="1" source="21" target="23" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="23" value="1. Background subtract&lt;br&gt;sep.Background mesh estimate&lt;br&gt;removes vignetting gradient" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="685" y="495" width="195" height="70" as="geometry" />
+        </mxCell>
+
+        <mxCell id="24" value="" style="edgeStyle=orthogonalEdgeStyle;html=1;" edge="1" source="23" target="25" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="25" value="2. Tile 512×512, overlap 64 px&lt;br&gt;Tukey window blend&lt;br&gt;50/50 weight at seam midpoint" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="685" y="610" width="195" height="70" as="geometry" />
+        </mxCell>
+
+        <mxCell id="26" value="" style="edgeStyle=orthogonalEdgeStyle;html=1;" edge="1" source="25" target="27" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="27" value="3. U-Net forward pass&lt;br&gt;per tile · CUDA GPU" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="685" y="725" width="195" height="60" as="geometry" />
+        </mxCell>
+
+        <mxCell id="28" value="" style="edgeStyle=orthogonalEdgeStyle;html=1;" edge="1" source="27" target="29" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="29" value="4. Add background back&lt;br&gt;denormalise → ADU scale" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="685" y="830" width="195" height="60" as="geometry" />
+        </mxCell>
+
+        <!-- load model: ckpt → unet_infer -->
+        <mxCell id="30" value="load model" style="edgeStyle=orthogonalEdgeStyle;html=1;fontSize=10;dashed=1;strokeColor=#b85450;" edge="1" source="16" target="27" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="118" y="860" />
+              <mxPoint x="450" y="860" />
+              <mxPoint x="450" y="755" />
+              <mxPoint x="685" y="755" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+        <!-- ── Denoised FITS ── -->
+        <mxCell id="40" value="Denoised FITS Frames" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="300" y="970" width="300" height="50" as="geometry" />
+        </mxCell>
+
+        <mxCell id="41" value="" style="edgeStyle=orthogonalEdgeStyle;html=1;" edge="1" source="29" target="40" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="783" y="940" />
+              <mxPoint x="450" y="940" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+        <!-- ── Stacker ── -->
+        <mxCell id="42" value="&lt;b&gt;Stacker&lt;/b&gt; — stacking/stacker.py&lt;br&gt;astroalign registration&lt;br&gt;sigma-clip combine" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="300" y="1070" width="300" height="75" as="geometry" />
+        </mxCell>
+
+        <mxCell id="43" value="" style="edgeStyle=orthogonalEdgeStyle;html=1;" edge="1" source="40" target="42" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- ── Output ── -->
+        <mxCell id="44" value="Stacked FITS + ZScale JPEG Preview" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=13;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="300" y="1200" width="300" height="60" as="geometry" />
+        </mxCell>
+
+        <mxCell id="45" value="" style="edgeStyle=orthogonalEdgeStyle;html=1;" edge="1" source="42" target="44" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

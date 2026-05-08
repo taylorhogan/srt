@@ -1,0 +1,200 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mxfile host="app.diagrams.net" version="21.0.0">
+  <diagram name="U-Net Architecture" id="unet-arch">
+    <mxGraphModel dx="1422" dy="762" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1200" pageHeight="900" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <!-- ═══════════════════════════════
+             LEGEND (top-right)
+             ═══════════════════════════════ -->
+        <mxCell id="leg" value="ConvBlock = Conv3×3(pad=1) → BN → LeakyReLU(0.1)  ×2" style="text;html=1;strokeColor=#666;fillColor=#f5f5f5;fontColor=#333;fontSize=11;align=left;verticalAlign=middle;spacingLeft=6;rounded=1;" vertex="1" parent="1">
+          <mxGeometry x="760" y="20" width="420" height="36" as="geometry" />
+        </mxCell>
+
+        <!-- ═══════════════════════════════
+             INPUT
+             ═══════════════════════════════ -->
+        <mxCell id="inp" value="Input  (B, 1, H, W)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontColor=#333333;fontSize=12;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="30" y="30" width="200" height="44" as="geometry" />
+        </mxCell>
+
+        <!-- ═══════════════════════════════
+             ENCODER
+             ═══════════════════════════════ -->
+
+        <!-- Level 1 -->
+        <mxCell id="enc1" value="ConvBlock  1 → 32 ch&lt;br&gt;H × W" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="30" y="110" width="200" height="65" as="geometry" />
+        </mxCell>
+        <mxCell id="e_inp_e1" value="" style="edgeStyle=orthogonalEdgeStyle;html=1;" edge="1" source="inp" target="enc1" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="pool1" value="MaxPool2d  ÷2" style="edgeStyle=orthogonalEdgeStyle;html=1;fontSize=10;endArrow=block;endFill=1;" edge="1" source="enc1" target="enc2" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- Level 2 -->
+        <mxCell id="enc2" value="ConvBlock  32 → 64 ch&lt;br&gt;H/2 × W/2" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="30" y="250" width="200" height="65" as="geometry" />
+        </mxCell>
+
+        <mxCell id="pool2" value="MaxPool2d  ÷2" style="edgeStyle=orthogonalEdgeStyle;html=1;fontSize=10;endArrow=block;endFill=1;" edge="1" source="enc2" target="enc3" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- Level 3 -->
+        <mxCell id="enc3" value="ConvBlock  64 → 128 ch&lt;br&gt;H/4 × W/4" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="30" y="390" width="200" height="65" as="geometry" />
+        </mxCell>
+
+        <mxCell id="pool3" value="MaxPool2d  ÷2" style="edgeStyle=orthogonalEdgeStyle;html=1;fontSize=10;endArrow=block;endFill=1;" edge="1" source="enc3" target="enc4" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- Level 4 -->
+        <mxCell id="enc4" value="ConvBlock  128 → 256 ch&lt;br&gt;H/8 × W/8" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="30" y="530" width="200" height="65" as="geometry" />
+        </mxCell>
+
+        <mxCell id="pool4" value="MaxPool2d  ÷2" style="edgeStyle=orthogonalEdgeStyle;html=1;fontSize=10;endArrow=block;endFill=1;" edge="1" source="enc4" target="bot" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="130" y="650" />
+              <mxPoint x="500" y="650" />
+              <mxPoint x="500" y="700" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+        <!-- ═══════════════════════════════
+             BOTTLENECK
+             ═══════════════════════════════ -->
+        <mxCell id="bot" value="Bottleneck&lt;br&gt;ConvBlock  256 → 512 ch&lt;br&gt;H/16 × W/16" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=12;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="400" y="700" width="200" height="75" as="geometry" />
+        </mxCell>
+
+        <!-- ═══════════════════════════════
+             DECODER
+             ═══════════════════════════════ -->
+
+        <!-- UpConv 4 -->
+        <mxCell id="up4" value="ConvTranspose2d  512→256  ×2" style="edgeStyle=orthogonalEdgeStyle;html=1;fontSize=10;endArrow=block;endFill=1;strokeColor=#9673a6;" edge="1" source="bot" target="dec4" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="870" y="738" />
+              <mxPoint x="870" y="562" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+        <!-- Level 4 decoder -->
+        <mxCell id="dec4" value="cat(skip4, up4) → ConvBlock&lt;br&gt;512 → 256 ch  ·  H/8 × W/8" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="770" y="530" width="240" height="65" as="geometry" />
+        </mxCell>
+
+        <!-- UpConv 3 -->
+        <mxCell id="up3" value="ConvTranspose2d  256→128  ×2" style="edgeStyle=orthogonalEdgeStyle;html=1;fontSize=10;endArrow=block;endFill=1;strokeColor=#82b366;" edge="1" source="dec4" target="dec3" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- Level 3 decoder -->
+        <mxCell id="dec3" value="cat(skip3, up3) → ConvBlock&lt;br&gt;256 → 128 ch  ·  H/4 × W/4" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="770" y="390" width="240" height="65" as="geometry" />
+        </mxCell>
+
+        <!-- UpConv 2 -->
+        <mxCell id="up2" value="ConvTranspose2d  128→64  ×2" style="edgeStyle=orthogonalEdgeStyle;html=1;fontSize=10;endArrow=block;endFill=1;strokeColor=#82b366;" edge="1" source="dec3" target="dec2" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- Level 2 decoder -->
+        <mxCell id="dec2" value="cat(skip2, up2) → ConvBlock&lt;br&gt;128 → 64 ch  ·  H/2 × W/2" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="770" y="250" width="240" height="65" as="geometry" />
+        </mxCell>
+
+        <!-- UpConv 1 -->
+        <mxCell id="up1" value="ConvTranspose2d  64→32  ×2" style="edgeStyle=orthogonalEdgeStyle;html=1;fontSize=10;endArrow=block;endFill=1;strokeColor=#82b366;" edge="1" source="dec2" target="dec1" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- Level 1 decoder -->
+        <mxCell id="dec1" value="cat(skip1, up1) → ConvBlock&lt;br&gt;64 → 32 ch  ·  H × W" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="770" y="110" width="240" height="65" as="geometry" />
+        </mxCell>
+
+        <!-- ═══════════════════════════════
+             HEAD + OUTPUT
+             ═══════════════════════════════ -->
+        <mxCell id="head" value="Head  Conv1×1  32 → 1 ch" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontColor=#333333;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="800" y="30" width="200" height="44" as="geometry" />
+        </mxCell>
+
+        <mxCell id="e_dec1_head" value="" style="edgeStyle=orthogonalEdgeStyle;html=1;" edge="1" source="dec1" target="head" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="out" value="Output  (B, 1, H, W)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontColor=#333333;fontSize=12;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="800" y="820" width="200" height="44" as="geometry" />
+        </mxCell>
+
+        <!-- phantom target for output routing -->
+        <mxCell id="e_head_out" value="" style="edgeStyle=orthogonalEdgeStyle;html=1;" edge="1" source="head" target="out" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1060" y="52" />
+              <mxPoint x="1060" y="842" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+        <!-- ═══════════════════════════════
+             SKIP CONNECTIONS  (dashed)
+             ═══════════════════════════════ -->
+
+        <!-- Skip 1: enc1 → dec1 -->
+        <mxCell id="sk1" value="skip 1" style="edgeStyle=orthogonalEdgeStyle;html=1;fontSize=10;dashed=1;strokeColor=#6c8ebf;endArrow=open;endFill=0;" edge="1" source="enc1" target="dec1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="370" y="142" />
+              <mxPoint x="370" y="142" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+        <!-- Skip 2: enc2 → dec2 -->
+        <mxCell id="sk2" value="skip 2" style="edgeStyle=orthogonalEdgeStyle;html=1;fontSize=10;dashed=1;strokeColor=#6c8ebf;endArrow=open;endFill=0;" edge="1" source="enc2" target="dec2" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="370" y="282" />
+              <mxPoint x="370" y="282" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+        <!-- Skip 3: enc3 → dec3 -->
+        <mxCell id="sk3" value="skip 3" style="edgeStyle=orthogonalEdgeStyle;html=1;fontSize=10;dashed=1;strokeColor=#6c8ebf;endArrow=open;endFill=0;" edge="1" source="enc3" target="dec3" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="370" y="422" />
+              <mxPoint x="370" y="422" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+        <!-- Skip 4: enc4 → dec4 -->
+        <mxCell id="sk4" value="skip 4" style="edgeStyle=orthogonalEdgeStyle;html=1;fontSize=10;dashed=1;strokeColor=#6c8ebf;endArrow=open;endFill=0;" edge="1" source="enc4" target="dec4" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="370" y="562" />
+              <mxPoint x="370" y="562" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
