@@ -801,6 +801,142 @@ def _drift_run(words: list[str]) -> None:
         social_server.post_social_message(f"L  {k}/{n} frames vs golden", str(out_path))
 
 
+def stack_cmd(words: list[str], account: str) -> None:
+    """Stack all LIGHT frames of a DSO (per filter) and post each as a JPEG.
+
+    Usage:
+        stack                 — all filters of the last-imaged DSO
+        stack <dso>           — all filters of the named DSO
+        stack <dso> <filter>  — only the named filter (e.g. stack m31 ha)
+    """
+    threading.Thread(target=_stack_run, args=(words,), daemon=True).start()
+
+
+def _stack_run(words: list[str]) -> None:
+    from stacking import stacker
+
+    cfg = config.data()
+    image_dir = Path(cfg["nina"]["image_dir"])
+    _project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+    scratch_dir = Path(os.path.join(_project_root, cfg["scratch"]["directory"]))
+
+    # words[0] is the bot mention, words[1] is "stack"; remainder is dso (+ optional filter)
+    extra = words[2:] if len(words) > 2 else []
+
+    # Filter aliases: last token is treated as a filter if it matches a known short name.
+    _FILTER_ALIASES = {
+        "L": {"L", "LUMINANCE", "LUMA"},
+        "R": {"R", "RED"},
+        "G": {"G", "GREEN"},
+        "B": {"B", "BLUE"},
+        "HA": {"HA", "H-ALPHA", "HALPHA"},
+        "OIII": {"OIII", "O3"},
+        "SII": {"SII", "S2"},
+    }
+
+    def _canonical_filter(token: str) -> Optional[str]:
+        t = token.upper().replace("-", "").replace("_", "")
+        for canon, aliases in _FILTER_ALIASES.items():
+            if t in {a.replace("-", "").replace("_", "") for a in aliases}:
+                return canon
+        return None
+
+    filter_arg: Optional[str] = None
+    if extra and _canonical_filter(extra[-1]) is not None:
+        filter_arg = _canonical_filter(extra[-1])
+        dso_arg = " ".join(extra[:-1]).strip() or None
+    else:
+        dso_arg = " ".join(extra).strip() or None
+
+    if dso_arg == "*":
+        dso_arg = None
+
+    def _is_light(f: Path) -> bool:
+        return f.parent.name.upper() == "LIGHT"
+
+    def _find_dso_dir(fits_path: Path) -> Optional[Path]:
+        d = fits_path.parent
+        while d.parent != image_dir and d.parent != d:
+            d = d.parent
+        return d if d.parent == image_dir else None
+
+    def _find_dso_dir_by_name(name: str) -> Optional[Path]:
+        target = name.lower().replace(" ", "").replace("_", "")
+        candidates = [
+            d for d in image_dir.iterdir()
+            if d.is_dir() and target in d.name.lower().replace(" ", "").replace("_", "")
+        ]
+        if not candidates:
+            return None
+        if len(candidates) == 1:
+            return candidates[0]
+        def _latest(d: Path) -> float:
+            try:
+                return max(f.stat().st_mtime for f in d.rglob("*.fits") if _is_light(f))
+            except ValueError:
+                return 0.0
+        return max(candidates, key=_latest)
+
+    dso_dir: Optional[Path] = None
+    if dso_arg:
+        dso_dir = _find_dso_dir_by_name(dso_arg)
+        if dso_dir is None:
+            social_server.post_social_message(f"No image directory found for '{dso_arg}'")
+            return
+    else:
+        all_fits = sorted(
+            (f for f in image_dir.rglob("*.fits") if _is_light(f)),
+            key=lambda f: f.stat().st_mtime,
+        )
+        if not all_fits:
+            social_server.post_social_message("No LIGHT frames found")
+            return
+        dso_dir = _find_dso_dir(all_fits[-1])
+
+    fits_files = sorted(f for f in dso_dir.rglob("*.fits") if _is_light(f)) if dso_dir else []
+    if not fits_files:
+        social_server.post_social_message("No LIGHT frames found")
+        return
+
+    groups = stacker.group_by_filter(fits_files)
+
+    if filter_arg is not None:
+        matching = {
+            name: paths for name, paths in groups.items()
+            if _canonical_filter(name) == filter_arg
+        }
+        if not matching:
+            social_server.post_social_message(
+                f"{dso_dir.name}: no {filter_arg} frames found"
+            )
+            return
+        groups = matching
+
+    social_server.post_social_message(
+        f"Stacking {dso_dir.name}: "
+        + ", ".join(f"{name}={len(paths)}" for name, paths in sorted(groups.items()))
+    )
+
+    for filter_name, paths in sorted(groups.items()):
+        try:
+            result, info = stacker.stack(paths)
+        except Exception as exc:
+            social_server.post_social_message(
+                f"{dso_dir.name} {filter_name}: stack failed — {exc}"
+            )
+            continue
+
+        safe_filter = filter_name.replace(" ", "_")
+        out_path = scratch_dir / f"stack_{dso_dir.name}_{safe_filter}.jpg"
+        jpg = stacker._save_jpg(
+            result, out_path,
+            title=f"{dso_dir.name}  {filter_name}  {info['n_frames']} frames ({info['method']})",
+        )
+        social_server.post_social_message(
+            f"{dso_dir.name} {filter_name}: {info['n_frames']} frames stacked", str(jpg),
+        )
+
+
 def get_super_user_commands() -> dict[str, Callable]:
     """Return the command-name → handler mapping for all super-user commands."""
     return {
@@ -824,6 +960,7 @@ def get_super_user_commands() -> dict[str, Callable]:
         "update": update_cmd,
         "optics": optics_cmd,
         "drift": drift_cmd,
+        "stack": stack_cmd,
     }
 
 
