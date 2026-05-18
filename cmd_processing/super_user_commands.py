@@ -814,9 +814,12 @@ def stack_cmd(words: list[str], account: str) -> None:
 
 def _stack_run(words: list[str]) -> None:
     from stacking import stacker
+    from fits_processing import fitsfwhm
+    from astropy.io import fits as _fits
 
     cfg = config.data()
     image_dir = Path(cfg["nina"]["image_dir"])
+    arcsec_per_pixel = cfg["nina"]["arc_sec_per_pixel"]
     _project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
     scratch_dir = Path(os.path.join(_project_root, cfg["scratch"]["directory"]))
 
@@ -927,13 +930,34 @@ def _stack_run(words: list[str]) -> None:
             continue
 
         safe_filter = filter_name.replace(" ", "_")
+        scratch_dir.mkdir(parents=True, exist_ok=True)
+        fits_path = scratch_dir / f"stack_{dso_dir.name}_{safe_filter}.fits"
+        _fits.PrimaryHDU(result.astype("float32")).writeto(fits_path, overwrite=True)
+
+        try:
+            _, fwhm_arcsec, star_count, ecc = fitsfwhm.calculate_fwhm(
+                fits_path, arcsec_per_pixel=arcsec_per_pixel,
+            )
+        except Exception as exc:
+            _logger.warning("stack: FWHM measurement failed for %s: %s", fits_path.name, exc)
+            fwhm_arcsec, star_count, ecc = 0.0, 0, 0.0
+
+        if star_count > 0:
+            metrics = f"FWHM {fwhm_arcsec:.2f}″   ecc {ecc:.2f}   stars {star_count}"
+        else:
+            metrics = "no stars detected"
+
         out_path = scratch_dir / f"stack_{dso_dir.name}_{safe_filter}.jpg"
         jpg = stacker._save_jpg(
             result, out_path,
-            title=f"{dso_dir.name}  {filter_name}  {info['n_frames']} frames ({info['method']})",
+            title=(
+                f"{dso_dir.name}  {filter_name}  {info['n_frames']} frames "
+                f"({info['method']})\n{metrics}"
+            ),
         )
         social_server.post_social_message(
-            f"{dso_dir.name} {filter_name}: {info['n_frames']} frames stacked", str(jpg),
+            f"{dso_dir.name} {filter_name}: {info['n_frames']} frames stacked — {metrics}",
+            str(jpg),
         )
 
 
