@@ -545,10 +545,19 @@ def convergence_curve(
     slope_pct = tail_slope * 100  # convert fraction/frame → %/frame
 
     fig, ax = plt.subplots(figsize=(10, 5))
-    ax.plot(xs, ys, "o-", color="steelblue", label="Mean residual")
+    fig.patch.set_facecolor("#0d0d1a")
+    ax.set_facecolor("#1a1a2e")
+    ax.tick_params(colors="white")
+    ax.xaxis.label.set_color("white")
+    ax.yaxis.label.set_color("white")
+    ax.title.set_color("white")
+    for spine in ax.spines.values():
+        spine.set_edgecolor("#444466")
+
+    ax.plot(xs, ys, "o-", color="#5fa8d3", label="Mean residual")
     ax.fill_between(xs, np.maximum(ys - errs, 0), ys + errs,
-                    alpha=0.25, color="steelblue", label="±1 σ  (trial spread)")
-    ax.plot(xs_tail, tail_fit, "--", color="tomato", linewidth=1.5,
+                    alpha=0.25, color="#5fa8d3", label="±1 σ  (trial spread)")
+    ax.plot(xs_tail, tail_fit, "--", color="#ff6b5b", linewidth=1.5,
             label=f"Tail slope: {slope_pct:+.4f}% / frame")
     ax.set_xlabel("Frames stacked")
     ax.set_ylabel("Normalised RMSE  (vs golden stack)")
@@ -559,13 +568,18 @@ def convergence_curve(
     if filter_name:
         title += f"  [{filter_name}]"
     ax.set_title(title)
-    ax.legend()
-    ax.grid(True, alpha=0.3)
+    legend = ax.legend()
+    legend.get_frame().set_facecolor("#1a1a2e")
+    legend.get_frame().set_edgecolor("#444466")
+    for text in legend.get_texts():
+        text.set_color("white")
+    ax.grid(True, alpha=0.3, color="#444466")
     fig.tight_layout()
 
     if output_path is not None:
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        fig.savefig(output_path, format="jpeg", dpi=150, bbox_inches="tight")
+        fig.savefig(output_path, format="jpeg", dpi=150, bbox_inches="tight",
+                    facecolor=fig.get_facecolor())
         plt.close(fig)
     else:
         plt.show()
