@@ -260,13 +260,18 @@ def _register_frames(frames: list[np.ndarray]) -> list[np.ndarray]:
             continue
 
         try:
-            aligned, _ = _astroalign.apply_transform(transform, frame, reference)
+            aligned, footprint = _astroalign.apply_transform(transform, frame, reference)
         except Exception as exc:
             failed += 1
             _logger.warning("apply_transform failed for frame %d: %s", i, exc)
             continue
 
-        registered.append(aligned.astype(frame.dtype))
+        aligned = aligned.astype(np.float32)
+        # astroalign's footprint is True for pixels that fell outside the
+        # source frame after the transform — those carry no real signal, so
+        # mark them NaN and let the combine step ignore them.
+        aligned[footprint.astype(bool)] = np.nan
+        registered.append(aligned)
 
     _logger.info(
         "Registration: %d/%d frames aligned, %d failed, %d rejected by QA",
@@ -394,21 +399,23 @@ def stack(
 
     _logger.info("Stacking %d frames with method %s…", len(accepted), method.name)
 
+    # NaN in `cube` marks pixels not covered by a given frame after registration.
+    # All combiners are nan-aware so non-coverage doesn't pollute the result.
     if method == StackMethod.MEAN:
-        result = np.mean(cube, axis=0)
+        result = np.nanmean(cube, axis=0)
 
     elif method == StackMethod.MEDIAN:
-        result = np.median(cube, axis=0)
+        result = np.nanmedian(cube, axis=0)
 
     elif method == StackMethod.SIGMA_CLIP:
+        # sigma_clip ignores NaN (they're treated as already-masked); pixels
+        # where everything was clipped fall back to the nanmean.
         clipped = sigma_clip(cube, sigma=sigma, axis=0, masked=True)
-        # Fall back to plain mean for pixels where everything was clipped
-        fallback = np.mean(cube, axis=0)
+        fallback = np.nanmean(cube, axis=0)
         result = np.where(clipped.mask.all(axis=0), fallback, np.ma.mean(clipped, axis=0).data)
 
     elif method == StackMethod.FWHM_WEIGHTED:
         fwhms = np.array([fwhm_values.get(p, 0.0) for p in accepted], dtype=np.float64)
-        # Frames with no measurement get the median weight of measured frames
         zero_mask = fwhms == 0.0
         if zero_mask.any():
             measured = fwhms[~zero_mask]
@@ -421,10 +428,44 @@ def stack(
         weights = 1.0 / (fwhms ** 2)
         weights /= weights.sum()
         _logger.info("FWHM weights: min=%.4f max=%.4f", weights.min(), weights.max())
-        result = np.einsum("i,ihw->hw", weights, cube)
+        # Weighted nanmean: numerator skips NaN; denominator only counts the
+        # weights of contributing (non-NaN) frames per pixel.
+        nan_mask = np.isnan(cube)
+        w = weights[:, None, None].astype(np.float32)
+        contrib = (~nan_mask).astype(np.float32) * w
+        numer = np.nansum(cube * w, axis=0)
+        denom = contrib.sum(axis=0)
+        result = np.where(denom > 0, numer / np.where(denom > 0, denom, 1.0), np.nan)
 
     else:
         raise ValueError(f"Unknown stack method: {method}")
+
+    # Coverage-based crop: keep the bounding box where at least 80% of frames
+    # contributed a real (non-NaN) pixel. This removes the bright partial-
+    # coverage shell and dark borders that otherwise inflate sigma_clipped_stats
+    # downstream and crater star detection.
+    n_frames = cube.shape[0]
+    coverage = np.sum(~np.isnan(cube), axis=0)
+    min_cov = max(1, int(round(0.8 * n_frames)))
+    well_covered = coverage >= min_cov
+    if well_covered.any():
+        rows = np.where(well_covered.any(axis=1))[0]
+        cols = np.where(well_covered.any(axis=0))[0]
+        y0, y1 = int(rows[0]), int(rows[-1]) + 1
+        x0, x1 = int(cols[0]), int(cols[-1]) + 1
+        result = result[y0:y1, x0:x1]
+        _logger.info(
+            "Cropped stack to high-coverage region: %dx%d → %dx%d (>=%d/%d frames)",
+            cube.shape[2], cube.shape[1], x1 - x0, y1 - y0, min_cov, n_frames,
+        )
+
+    # Any residual NaN in the cropped image is replaced with the global
+    # sky median so DAOStarFinder and writers don't choke.
+    nan_residual = np.isnan(result)
+    if nan_residual.any():
+        finite = result[~nan_residual]
+        sky = float(np.median(finite)) if finite.size > 0 else 0.0
+        result[nan_residual] = sky
 
     info = {
         "n_frames": len(accepted),
