@@ -922,7 +922,11 @@ def _stack_run(words: list[str]) -> None:
 
     for filter_name, paths in sorted(groups.items()):
         try:
-            result, info = stacker.stack(paths)
+            result, info = stacker.stack(
+                paths,
+                method=stacker.StackMethod.FWHM_WEIGHTED,
+                max_fwhm_multiplier=1.5,
+            )
         except Exception as exc:
             social_server.post_social_message(
                 f"{dso_dir.name} {filter_name}: stack failed — {exc}"

@@ -205,11 +205,21 @@ def _best_reference_idx(frames: list[np.ndarray]) -> int:
     return best_idx
 
 
+_REG_MIN_MATCHED_STARS = 10
+_REG_MAX_MEDIAN_RESIDUAL_PX = 2.0
+
+
 def _register_frames(frames: list[np.ndarray]) -> list[np.ndarray]:
     """
     Register all frames to the best reference frame using an affine transform.
     The reference is chosen as the frame with the most detected stars.
-    Frames that fail to register are dropped with a warning.
+
+    Frames are dropped when:
+      - astroalign cannot find a transform at all,
+      - the transform was fit from fewer than _REG_MIN_MATCHED_STARS pairs, or
+      - the median residual of the matched pairs exceeds _REG_MAX_MEDIAN_RESIDUAL_PX
+        (a successful affine fit on garbage matches will still return — this
+        catches that case).
     """
     if not _REGISTER_AVAILABLE or len(frames) < 2:
         return frames
@@ -218,19 +228,49 @@ def _register_frames(frames: list[np.ndarray]) -> list[np.ndarray]:
     reference = frames[ref_idx]
     registered = [reference]
     failed = 0
+    poor_qa = 0
     for i, frame in enumerate(frames):
         if i == ref_idx:
             continue
         try:
-            aligned, _ = _astroalign.register(frame, reference)
-            registered.append(aligned.astype(frame.dtype))
+            transform, (src_pts, dst_pts) = _astroalign.find_transform(frame, reference)
         except Exception as exc:
             failed += 1
-            _logger.warning("Registration failed for frame %d, dropping: %s", i, exc)
+            _logger.warning("Registration failed for frame %d: %s", i, exc)
+            continue
+
+        n_matched = len(src_pts) if src_pts is not None else 0
+        if n_matched < _REG_MIN_MATCHED_STARS:
+            poor_qa += 1
+            _logger.warning(
+                "Frame %d dropped — only %d matched stars (< %d)",
+                i, n_matched, _REG_MIN_MATCHED_STARS,
+            )
+            continue
+
+        transformed = transform(np.asarray(src_pts))
+        residuals = np.sqrt(np.sum((transformed - np.asarray(dst_pts)) ** 2, axis=1))
+        median_residual = float(np.median(residuals))
+        if median_residual > _REG_MAX_MEDIAN_RESIDUAL_PX:
+            poor_qa += 1
+            _logger.warning(
+                "Frame %d dropped — registration residual %.2f px > %.2f",
+                i, median_residual, _REG_MAX_MEDIAN_RESIDUAL_PX,
+            )
+            continue
+
+        try:
+            aligned, _ = _astroalign.apply_transform(transform, frame, reference)
+        except Exception as exc:
+            failed += 1
+            _logger.warning("apply_transform failed for frame %d: %s", i, exc)
+            continue
+
+        registered.append(aligned.astype(frame.dtype))
 
     _logger.info(
-        "Registration: %d/%d frames aligned, %d dropped",
-        len(registered), len(frames), failed,
+        "Registration: %d/%d frames aligned, %d failed, %d rejected by QA",
+        len(registered), len(frames), failed, poor_qa,
     )
     return registered
 
@@ -260,6 +300,7 @@ def stack(
     flat_paths: Optional[list[Path]] = None,
     sigma: float = 3.0,
     max_fwhm: Optional[float] = None,
+    max_fwhm_multiplier: Optional[float] = None,
     register: bool = True,
 ) -> tuple[np.ndarray, dict]:
     """
@@ -274,6 +315,11 @@ def stack(
         sigma:        Rejection sigma for SIGMA_CLIP (default 3.0).
         max_fwhm:     Reject frames whose FWHM (pixels) exceeds this value.
                       Frames where FWHM cannot be measured are kept.
+        max_fwhm_multiplier:
+                      If set and max_fwhm is None, derive max_fwhm as
+                      multiplier × median(measured FWHM). Lets the caller say
+                      "reject frames worse than 1.5× the typical sub" without
+                      knowing the seeing in advance.
 
     Returns:
         (stacked_array, info_dict)
@@ -294,13 +340,27 @@ def stack(
     master_flat = build_master_flat(flat_paths or [], master_bias, master_dark)
 
     # Measure FWHM when needed
-    need_fwhm = method == StackMethod.FWHM_WEIGHTED or max_fwhm is not None
+    need_fwhm = (
+        method == StackMethod.FWHM_WEIGHTED
+        or max_fwhm is not None
+        or max_fwhm_multiplier is not None
+    )
     fwhm_values: dict[Path, float] = {}
     if need_fwhm:
         _logger.info("Measuring FWHM for %d frames…", len(light_paths))
         for p in light_paths:
             fwhm_values[p] = _measure_fwhm(p)
             _logger.debug("  %s → FWHM %.2f px", p.name, fwhm_values[p])
+
+    if max_fwhm is None and max_fwhm_multiplier is not None:
+        measured = np.array([v for v in fwhm_values.values() if v > 0.0])
+        if measured.size > 0:
+            median_fwhm = float(np.median(measured))
+            max_fwhm = median_fwhm * max_fwhm_multiplier
+            _logger.info(
+                "max_fwhm auto-derived: median %.2f px × %.2f = %.2f px",
+                median_fwhm, max_fwhm_multiplier, max_fwhm,
+            )
 
     # Reject frames that exceed max_fwhm (unmeasured frames are kept)
     rejected: list[Path] = []
