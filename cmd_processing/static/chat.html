@@ -736,16 +736,21 @@
     connect();
   }
 
-  // BFCache restore: browser froze the page while navigating away — WS is dead but onclose never fired.
-  window.addEventListener('pageshow', (e) => { if (e.persisted) reconnectNow(); });
+  // BFCache restore / tab foregrounded: only force a reconnect if the
+  // existing socket is actually dead. A healthy WS survives a quick tab
+  // switch, and tearing it down forces a full history re-send + re-render
+  // (multi-second stall on phones over Tailscale) for no benefit.
+  function reconnectIfNeeded() {
+    if (!ws || ws.readyState !== WebSocket.OPEN) reconnectNow();
+  }
 
-  // Tab/app foregrounded after sleep or background: socket may have quietly died.
+  window.addEventListener('pageshow', (e) => { if (e.persisted) reconnectIfNeeded(); });
+
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible') {
-      reconnectNow();
-      fetchTicker();
-      fetchImagingTicker();
-    }
+    if (document.visibilityState !== 'visible') return;
+    reconnectIfNeeded();
+    fetchTicker();
+    fetchImagingTicker();
   });
 
   connect();
