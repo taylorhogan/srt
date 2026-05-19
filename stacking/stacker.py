@@ -2,10 +2,14 @@
 
 Stacking methods
 ----------------
-MEAN          – arithmetic mean (fast, no rejection)
-MEDIAN        – pixel-wise median (robust against cosmics, lower SNR than mean)
-SIGMA_CLIP    – sigma-clipped mean (best general-purpose; rejects outliers per pixel)
-FWHM_WEIGHTED – weighted mean where weight = 1 / FWHM²  (rewards sharper frames)
+MEAN             – arithmetic mean (fast, no rejection)
+MEDIAN           – pixel-wise median (robust against cosmics, lower SNR than mean)
+SIGMA_CLIP       – sigma-clipped mean (rejects outliers per pixel)
+FWHM_WEIGHTED    – weighted mean where weight = 1 / FWHM²  (rewards sharper frames)
+SIGMA_CLIP_FWHM  – sigma-clip outliers per pixel, then weighted mean of the
+                   survivors by 1 / FWHM²; best general-purpose result on
+                   dithered data because it rejects hot pixels/cosmics AND
+                   rewards better-seeing frames.
 
 Calibration pipeline (applied to each light frame before stacking)
 ------------------------------------------------------------------
@@ -68,6 +72,7 @@ class StackMethod(Enum):
     MEDIAN = auto()
     SIGMA_CLIP = auto()
     FWHM_WEIGHTED = auto()
+    SIGMA_CLIP_FWHM = auto()
 
 
 # ---------------------------------------------------------------------------
@@ -293,6 +298,26 @@ def _measure_fwhm(path: Path) -> float:
     return 0.0
 
 
+def _fwhm_weights(fwhm_values: dict, accepted: list[Path]) -> np.ndarray:
+    """Build per-frame 1/FWHM² weights, normalised to sum to 1.
+
+    Frames with no FWHM measurement get the median weight of measured frames.
+    """
+    fwhms = np.array([fwhm_values.get(p, 0.0) for p in accepted], dtype=np.float64)
+    zero_mask = fwhms == 0.0
+    if zero_mask.any():
+        measured = fwhms[~zero_mask]
+        fallback_fwhm = float(np.median(measured)) if measured.size > 0 else 1.0
+        fwhms[zero_mask] = fallback_fwhm
+        _logger.warning(
+            "%d frame(s) had no FWHM measurement; assigned median FWHM %.2f px",
+            int(zero_mask.sum()), fallback_fwhm,
+        )
+    weights = 1.0 / (fwhms ** 2)
+    weights /= weights.sum()
+    return weights
+
+
 # ---------------------------------------------------------------------------
 # Core stacking
 # ---------------------------------------------------------------------------
@@ -347,6 +372,7 @@ def stack(
     # Measure FWHM when needed
     need_fwhm = (
         method == StackMethod.FWHM_WEIGHTED
+        or method == StackMethod.SIGMA_CLIP_FWHM
         or max_fwhm is not None
         or max_fwhm_multiplier is not None
     )
@@ -408,25 +434,16 @@ def stack(
         result = np.nanmedian(cube, axis=0)
 
     elif method == StackMethod.SIGMA_CLIP:
-        # sigma_clip ignores NaN (they're treated as already-masked); pixels
-        # where everything was clipped fall back to the nanmean.
-        clipped = sigma_clip(cube, sigma=sigma, axis=0, masked=True)
+        # Use MAD-based std so a single huge outlier (e.g. a hot pixel that
+        # snuck past calibration) can't inflate its own rejection bound.
+        # NaN is treated as already-masked. Pixels with all values clipped
+        # fall back to nanmean.
+        clipped = sigma_clip(cube, sigma=sigma, axis=0, masked=True, stdfunc="mad_std")
         fallback = np.nanmean(cube, axis=0)
         result = np.where(clipped.mask.all(axis=0), fallback, np.ma.mean(clipped, axis=0).data)
 
     elif method == StackMethod.FWHM_WEIGHTED:
-        fwhms = np.array([fwhm_values.get(p, 0.0) for p in accepted], dtype=np.float64)
-        zero_mask = fwhms == 0.0
-        if zero_mask.any():
-            measured = fwhms[~zero_mask]
-            fallback_fwhm = float(np.median(measured)) if measured.size > 0 else 1.0
-            fwhms[zero_mask] = fallback_fwhm
-            _logger.warning(
-                "%d frame(s) had no FWHM measurement; assigned median FWHM %.2f px",
-                int(zero_mask.sum()), fallback_fwhm,
-            )
-        weights = 1.0 / (fwhms ** 2)
-        weights /= weights.sum()
+        weights = _fwhm_weights(fwhm_values, accepted)
         _logger.info("FWHM weights: min=%.4f max=%.4f", weights.min(), weights.max())
         # Weighted nanmean: numerator skips NaN; denominator only counts the
         # weights of contributing (non-NaN) frames per pixel.
@@ -436,6 +453,22 @@ def stack(
         numer = np.nansum(cube * w, axis=0)
         denom = contrib.sum(axis=0)
         result = np.where(denom > 0, numer / np.where(denom > 0, denom, 1.0), np.nan)
+
+    elif method == StackMethod.SIGMA_CLIP_FWHM:
+        weights = _fwhm_weights(fwhm_values, accepted)
+        _logger.info("FWHM weights: min=%.4f max=%.4f", weights.min(), weights.max())
+        # Sigma-clip per pixel using MAD-based std (robust to single huge
+        # outliers like uncorrected hot pixels), then take a weighted mean of
+        # the surviving values with weight = 1/FWHM². NaN is masked. This
+        # rejects dithered hot pixels / cosmics AND favours sharper frames.
+        clipped = sigma_clip(cube, sigma=sigma, axis=0, masked=True, stdfunc="mad_std")
+        valid = (~clipped.mask).astype(np.float32)
+        w = weights[:, None, None].astype(np.float32) * valid
+        safe_cube = np.where(np.isnan(cube), 0.0, cube)
+        numer = np.sum(safe_cube * weights[:, None, None].astype(np.float32) * valid, axis=0)
+        denom = w.sum(axis=0)
+        fallback = np.nanmean(cube, axis=0)
+        result = np.where(denom > 0, numer / np.where(denom > 0, denom, 1.0), fallback)
 
     else:
         raise ValueError(f"Unknown stack method: {method}")

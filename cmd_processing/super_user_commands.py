@@ -924,7 +924,7 @@ def _stack_run(words: list[str]) -> None:
         try:
             result, info = stacker.stack(
                 paths,
-                method=stacker.StackMethod.FWHM_WEIGHTED,
+                method=stacker.StackMethod.SIGMA_CLIP_FWHM,
                 max_fwhm_multiplier=1.5,
             )
         except Exception as exc:
