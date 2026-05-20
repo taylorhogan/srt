@@ -1660,7 +1660,6 @@ def _snr_run(words: list[str]) -> None:
     Loads all LIGHT frames, groups by filter, and posts one convergence plot per
     filter showing normalised RMSE vs Fibonacci-spaced frame counts.
     """
-    from astropy.io import fits as _fits
     from stacking import stacker
 
     cfg = config.data()
@@ -1723,18 +1722,10 @@ def _snr_run(words: list[str]) -> None:
         return
 
     social_server.post_social_message(
-        f"Convergence for {dso_dir.name}: {len(fits_files)} light frames — loading…"
+        f"Convergence for {dso_dir.name}: {len(fits_files)} light frames — computing…"
     )
 
-    # Group by filter
-    by_filter: dict[str, list[Path]] = {}
-    for f in fits_files:
-        try:
-            with _fits.open(f) as hdul:
-                filter_name = str(hdul[0].header.get("FILTER", "Unknown")).strip()
-        except Exception:
-            filter_name = "Unknown"
-        by_filter.setdefault(filter_name, []).append(f)
+    by_filter = stacker.group_by_filter(fits_files)
 
     _project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
     scratch_dir = os.path.join(_project_root, cfg["scratch"]["directory"])
@@ -1743,17 +1734,19 @@ def _snr_run(words: list[str]) -> None:
 
     saved: dict[str, dict] = {}
     for filter_name, paths in by_filter.items():
-        try:
-            frames = [stacker._load_fits_2d(p) for p in paths]
-        except Exception as exc:
-            social_server.post_social_message(f"Convergence [{filter_name}]: failed to load frames — {exc}")
-            continue
+        def _progress(msg: str, _fn: str = filter_name) -> None:
+            social_server.post_social_message(f"Convergence [{_fn}]: {msg}")
 
         output_path = Path(scratch_dir) / f"convergence_{filter_name}.jpg"
         try:
-            _, _, slope_pct = stacker.convergence_curve(frames, filter_name=filter_name, output_path=output_path)
+            _, _, slope_pct = stacker.convergence_curve(
+                paths,
+                filter_name=filter_name,
+                output_path=output_path,
+                progress_cb=_progress,
+            )
         except Exception as exc:
-            social_server.post_social_message(f"Convergence [{filter_name}]: plot failed — {exc}")
+            social_server.post_social_message(f"Convergence [{filter_name}]: failed — {exc}")
             continue
 
         from datetime import date as _date

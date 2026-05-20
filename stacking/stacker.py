@@ -696,45 +696,200 @@ def _fib_counts(max_n: int) -> list[int]:
     return counts
 
 
+def _prepare_for_convergence(
+    paths: list[Path],
+    max_fwhm_multiplier: float = 1.5,
+    register: bool = True,
+    downscale_to: int = 512,
+    progress_cb: Optional[Callable[[str], None]] = None,
+) -> tuple[list[np.ndarray], list[Path], dict[Path, float]]:
+    """
+    Load, FWHM-filter, register, and downscale a set of FITS paths for convergence
+    analysis.
+
+    Uses *streaming* registration so the full-resolution cube never lives in RAM:
+    the reference and one source frame are held at full resolution at a time;
+    each aligned frame is immediately downscaled to ~downscale_to px before the
+    next frame is loaded.  Peak memory is roughly two full-res frames plus the
+    entire downscaled cube (a few hundred MB for a full-frame sensor).
+
+    Returns (downscaled_frames, accepted_paths, fwhm_values).
+    fwhm_values maps every measured path; pass it with accepted_paths to
+    _fwhm_weights() to get per-frame weights in registration-output order.
+    """
+    if not paths:
+        raise ValueError("No paths provided")
+
+    if progress_cb:
+        progress_cb(f"measuring FWHM for {len(paths)} frames…")
+    fwhm_values: dict[Path, float] = {}
+    for p in paths:
+        fwhm_values[p] = _measure_fwhm(p)
+
+    accepted = list(paths)
+    measured = np.array([v for v in fwhm_values.values() if v > 0.0])
+    if measured.size > 0 and max_fwhm_multiplier is not None:
+        max_fwhm = float(np.median(measured)) * max_fwhm_multiplier
+        accepted = [p for p in paths
+                    if fwhm_values.get(p, 0.0) == 0.0 or fwhm_values[p] <= max_fwhm]
+        n_rejected = len(paths) - len(accepted)
+        if n_rejected:
+            _logger.info("Convergence prep: rejected %d blurry frames", n_rejected)
+            if progress_cb:
+                progress_cb(f"FWHM done — rejected {n_rejected} blurry, {len(accepted)} remain")
+        elif progress_cb:
+            arcsec = _get_arcsec_per_pixel()
+            progress_cb(f"FWHM done — median {float(np.median(measured)) * arcsec:.2f}″, all {len(accepted)} frames kept")
+    elif progress_cb:
+        progress_cb(f"FWHM unmeasurable — using all {len(accepted)} frames")
+
+    if not accepted:
+        raise ValueError("All frames rejected by FWHM threshold")
+
+    if not register or not _REGISTER_AVAILABLE or len(accepted) < 2:
+        if progress_cb:
+            progress_cb(f"loading {len(accepted)} frames (no registration)…")
+        frame0 = _load_fits_2d(accepted[0])
+        scale = max(1, min(frame0.shape) // downscale_to)
+        frames_out = [frame0[::scale, ::scale]]
+        frame0 = None
+        for p in accepted[1:]:
+            f = _load_fits_2d(p)
+            frames_out.append(f[::scale, ::scale])
+            f = None
+        return frames_out, accepted, fwhm_values
+
+    # Pick reference from a sample of up to 10 evenly-spaced frames.
+    step = max(1, len(accepted) // 10)
+    sample_indices = list(range(0, len(accepted), step))[:10]
+    sample_frames = [_load_fits_2d(accepted[i]) for i in sample_indices]
+    ref_sample_idx = _best_reference_idx(sample_frames)
+    sample_frames = None  # free full-res copies
+    actual_ref_idx = sample_indices[ref_sample_idx]
+    _logger.info("Convergence: reference = accepted[%d]", actual_ref_idx)
+
+    if progress_cb:
+        progress_cb(f"registering {len(accepted)} frames (streaming)…")
+
+    reference = _load_fits_2d(accepted[actual_ref_idx])
+    scale = max(1, min(reference.shape) // downscale_to)
+
+    result_frames: list[np.ndarray] = [reference[::scale, ::scale]]
+    result_accepted: list[Path] = [accepted[actual_ref_idx]]
+    failed, poor_qa = 0, 0
+
+    for i, p in enumerate(accepted):
+        if i == actual_ref_idx:
+            continue
+        try:
+            frame = _load_fits_2d(p)
+            transform, (src_pts, dst_pts) = _astroalign.find_transform(frame, reference)
+        except Exception as exc:
+            failed += 1
+            _logger.warning("Convergence registration failed for frame %d: %s", i, exc)
+            continue
+
+        n_matched = len(src_pts) if src_pts is not None else 0
+        if n_matched < _REG_MIN_MATCHED_STARS:
+            poor_qa += 1
+            _logger.warning("Convergence: frame %d dropped — %d matched stars", i, n_matched)
+            continue
+
+        pts_tx = transform(np.asarray(src_pts))
+        residuals = np.sqrt(np.sum((pts_tx - np.asarray(dst_pts)) ** 2, axis=1))
+        if float(np.median(residuals)) > _REG_MAX_MEDIAN_RESIDUAL_PX:
+            poor_qa += 1
+            _logger.warning("Convergence: frame %d dropped — high residual", i)
+            continue
+
+        try:
+            aligned, footprint = _astroalign.apply_transform(transform, frame, reference)
+        except Exception as exc:
+            failed += 1
+            _logger.warning("Convergence: apply_transform failed for frame %d: %s", i, exc)
+            continue
+
+        frame = None  # free full-res copy
+        aligned = aligned.astype(np.float32)
+        aligned[footprint.astype(bool)] = np.nan
+        result_frames.append(aligned[::scale, ::scale])
+        result_accepted.append(p)
+
+    reference = None  # free reference
+    n_dropped = len(accepted) - len(result_frames)
+    _logger.info(
+        "Convergence prep: %d/%d frames registered, %d failed, %d dropped QA",
+        len(result_frames), len(accepted), failed, poor_qa,
+    )
+    if progress_cb:
+        progress_cb(
+            f"registration done — {len(result_frames)} frames aligned"
+            + (f", {n_dropped} dropped" if n_dropped > 0 else "")
+            + ", building golden…"
+        )
+
+    return result_frames, result_accepted, fwhm_values
+
+
 def convergence_curve(
-    frames: list[np.ndarray],
+    paths: list[Path],
     filter_name: str = "",
     output_path: Optional[Path] = None,
     n_trials: int = 20,
+    max_fwhm_multiplier: float = 1.5,
+    register: bool = True,
+    progress_cb: Optional[Callable[[str], None]] = None,
 ) -> tuple[list[int], list[float], float]:
     """
     Measure how quickly stacking converges to the golden (all-frames) stack.
 
-    For each Fibonacci-spaced count k, draws n_trials random subsets of k frames,
-    mean-stacks each, and computes RMSE against the golden stack.  RMSE is
-    normalised by the golden stack's sigma-clipped median so the y-axis is a
-    dimensionless fraction (0 = identical to golden).
+    Prepares frames via the same FWHM-filter + registration pipeline as stack(),
+    then downscales to ~512 px for speed.  For each Fibonacci-spaced count k it
+    draws n_trials random FWHM-weighted subsets and measures RMSE against the
+    SIGMA_CLIP_FWHM golden stack.  RMSE is normalised by the golden stack's
+    sigma-clipped median so the y-axis is dimensionless (0 = identical to golden).
 
     Args:
-        frames:      Calibrated 2-D arrays (any order — subsets are drawn randomly).
-        filter_name: Label used in the plot title.
-        output_path: If given, save the plot as a JPEG to this path.
-        n_trials:    Random subsets to average per frame count (default 20).
+        paths:               LIGHT-frame FITS paths (caller already split by filter).
+        filter_name:         Label used in the plot title.
+        output_path:         If given, save the plot as a JPEG to this path.
+        n_trials:            Random subsets to average per frame count (default 20).
+        max_fwhm_multiplier: Reject frames worse than this × median FWHM (default 1.5).
+        register:            Register frames before stacking (default True).
+        progress_cb:         Called with a status string at each major milestone.
 
     Returns:
-        (counts, mean_residuals, slope_pct) — Fibonacci frame counts, mean normalised RMSE,
-        and tail slope in %/frame (negative means improving).
+        (counts, mean_residuals, slope_pct) — Fibonacci frame counts, mean normalised
+        RMSE, and tail slope in %/frame (negative means improving).
     """
     from astropy.stats import sigma_clipped_stats
     import matplotlib.pyplot as plt
 
     rng = np.random.default_rng()
-    n = len(frames)
-    h, w = frames[0].shape[:2]
-    scale = max(1, min(h, w) // 512)
-    if scale > 1:
-        frames = [f[::scale, ::scale] for f in frames]
-    arr = np.stack(frames, axis=0)  # (N, H//scale, W//scale)
 
-    golden = arr.mean(axis=0)
+    frames, accepted, fwhm_values = _prepare_for_convergence(
+        paths,
+        max_fwhm_multiplier=max_fwhm_multiplier,
+        register=register,
+        progress_cb=progress_cb,
+    )
+
+    n = len(frames)
+    arr = np.stack(frames, axis=0)  # (N, H//scale, W//scale)
+    weights = _fwhm_weights(fwhm_values, accepted)
+
+    # Golden: SIGMA_CLIP_FWHM stack of all registered frames — same method as stack().
+    golden = _combine_tile(arr, StackMethod.SIGMA_CLIP_FWHM, weights, sigma=3.0)
+    nan_px = np.isnan(golden)
+    if nan_px.any():
+        golden[nan_px] = float(np.nanmedian(golden))
+
     _, golden_median, _ = sigma_clipped_stats(golden, sigma=3.0)
     if golden_median <= 0:
         golden_median = 1.0
+
+    if progress_cb:
+        progress_cb(f"sampling convergence ({n} frames, {len(_fib_counts(n))} points)…")
 
     counts = _fib_counts(n)
     mean_residuals: list[float] = []
@@ -745,8 +900,16 @@ def convergence_curve(
         trial_rmses: list[float] = []
         for _ in range(actual_trials):
             idx = rng.choice(n, size=k, replace=False)
-            subset_stack = arr[idx].mean(axis=0)
-            rmse = float(np.sqrt(np.mean((subset_stack - golden) ** 2)))
+            # FWHM-weighted mean for the k-frame subset (renormalised weights)
+            sub_w = weights[idx]
+            sub_w = sub_w / sub_w.sum()
+            nan_mask = np.isnan(arr[idx])
+            safe = np.where(nan_mask, 0.0, arr[idx])
+            contrib = (~nan_mask).astype(np.float32) * sub_w[:, None, None]
+            numer = np.sum(safe * sub_w[:, None, None], axis=0)
+            denom = contrib.sum(axis=0)
+            subset_stack = np.where(denom > 0, numer / np.where(denom > 0, denom, 1.0), golden)
+            rmse = float(np.sqrt(np.nanmean((subset_stack - golden) ** 2)))
             trial_rmses.append(rmse / golden_median)
         mean_residuals.append(float(np.mean(trial_rmses)))
         std_residuals.append(float(np.std(trial_rmses)))
@@ -892,14 +1055,12 @@ def stack_directory(
 
         if snr_demo:
             conv_jpg = out.with_name(out.stem + "_convergence.jpg")
-            master_bias = build_master_bias(bias_paths)
-            master_dark = build_master_dark(dark_paths, master_bias)
-            master_flat = build_master_flat(flat_paths, master_bias, master_dark)
-            calibrated = [_calibrate(_load_fits_2d(p), master_bias, master_dark, master_flat)
-                          for p in group_paths]
-            if register:
-                calibrated, _ = _register_frames(calibrated)
-            convergence_curve(calibrated, filter_name=filter_name, output_path=conv_jpg)
+            convergence_curve(
+                group_paths,
+                filter_name=filter_name,
+                output_path=conv_jpg,
+                register=register,
+            )
             _logger.info("Convergence curve → %s", conv_jpg)
 
     return results

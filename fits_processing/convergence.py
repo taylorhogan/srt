@@ -87,7 +87,6 @@ def compute_dso_convergence(dso_name: str, image_dir: Path) -> dict[str, dict]:
     Reuses the same FITS-loading / filter-grouping logic as _snr_run().
     Returns an empty dict if no LIGHT frames are found.
     """
-    from astropy.io import fits as _fits
     from stacking import stacker
 
     def _is_light(f: Path) -> bool:
@@ -122,21 +121,13 @@ def compute_dso_convergence(dso_name: str, image_dir: Path) -> dict[str, dict]:
     if not fits_files:
         return {}
 
-    by_filter: dict[str, list[Path]] = {}
-    for f in fits_files:
-        try:
-            with _fits.open(f) as hdul:
-                fname = str(hdul[0].header.get("FILTER", "Unknown")).strip()
-        except Exception:
-            fname = "Unknown"
-        by_filter.setdefault(fname, []).append(f)
+    by_filter = stacker.group_by_filter(fits_files)
 
     results: dict[str, dict] = {}
     today = date.today().isoformat()
     for fname, paths in by_filter.items():
         try:
-            frames = [stacker._load_fits_2d(p) for p in paths]
-            _, _, slope_pct = stacker.convergence_curve(frames, filter_name=fname)
+            _, _, slope_pct = stacker.convergence_curve(paths, filter_name=fname)
             results[fname] = {
                 "tail_slope_pct": round(slope_pct, 6),
                 "frame_count": len(paths),
