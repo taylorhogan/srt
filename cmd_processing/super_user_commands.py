@@ -689,9 +689,8 @@ def drift_cmd(words: list[str], account: str) -> None:
 
 def _drift_run(words: list[str]) -> None:
     import numpy as np
-    from astropy.io import fits as _fits
-    from astropy.visualization import ZScaleInterval
     import matplotlib.pyplot as plt
+    from astropy.visualization import ZScaleInterval
     from stacking import stacker
 
     cfg = config.data()
@@ -755,41 +754,59 @@ def _drift_run(words: list[str]) -> None:
         social_server.post_social_message("No LIGHT frames found")
         return
 
-    l_files = [
-        f for f in fits_files
-        if stacker.read_filter(f).upper() in ("L", "LUMINANCE", "LUMA")
-    ]
+    by_filter = stacker.group_by_filter(fits_files)
+    l_files = next(
+        (v for k, v in by_filter.items() if k.upper() in ("L", "LUMINANCE", "LUMA")),
+        [],
+    )
     if not l_files:
         social_server.post_social_message(f"{dso_dir.name}: no L filter frames found")
         return
 
-    n = len(l_files)
-    social_server.post_social_message(f"Drift for {dso_dir.name}: {n} L frames — loading…")
+    social_server.post_social_message(
+        f"Drift for {dso_dir.name}: {len(l_files)} L frames — preparing…"
+    )
 
-    frames = []
-    for p in l_files:
-        with _fits.open(p) as hdul:
-            frames.append(np.squeeze(hdul[0].data).astype(np.float32))
+    def _progress(msg: str) -> None:
+        social_server.post_social_message(f"Drift [L]: {msg}")
 
-    h, w = frames[0].shape[:2]
-    scale = max(1, min(h, w) // 512)
-    if scale > 1:
-        frames = [f[::scale, ::scale] for f in frames]
-
+    frames, accepted, fwhm_values = stacker._prepare_for_convergence(
+        l_files, progress_cb=_progress,
+    )
+    n = len(frames)
     arr = np.stack(frames, axis=0)
-    golden = arr.mean(axis=0)
+    weights = stacker._fwhm_weights(fwhm_values, accepted)
+
+    # Re-sort into acquisition (mtime) order so arr[:k] = first k frames acquired.
+    sort_order = sorted(range(n), key=lambda i: accepted[i].stat().st_mtime)
+    arr = arr[sort_order]
+    weights = weights[sort_order]
+
+    golden = stacker._combine_tile(arr, stacker.StackMethod.SIGMA_CLIP_FWHM, weights, sigma=3.0)
+    nan_px = np.isnan(golden)
+    if nan_px.any():
+        golden[nan_px] = float(np.nanmedian(golden))
 
     counts = stacker._fib_counts(n)
-
     for k in counts:
-        diff = np.abs(arr[:k].mean(axis=0) - golden)
+        sub_w = weights[:k].copy()
+        sub_w /= sub_w.sum()
+        nan_mask = np.isnan(arr[:k])
+        safe = np.where(nan_mask, 0.0, arr[:k])
+        contrib = (~nan_mask).astype(np.float32) * sub_w[:, None, None]
+        numer = np.sum(safe * sub_w[:, None, None], axis=0)
+        denom = contrib.sum(axis=0)
+        subset_mean = np.where(denom > 0, numer / np.where(denom > 0, denom, 1.0), golden)
+
+        diff = np.abs(subset_mean - golden)
         try:
             vmin, vmax = ZScaleInterval().get_limits(diff)
         except Exception:
             vmin, vmax = float(np.percentile(diff, 1)), float(np.percentile(diff, 99))
 
         fig, ax = plt.subplots(figsize=(8, 8))
-        ax.imshow(diff, origin="lower", cmap="gray", vmin=vmin, vmax=vmax, interpolation="nearest")
+        ax.imshow(diff, origin="lower", cmap="gray", vmin=vmin, vmax=vmax,
+                  interpolation="nearest")
         ax.axis("off")
         ax.set_title(f"{dso_dir.name}  L  {k}/{n} frames vs golden", fontsize=10)
         fig.tight_layout(pad=0.5)
@@ -797,7 +814,6 @@ def _drift_run(words: list[str]) -> None:
         out_path = scratch_dir / f"drift_L_{k:04d}of{n:04d}.jpg"
         fig.savefig(out_path, format="jpeg", dpi=120, bbox_inches="tight")
         plt.close(fig)
-
         social_server.post_social_message(f"L  {k}/{n} frames vs golden", str(out_path))
 
 
