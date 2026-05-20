@@ -1191,12 +1191,32 @@ def _bad_run(words: list[str]) -> None:
         return
 
     failed: list[tuple[Path, str]] = []
+    renamed_paths: list[str] = []
     for f, _reason in bad:
         target = f.with_suffix(f.suffix + ".bad")
         try:
             f.rename(target)
+            renamed_paths.append(str(f))
         except Exception as exc:
             failed.append((f, str(exc)))
+
+    # Drop the renamed entries from the cache so stats / bad / anything else
+    # that reads frame_stats.json doesn't carry orphan rows pointing at
+    # paths that no longer exist.
+    if renamed_paths:
+        for p in renamed_paths:
+            cached_by_path.pop(p, None)
+        tmp = cache_path.with_suffix(".tmp")
+        try:
+            with open(tmp, "w") as f:
+                _json.dump(list(cached_by_path.values()), f, default=str, indent=2)
+            tmp.replace(cache_path)
+        except Exception:
+            try:
+                tmp.unlink(missing_ok=True)
+            except Exception:
+                pass
+
     if failed:
         social_server.post_social_message(
             f"Rename failed for {len(failed)} frame(s); first error: "
