@@ -227,6 +227,16 @@ async def api_ticker():
         except Exception:
             pass
 
+        # Free space on the drive hosting NINA images
+        try:
+            import shutil
+            from configs import config as _cfg
+            image_drive = Path(_cfg.data()["nina"]["image_dir"]).drive or "C:"
+            free_gb = shutil.disk_usage(image_drive + "\\").free / 1024 ** 3
+            metrics.append({"label": f"{image_drive} Free", "value": f"{free_gb:.1f} GB"})
+        except Exception:
+            pass
+
         payload = {"ok": True, "metrics": metrics}
     except Exception:
         _logger.exception("api_ticker error")
@@ -264,6 +274,9 @@ async def api_imaging_ticker():
             import json as _json
             import datetime as _dt
             import pytz
+            import astropy.units as _u
+            from astropy.coordinates import SkyCoord as _SkyCoord
+            from astroplan import FixedTarget as _FixedTarget
             from iris_astronomy import astro_dso_visibility
             from astropy.time import Time as _AstroTime
 
@@ -276,7 +289,34 @@ async def api_imaging_ticker():
                 instructions = _json.load(f)
             in_proc = next((i for i in instructions if i.get("status") == "in process"), None)
             if in_proc:
-                dso = astro_dso_visibility.is_a_dso_object(in_proc["dso"])
+                # Read RA/Dec from the already-generated NINA sequence rather than
+                # hitting Simbad on every ticker poll (avoids network failures).
+                dso = None
+                seq_path = Path(cfg2["nina"]["sequence_output"])
+                if seq_path.exists():
+                    def _walk_seq(obj):
+                        if isinstance(obj, dict):
+                            if "NINA.Astrometry.InputCoordinates" in obj.get("$type", ""):
+                                ra_h = obj["RAHours"] + obj["RAMinutes"] / 60 + obj["RASeconds"] / 3600
+                                dec_abs = obj["DecDegrees"] + obj["DecMinutes"] / 60 + obj["DecSeconds"] / 3600
+                                return ra_h, -dec_abs if obj.get("NegativeDec") else dec_abs
+                            for v in obj.values():
+                                r = _walk_seq(v)
+                                if r:
+                                    return r
+                        elif isinstance(obj, list):
+                            for item in obj:
+                                r = _walk_seq(item)
+                                if r:
+                                    return r
+                        return None
+                    with open(seq_path) as f:
+                        seq_data = _json.load(f)
+                    coords = _walk_seq(seq_data)
+                    if coords:
+                        ra_h, dec_d = coords
+                        sc = _SkyCoord(ra=ra_h * _u.hour, dec=dec_d * _u.deg)
+                        dso = _FixedTarget(coord=sc, name=in_proc["dso"])
                 if dso:
                     finish = astro_dso_visibility.get_finish_time(dso, _AstroTime.now())
                     if finish is not None:
