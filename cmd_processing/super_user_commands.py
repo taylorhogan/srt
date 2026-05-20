@@ -1070,6 +1070,13 @@ def _bad_run(words: list[str]) -> None:
             pass
 
     def _analyse(fits_path: Path) -> dict:
+        from astropy.io import fits as _fits
+        filter_name = "Unknown"
+        try:
+            with _fits.open(fits_path) as hdul:
+                filter_name = str(hdul[0].header.get("FILTER", "Unknown")).strip()
+        except Exception:
+            pass
         try:
             with _warnings.catch_warnings():
                 _warnings.simplefilter("ignore")
@@ -1078,14 +1085,15 @@ def _bad_run(words: list[str]) -> None:
                 )
             return {
                 "path": str(fits_path),
+                "filter": filter_name,
                 "fwhm_arcsec": round(float(fwhm_arcsec), 3) if star_count else None,
                 "eccentricity": round(float(ecc), 3) if star_count else None,
                 "star_count": int(star_count),
             }
         except Exception as exc:
             _logger.warning("bad: could not analyse %s: %s", fits_path.name, exc)
-            return {"path": str(fits_path), "fwhm_arcsec": None,
-                    "eccentricity": None, "star_count": 0}
+            return {"path": str(fits_path), "filter": filter_name,
+                    "fwhm_arcsec": None, "eccentricity": None, "star_count": 0}
 
     need_analysis = [f for f in fits_files if str(f) not in cached_by_path]
     cached_count = len(fits_files) - len(need_analysis)
@@ -1134,10 +1142,37 @@ def _bad_run(words: list[str]) -> None:
         elif ecc is not None and ecc > _BAD_ECC:
             bad.append((f, f"ecc {ecc:.2f} > {_BAD_ECC}"))
 
+    from stacking import stacker as _stacker
+
+    def _filter_for(f: Path) -> str:
+        entry = cached_by_path.get(str(f), {})
+        name = entry.get("filter")
+        if name:
+            return str(name).strip()
+        return _stacker.read_filter(f)
+
+    # Per-filter totals before/after the would-be rename
+    total_by_filter: dict[str, int] = {}
+    bad_by_filter: dict[str, int] = {}
+    bad_set = {p for p, _ in bad}
+    for f in fits_files:
+        fn = _filter_for(f) or "Unknown"
+        total_by_filter[fn] = total_by_filter.get(fn, 0) + 1
+        if f in bad_set:
+            bad_by_filter[fn] = bad_by_filter.get(fn, 0) + 1
+
+    def _remaining_summary() -> str:
+        parts = []
+        for fn in sorted(total_by_filter):
+            remaining = total_by_filter[fn] - bad_by_filter.get(fn, 0)
+            parts.append(f"{fn}: {remaining}/{total_by_filter[fn]}")
+        return "Remaining frames per filter — " + "  ".join(parts)
+
     if not bad:
         social_server.post_social_message(
             f"{dso_dir.name}: all {len(fits_files)} frames pass thresholds "
-            f"(FWHM≤{_BAD_FWHM_ARCSEC}\", ecc≤{_BAD_ECC}, stars>0)"
+            f"(FWHM≤{_BAD_FWHM_ARCSEC}\", ecc≤{_BAD_ECC}, stars>0)\n"
+            f"{_remaining_summary()}"
         )
         return
 
@@ -1147,6 +1182,7 @@ def _bad_run(words: list[str]) -> None:
         lines.append(f"  {f.name}  — {reason}")
     if len(bad) > 40:
         lines.append(f"  …and {len(bad) - 40} more")
+    lines.append(_remaining_summary())
     if not do_rename:
         lines.append(f"Re-run as `bad {dso_arg or '*'} go` to actually rename.")
     social_server.post_social_message("\n".join(lines))
