@@ -891,16 +891,21 @@ def convergence_curve(
     if progress_cb:
         progress_cb(f"sampling convergence ({n} frames, {len(_fib_counts(n))} points)…")
 
-    counts = _fib_counts(n)
-    mean_residuals: list[float] = []
-    std_residuals: list[float] = []
+    from concurrent.futures import ThreadPoolExecutor
 
-    for k in counts:
+    counts = _fib_counts(n)
+
+    # Each Fibonacci count is fully independent — run them all concurrently.
+    # Give each worker its own seeded RNG so there is no shared mutable state.
+    seeds = rng.integers(0, 2**31, size=len(counts))
+
+    def _trials_for_k(args: tuple[int, int]) -> tuple[float, float]:
+        k, seed = args
+        local_rng = np.random.default_rng(seed)
         actual_trials = n_trials if k < n else 1
         trial_rmses: list[float] = []
         for _ in range(actual_trials):
-            idx = rng.choice(n, size=k, replace=False)
-            # FWHM-weighted mean for the k-frame subset (renormalised weights)
+            idx = local_rng.choice(n, size=k, replace=False)
             sub_w = weights[idx]
             sub_w = sub_w / sub_w.sum()
             nan_mask = np.isnan(arr[idx])
@@ -909,10 +914,16 @@ def convergence_curve(
             numer = np.sum(safe * sub_w[:, None, None], axis=0)
             denom = contrib.sum(axis=0)
             subset_stack = np.where(denom > 0, numer / np.where(denom > 0, denom, 1.0), golden)
-            rmse = float(np.sqrt(np.nanmean((subset_stack - golden) ** 2)))
-            trial_rmses.append(rmse / golden_median)
-        mean_residuals.append(float(np.mean(trial_rmses)))
-        std_residuals.append(float(np.std(trial_rmses)))
+            trial_rmses.append(
+                float(np.sqrt(np.nanmean((subset_stack - golden) ** 2))) / golden_median
+            )
+        return float(np.mean(trial_rmses)), float(np.std(trial_rmses))
+
+    with ThreadPoolExecutor() as pool:
+        results = list(pool.map(_trials_for_k, zip(counts, seeds.tolist())))
+
+    mean_residuals = [r[0] for r in results]
+    std_residuals = [r[1] for r in results]
 
     xs = np.array(counts)
     ys = np.array(mean_residuals)
