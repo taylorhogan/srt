@@ -29,7 +29,6 @@ biases are filter-agnostic.
 
 import logging
 import os
-import random
 import sys
 import threading
 import time
@@ -214,10 +213,17 @@ _REG_MIN_MATCHED_STARS = 10
 _REG_MAX_MEDIAN_RESIDUAL_PX = 2.0
 
 
-def _register_frames(frames: list[np.ndarray]) -> list[np.ndarray]:
+def _register_frames(
+    frames: list[np.ndarray],
+) -> tuple[list[np.ndarray], list[int]]:
     """
     Register all frames to the best reference frame using an affine transform.
     The reference is chosen as the frame with the most detected stars.
+
+    Returns (registered_frames, surviving_indices) where surviving_indices[i]
+    is the index in the *input* list that produced registered_frames[i].  The
+    caller must use these indices to keep any parallel per-frame data (e.g.
+    FWHM weights) in sync with the returned frame list.
 
     Frames are dropped when:
       - astroalign cannot find a transform at all,
@@ -227,11 +233,12 @@ def _register_frames(frames: list[np.ndarray]) -> list[np.ndarray]:
         catches that case).
     """
     if not _REGISTER_AVAILABLE or len(frames) < 2:
-        return frames
+        return frames, list(range(len(frames)))
 
     ref_idx = _best_reference_idx(frames)
     reference = frames[ref_idx]
     registered = [reference]
+    surviving_indices = [ref_idx]
     failed = 0
     poor_qa = 0
     for i, frame in enumerate(frames):
@@ -277,12 +284,13 @@ def _register_frames(frames: list[np.ndarray]) -> list[np.ndarray]:
         # mark them NaN and let the combine step ignore them.
         aligned[footprint.astype(bool)] = np.nan
         registered.append(aligned)
+        surviving_indices.append(i)
 
     _logger.info(
         "Registration: %d/%d frames aligned, %d failed, %d rejected by QA",
         len(registered), len(frames), failed, poor_qa,
     )
-    return registered
+    return registered, surviving_indices
 
 
 def _measure_fwhm(path: Path) -> float:
@@ -375,6 +383,7 @@ def stack(
     max_fwhm: Optional[float] = None,
     max_fwhm_multiplier: Optional[float] = None,
     register: bool = True,
+    progress_cb: Optional[Callable[[str], None]] = None,
 ) -> tuple[np.ndarray, dict]:
     """
     Stack a list of FITS light frames with optional calibration and FWHM weighting.
@@ -422,6 +431,8 @@ def stack(
     fwhm_values: dict[Path, float] = {}
     if need_fwhm:
         _logger.info("Measuring FWHM for %d frames…", len(light_paths))
+        if progress_cb:
+            progress_cb(f"measuring FWHM for {len(light_paths)} frames…")
         for p in light_paths:
             fwhm_values[p] = _measure_fwhm(p)
             _logger.debug("  %s → FWHM %.2f px", p.name, fwhm_values[p])
@@ -452,7 +463,21 @@ def stack(
             f"All {len(light_paths)} frames were rejected by max_fwhm={max_fwhm}"
         )
 
-    random.shuffle(accepted)
+    if need_fwhm and progress_cb:
+        measured_vals = [v for v in fwhm_values.values() if v > 0.0]
+        arcsec = _get_arcsec_per_pixel()
+        if measured_vals:
+            median_px = float(np.median(measured_vals))
+            progress_cb(
+                f"FWHM done — median {median_px * arcsec:.2f}″, "
+                f"keeping {len(accepted)}/{len(light_paths)} frames"
+                + (f", rejected {len(rejected)} blurry" if rejected else "")
+            )
+        else:
+            progress_cb(
+                f"FWHM unmeasurable — keeping {len(accepted)}/{len(light_paths)} frames"
+            )
+
     _logger.info(
         "Loading and calibrating %d frames (rejected %d)…", len(accepted), len(rejected)
     )
@@ -461,8 +486,18 @@ def stack(
 
     if register:
         _logger.info("Registering %d frames to reference…", len(calibrated))
-        calibrated = _register_frames(calibrated)
+        if progress_cb:
+            progress_cb(f"registering {len(calibrated)} frames…")
+        calibrated, surviving_indices = _register_frames(calibrated)
+        accepted = [accepted[i] for i in surviving_indices]
         _logger.info("%d frames remain after registration", len(calibrated))
+        if progress_cb:
+            n_dropped = len(light_paths) - len(accepted) - len(rejected)
+            progress_cb(
+                f"registration done — {len(calibrated)} frames aligned"
+                + (f", {n_dropped} dropped" if n_dropped > 0 else "")
+                + ", combining…"
+            )
 
     n_frames = len(calibrated)
     if n_frames == 0:
@@ -498,11 +533,14 @@ def stack(
         TILE = 512  # 512×512×N×4B ≈ 1 MiB per slice → ~60 MiB per tile cube at N=60
         n_ty = (H + TILE - 1) // TILE
         n_tx = (W + TILE - 1) // TILE
+        n_tiles_total = n_ty * n_tx
         _logger.info(
             "Tiled combine: %d frames, %d×%d tiles of %d px, method %s",
             n_frames, n_ty, n_tx, TILE, method.name,
         )
 
+        _progress_pcts_fired: set[int] = set()
+        tile_idx = 0
         for y0 in range(0, H, TILE):
             y1 = min(y0 + TILE, H)
             for x0 in range(0, W, TILE):
@@ -512,6 +550,13 @@ def stack(
                 )
                 coverage[y0:y1, x0:x1] = np.sum(~np.isnan(cube_tile), axis=0).astype(np.int32)
                 result[y0:y1, x0:x1] = _combine_tile(cube_tile, method, weights, sigma)
+                tile_idx += 1
+                if progress_cb:
+                    pct = tile_idx * 100 // n_tiles_total
+                    milestone = (pct // 25) * 25
+                    if milestone > 0 and milestone not in _progress_pcts_fired:
+                        _progress_pcts_fired.add(milestone)
+                        progress_cb(f"combining {milestone}%…")
     finally:
         # Drop memmaps before deleting the backing files (matters on Windows).
         mmaps = None
@@ -853,7 +898,7 @@ def stack_directory(
             calibrated = [_calibrate(_load_fits_2d(p), master_bias, master_dark, master_flat)
                           for p in group_paths]
             if register:
-                calibrated = _register_frames(calibrated)
+                calibrated, _ = _register_frames(calibrated)
             convergence_curve(calibrated, filter_name=filter_name, output_path=conv_jpg)
             _logger.info("Convergence curve → %s", conv_jpg)
 

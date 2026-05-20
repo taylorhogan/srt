@@ -921,11 +921,15 @@ def _stack_run(words: list[str]) -> None:
     )
 
     for filter_name, paths in sorted(groups.items()):
+        def _progress(msg: str, _fn: str = filter_name, _dso: str = dso_dir.name) -> None:
+            social_server.post_social_message(f"{_dso} {_fn}: {msg}")
+
         try:
             result, info = stacker.stack(
                 paths,
                 method=stacker.StackMethod.SIGMA_CLIP_FWHM,
                 max_fwhm_multiplier=1.5,
+                progress_cb=_progress,
             )
         except Exception as exc:
             social_server.post_social_message(
