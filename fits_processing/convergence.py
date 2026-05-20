@@ -44,7 +44,12 @@ def _threshold() -> float:
 
 def _min_frames() -> int:
     cfg = _config.data()
-    return int(cfg.get("convergence", {}).get("min_frames_per_filter", 20))
+    return int(cfg.get("convergence", {}).get("min_frames_per_filter", 30))
+
+
+def _rmse_threshold() -> float:
+    cfg = _config.data()
+    return float(cfg.get("convergence", {}).get("rmse_done_threshold", 5.0))
 
 
 def load_convergence() -> dict:
@@ -127,9 +132,10 @@ def compute_dso_convergence(dso_name: str, image_dir: Path) -> dict[str, dict]:
     today = date.today().isoformat()
     for fname, paths in by_filter.items():
         try:
-            _, _, slope_pct = stacker.convergence_curve(paths, filter_name=fname)
+            _, _, slope_pct, final_rmse_pct = stacker.convergence_curve(paths, filter_name=fname)
             results[fname] = {
                 "tail_slope_pct": round(slope_pct, 6),
+                "final_rmse_pct": round(final_rmse_pct, 4),
                 "frame_count": len(paths),
                 "updated": today,
             }
@@ -139,18 +145,22 @@ def compute_dso_convergence(dso_name: str, image_dir: Path) -> dict[str, dict]:
 
 
 def is_dso_done(dso_name: str) -> bool:
-    """True if every imaged filter is below threshold AND above min_frames."""
+    """True if every imaged filter has a flat tail AND low absolute RMSE AND min frames."""
     data = load_convergence()
     key = dso_name.lower().replace(" ", "")
     filters = data.get(key, {})
     if not filters:
         return False
-    threshold = _threshold()
+    slope_threshold = _threshold()
+    rmse_threshold = _rmse_threshold()
     min_frames = _min_frames()
     for info in filters.values():
         if info.get("frame_count", 0) < min_frames:
             return False
-        if abs(info.get("tail_slope_pct", 999.0)) > threshold:
+        if abs(info.get("tail_slope_pct", 999.0)) > slope_threshold:
+            return False
+        rmse = info.get("final_rmse_pct")
+        if rmse is not None and rmse > rmse_threshold:
             return False
     return True
 

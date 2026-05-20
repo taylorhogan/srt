@@ -860,8 +860,9 @@ def convergence_curve(
         progress_cb:         Called with a status string at each major milestone.
 
     Returns:
-        (counts, mean_residuals, slope_pct) — Fibonacci frame counts, mean normalised
-        RMSE, and tail slope in %/frame (negative means improving).
+        (counts, mean_residuals, slope_pct, final_rmse_pct) — Fibonacci frame counts,
+        mean normalised RMSE per point, tail slope in %/frame (negative = improving),
+        and the RMSE at the last (all-frames) point as a percentage.
     """
     from astropy.stats import sigma_clipped_stats
     import matplotlib.pyplot as plt
@@ -983,7 +984,8 @@ def convergence_curve(
     else:
         plt.show()
 
-    return counts, mean_residuals, slope_pct
+    final_rmse_pct = float(mean_residuals[-1]) * 100
+    return counts, mean_residuals, slope_pct, final_rmse_pct
 
 
 # ---------------------------------------------------------------------------

@@ -1755,7 +1755,7 @@ def _snr_run(words: list[str]) -> None:
         output_path = Path(scratch_dir) / f"convergence_{filter_name}.jpg"
         golden_output_path = Path(scratch_dir) / f"golden_{filter_name}.jpg"
         try:
-            _, _, slope_pct = stacker.convergence_curve(
+            _, _, slope_pct, final_rmse_pct = stacker.convergence_curve(
                 paths,
                 filter_name=filter_name,
                 output_path=output_path,
@@ -1769,12 +1769,13 @@ def _snr_run(words: list[str]) -> None:
         from datetime import date as _date
         saved[filter_name] = {
             "tail_slope_pct": round(slope_pct, 6),
+            "final_rmse_pct": round(final_rmse_pct, 4),
             "frame_count": len(paths),
             "updated": _date.today().isoformat(),
         }
 
         social_server.post_social_message(
-            f"Stack convergence vs golden — {filter_name}  ({len(paths)} frames)  slope {slope_pct:+.4f}%/frame",
+            f"Stack convergence vs golden — {filter_name}  ({len(paths)} frames)  slope {slope_pct:+.4f}%/frame  RMSE {final_rmse_pct:.2f}%",
             str(output_path),
         )
         social_server.post_social_message(
