@@ -965,6 +965,209 @@ def _stack_run(words: list[str]) -> None:
         )
 
 
+_BAD_FWHM_ARCSEC = 3.0
+_BAD_ECC = 0.45
+
+
+def bad_cmd(words: list[str], account: str) -> None:
+    """Rename LIGHT frames that fail quality thresholds to .bad.
+
+    Failing == 0 stars detected OR FWHM > 3.0″ OR eccentricity > 0.45.
+    Renames `<frame>.fits` to `<frame>.fits.bad` so they're skipped by
+    the stacker (which only globs *.fits).
+
+    Reuses the frame_stats.json cache populated by the `stats` command;
+    any uncached frames are measured on the spot and written back to the
+    cache.
+
+    Usage:
+        bad                 — dry-run on last-imaged DSO
+        bad <dso>           — dry-run on named DSO
+        bad <dso> go        — actually rename (default is dry-run)
+        bad go              — dry-run on last DSO (use `bad * go` to rename)
+    """
+    threading.Thread(target=_bad_run, args=(words,), daemon=True).start()
+
+
+def _bad_run(words: list[str]) -> None:
+    import json as _json
+    import warnings as _warnings
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    from fits_processing import fitsfwhm
+
+    cfg = config.data()
+    image_dir = Path(cfg["nina"]["image_dir"])
+    arcsec_per_pixel = cfg["nina"]["arc_sec_per_pixel"]
+
+    # Parse args: optional <dso> and optional trailing "go"
+    extra = list(words[2:]) if len(words) > 2 else []
+    do_rename = False
+    if extra and extra[-1].lower() == "go":
+        do_rename = True
+        extra = extra[:-1]
+    dso_arg = " ".join(extra).strip() or None
+    if dso_arg == "*":
+        dso_arg = None
+
+    def _is_light(f: Path) -> bool:
+        return f.parent.name.upper() == "LIGHT"
+
+    def _find_dso_dir(fits_path: Path) -> Optional[Path]:
+        d = fits_path.parent
+        while d.parent != image_dir and d.parent != d:
+            d = d.parent
+        return d if d.parent == image_dir else None
+
+    def _find_dso_dir_by_name(name: str) -> Optional[Path]:
+        target = name.lower().replace(" ", "").replace("_", "")
+        candidates = [
+            d for d in image_dir.iterdir()
+            if d.is_dir() and target in d.name.lower().replace(" ", "").replace("_", "")
+        ]
+        if not candidates:
+            return None
+        if len(candidates) == 1:
+            return candidates[0]
+        def _latest(d: Path) -> float:
+            try:
+                return max(f.stat().st_mtime for f in d.rglob("*.fits") if _is_light(f))
+            except ValueError:
+                return 0.0
+        return max(candidates, key=_latest)
+
+    if dso_arg:
+        dso_dir = _find_dso_dir_by_name(dso_arg)
+        if dso_dir is None:
+            social_server.post_social_message(f"No image directory found for '{dso_arg}'")
+            return
+    else:
+        all_fits = sorted(
+            (f for f in image_dir.rglob("*.fits") if _is_light(f)),
+            key=lambda f: f.stat().st_mtime,
+        )
+        if not all_fits:
+            social_server.post_social_message("No LIGHT frames found")
+            return
+        dso_dir = _find_dso_dir(all_fits[-1])
+
+    fits_files = sorted(f for f in dso_dir.rglob("*.fits") if _is_light(f)) if dso_dir else []
+    if not fits_files:
+        social_server.post_social_message(f"{dso_dir.name}: no LIGHT frames found")
+        return
+
+    # Load existing stats cache (path → entry)
+    cache_path = dso_dir / "frame_stats.json"
+    cached_by_path: dict[str, dict] = {}
+    if cache_path.exists():
+        try:
+            with open(cache_path) as f:
+                existing = _json.load(f)
+            if isinstance(existing, list):
+                for entry in existing:
+                    if "path" in entry:
+                        cached_by_path[str(Path(entry["path"]))] = entry
+        except Exception:
+            pass
+
+    def _analyse(fits_path: Path) -> dict:
+        try:
+            with _warnings.catch_warnings():
+                _warnings.simplefilter("ignore")
+                _, fwhm_arcsec, star_count, ecc = fitsfwhm.calculate_fwhm(
+                    fits_path, arcsec_per_pixel=arcsec_per_pixel
+                )
+            return {
+                "path": str(fits_path),
+                "fwhm_arcsec": round(float(fwhm_arcsec), 3) if star_count else None,
+                "eccentricity": round(float(ecc), 3) if star_count else None,
+                "star_count": int(star_count),
+            }
+        except Exception as exc:
+            _logger.warning("bad: could not analyse %s: %s", fits_path.name, exc)
+            return {"path": str(fits_path), "fwhm_arcsec": None,
+                    "eccentricity": None, "star_count": 0}
+
+    need_analysis = [f for f in fits_files if str(f) not in cached_by_path]
+    cached_count = len(fits_files) - len(need_analysis)
+    social_server.post_social_message(
+        f"bad {dso_dir.name}: {len(fits_files)} frames "
+        f"({cached_count} cached, {len(need_analysis)} to analyse)"
+    )
+
+    if need_analysis:
+        new_entries: list[dict] = [None] * len(need_analysis)
+        max_workers = min(8, len(need_analysis))
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            future_map = {pool.submit(_analyse, f): i for i, f in enumerate(need_analysis)}
+            for fut in as_completed(future_map):
+                new_entries[future_map[fut]] = fut.result()
+        for entry in new_entries:
+            cached_by_path[str(Path(entry["path"]))] = entry
+        tmp = cache_path.with_suffix(".tmp")
+        try:
+            with open(tmp, "w") as f:
+                _json.dump(list(cached_by_path.values()), f, default=str, indent=2)
+            tmp.replace(cache_path)
+        except Exception:
+            try:
+                tmp.unlink(missing_ok=True)
+            except Exception:
+                pass
+
+    # Decide which frames are bad. Legacy `stats` cache entries don't carry
+    # `star_count`; in those rows, `eccentricity is None` is the project's
+    # marker for "no stars detected" (see _image_stats_run).
+    bad: list[tuple[Path, str]] = []  # (path, reason)
+    for f in fits_files:
+        entry = cached_by_path.get(str(f), {})
+        fwhm = entry.get("fwhm_arcsec")
+        ecc = entry.get("eccentricity")
+        if "star_count" in entry:
+            star_count = entry["star_count"]
+        else:
+            star_count = 0 if ecc is None else None
+
+        if star_count == 0:
+            bad.append((f, "0 stars"))
+        elif fwhm is not None and fwhm > _BAD_FWHM_ARCSEC:
+            bad.append((f, f"FWHM {fwhm:.2f}\" > {_BAD_FWHM_ARCSEC}\""))
+        elif ecc is not None and ecc > _BAD_ECC:
+            bad.append((f, f"ecc {ecc:.2f} > {_BAD_ECC}"))
+
+    if not bad:
+        social_server.post_social_message(
+            f"{dso_dir.name}: all {len(fits_files)} frames pass thresholds "
+            f"(FWHM≤{_BAD_FWHM_ARCSEC}\", ecc≤{_BAD_ECC}, stars>0)"
+        )
+        return
+
+    verb = "Renamed" if do_rename else "Would rename"
+    lines = [f"{verb} {len(bad)}/{len(fits_files)} frame(s) in {dso_dir.name}:"]
+    for f, reason in bad[:40]:
+        lines.append(f"  {f.name}  — {reason}")
+    if len(bad) > 40:
+        lines.append(f"  …and {len(bad) - 40} more")
+    if not do_rename:
+        lines.append(f"Re-run as `bad {dso_arg or '*'} go` to actually rename.")
+    social_server.post_social_message("\n".join(lines))
+
+    if not do_rename:
+        return
+
+    failed: list[tuple[Path, str]] = []
+    for f, _reason in bad:
+        target = f.with_suffix(f.suffix + ".bad")
+        try:
+            f.rename(target)
+        except Exception as exc:
+            failed.append((f, str(exc)))
+    if failed:
+        social_server.post_social_message(
+            f"Rename failed for {len(failed)} frame(s); first error: "
+            f"{failed[0][0].name} — {failed[0][1]}"
+        )
+
+
 def get_super_user_commands() -> dict[str, Callable]:
     """Return the command-name → handler mapping for all super-user commands."""
     return {
@@ -989,6 +1192,7 @@ def get_super_user_commands() -> dict[str, Callable]:
         "optics": optics_cmd,
         "drift": drift_cmd,
         "stack": stack_cmd,
+        "bad": bad_cmd,
     }
 
 
@@ -1646,6 +1850,7 @@ def _image_stats_run(words: list[str], account: str) -> None:
                 "filter":          filter_name,
                 "fwhm_arcsec":     fwhm_arcsec,
                 "eccentricity":    ecc,
+                "star_count":      int(star_count),
                 "sky_adu_per_s":   round(sky["sky_adu_per_s"], 2)       if sky else None,
                 "sky_mag_arcsec2": round(sky["sky_mag_arcsec2"], 2)
                                    if sky and sky.get("sky_mag_arcsec2") is not None else None,
@@ -1653,7 +1858,7 @@ def _image_stats_run(words: list[str], account: str) -> None:
         except Exception as exc:
             _logger.warning("stats: could not analyse %s: %s", fits_path.name, exc)
             return {"path": str(fits_path), "time": "", "filter": "Unknown",
-                    "fwhm_arcsec": None, "eccentricity": None,
+                    "fwhm_arcsec": None, "eccentricity": None, "star_count": 0,
                     "sky_adu_per_s": None, "sky_mag_arcsec2": None}
 
     need_analysis = [f for f in fits_files if str(f) not in cached_by_path]
