@@ -787,8 +787,11 @@ def _drift_run(words: list[str]) -> None:
     if nan_px.any():
         golden[nan_px] = float(np.nanmedian(golden))
 
+    from concurrent.futures import ThreadPoolExecutor
+
     counts = stacker._fib_counts(n)
-    for k in counts:
+
+    def _render_k(k: int) -> tuple[int, Path]:
         sub_w = weights[:k].copy()
         sub_w /= sub_w.sum()
         nan_mask = np.isnan(arr[:k])
@@ -797,24 +800,27 @@ def _drift_run(words: list[str]) -> None:
         numer = np.sum(safe * sub_w[:, None, None], axis=0)
         denom = contrib.sum(axis=0)
         subset_mean = np.where(denom > 0, numer / np.where(denom > 0, denom, 1.0), golden)
-
         diff = np.abs(subset_mean - golden)
         try:
             vmin, vmax = ZScaleInterval().get_limits(diff)
         except Exception:
             vmin, vmax = float(np.percentile(diff, 1)), float(np.percentile(diff, 99))
-
         fig, ax = plt.subplots(figsize=(8, 8))
         ax.imshow(diff, origin="lower", cmap="gray", vmin=vmin, vmax=vmax,
                   interpolation="nearest")
         ax.axis("off")
         ax.set_title(f"{dso_dir.name}  L  {k}/{n} frames vs golden", fontsize=10)
         fig.tight_layout(pad=0.5)
-
         out_path = scratch_dir / f"drift_L_{k:04d}of{n:04d}.jpg"
         fig.savefig(out_path, format="jpeg", dpi=120, bbox_inches="tight")
         plt.close(fig)
-        social_server.post_social_message(f"L  {k}/{n} frames vs golden", str(out_path))
+        return k, out_path
+
+    with ThreadPoolExecutor() as pool:
+        results = dict(pool.map(_render_k, counts))
+
+    for k in counts:
+        social_server.post_social_message(f"L  {k}/{n} frames vs golden", str(results[k]))
 
 
 def stack_cmd(words: list[str], account: str) -> None:
