@@ -984,7 +984,10 @@ def convergence_curve(
     else:
         plt.show()
 
-    final_rmse_pct = float(mean_residuals[-1]) * 100
+    # Use second-to-last point: "how much worse with ~40% fewer frames?"
+    # This is a better flatness signal than [-1] which just measures method gap (weighted mean vs sigma clip).
+    penult = mean_residuals[-2] if len(mean_residuals) >= 2 else mean_residuals[-1]
+    final_rmse_pct = float(penult) * 100
     return counts, mean_residuals, slope_pct, final_rmse_pct
 
 
