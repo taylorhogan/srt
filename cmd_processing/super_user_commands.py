@@ -1544,36 +1544,18 @@ def doit_cmd(words: list[str], account: str) -> None:
         _logger.info("Terminating NINA before starting flats")
         social_server.post_social_message("Terminating NINA before flats")
         _kill_nina()
-        threading.Thread(target=_compute_end_of_night_convergence, daemon=True).start()
         do_flats()
 
-
-
-def _compute_end_of_night_convergence() -> None:
-    """Compute and persist convergence data for the DSO imaged tonight."""
-    try:
-        from fits_processing import convergence as _conv
-
-        cfg = config.data()
-        image_dir = Path(cfg["nina"]["image_dir"])
-
         instr = instructions.get_dso_object_tonight()
-        dso_name = instr.get("dso") if instr else None
-        if not dso_name:
-            _logger.warning("_compute_end_of_night_convergence: no active DSO found")
-            return
-
-        social_server.post_social_message(f"Computing convergence for {dso_name}…")
-        results = _conv.compute_dso_convergence(dso_name, image_dir)
-        if not results:
-            social_server.post_social_message(f"Convergence: no LIGHT frames found for {dso_name}")
-            return
-
-        _conv.save_convergence(dso_name, results)
-        parts = [f"{f} {v['tail_slope_pct']:+.4f}%/f ({v['frame_count']}f)" for f, v in results.items()]
-        social_server.post_social_message(f"Convergence: {dso_name} — " + ", ".join(parts))
-    except Exception:
-        _logger.exception("_compute_end_of_night_convergence failed")
+        eon_dso = instr.get("dso") if instr else None
+        eon_words = ["snr", eon_dso] if eon_dso else ["snr"]
+        social_server.post_social_message(
+            f"End of night: SNR analysis for {eon_dso or 'most recent DSO'}…"
+        )
+        try:
+            _snr_run(eon_words, "system")
+        except Exception:
+            _logger.exception("End-of-night SNR failed")
 
 
 def do_flats() -> None:
@@ -1738,11 +1720,13 @@ def _snr_run(words: list[str]) -> None:
             social_server.post_social_message(f"Convergence [{_fn}]: {msg}")
 
         output_path = Path(scratch_dir) / f"convergence_{filter_name}.jpg"
+        golden_output_path = Path(scratch_dir) / f"golden_{filter_name}.jpg"
         try:
             _, _, slope_pct = stacker.convergence_curve(
                 paths,
                 filter_name=filter_name,
                 output_path=output_path,
+                golden_output_path=golden_output_path,
                 progress_cb=_progress,
             )
         except Exception as exc:
@@ -1759,6 +1743,10 @@ def _snr_run(words: list[str]) -> None:
         social_server.post_social_message(
             f"Stack convergence vs golden — {filter_name}  ({len(paths)} frames)  slope {slope_pct:+.4f}%/frame",
             str(output_path),
+        )
+        social_server.post_social_message(
+            f"Golden stack — {filter_name}  ({len(paths)} frames)",
+            str(golden_output_path),
         )
 
     if saved and dso_dir is not None:

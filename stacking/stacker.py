@@ -835,6 +835,7 @@ def convergence_curve(
     paths: list[Path],
     filter_name: str = "",
     output_path: Optional[Path] = None,
+    golden_output_path: Optional[Path] = None,
     n_trials: int = 20,
     max_fwhm_multiplier: float = 1.5,
     register: bool = True,
@@ -887,6 +888,11 @@ def convergence_curve(
     _, golden_median, _ = sigma_clipped_stats(golden, sigma=3.0)
     if golden_median <= 0:
         golden_median = 1.0
+
+    if golden_output_path is not None:
+        golden_output_path.parent.mkdir(parents=True, exist_ok=True)
+        _label = f"{filter_name} golden  {n} frames" if filter_name else f"golden  {n} frames"
+        _save_jpg(golden, golden_output_path, title=_label)
 
     if progress_cb:
         progress_cb(f"sampling convergence ({n} frames, {len(_fib_counts(n))} points)…")
