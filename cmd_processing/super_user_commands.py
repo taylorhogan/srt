@@ -791,7 +791,9 @@ def _drift_run(words: list[str]) -> None:
 
     counts = stacker._fib_counts(n)
 
-    def _render_k(k: int) -> tuple[int, Path]:
+    def _compute_diff_k(k: int) -> tuple[int, np.ndarray]:
+        if k == n:
+            return k, np.zeros_like(golden)
         sub_w = weights[:k].copy()
         sub_w /= sub_w.sum()
         nan_mask = np.isnan(arr[:k])
@@ -800,11 +802,20 @@ def _drift_run(words: list[str]) -> None:
         numer = np.sum(safe * sub_w[:, None, None], axis=0)
         denom = contrib.sum(axis=0)
         subset_mean = np.where(denom > 0, numer / np.where(denom > 0, denom, 1.0), golden)
-        diff = np.abs(subset_mean - golden)
-        try:
-            vmin, vmax = ZScaleInterval().get_limits(diff)
-        except Exception:
-            vmin, vmax = float(np.percentile(diff, 1)), float(np.percentile(diff, 99))
+        return k, np.abs(subset_mean - golden)
+
+    with ThreadPoolExecutor() as pool:
+        diffs = dict(pool.map(_compute_diff_k, counts))
+
+    first_diff = diffs[counts[0]]
+    try:
+        _, vmax = ZScaleInterval().get_limits(first_diff)
+    except Exception:
+        vmax = float(np.nanpercentile(first_diff, 99))
+    vmin = 0.0
+
+    def _render_k(k: int) -> tuple[int, Path]:
+        diff = diffs[k]
         fig, ax = plt.subplots(figsize=(8, 8))
         ax.imshow(diff, origin="lower", cmap="gray", vmin=vmin, vmax=vmax,
                   interpolation="nearest")
