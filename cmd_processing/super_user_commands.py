@@ -1747,41 +1747,47 @@ def _snr_run(words: list[str]) -> None:
 
     from fits_processing import convergence as _conv
 
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    from datetime import date as _date
+
+    def _run_filter(filter_name: str, paths: list) -> tuple:
+        out = Path(scratch_dir) / f"convergence_{filter_name}.jpg"
+        gold = Path(scratch_dir) / f"golden_{filter_name}.jpg"
+        def _progress(msg: str) -> None:
+            social_server.post_social_message(f"Convergence [{filter_name}]: {msg}")
+        _, _, slope_pct, final_rmse_pct = stacker.convergence_curve(
+            paths,
+            filter_name=filter_name,
+            output_path=out,
+            golden_output_path=gold,
+            progress_cb=_progress,
+        )
+        return filter_name, paths, slope_pct, final_rmse_pct, out, gold
+
     saved: dict[str, dict] = {}
-    for filter_name, paths in by_filter.items():
-        def _progress(msg: str, _fn: str = filter_name) -> None:
-            social_server.post_social_message(f"Convergence [{_fn}]: {msg}")
-
-        output_path = Path(scratch_dir) / f"convergence_{filter_name}.jpg"
-        golden_output_path = Path(scratch_dir) / f"golden_{filter_name}.jpg"
-        try:
-            _, _, slope_pct, final_rmse_pct = stacker.convergence_curve(
-                paths,
-                filter_name=filter_name,
-                output_path=output_path,
-                golden_output_path=golden_output_path,
-                progress_cb=_progress,
+    with ThreadPoolExecutor() as pool:
+        futures = {pool.submit(_run_filter, fn, p): fn for fn, p in by_filter.items()}
+        for future in as_completed(futures):
+            fn = futures[future]
+            try:
+                fn, paths, slope_pct, final_rmse_pct, out, gold = future.result()
+            except Exception as exc:
+                social_server.post_social_message(f"Convergence [{fn}]: failed — {exc}")
+                continue
+            saved[fn] = {
+                "tail_slope_pct": round(slope_pct, 6),
+                "final_rmse_pct": round(final_rmse_pct, 4),
+                "frame_count": len(paths),
+                "updated": _date.today().isoformat(),
+            }
+            social_server.post_social_message(
+                f"Stack convergence vs golden — {fn}  ({len(paths)} frames)  slope {slope_pct:+.4f}%/frame  RMSE {final_rmse_pct:.2f}%",
+                str(out),
             )
-        except Exception as exc:
-            social_server.post_social_message(f"Convergence [{filter_name}]: failed — {exc}")
-            continue
-
-        from datetime import date as _date
-        saved[filter_name] = {
-            "tail_slope_pct": round(slope_pct, 6),
-            "final_rmse_pct": round(final_rmse_pct, 4),
-            "frame_count": len(paths),
-            "updated": _date.today().isoformat(),
-        }
-
-        social_server.post_social_message(
-            f"Stack convergence vs golden — {filter_name}  ({len(paths)} frames)  slope {slope_pct:+.4f}%/frame  RMSE {final_rmse_pct:.2f}%",
-            str(output_path),
-        )
-        social_server.post_social_message(
-            f"Golden stack — {filter_name}  ({len(paths)} frames)",
-            str(golden_output_path),
-        )
+            social_server.post_social_message(
+                f"Golden stack — {fn}  ({len(paths)} frames)",
+                str(gold),
+            )
 
     if saved and dso_dir is not None:
         try:

@@ -667,18 +667,20 @@ def _write_stack(
 def _save_jpg(data: np.ndarray, output_path: Path, title: str = "") -> Path:
     """Save a ZScale-stretched JPEG preview alongside the stacked FITS."""
     from astropy.visualization import ZScaleInterval
-    import matplotlib.pyplot as plt
+    from matplotlib.figure import Figure
+    from matplotlib.backends.backend_agg import FigureCanvasAgg
 
     jpg_path = output_path.with_suffix(".jpg")
     vmin, vmax = ZScaleInterval().get_limits(data)
-    fig, ax = plt.subplots(figsize=(10, 10))
+    fig = Figure(figsize=(10, 10))
+    FigureCanvasAgg(fig)
+    ax = fig.add_subplot(111)
     ax.imshow(data, origin="lower", cmap="gray", vmin=vmin, vmax=vmax, interpolation="nearest")
     ax.axis("off")
     if title:
         ax.set_title(title, fontsize=10)
     fig.tight_layout(pad=0.5)
     fig.savefig(jpg_path, format="jpeg", dpi=150, bbox_inches="tight")
-    plt.close(fig)
     return jpg_path
 
 
@@ -867,6 +869,9 @@ def convergence_curve(
     """
     from astropy.stats import sigma_clipped_stats
     import matplotlib.pyplot as plt
+    from matplotlib.figure import Figure
+    from matplotlib.backends.backend_agg import FigureCanvasAgg
+    from matplotlib.ticker import FuncFormatter
 
     rng = np.random.default_rng()
 
@@ -943,8 +948,10 @@ def convergence_curve(
     tail_fit = np.polyval([tail_slope, tail_intercept], xs_tail)
     slope_pct = tail_slope * 100  # convert fraction/frame → %/frame
 
-    fig, ax = plt.subplots(figsize=(10, 5))
+    fig = Figure(figsize=(10, 5))
+    FigureCanvasAgg(fig)
     fig.patch.set_facecolor("#0d0d1a")
+    ax = fig.add_subplot(111)
     ax.set_facecolor("#1a1a2e")
     ax.tick_params(colors="white")
     ax.xaxis.label.set_color("white")
@@ -960,7 +967,7 @@ def convergence_curve(
             label=f"Tail slope: {slope_pct:+.4f}% / frame")
     ax.set_xlabel("Frames stacked")
     ax.set_ylabel("Normalised RMSE  (vs golden stack)")
-    ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"{v:.1%}"))
+    ax.yaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{v:.1%}"))
     ax.set_xticks(xs)
     ax.set_xticklabels([str(int(x)) for x in xs], rotation=45 if len(xs) > 8 else 0, ha="right")
     title = "Stack convergence vs golden"
@@ -979,7 +986,6 @@ def convergence_curve(
         output_path.parent.mkdir(parents=True, exist_ok=True)
         fig.savefig(output_path, format="jpeg", dpi=150, bbox_inches="tight",
                     facecolor=fig.get_facecolor())
-        plt.close(fig)
     else:
         plt.show()
 
