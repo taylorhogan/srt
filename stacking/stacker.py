@@ -290,12 +290,55 @@ def _measure_fwhm(path: Path) -> float:
     if not _FWHM_AVAILABLE:
         return 0.0
     try:
-        fwhm_px, _, count = _calculate_fwhm(path, arcsec_per_pixel=_get_arcsec_per_pixel())
+        fwhm_px, _, count, _ = _calculate_fwhm(path, arcsec_per_pixel=_get_arcsec_per_pixel())
         if count > 0 and fwhm_px > 0:
             return float(fwhm_px)
     except Exception as exc:
         _logger.warning("FWHM measurement failed for %s: %s", path.name, exc)
     return 0.0
+
+
+def _combine_tile(
+    cube_tile: np.ndarray,
+    method: "StackMethod",
+    weights: Optional[np.ndarray],
+    sigma: float,
+) -> np.ndarray:
+    """Combine an (N, h, w) cube into an (h, w) 2-D tile.
+
+    NaN entries are treated as non-coverage. `weights` is only used by the
+    FWHM-weighted methods and must already be normalised to sum to 1.
+    """
+    if method == StackMethod.MEAN:
+        return np.nanmean(cube_tile, axis=0)
+
+    if method == StackMethod.MEDIAN:
+        return np.nanmedian(cube_tile, axis=0)
+
+    if method == StackMethod.SIGMA_CLIP:
+        clipped = sigma_clip(cube_tile, sigma=sigma, axis=0, masked=True, stdfunc="mad_std")
+        fallback = np.nanmean(cube_tile, axis=0)
+        return np.where(clipped.mask.all(axis=0), fallback, np.ma.mean(clipped, axis=0).data)
+
+    if method == StackMethod.FWHM_WEIGHTED:
+        nan_mask = np.isnan(cube_tile)
+        w = weights[:, None, None].astype(np.float32)
+        contrib = (~nan_mask).astype(np.float32) * w
+        numer = np.nansum(cube_tile * w, axis=0)
+        denom = contrib.sum(axis=0)
+        return np.where(denom > 0, numer / np.where(denom > 0, denom, 1.0), np.nan)
+
+    if method == StackMethod.SIGMA_CLIP_FWHM:
+        clipped = sigma_clip(cube_tile, sigma=sigma, axis=0, masked=True, stdfunc="mad_std")
+        valid = (~clipped.mask).astype(np.float32)
+        w = weights[:, None, None].astype(np.float32) * valid
+        safe = np.where(np.isnan(cube_tile), 0.0, cube_tile)
+        numer = np.sum(safe * weights[:, None, None].astype(np.float32) * valid, axis=0)
+        denom = w.sum(axis=0)
+        fallback = np.nanmean(cube_tile, axis=0)
+        return np.where(denom > 0, numer / np.where(denom > 0, denom, 1.0), fallback)
+
+    raise ValueError(f"Unknown stack method: {method}")
 
 
 def _fwhm_weights(fwhm_values: dict, accepted: list[Path]) -> np.ndarray:
@@ -421,64 +464,61 @@ def stack(
         calibrated = _register_frames(calibrated)
         _logger.info("%d frames remain after registration", len(calibrated))
 
-    cube = np.stack(calibrated, axis=0)
+    n_frames = len(calibrated)
+    if n_frames == 0:
+        raise ValueError("All frames were dropped during registration")
+    H, W = calibrated[0].shape
 
-    _logger.info("Stacking %d frames with method %s…", len(accepted), method.name)
+    # Stream each registered frame to a temp memmap on disk and free the
+    # in-memory array, so we never hold all frames in RAM at once. A full
+    # cube of e.g. 60 × 6388 × 9576 float32 is ~14 GiB and OOMs the typical
+    # observatory machine.
+    import shutil
+    import tempfile
+    tmp_dir = Path(tempfile.mkdtemp(prefix="srt_stack_"))
 
-    # NaN in `cube` marks pixels not covered by a given frame after registration.
-    # All combiners are nan-aware so non-coverage doesn't pollute the result.
-    if method == StackMethod.MEAN:
-        result = np.nanmean(cube, axis=0)
-
-    elif method == StackMethod.MEDIAN:
-        result = np.nanmedian(cube, axis=0)
-
-    elif method == StackMethod.SIGMA_CLIP:
-        # Use MAD-based std so a single huge outlier (e.g. a hot pixel that
-        # snuck past calibration) can't inflate its own rejection bound.
-        # NaN is treated as already-masked. Pixels with all values clipped
-        # fall back to nanmean.
-        clipped = sigma_clip(cube, sigma=sigma, axis=0, masked=True, stdfunc="mad_std")
-        fallback = np.nanmean(cube, axis=0)
-        result = np.where(clipped.mask.all(axis=0), fallback, np.ma.mean(clipped, axis=0).data)
-
-    elif method == StackMethod.FWHM_WEIGHTED:
+    weights = None
+    if method in (StackMethod.FWHM_WEIGHTED, StackMethod.SIGMA_CLIP_FWHM):
         weights = _fwhm_weights(fwhm_values, accepted)
         _logger.info("FWHM weights: min=%.4f max=%.4f", weights.min(), weights.max())
-        # Weighted nanmean: numerator skips NaN; denominator only counts the
-        # weights of contributing (non-NaN) frames per pixel.
-        nan_mask = np.isnan(cube)
-        w = weights[:, None, None].astype(np.float32)
-        contrib = (~nan_mask).astype(np.float32) * w
-        numer = np.nansum(cube * w, axis=0)
-        denom = contrib.sum(axis=0)
-        result = np.where(denom > 0, numer / np.where(denom > 0, denom, 1.0), np.nan)
 
-    elif method == StackMethod.SIGMA_CLIP_FWHM:
-        weights = _fwhm_weights(fwhm_values, accepted)
-        _logger.info("FWHM weights: min=%.4f max=%.4f", weights.min(), weights.max())
-        # Sigma-clip per pixel using MAD-based std (robust to single huge
-        # outliers like uncorrected hot pixels), then take a weighted mean of
-        # the surviving values with weight = 1/FWHM². NaN is masked. This
-        # rejects dithered hot pixels / cosmics AND favours sharper frames.
-        clipped = sigma_clip(cube, sigma=sigma, axis=0, masked=True, stdfunc="mad_std")
-        valid = (~clipped.mask).astype(np.float32)
-        w = weights[:, None, None].astype(np.float32) * valid
-        safe_cube = np.where(np.isnan(cube), 0.0, cube)
-        numer = np.sum(safe_cube * weights[:, None, None].astype(np.float32) * valid, axis=0)
-        denom = w.sum(axis=0)
-        fallback = np.nanmean(cube, axis=0)
-        result = np.where(denom > 0, numer / np.where(denom > 0, denom, 1.0), fallback)
+    try:
+        mmap_paths: list[Path] = []
+        for i, frame in enumerate(calibrated):
+            p = tmp_dir / f"f{i:04d}.npy"
+            np.save(p, frame.astype(np.float32, copy=False))
+            mmap_paths.append(p)
+        calibrated = None  # release the in-memory list
 
-    else:
-        raise ValueError(f"Unknown stack method: {method}")
+        mmaps = [np.load(p, mmap_mode="r") for p in mmap_paths]
+
+        result = np.empty((H, W), dtype=np.float32)
+        coverage = np.zeros((H, W), dtype=np.int32)
+
+        TILE = 512  # 512×512×N×4B ≈ 1 MiB per slice → ~60 MiB per tile cube at N=60
+        n_ty = (H + TILE - 1) // TILE
+        n_tx = (W + TILE - 1) // TILE
+        _logger.info(
+            "Tiled combine: %d frames, %d×%d tiles of %d px, method %s",
+            n_frames, n_ty, n_tx, TILE, method.name,
+        )
+
+        for y0 in range(0, H, TILE):
+            y1 = min(y0 + TILE, H)
+            for x0 in range(0, W, TILE):
+                x1 = min(x0 + TILE, W)
+                cube_tile = np.stack(
+                    [np.asarray(m[y0:y1, x0:x1]) for m in mmaps], axis=0,
+                )
+                coverage[y0:y1, x0:x1] = np.sum(~np.isnan(cube_tile), axis=0).astype(np.int32)
+                result[y0:y1, x0:x1] = _combine_tile(cube_tile, method, weights, sigma)
+    finally:
+        # Drop memmaps before deleting the backing files (matters on Windows).
+        mmaps = None
+        shutil.rmtree(tmp_dir, ignore_errors=True)
 
     # Coverage-based crop: keep the bounding box where at least 80% of frames
-    # contributed a real (non-NaN) pixel. This removes the bright partial-
-    # coverage shell and dark borders that otherwise inflate sigma_clipped_stats
-    # downstream and crater star detection.
-    n_frames = cube.shape[0]
-    coverage = np.sum(~np.isnan(cube), axis=0)
+    # contributed a real (non-NaN) pixel.
     min_cov = max(1, int(round(0.8 * n_frames)))
     well_covered = coverage >= min_cov
     if well_covered.any():
@@ -489,7 +529,7 @@ def stack(
         result = result[y0:y1, x0:x1]
         _logger.info(
             "Cropped stack to high-coverage region: %dx%d → %dx%d (>=%d/%d frames)",
-            cube.shape[2], cube.shape[1], x1 - x0, y1 - y0, min_cov, n_frames,
+            W, H, x1 - x0, y1 - y0, min_cov, n_frames,
         )
 
     # Any residual NaN in the cropped image is replaced with the global
