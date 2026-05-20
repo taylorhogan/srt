@@ -965,14 +965,14 @@ def _stack_run(words: list[str]) -> None:
         )
 
 
-_BAD_FWHM_ARCSEC = 3.0
+_BAD_FWHM_ARCSEC = 3.5
 _BAD_ECC = 0.45
 
 
 def bad_cmd(words: list[str], account: str) -> None:
     """Rename LIGHT frames that fail quality thresholds to .bad.
 
-    Failing == 0 stars detected OR FWHM > 3.0″ OR eccentricity > 0.45.
+    Failing == 0 stars detected OR FWHM > 3.5″ OR eccentricity > 0.45.
     Renames `<frame>.fits` to `<frame>.fits.bad` so they're skipped by
     the stacker (which only globs *.fits).
 
