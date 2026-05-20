@@ -32,6 +32,7 @@ import os
 import sys
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from enum import Enum, auto
 from pathlib import Path
 from typing import Callable, Optional
@@ -722,9 +723,9 @@ def _prepare_for_convergence(
 
     if progress_cb:
         progress_cb(f"measuring FWHM for {len(paths)} frames…")
-    fwhm_values: dict[Path, float] = {}
-    for p in paths:
-        fwhm_values[p] = _measure_fwhm(p)
+    with ThreadPoolExecutor() as pool:
+        fwhm_results = list(pool.map(_measure_fwhm, paths))
+    fwhm_values: dict[Path, float] = dict(zip(paths, fwhm_results))
 
     accepted = list(paths)
     measured = np.array([v for v in fwhm_values.values() if v > 0.0])
@@ -897,8 +898,6 @@ def convergence_curve(
 
     if progress_cb:
         progress_cb(f"sampling convergence ({n} frames, {len(_fib_counts(n))} points)…")
-
-    from concurrent.futures import ThreadPoolExecutor
 
     counts = _fib_counts(n)
 
