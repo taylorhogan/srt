@@ -525,7 +525,8 @@
     ws.onmessage = (event) => {
       const data = JSON.parse(event.data);
       if (data.type === 'history') {
-        lastSeenId = 0;  // server restarted — reset so new IDs aren't filtered out
+        lastSeenId = 0;
+        messagesDiv.innerHTML = '';  // clear before replay so reconnects don't duplicate
         data.messages.forEach(renderMessage);
         requestAnimationFrame(() => { messagesDiv.scrollTop = messagesDiv.scrollHeight; });
       } else if (data.type === 'message') {

@@ -725,7 +725,7 @@ def _prepare_for_convergence(
 
     if progress_cb:
         progress_cb(f"measuring FWHM for {len(paths)} frames…")
-    with ThreadPoolExecutor() as pool:
+    with ThreadPoolExecutor(max_workers=4) as pool:
         fwhm_results = list(pool.map(_measure_fwhm, paths))
     fwhm_values: dict[Path, float] = dict(zip(paths, fwhm_results))
 
@@ -930,7 +930,7 @@ def convergence_curve(
             )
         return float(np.mean(trial_rmses)), float(np.std(trial_rmses))
 
-    with ThreadPoolExecutor() as pool:
+    with ThreadPoolExecutor(max_workers=4) as pool:
         results = list(pool.map(_trials_for_k, zip(counts, seeds.tolist())))
 
     mean_residuals = [r[0] for r in results]

@@ -87,6 +87,12 @@ class PublicConfig():
             "driver_key": "",  # DriverUniqueKey from Unity; blank = auto-discover
         },
 
+        "calibration": {
+            "bias_dir": None,
+            "dark_dir": None,
+            "flat_root": None,
+        },
+
         "convergence": {
             "tail_slope_threshold": 0.30,   # %/frame — abs(slope) below this = converged
             "rmse_done_threshold": 5.0,     # % — final-point RMSE must also be below this
