@@ -940,10 +940,12 @@ def convergence_curve(
     ys = np.array(mean_residuals)
     errs = np.array(std_residuals)
 
-    # Fit a line to the tail (last ~40% of points, min 3) to quantify the linear decline.
-    tail_n = max(3, round(len(xs) * 0.4))
-    xs_tail = xs[-tail_n:]
-    ys_tail = ys[-tail_n:]
+    # Fit a line to the tail, excluding the final k=n point.  The last point is
+    # computed with only 1 trial and uses a plain weighted mean against a
+    # sigma-clipped golden, so it systematically undershoots and distorts the slope.
+    tail_n = max(4, round(len(xs) * 0.4))
+    xs_tail = xs[-tail_n:-1]
+    ys_tail = ys[-tail_n:-1]
     tail_slope, tail_intercept = np.polyfit(xs_tail, ys_tail, 1)
     tail_fit = np.polyval([tail_slope, tail_intercept], xs_tail)
     slope_pct = tail_slope * 100  # convert fraction/frame → %/frame
