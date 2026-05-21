@@ -856,6 +856,12 @@ def _stack_run(words: list[str]) -> None:
     _project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
     scratch_dir = Path(os.path.join(_project_root, cfg["scratch"]["directory"]))
 
+    cal = cfg.get("calibration", {})
+    _bias_paths = stacker._collect_fits(Path(cal["bias_dir"])) if cal.get("bias_dir") else []
+    _dark_paths = stacker._collect_fits(Path(cal["dark_dir"])) if cal.get("dark_dir") else []
+    _flat_dir = Path(cal["flat_dir"]) if cal.get("flat_dir") else None
+    _flat_dirs = {k: Path(v) for k, v in cal.get("flat_dirs", {}).items()} or None
+
     # words[0] is the bot mention, words[1] is "stack"; remainder is dso (+ optional filter)
     extra = words[2:] if len(words) > 2 else []
 
@@ -958,9 +964,13 @@ def _stack_run(words: list[str]) -> None:
             social_server.post_social_message(f"{_dso} {_fn}: {msg}")
 
         try:
+            flat_paths = stacker._resolve_flat_paths(filter_name, _flat_dir, _flat_dirs)
             result, info = stacker.stack(
                 paths,
                 method=stacker.StackMethod.SIGMA_CLIP_FWHM,
+                bias_paths=_bias_paths,
+                dark_paths=_dark_paths,
+                flat_paths=flat_paths,
                 max_fwhm_multiplier=1.5,
                 progress_cb=_progress,
             )
@@ -1586,7 +1596,7 @@ def doit_cmd(words: list[str], account: str) -> None:
             f"End of night: SNR analysis for {eon_dso or 'most recent DSO'}…"
         )
         try:
-            _snr_run(eon_words, "system")
+            _snr_run(eon_words)
         except Exception:
             _logger.exception("End-of-night SNR failed")
 
@@ -1747,53 +1757,88 @@ def _snr_run(words: list[str]) -> None:
 
     from fits_processing import convergence as _conv
 
-    from concurrent.futures import ThreadPoolExecutor, as_completed
     from datetime import date as _date
 
-    def _run_filter(filter_name: str, paths: list) -> tuple:
-        out = Path(scratch_dir) / f"convergence_{filter_name}.jpg"
-        gold = Path(scratch_dir) / f"golden_{filter_name}.jpg"
-        def _progress(msg: str) -> None:
-            social_server.post_social_message(f"Convergence [{filter_name}]: {msg}")
-        _, _, slope_pct, final_rmse_pct = stacker.convergence_curve(
-            paths,
-            filter_name=filter_name,
-            output_path=out,
-            golden_output_path=gold,
-            progress_cb=_progress,
-        )
-        return filter_name, paths, slope_pct, final_rmse_pct, out, gold
-
     saved: dict[str, dict] = {}
-    with ThreadPoolExecutor() as pool:
-        futures = {pool.submit(_run_filter, fn, p): fn for fn, p in by_filter.items()}
-        for future in as_completed(futures):
-            fn = futures[future]
-            try:
-                fn, paths, slope_pct, final_rmse_pct, out, gold = future.result()
-            except Exception as exc:
-                social_server.post_social_message(f"Convergence [{fn}]: failed — {exc}")
-                continue
-            saved[fn] = {
-                "tail_slope_pct": round(slope_pct, 6),
-                "final_rmse_pct": round(final_rmse_pct, 4),
-                "frame_count": len(paths),
-                "updated": _date.today().isoformat(),
-            }
-            social_server.post_social_message(
-                f"Stack convergence vs golden — {fn}  ({len(paths)} frames)  slope {slope_pct:+.4f}%/frame  RMSE {final_rmse_pct:.2f}%",
-                str(out),
+    for fn, paths in by_filter.items():
+        out = Path(scratch_dir) / f"convergence_{fn}.jpg"
+        gold = Path(scratch_dir) / f"golden_{fn}.jpg"
+        def _progress(msg: str, _fn: str = fn) -> None:
+            social_server.post_social_message(f"Convergence [{_fn}]: {msg}")
+        try:
+            _, _, slope_pct, final_rmse_pct = stacker.convergence_curve(
+                paths,
+                filter_name=fn,
+                output_path=out,
+                golden_output_path=gold,
+                progress_cb=_progress,
             )
-            social_server.post_social_message(
-                f"Golden stack — {fn}  ({len(paths)} frames)",
-                str(gold),
-            )
+        except Exception as exc:
+            social_server.post_social_message(f"Convergence [{fn}]: failed — {exc}")
+            continue
+        saved[fn] = {
+            "tail_slope_pct": round(slope_pct, 6),
+            "final_rmse_pct": round(final_rmse_pct, 4),
+            "frame_count": len(paths),
+            "updated": _date.today().isoformat(),
+        }
+        social_server.post_social_message(
+            f"Stack convergence vs golden — {fn}  ({len(paths)} frames)  slope {slope_pct:+.4f}%/frame  RMSE {final_rmse_pct:.2f}%",
+            str(out),
+        )
+        social_server.post_social_message(
+            f"Golden stack — {fn}  ({len(paths)} frames)",
+            str(gold),
+        )
 
     if saved and dso_dir is not None:
         try:
             _conv.save_convergence(dso_dir.name, saved)
         except Exception:
             _logger.exception("_snr_run: failed to save convergence for %s", dso_dir.name)
+
+        slope_threshold = float(cfg.get("convergence", {}).get("tail_slope_threshold", 0.40))
+        rmse_threshold  = float(cfg.get("convergence", {}).get("rmse_done_threshold",   5.0))
+        min_frames      = int(cfg.get("convergence", {}).get("min_frames_per_filter",    30))
+
+        lines: list[str] = []
+        for fn, info in sorted(saved.items()):
+            n          = info["frame_count"]
+            slope_abs  = abs(info["tail_slope_pct"])
+            rmse       = info.get("final_rmse_pct")
+
+            needed_min = max(0, min_frames - n)
+            needed_slope = (
+                max(0, int(n * (slope_abs / slope_threshold - 1)))
+                if slope_threshold > 0 and n > 0 else 0
+            )
+            rmse_over = rmse is not None and rmse > rmse_threshold
+
+            if needed_min > 0:
+                lines.append(
+                    f"  {fn}: {n} frames — need {needed_min} more to reach minimum ({min_frames} required)"
+                )
+            elif needed_slope > 0 and rmse_over:
+                lines.append(
+                    f"  {fn}: {n} frames — need ~{needed_slope} more"
+                    f" (slope {slope_abs:.2f}% > {slope_threshold:.2f}% target,"
+                    f" RMSE {rmse:.1f}% > {rmse_threshold:.1f}% limit)"
+                )
+            elif needed_slope > 0:
+                lines.append(
+                    f"  {fn}: {n} frames — need ~{needed_slope} more"
+                    f" (slope {slope_abs:.2f}% > {slope_threshold:.2f}% target)"
+                )
+            elif rmse_over:
+                lines.append(
+                    f"  {fn}: {n} frames — slope converged but RMSE {rmse:.1f}% still above {rmse_threshold:.1f}% limit"
+                )
+            else:
+                lines.append(f"  {fn}: done ✓  ({n} frames, slope {slope_abs:.2f}%, RMSE {rmse:.1f}%)")
+
+        social_server.post_social_message(
+            f"{dso_dir.name} — exposures needed:\n" + "\n".join(lines)
+        )
 
 
 def image_stats_cmd(words: list[str], account: str) -> None:
