@@ -989,17 +989,10 @@ def save_stats_plot_from_cache(
                 ax.axvspan(start - 0.5, end + 0.5, color="#5080b0", alpha=0.12, zorder=0)
 
 
-    def _draw_filter_lines(ax, xs, ys, colors):
-        from collections import defaultdict
-        groups: dict = defaultdict(list)
-        for x, y, c in zip(xs, ys, colors):
-            groups[c].append((x, y))
-        for c, pts in groups.items():
-            pts.sort()
-            ax.plot([p[0] for p in pts], [p[1] for p in pts],
-                    color=c, linewidth=0.8, alpha=0.35, zorder=2)
+    def _draw_filter_lines(ax, xs, ys):
+        ax.plot(xs, ys, color="white", linewidth=0.8, alpha=0.35, zorder=2)
 
-    _draw_filter_lines(ax1, fwhm_nums, fwhms, star_colors)
+    _draw_filter_lines(ax1, fwhm_nums, fwhms)
     ax1.scatter(fwhm_nums, fwhms, c=star_colors, s=30, zorder=3)
     ax1.axhline(median_fwhm, color="white", linestyle="--", linewidth=1, alpha=0.8)
     ax1.text(fwhm_nums[0], median_fwhm, f' median {median_fwhm:.2f}"',
@@ -1007,7 +1000,7 @@ def save_stats_plot_from_cache(
     ax1.set_ylabel('FWHM (arcsec)')
     ax1.set_title(f"{len(fwhms)} frames · {dso_label(frames)}", color="white")
 
-    _draw_filter_lines(ax2, fwhm_nums, eccs, star_colors)
+    _draw_filter_lines(ax2, fwhm_nums, eccs)
     ax2.scatter(fwhm_nums, eccs, c=star_colors, s=30, zorder=3)
     ax2.axhline(median_ecc, color="white", linestyle="--", linewidth=1, alpha=0.8)
     ax2.text(fwhm_nums[0], median_ecc, f" median {median_ecc:.3f}",
@@ -1016,7 +1009,7 @@ def save_stats_plot_from_cache(
 
     if sky_vals:
         median_sky = float(np.median(sky_vals))
-        _draw_filter_lines(ax3, sky_nums, sky_vals, sky_colors)
+        _draw_filter_lines(ax3, sky_nums, sky_vals)
         ax3.scatter(sky_nums, sky_vals, c=sky_colors, s=30, zorder=3)
         ax3.axhline(median_sky, color="white", linestyle="--", linewidth=1, alpha=0.8)
         ax3.text(sky_nums[0], median_sky, f" median {median_sky:.2f}",
@@ -1033,7 +1026,7 @@ def save_stats_plot_from_cache(
 
     if star_counts:
         median_stars = float(np.median(star_counts))
-        _draw_filter_lines(ax4, star_nums, star_counts, star_count_colors)
+        _draw_filter_lines(ax4, star_nums, star_counts)
         ax4.scatter(star_nums, star_counts, c=star_count_colors, s=30, zorder=3)
         ax4.axhline(median_stars, color="white", linestyle="--", linewidth=1, alpha=0.8)
         ax4.text(star_nums[0], median_stars, f" median {median_stars:.0f}",
