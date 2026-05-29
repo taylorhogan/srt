@@ -136,6 +136,24 @@ class PublicConfig():
             # Flux is normalised to ~1, so depth ≥ 1 means negative in-transit
             # flux — an outlier artifact, not a real transit/eclipse.
             "max_bls_depth": 0.8,
+            # Divide the per-frame median (common mode) over kept stars out of
+            # every light curve before searching. A flux change shared by many
+            # stars (start-of-night ramp, between-session offset, transparency)
+            # is never a transit — that affects one star.
+            "common_mode_correction": True,
+            # Down-rank any BLS period shared by at least this fraction of the
+            # stars that produced a BLS detection — sparse/irregular sampling
+            # aliases cluster unrelated stars at identical periods.
+            "shared_period_frac": 0.05,
+            # BLS significance floor (rejects sparse-sampling artifacts where a
+            # near-flat periodogram inflates the power z-score):
+            "min_bls_cycles": 2,        # baseline must span ≥ this many periods
+            "depth_snr_min": 3.0,       # depth ≥ this × (scatter / sqrt(n_in_transit))
+            "min_transit_points": 3,    # ≥ this many in-transit points required
+            "min_bls_power": 0.01,      # absolute-power backstop
+            # Reject when far more points pile into the transit window than
+            # duration/period predicts — that's a sampling alias, not a transit.
+            "max_in_transit_factor": 2.5,
             "file": "local/transits.json",
         },
 
