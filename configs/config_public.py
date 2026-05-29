@@ -7,7 +7,7 @@ class PublicConfig():
 
         },
         "version": {
-            "date": "2026.5.20.5"
+            "date": "2026.5.29.1"
         },
 
         "logger": {
@@ -98,6 +98,16 @@ class PublicConfig():
             "rmse_done_threshold": 5.0,     # % — final-point RMSE must also be below this
             "min_frames_per_filter": 30,    # don't evaluate until this many frames
             "file": "local/convergence.json",
+        },
+
+        "transit": {
+            "min_frames": 20,
+            "aperture_fwhm_mult": 1.5,
+            "sky_annulus_fwhm_mult": (3.0, 5.0),
+            "comparison_quantile": 0.25,
+            "min_baseline_days_for_bls": 1.0,
+            "top_n_plot": 5,
+            "file": "local/transits.json",
         },
 
         "machine": {

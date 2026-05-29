@@ -1290,6 +1290,7 @@ def get_super_user_commands() -> dict[str, Callable]:
         "active": active_cmd,
         "stats": image_stats_cmd,
         "snr": snr_cmd,
+        "transit": transit_cmd,
         "log": log_cmd,
         "update": update_cmd,
         "optics": optics_cmd,
@@ -1839,6 +1840,75 @@ def _snr_run(words: list[str]) -> None:
         social_server.post_social_message(
             f"{dso_dir.name} — exposures needed:\n" + "\n".join(lines)
         )
+
+
+def transit_cmd(words: list[str], account: str) -> None:
+    """Search saved subs for transit-like dips. Background thread (non-blocking).
+
+    Usage: transit <dso> <filter>
+    """
+    threading.Thread(target=_transit_run, args=(words,), daemon=True).start()
+
+
+def _transit_run(words: list[str]) -> None:
+    """Worker for transit_cmd."""
+    if len(words) < 4:
+        social_server.post_social_message("Usage: transit <dso> <filter>")
+        return
+
+    filter_name = words[-1].strip()
+    dso_arg = " ".join(words[2:-1]).strip()
+    if not dso_arg or not filter_name:
+        social_server.post_social_message("Usage: transit <dso> <filter>")
+        return
+
+    cfg = config.data()
+    image_dir = Path(cfg["nina"]["image_dir"])
+    _project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    scratch_dir = Path(os.path.join(_project_root, cfg["scratch"]["directory"]))
+    out_path = scratch_dir / f"transit_{dso_arg.replace(' ', '_')}_{filter_name}.jpg"
+
+    def _progress(msg: str) -> None:
+        social_server.post_social_message(f"Transit [{dso_arg}/{filter_name}]: {msg}")
+
+    social_server.post_social_message(
+        f"Transit search for {dso_arg} [{filter_name}]: starting…"
+    )
+
+    try:
+        from transit_search import transit as _ts
+        entry = _ts.run_transit_search(
+            dso_name=dso_arg,
+            filter_name=filter_name,
+            image_dir=image_dir,
+            output_plot_path=out_path,
+            progress_cb=_progress,
+        )
+    except Exception as exc:
+        _logger.exception("_transit_run: failed")
+        social_server.post_social_message(f"Transit [{dso_arg}/{filter_name}]: failed — {exc}")
+        return
+
+    cands = entry.get("candidates", [])
+    if cands:
+        top = cands[0]
+        period = top.get("bls_period_d")
+        period_str = f"P={period:.3f}d depth={top.get('bls_depth', 0):.3f}" if period else "no BLS"
+        summary = (
+            f"Transit [{dso_arg}/{filter_name}]: {entry['n_stars']} stars, "
+            f"{entry['frame_count']} frames over {entry['baseline_days']:.1f}d. "
+            f"Top: ({top['x']:.0f},{top['y']:.0f}) dip σ={top['max_dip_sigma']:.1f}  {period_str}. "
+            f"Manual verification required."
+        )
+    else:
+        summary = (
+            f"Transit [{dso_arg}/{filter_name}]: complete, no candidates above threshold."
+        )
+
+    if out_path.exists():
+        social_server.post_social_message(summary, str(out_path))
+    else:
+        social_server.post_social_message(summary)
 
 
 def image_stats_cmd(words: list[str], account: str) -> None:

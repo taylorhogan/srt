@@ -703,7 +703,7 @@ def _prepare_for_convergence(
     paths: list[Path],
     max_fwhm_multiplier: float = 1.5,
     register: bool = True,
-    downscale_to: int = 512,
+    downscale_to: Optional[int] = 512,
     progress_cb: Optional[Callable[[str], None]] = None,
 ) -> tuple[list[np.ndarray], list[Path], dict[Path, float]]:
     """
@@ -716,7 +716,10 @@ def _prepare_for_convergence(
     next frame is loaded.  Peak memory is roughly two full-res frames plus the
     entire downscaled cube (a few hundred MB for a full-frame sensor).
 
-    Returns (downscaled_frames, accepted_paths, fwhm_values).
+    Pass downscale_to=None to keep frames at full resolution (e.g. for per-star
+    aperture photometry).
+
+    Returns (frames, accepted_paths, fwhm_values).
     fwhm_values maps every measured path; pass it with accepted_paths to
     _fwhm_weights() to get per-frame weights in registration-output order.
     """
@@ -753,7 +756,7 @@ def _prepare_for_convergence(
         if progress_cb:
             progress_cb(f"loading {len(accepted)} frames (no registration)…")
         frame0 = _load_fits_2d(accepted[0])
-        scale = max(1, min(frame0.shape) // downscale_to)
+        scale = 1 if downscale_to is None else max(1, min(frame0.shape) // downscale_to)
         frames_out = [frame0[::scale, ::scale]]
         frame0 = None
         for p in accepted[1:]:
@@ -775,7 +778,7 @@ def _prepare_for_convergence(
         progress_cb(f"registering {len(accepted)} frames (streaming)…")
 
     reference = _load_fits_2d(accepted[actual_ref_idx])
-    scale = max(1, min(reference.shape) // downscale_to)
+    scale = 1 if downscale_to is None else max(1, min(reference.shape) // downscale_to)
 
     result_frames: list[np.ndarray] = [reference[::scale, ::scale]]
     result_accepted: list[Path] = [accepted[actual_ref_idx]]
