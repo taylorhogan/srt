@@ -17,7 +17,10 @@ and BLS search are new here.
 import json
 import logging
 import os
+import shutil
+import subprocess
 import sys
+import tempfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, datetime, timezone
 from pathlib import Path
@@ -433,7 +436,10 @@ def _plot_top_candidates(
             spine.set_edgecolor("#444466")
         ax1.plot(times_rel, rel_flux[:, s], "o", markersize=3, color="#5fa8d3")
         ax1.axhline(1.0, color="#888", linestyle=":", linewidth=0.8)
-        ax1.set_ylabel(f"#{row+1}\n({cand['x']:.0f},{cand['y']:.0f})", color="white")
+        label = f"#{row+1}\n({cand['x']:.0f},{cand['y']:.0f})"
+        if cand.get("gaia_g_mag") is not None:
+            label += f"\nG={cand['gaia_g_mag']:.1f}"
+        ax1.set_ylabel(label, color="white")
         if row == 0:
             ax1.set_title(f"{title} — raw light curve (days from first frame)", color="white")
         ax1.grid(True, alpha=0.25, color="#444466")
@@ -464,6 +470,108 @@ def _plot_top_candidates(
     fig.tight_layout()
     output_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(output_path, format="jpeg", dpi=130, facecolor=fig.get_facecolor())
+
+
+def _plate_solve_wcs(
+    reference_path: Path,
+    astap_exe: str,
+    progress_cb: Optional[Callable[[str], None]] = None,
+):
+    """Plate-solve ``reference_path`` with ASTAP and return an astropy WCS, or None.
+
+    Solves a temporary copy (so the original imaging data is never touched) using
+    the frame's own RA/DEC header as a hint. ASTAP reads pixel size + focal length
+    from the FITS header to determine the field of view, so ``-fov 0`` is reliable
+    for N.I.N.A frames. Returns None on any failure (missing solver, no solution,
+    unreadable WCS).
+    """
+    from astropy.wcs import WCS
+
+    if not astap_exe or not os.path.exists(astap_exe):
+        if progress_cb:
+            progress_cb("identify: ASTAP not found, skipping star IDs")
+        return None
+
+    try:
+        hdr = fits.getheader(reference_path)
+        ra_deg = float(hdr.get("RA"))
+        dec_deg = float(hdr.get("DEC"))
+    except Exception:
+        ra_deg = dec_deg = None
+
+    tmp_dir = tempfile.mkdtemp(prefix="transit_solve_")
+    tmp_fits = Path(tmp_dir) / "ref.fits"
+    try:
+        shutil.copy2(reference_path, tmp_fits)
+        cmd = [astap_exe, "-f", str(tmp_fits), "-fov", "0", "-r", "5", "-update"]
+        if ra_deg is not None and dec_deg is not None:
+            cmd += ["-ra", f"{ra_deg / 15.0:.6f}", "-spd", f"{dec_deg + 90.0:.6f}"]
+        if progress_cb:
+            progress_cb("identify: plate-solving reference frame with ASTAP…")
+        subprocess.run(cmd, capture_output=True, timeout=300)
+        solved = fits.getheader(tmp_fits)
+        if "CRVAL1" not in solved:
+            if progress_cb:
+                progress_cb("identify: plate solve failed, skipping star IDs")
+            return None
+        return WCS(solved)
+    except Exception:
+        _logger.exception("Plate solve failed")
+        return None
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+def _identify_candidates(
+    reference_path: Path,
+    candidates: list[dict],
+    astap_exe: str,
+    match_radius_arcsec: float = 3.0,
+    progress_cb: Optional[Callable[[str], None]] = None,
+) -> None:
+    """Add RA/Dec and the nearest Gaia source to each candidate, in place.
+
+    Plate-solves the reference frame (whose pixel grid the candidate x,y live in),
+    converts each (x, y) to sky coordinates, and cone-searches Gaia DR3 for the
+    nearest source. Fully fail-safe: any solver/network/query failure leaves the
+    candidates unchanged apart from any RA/Dec already filled in.
+    """
+    wcs = _plate_solve_wcs(reference_path, astap_exe, progress_cb)
+    if wcs is None:
+        return
+
+    import astropy.units as u
+    from astropy.coordinates import SkyCoord
+    from astroquery.gaia import Gaia
+
+    if progress_cb:
+        progress_cb(f"identify: Gaia lookup for {len(candidates)} candidates…")
+
+    radius = u.Quantity(match_radius_arcsec, u.arcsec)
+    for c in candidates:
+        try:
+            sky = wcs.pixel_to_world(c["x"], c["y"])
+            c["ra_deg"] = round(float(sky.ra.deg), 6)
+            c["dec_deg"] = round(float(sky.dec.deg), 6)
+        except Exception:
+            continue
+        try:
+            res = Gaia.cone_search_async(sky, radius=radius).get_results()
+            if len(res) == 0:
+                c["gaia_source_id"] = None
+                continue
+            res.sort("dist")
+            row = res[0]
+            gmag = row["phot_g_mean_mag"]
+            c["gaia_source_id"] = str(row["source_id"])
+            c["gaia_g_mag"] = (None if np.ma.is_masked(gmag)
+                               else round(float(gmag), 3))
+            c["gaia_sep_arcsec"] = round(float(row["dist"]) * 3600.0, 2)
+        except Exception:
+            _logger.exception("Gaia lookup failed for a candidate")
+            if progress_cb:
+                progress_cb("identify: Gaia query failed, leaving remaining IDs blank")
+            break
 
 
 def run_transit_search(
@@ -498,6 +606,9 @@ def run_transit_search(
     min_transit_points = int(cfg.get("min_transit_points", 3))
     min_bls_power = float(cfg.get("min_bls_power", 0.01))
     max_in_transit_factor = float(cfg.get("max_in_transit_factor", 2.5))
+    identify_candidates = bool(cfg.get("identify_candidates", True))
+    gaia_match_radius_arcsec = float(cfg.get("gaia_match_radius_arcsec", 3.0))
+    astap_exe = _config.data().get("hardware", {}).get("astap_exe", "")
 
     dso_dir = _find_dso_dir(image_dir, dso_name)
     if dso_dir is None:
@@ -708,6 +819,14 @@ def run_transit_search(
 
     per_star.sort(key=lambda c: c["score"], reverse=True)
     top = per_star[:top_n]
+
+    # Tag the top candidates with sky coordinates + nearest Gaia source.
+    if identify_candidates:
+        _identify_candidates(
+            accepted[0], top, astap_exe,
+            match_radius_arcsec=gaia_match_radius_arcsec,
+            progress_cb=progress_cb,
+        )
 
     _notify(f"plotting top {len(top)} candidates…")
     _plot_top_candidates(

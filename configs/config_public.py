@@ -98,6 +98,9 @@ class PublicConfig():
             "roof_relay_url": "http://192.168.87.41/relay/0?turn=on",
             # Shelly relay base URL for the dehumidifier; append ?turn=on / ?turn=off.
             "dehumidifier_relay_url": "http://192.168.87.28/relay/0",
+            # ASTAP plate solver (also used by N.I.N.A) — used to give transit
+            # candidates real sky coordinates and Gaia identifications.
+            "astap_exe": "C:/Program Files/astap/astap.exe",
         },
 
         "calibration": {
@@ -154,6 +157,10 @@ class PublicConfig():
             # Reject when far more points pile into the transit window than
             # duration/period predicts — that's a sampling alias, not a transit.
             "max_in_transit_factor": 2.5,
+            # Plate-solve the reference frame (ASTAP) and tag each candidate with
+            # RA/Dec + the nearest Gaia source (id, G mag, separation).
+            "identify_candidates": True,
+            "gaia_match_radius_arcsec": 3.0,
             "file": "local/transits.json",
         },
 
