@@ -99,24 +99,33 @@ def visual_status():
 
     accuracy = cfg["camera safety"]["accuracy"]
     print(accuracy)
+    # A state is only trusted when the template match is both close to the
+    # expected pixel position AND confident enough. cv.matchTemplate always
+    # returns a best-match location, so position alone can be fooled by a
+    # low-confidence match that happens to land near the expected spot.
+    min_conf = cfg["camera safety"]["match_confidence"]
+    print("min match confidence", min_conf)
 
     parked_error = math.dist(parked_center, cfg["camera safety"]["parked pos"])
     print(parked_center)
     print(cfg["camera safety"]["parked pos"])
     print (parked_error)
-    parked = abs(parked_error) < accuracy
+    print("parked confidence", max_val_parked)
+    parked = abs(parked_error) < accuracy and max_val_parked >= min_conf
 
     closed_error = math.dist(closed_center, cfg["camera safety"]["closed pos"])
     print(closed_center)
     print(cfg["camera safety"]["closed pos"])
     print(closed_error)
-    closed = abs(closed_error) < accuracy
+    print("closed confidence", max_val_closed)
+    closed = abs(closed_error) < accuracy and max_val_closed >= min_conf
 
     open_error = math.dist(open_center, cfg["camera safety"]["open pos"])
     print(open_center)
     print(cfg["camera safety"]["open pos"])
     print(open_error)
-    open = abs(open_error) < accuracy
+    print("open confidence", max_val_open)
+    open = abs(open_error) < accuracy and max_val_open >= min_conf
     print ("parked, closed, open", str(parked), str(closed), str(open))
 
     mod_date = time.ctime(os.path.getmtime(cfg["camera safety"]["scope_view"]))

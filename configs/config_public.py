@@ -48,6 +48,11 @@ class PublicConfig():
             "parked pos": (590, 290),
 
             "accuracy": 150,
+            # Minimum normalized template-match score (TM_CCOEFF_NORMED, 0..1)
+            # required before a parked/closed/open state is trusted. Guards
+            # against a spurious low-confidence match that happens to land near
+            # the expected pixel position.
+            "match_confidence": 0.6,
             "scope_view": "./base_images/scope_view.jpg",
             "processed_view": "./base_images/processed.jpg",
             "no_image": "./base_images/no_image.jpg",
@@ -87,6 +92,14 @@ class PublicConfig():
             "driver_key": "",  # DriverUniqueKey from Unity; blank = auto-discover
         },
 
+        "hardware": {
+            # Shelly relay that toggles the roof motor (GETting this URL fires
+            # the relay; the roof direction depends on its current position).
+            "roof_relay_url": "http://192.168.87.41/relay/0?turn=on",
+            # Shelly relay base URL for the dehumidifier; append ?turn=on / ?turn=off.
+            "dehumidifier_relay_url": "http://192.168.87.28/relay/0",
+        },
+
         "calibration": {
             "bias_dir": None,
             "dark_dir": None,
@@ -107,6 +120,22 @@ class PublicConfig():
             "comparison_quantile": 0.25,
             "min_baseline_days_for_bls": 1.0,
             "top_n_plot": 5,
+            # Reject stars whose light curve has a finite flux in fewer than this
+            # fraction of frames. Edge stars drift into registration NaN borders
+            # on some frames, leaving mostly-NaN curves that read as huge fake dips.
+            "min_valid_fraction": 0.8,
+            # Reject stars whose centre is within this multiple of the sky-annulus
+            # outer radius of any frame edge, so the full aperture stays on-chip.
+            "edge_margin_mult": 1.0,
+            # Blank differential-flux samples more than this many robust sigma
+            # ABOVE the baseline before searching. Stars never brighten during a
+            # transit, so high spikes are photometry glitches; low excursions
+            # (real dips) are kept.
+            "outlier_high_sigma": 5.0,
+            # Reject BLS detections whose fractional depth is outside (0, this).
+            # Flux is normalised to ~1, so depth ≥ 1 means negative in-transit
+            # flux — an outlier artifact, not a real transit/eclipse.
+            "max_bls_depth": 0.8,
             "file": "local/transits.json",
         },
 

@@ -18,7 +18,7 @@ import json
 import logging
 import os
 import sys
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Callable, Optional
@@ -254,6 +254,34 @@ def _differential_normalize(
     return rel, comp_mask
 
 
+def _sanitize_rel_flux(rel_flux: np.ndarray, high_sigma: float = 5.0) -> np.ndarray:
+    """Blank unphysical differential-flux samples before the transit search.
+
+    Differential flux is normalised so each star's median ≈ 1. Two kinds of
+    samples are blanked to NaN because they corrupt both the dip statistic and
+    BLS without representing a real transit:
+
+      * non-finite or non-positive values (over-subtracted sky / registration
+        glitches — a star cannot have ≤ 0 net flux), and
+      * points more than ``high_sigma`` robust sigma *above* the baseline — a
+        star never brightens during a transit, so high spikes are glitches.
+
+    Low excursions (the actual dips/eclipses we want to find) are left intact.
+    Clipping is per-star (per column).
+    """
+    clean = rel_flux.astype(np.float64, copy=True)
+    clean[~np.isfinite(clean)] = np.nan
+    clean[clean <= 0] = np.nan
+    med = np.nanmedian(clean, axis=0)
+    mad = np.nanmedian(np.abs(clean - med[None, :]), axis=0)
+    sigma = 1.4826 * mad
+    # Where sigma is 0/NaN (flat or all-NaN column) disable high clipping.
+    high = np.where(sigma > 0, med + high_sigma * sigma, np.inf)
+    with np.errstate(invalid="ignore"):
+        clean[clean > high[None, :]] = np.nan
+    return clean
+
+
 def _max_dip_sigma(rel_curve: np.ndarray) -> float:
     """Strongest dip (median - lowest-rolling-mean-of-3) in units of MAD."""
     finite = rel_curve[np.isfinite(rel_curve)]
@@ -277,6 +305,7 @@ def _run_bls(
     times_mjd: np.ndarray,
     rel_curve: np.ndarray,
     baseline_days: float,
+    max_depth: float = 0.8,
 ) -> Optional[dict]:
     """Astropy BLS on a single light curve. Returns top-period summary, or None."""
     mask = np.isfinite(rel_curve)
@@ -295,19 +324,34 @@ def _run_bls(
     try:
         bls = BoxLeastSquares(t, y)
         periods = np.linspace(period_min, period_max, 1500)
+        # Astropy requires every trial duration to be strictly shorter than the
+        # minimum trial period. With minute-cadence subs period_min hits its
+        # 0.2 d floor, which collides with the 0.2 d duration and makes
+        # bls.power() raise for every star. Keep only durations below period_min.
         durations = np.array([0.02, 0.05, 0.1, 0.2])
+        durations = durations[durations < period_min]
+        if durations.size == 0:
+            return None
         result = bls.power(periods, durations)
         power = np.asarray(result.power)
-        if not np.isfinite(power).any():
+        depth = np.asarray(result.depth)
+        # Keep only periods with a physically plausible depth: flux is normalised
+        # to ~1, so a real dip has 0 < depth < max_depth. Depth ≥ 1 means negative
+        # in-transit flux (an outlier artifact); depth ≤ 0 is a brightening.
+        physical = np.isfinite(power) & (depth > 0) & (depth < max_depth)
+        if not physical.any():
             return None
-        best = int(np.nanargmax(power))
+        best = int(np.argmax(np.where(physical, power, -np.inf)))
+        # Compute the significance baseline over physical periods only, so a few
+        # artifact spikes don't inflate the mean/std and wash out the z-score.
+        phys_power = power[physical]
         return {
             "period_d": float(result.period[best]),
             "depth": float(result.depth[best]),
             "duration_d": float(result.duration[best]),
             "power": float(power[best]),
-            "power_mean": float(np.nanmean(power)),
-            "power_std": float(np.nanstd(power)),
+            "power_mean": float(np.nanmean(phys_power)),
+            "power_std": float(np.nanstd(phys_power)),
         }
     except Exception:
         _logger.exception("BLS failed on a light curve")
@@ -396,6 +440,10 @@ def run_transit_search(
     sky_in_mult, sky_out_mult = float(sky_mult[0]), float(sky_mult[1])
     comp_q = float(cfg.get("comparison_quantile", 0.25))
     top_n = int(cfg.get("top_n_plot", 5))
+    min_valid_fraction = float(cfg.get("min_valid_fraction", 0.8))
+    edge_margin_mult = float(cfg.get("edge_margin_mult", 1.0))
+    outlier_high_sigma = float(cfg.get("outlier_high_sigma", 5.0))
+    max_bls_depth = float(cfg.get("max_bls_depth", 0.8))
 
     dso_dir = _find_dso_dir(image_dir, dso_name)
     if dso_dir is None:
@@ -410,9 +458,18 @@ def run_transit_search(
 
     by_filter = stacker.group_by_filter(light_files)
     paths = by_filter.get(filter_name, [])
+    if not paths:
+        # Case-insensitive fallback (e.g. user types "l", FITS header says "L")
+        for key, val in by_filter.items():
+            if key.lower() == filter_name.lower():
+                paths = val
+                filter_name = key  # use the canonical name going forward
+                break
     if len(paths) < min_frames:
+        available = ", ".join(sorted(by_filter.keys())) or "none"
         raise ValueError(
             f"Need at least {min_frames} '{filter_name}' frames, found {len(paths)}"
+            f" (available filters: {available})"
         )
 
     _notify(f"prep: registering {len(paths)} '{filter_name}' frames at full res…")
@@ -458,14 +515,56 @@ def run_transit_search(
     def _do_one(i: int) -> tuple[int, np.ndarray]:
         return i, _photometry_one_frame(frames[i], positions, aperture_r, sky_in, sky_out)
 
+    tick = max(1, n_frames // 5)
     with ThreadPoolExecutor(max_workers=4) as pool:
-        for i, row in pool.map(_do_one, range(n_frames)):
+        futs = {pool.submit(_do_one, i): i for i in range(n_frames)}
+        done = 0
+        for fut in as_completed(futs):
+            i, row = fut.result()
             flux_matrix[i] = row
+            done += 1
+            if done % tick == 0:
+                _notify(f"photometry: {done}/{n_frames} frames done…")
 
     _notify(f"photometry: done — {np.isfinite(flux_matrix).mean()*100:.1f}% valid")
 
     _notify(f"differential photometry: comparison_quantile={comp_q}…")
     rel_flux, comp_mask = _differential_normalize(flux_matrix, comp_q)
+    # Blank unphysical (≤0) and high-spike outlier samples before searching, so
+    # they can't drive fake dips or unphysically deep BLS detections.
+    rel_flux = _sanitize_rel_flux(rel_flux, high_sigma=outlier_high_sigma)
+
+    # --- Reject stars that can't yield a trustworthy light curve ------------ #
+    # Otherwise edge artifacts dominate the results: stars near the frame border
+    # drift into the NaN regions left by astroalign registration on some frames,
+    # so their aperture is blanked there (bad_count > 0.5 → NaN). The few surviving
+    # points read as a huge fake "dip", and BLS is starved of its 20-point minimum.
+    # Keep only stars whose full aperture stays on-chip and that have enough
+    # finite measurements for both the dip statistic and BLS to be meaningful.
+    frame_h, frame_w = frames[0].shape
+    edge_margin = edge_margin_mult * sky_out
+    valid_counts = np.isfinite(rel_flux).sum(axis=0)
+    # 20 is the floor required by _run_bls; the fraction dominates for longer runs.
+    min_valid = max(20, int(np.ceil(min_valid_fraction * n_frames)))
+    xs, ys = positions[:, 0], positions[:, 1]
+    on_chip = (
+        (xs >= edge_margin) & (xs < frame_w - edge_margin)
+        & (ys >= edge_margin) & (ys < frame_h - edge_margin)
+    )
+    keep_mask = on_chip & (valid_counts >= min_valid)
+    kept_indices = np.flatnonzero(keep_mask)
+    n_kept = int(kept_indices.size)
+    _notify(
+        f"filtering: {n_kept}/{n_stars} stars pass "
+        f"(≥{min_valid} valid pts, ≥{edge_margin:.0f}px from edge)"
+    )
+    if n_kept == 0:
+        raise ValueError(
+            f"No stars survived the validity/edge filter "
+            f"(needed ≥{min_valid} of {n_frames} valid points and "
+            f"≥{edge_margin:.0f}px from the edge). Try more frames or lower "
+            f"min_valid_fraction / edge_margin_mult."
+        )
 
     _notify(f"transit search: per-star dip + BLS  (baseline={baseline_days:.2f} d)…")
 
@@ -475,7 +574,7 @@ def run_transit_search(
                      "x": float(positions[s, 0]),
                      "y": float(positions[s, 1]),
                      "max_dip_sigma": _max_dip_sigma(curve)}
-        bls = _run_bls(times_mjd, curve, baseline_days)
+        bls = _run_bls(times_mjd, curve, baseline_days, max_depth=max_bls_depth)
         if bls is not None:
             power_z = (bls["power"] - bls["power_mean"]) / bls["power_std"] if bls["power_std"] > 0 else 0.0
             out.update({
@@ -487,8 +586,16 @@ def run_transit_search(
             })
         return out
 
+    tick = max(1, n_kept // 5)
+    per_star: list[dict] = []
     with ThreadPoolExecutor(max_workers=4) as pool:
-        per_star = list(pool.map(_per_star, range(n_stars)))
+        futs = {pool.submit(_per_star, s): s for s in kept_indices}
+        done = 0
+        for fut in as_completed(futs):
+            per_star.append(fut.result())
+            done += 1
+            if done % tick == 0:
+                _notify(f"transit search: BLS {done}/{n_kept} stars…")
 
     for cand in per_star:
         dip = float(cand.get("max_dip_sigma", 0.0))
@@ -509,6 +616,7 @@ def run_transit_search(
         "frame_count": n_frames,
         "baseline_days": round(baseline_days, 3),
         "n_stars": n_stars,
+        "n_stars_searched": n_kept,
         "n_comparison": int(comp_mask.sum()),
         "aperture_px": round(aperture_r, 2),
         "candidates": [

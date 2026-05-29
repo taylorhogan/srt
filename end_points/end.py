@@ -248,7 +248,7 @@ def do_main():
                         social_server.post_social_message("Vision Safety says roof is NOT closed")
                     logger.info("step 4")
                     # turn on dehumidifier
-                    r = requests.get('http://192.168.87.28/relay/0?turn=on')
+                    r = requests.get(cfg["hardware"]["dehumidifier_relay_url"] + "?turn=on")
                     # turn off lights
                     instructions = (dict
                         (
@@ -291,14 +291,28 @@ def do_main():
 
 
 
-    from astral import LocationInfo
-    from astral.sun import sun
-    cfg = config.data()
-    loc = cfg["location"]
-    city = LocationInfo(loc["city"], "USA", loc["timezone"], loc["latitude"], loc["longitude"])
-    yesterday = (datetime.now() - timedelta(days=1)).date()
-    sunset = sun(city.observer, date=yesterday)["sunset"]
-    _post_imaging_summary(sunset)
+    # Prefer the actual imaging start time persisted by doit_cmd; this is the
+    # correct boundary for "frames from tonight" regardless of when the end
+    # sequence runs. Fall back to yesterday's sunset only if the marker file is
+    # missing or unreadable.
+    imaging_start = None
+    try:
+        _root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+        with open(os.path.join(_root, "imaging_start.txt")) as _f:
+            imaging_start = datetime.fromisoformat(_f.read().strip())
+    except (FileNotFoundError, ValueError):
+        imaging_start = None
+
+    if imaging_start is None:
+        from astral import LocationInfo
+        from astral.sun import sun
+        cfg = config.data()
+        loc = cfg["location"]
+        city = LocationInfo(loc["city"], "USA", loc["timezone"], loc["latitude"], loc["longitude"])
+        yesterday = (datetime.now() - timedelta(days=1)).date()
+        imaging_start = sun(city.observer, date=yesterday)["sunset"]
+
+    _post_imaging_summary(imaging_start)
     logger.info('End End Sequence')
     super_user_commands.set_imaging_state(super_user_commands.ImagingState.NONE)
 

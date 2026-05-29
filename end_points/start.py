@@ -46,7 +46,7 @@ if __name__ == "__main__":
     asyncio.run(ku.kasa_do(dev_map, instructions))
     logger.info('Turning off lights')
 
-    r = requests.get('http://192.168.87.28/relay/0?turn=off')
+    r = requests.get(cfg["hardware"]["dehumidifier_relay_url"] + "?turn=off")
     logger.info('Turning off dehumidifier')
     logger.info('End Start Sequence')
     print ("Done with startup")

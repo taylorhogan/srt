@@ -62,7 +62,7 @@ def toggle_roof(dev_map: dict) -> None:
     asyncio.run(ku.kasa_do(dev_map, inst))
     time.sleep(10)
     try:
-        r = requests.get('http://192.168.87.41/relay/0?turn=on', timeout=10)
+        r = requests.get(config.data()["hardware"]["roof_relay_url"], timeout=10)
         r.raise_for_status()
     except requests.RequestException as e:
         _logger.error("Failed to trigger relay in toggle_roof: %s", e)
@@ -220,7 +220,7 @@ def open_if_mount_off_cmd(words: list[str], account: str) -> None:
         inst = {"Roof motor": 'on', "Iris inside light": 'off'}
         asyncio.run(ku.kasa_do(dev_map, inst))
         try:
-            r = requests.get('http://192.168.87.41/relay/0?turn=on', timeout=10)
+            r = requests.get(config.data()["hardware"]["roof_relay_url"], timeout=10)
             r.raise_for_status()
         except requests.RequestException as e:
             _logger.error("Failed to trigger relay in open_if_mount_off_cmd: %s", e)
@@ -1335,7 +1335,7 @@ def is_safe() -> bool:
             first_line = file.readline()
     except FileNotFoundError:
         return False
-    return first_line == "USER SAFE"
+    return first_line.strip() == "USER SAFE"
 
 def get_scheduler_state() -> dict:
     """Read the scheduler's current state from scheduler_state.json.
@@ -1380,6 +1380,11 @@ def image_cmd(words: list[str], account: str) -> None:
     else:
         from fits_processing import frame_watcher
         cfg = config.data()
+        # Claim the run synchronously, before returning, so callers that poll
+        # get_imaging_state() (e.g. the scheduler's imaging_task) never observe
+        # NONE and conclude the run finished before the worker thread has even
+        # set ACTIVE.
+        set_imaging_state(ImagingState.ACTIVE)
         frame_watcher.start(
             Path(cfg["nina"]["image_dir"]),
             cfg["nina"]["arc_sec_per_pixel"],
@@ -1396,9 +1401,14 @@ def image_cmd(words: list[str], account: str) -> None:
 
 def doit_cmd(words: list[str], account: str) -> None:
     """
-    Full observatory imaging run. Called by image_cmd (manual trigger) or the
-    scheduler (auto mode). Manages the entire night: safety checks → roof open
-    → NINA prelude → NINA main imaging.
+    Full observatory imaging run. Always launched via image_cmd, which runs it
+    in a background thread (manual trigger or the scheduler in auto mode).
+    Manages the entire night: safety checks → roof open → NINA prelude →
+    NINA main imaging.
+
+    image_cmd claims the run by setting imaging state to ACTIVE synchronously
+    before this thread starts (guarding against concurrent callers), so this
+    function does not re-check or re-claim the state.
 
     operand meanings:
         1 = full run (prelude + image_nina1)
@@ -1406,7 +1416,6 @@ def doit_cmd(words: list[str], account: str) -> None:
         3 = full run (prelude + home_and_park, no imaging)
 
     State machine transitions written to imaging.txt during this function:
-        NONE → ACTIVE   (immediately, guards against concurrent calls)
         ACTIVE → IN_PRELUDE   (just before on_nina.bat launches)
         IN_PRELUDE → DONE_PRELUDE   (written externally by NINA/bat when prelude ends)
         DONE_PRELUDE → IN_MAIN   (just before image_nina bat launches)
@@ -1417,25 +1426,14 @@ def doit_cmd(words: list[str], account: str) -> None:
     aborts immediately without closing the roof (that is handled by end.py).
     """
 
-    # ------------------------------------------------------------------ #
-    # Guard: refuse to run if another imaging session is already active.  #
-    # This can happen if the scheduler fires while a manual run is live,  #
-    # or if a previous crash left the state file in a non-NONE state.     #
-    # ------------------------------------------------------------------ #
-    current = get_imaging_state()
-    if current != ImagingState.NONE:
-        msg = f"Imaging already in progress (state: {current.value}), aborting"
-        _logger.warning(msg)
-        social_server.post_social_message(msg)
-        return
-
-    # Claim the run immediately so no concurrent caller can slip through.
-    set_imaging_state(ImagingState.ACTIVE)
+    # The run has already been claimed (state set to ACTIVE) synchronously by
+    # image_cmd before this thread started, which also guarantees no concurrent
+    # caller slipped through. Nothing to re-check here.
     _logger.info("doit_cmd")
 
     # Kill any stale NINA or PWI4 processes before starting a fresh run.
     subprocess.run(
-        [r"C:\Users\iriso\Documents\development\srt\scripts\kill_nina_pwi4.bat"],
+        [os.path.join(_SCRIPTS_DIR, "kill_nina_pwi4.bat")],
         shell=True
     )
 
