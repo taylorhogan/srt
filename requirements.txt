@@ -103,5 +103,6 @@ fastapi
 uvicorn[standard]
 websockets
 python-multipart
+psutil
 prefect
 pyserial

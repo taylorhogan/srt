@@ -44,6 +44,32 @@ async def _on_startup():
 _images_dir: Optional[str] = None
 
 
+def _read_cpu_percent() -> Optional[float]:
+    """Best-effort system CPU utilisation (%).
+
+    Prefers psutil; falls back to a no-dependency Windows CIM query so the
+    metric still works where psutil isn't installed. Returns None on failure.
+    Blocking — call via asyncio.to_thread.
+    """
+    try:
+        import psutil
+        return psutil.cpu_percent(interval=0.3)
+    except Exception:
+        pass
+    try:
+        import subprocess
+        out = subprocess.run(
+            ["powershell", "-NoProfile", "-Command",
+             "(Get-CimInstance Win32_Processor | "
+             "Measure-Object -Property LoadPercentage -Average).Average"],
+            capture_output=True, text=True, timeout=8,
+        )
+        val = out.stdout.strip()
+        return float(val) if val else None
+    except Exception:
+        return None
+
+
 def init(images_dir: str) -> None:
     global _images_dir
     _images_dir = images_dir
@@ -270,6 +296,14 @@ async def api_ticker():
             image_drive = Path(_cfg.data()["nina"]["image_dir"]).drive or "C:"
             free_gb = shutil.disk_usage(image_drive + "\\").free / 1024 ** 3
             metrics.append({"label": f"{image_drive} Free", "value": f"{free_gb:.1f} GB"})
+        except Exception:
+            pass
+
+        # System CPU utilisation
+        try:
+            cpu = await asyncio.to_thread(_read_cpu_percent)
+            if cpu is not None:
+                metrics.append({"label": "CPU", "value": f"{cpu:.0f}%"})
         except Exception:
             pass
 
