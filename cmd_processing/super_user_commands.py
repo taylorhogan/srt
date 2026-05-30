@@ -2107,6 +2107,29 @@ def _image_stats_run(words: list[str], account: str) -> None:
         str(plot_path)
     )
 
+    # Min / median / max summary, posted after the graph. FWHM/ecc skip frames
+    # with no stars (those carry None); star count includes every frame.
+    import statistics as _statistics
+
+    def _mmm(values: list) -> Optional[tuple]:
+        vals = [v for v in values if v is not None]
+        if not vals:
+            return None
+        return min(vals), _statistics.median(vals), max(vals)
+
+    summary_lines = ["━━ Frame stats (min / median / max) ━━"]
+    stars = _mmm([fr.get("star_count") for fr in frames])
+    if stars:
+        summary_lines.append(f"Stars : {stars[0]:.0f} / {stars[1]:.0f} / {stars[2]:.0f}")
+    fwhm = _mmm([fr.get("fwhm_arcsec") for fr in frames])
+    if fwhm:
+        summary_lines.append(f"FWHM  : {fwhm[0]:.2f}\" / {fwhm[1]:.2f}\" / {fwhm[2]:.2f}\"")
+    ecc = _mmm([fr.get("eccentricity") for fr in frames])
+    if ecc:
+        summary_lines.append(f"Ecc   : {ecc[0]:.3f} / {ecc[1]:.3f} / {ecc[2]:.3f}")
+    if len(summary_lines) > 1:
+        social_server.post_social_message("\n".join(summary_lines))
+
 
 if __name__ == "__main__":
     announce_roof_movement("The roof will be opening in 5 Minutes")
