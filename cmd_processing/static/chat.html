@@ -124,11 +124,6 @@
     font-size: 11.5px; color: #7d8590; margin-top: 8px;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
-  .card-thumb {
-    max-width: 100%; max-height: 240px; border-radius: 6px; margin-top: 9px;
-    display: block; cursor: zoom-in; border: 1px solid #21262d;
-  }
-  .card-thumb:hover { opacity: 0.9; }
   .card-bottom { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
   .progress-wrap { flex: 1; height: 3px; border-radius: 3px; background: #21262d; overflow: hidden; }
   .progress-bar { height: 100%; border-radius: 3px; transition: width .4s ease; }
@@ -435,19 +430,6 @@
     log.textContent = lastLogText(job);
     if (job.status === 'QUEUED' && job.resource_class === 'mount_exclusive') log.textContent = 'Waiting for mount…';
     card.appendChild(log);
-
-    // Surface the most recent image result on the card face so graph/image
-    // commands (stats, optics, latest, show…) are visible without opening the sheet.
-    let imgEntry = null;
-    for (let i = job.log.length - 1; i >= 0; i--) { if (job.log[i].image_url) { imgEntry = job.log[i]; break; } }
-    if (imgEntry) {
-      const thumb = document.createElement('img');
-      thumb.className = 'card-thumb';
-      thumb.src = imgEntry.image_url;
-      thumb.alt = 'result';
-      thumb.onclick = (e) => { e.stopPropagation(); openLightbox(imgEntry.image_url); };
-      card.appendChild(thumb);
-    }
 
     if (!isSystem) {
       const bottom = document.createElement('div'); bottom.className = 'card-bottom';
