@@ -376,15 +376,20 @@
 
   // ── Rendering ───────────────────────────────────────────────────
   function sortedJobs() {
-    // Newest user jobs on top; the pinned system feed sinks to the bottom.
+    // Newest user job at the bottom (chat-style); the system feed pins to the top.
     return [...jobs.values()].sort((a, b) => {
-      if (a.kind === 'system') return 1;
-      if (b.kind === 'system') return -1;
-      return b.created_at - a.created_at;
+      if (a.kind === 'system') return -1;
+      if (b.kind === 'system') return 1;
+      return a.created_at - b.created_at;
     });
   }
 
   function renderPanel() {
+    // Preserve the reader's position across the full rebuild: stick to the
+    // newest card if already at the bottom, otherwise keep the current scroll.
+    const wasAtBottom = panel.scrollHeight - panel.scrollTop - panel.clientHeight < 60;
+    const prevScroll = panel.scrollTop;
+
     const list = sortedJobs();
     const userJobs = list.filter((j) => j.kind !== 'system');
     panel.innerHTML = '';
@@ -400,6 +405,8 @@
     list.forEach((job) => panel.appendChild(renderCard(job)));
     updateElapsed();
     updateHeaderCounts();
+
+    panel.scrollTop = wasAtBottom ? panel.scrollHeight : prevScroll;
   }
 
   function renderCard(job) {
