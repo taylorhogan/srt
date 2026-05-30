@@ -14,6 +14,11 @@ from utils import pushover
 
 cfg = config.data()
 
+# Per-template confidence/error from the most recent visual_status() call, so
+# callers (e.g. the web-chat `status` command) can report the raw match scores
+# without changing visual_status()'s 4-tuple return signature.
+last_match: dict | None = None
+
 
 def find_template_rectangle (image, template_image_path):
     # Load the main image and the template
@@ -127,6 +132,15 @@ def visual_status():
     print("open confidence", max_val_open)
     open = abs(open_error) < accuracy and max_val_open >= min_conf
     print ("parked, closed, open", str(parked), str(closed), str(open))
+
+    global last_match
+    last_match = {
+        "min_conf": min_conf,
+        "accuracy": accuracy,
+        "parked": {"conf": float(max_val_parked), "error": float(parked_error)},
+        "closed": {"conf": float(max_val_closed), "error": float(closed_error)},
+        "open":   {"conf": float(max_val_open),   "error": float(open_error)},
+    }
 
     mod_date = time.ctime(os.path.getmtime(cfg["camera safety"]["scope_view"]))
     return parked,  closed, open, mod_date

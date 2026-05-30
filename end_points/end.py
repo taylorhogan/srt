@@ -41,6 +41,16 @@ def determine_roof_state_visually(account):
             reply += "\nRoof is not open"
     else:
         reply = "Scope is not parked"
+
+    lm = vision_safety.last_match
+    if lm:
+        reply += (
+            f"\n━━ Match confidence (≥ {lm['min_conf']:.2f}) ━━\n"
+            f"Parked : {lm['parked']['conf']:.2f}\n"
+            f"Closed : {lm['closed']['conf']:.2f}\n"
+            f"Open   : {lm['open']['conf']:.2f}"
+        )
+
     reply += "\nPicture Date:" + mod_date + "\n"
     logger = cfg["logger"]["logging"]
     logger.info(account)

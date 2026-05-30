@@ -34,37 +34,58 @@ def is_initialized() -> bool:
     return _initialized
 
 
-def post_message(text: str, image_path: Optional[str] = None, html: Optional[str] = None) -> dict:
+def make_entry(text: str, image_url: Optional[str] = None, html: Optional[str] = None) -> dict:
+    """Build a message/log entry dict (id + timestamp) without broadcasting."""
     global _counter
-    image_url = None
-
-    if image_path and _images_dir:
-        src = Path(image_path)
-        if src.is_file():
-            _counter += 1
-            unique_name = f"{int(time.time())}_{_counter}_{src.name}"
-            dest = Path(_images_dir) / unique_name
-            shutil.copy2(str(src), str(dest))
-            image_url = f"/images/{unique_name}"
-
     with _lock:
         _counter += 1
-        msg = {
+        return {
             "id": _counter,
             "timestamp": time.time(),
             "text": text,
             "image_url": image_url,
             "html": html,
         }
-        _messages.append(msg)
 
+
+def broadcast(envelope: dict) -> None:
+    """Push a typed envelope (e.g. ``{"type": "job_event", ...}``) to all clients."""
+    with _lock:
         for queue in list(_subscribers):
             try:
-                queue.put_nowait(msg)
+                queue.put_nowait(envelope)
             except asyncio.QueueFull:
                 pass
 
-    return msg
+
+def post_message(text: str, image_path: Optional[str] = None, html: Optional[str] = None) -> dict:
+    image_url = None
+
+    if image_path and _images_dir:
+        src = Path(image_path)
+        if src.is_file():
+            global _counter
+            with _lock:
+                _counter += 1
+                seq = _counter
+            unique_name = f"{int(time.time())}_{seq}_{src.name}"
+            dest = Path(_images_dir) / unique_name
+            shutil.copy2(str(src), str(dest))
+            image_url = f"/images/{unique_name}"
+
+    entry = make_entry(text, image_url=image_url, html=html)
+
+    # Resolve the active job (falls back to the pinned system feed) and route the
+    # entry into that job's isolated log; the registry broadcasts the job event.
+    from cmd_processing import jobs
+    job_id = jobs.get_current_job() or jobs.SYSTEM_JOB_ID
+    entry["job_id"] = job_id
+
+    with _lock:
+        _messages.append(entry)
+
+    jobs.append_log(job_id, entry)
+    return entry
 
 
 def subscribe() -> asyncio.Queue:

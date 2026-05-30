@@ -31,6 +31,7 @@ from fits_processing import fitstojpg, fitsfwhm, sky_brightness as sb, session_s
 from control import instructions
 from cmd_processing import super_user_commands as su
 from cmd_processing import message_bus
+from cmd_processing import jobs
 from nina_gen import nina_sequence_gen
 from utils.utils import topic_to_sched
 from utils import utils
@@ -384,7 +385,7 @@ def post_dso_preview(dso_name: str) -> None:
                 f"Preview for {dso_name} timed out after {_TIMEOUT_SEC}s — SkyView/SIMBAD did not respond"
             )
 
-    threading.Thread(target=_watchdog, daemon=True).start()
+    jobs.spawn(_watchdog)
 
 
 
@@ -428,7 +429,7 @@ def speedtest_cmd(words: list[str], index: int, m: Mastodon, account: str) -> No
         else:
             post_social_message("Speed test failed — check internet connection")
 
-    threading.Thread(target=_run, daemon=True).start()
+    jobs.spawn(_run)
 
 
 keywords = {
@@ -557,22 +558,6 @@ def post_social_message(message: str, image: Optional[str] = None, vis: Optional
         except Exception:
             logger.exception("Failed to post message via web chat API")
 
-    # Optionally mirror to Mastodon
-    if cfg.get("web_chat", {}).get("mastodon_mirror", False):
-        try:
-            mastodon = cfg["globals"]["mastodon instance"]
-            if mastodon is None:
-                mastodon = get_mastodon_instance()
-                cfg["globals"]["mastodon instance"] = mastodon
-            if image is None:
-                mastodon.status_post(message, visibility=vis)
-            else:
-                mime = "image/jpeg" if image.lower().endswith((".jpg", ".jpeg")) else "image/png"
-                media = mastodon.media_post(image, mime)
-                mastodon.status_post(message, media_ids=media, visibility=vis)
-        except Exception:
-            logger.exception("Failed to mirror message to Mastodon")
-
 
 def handle_mention(notification: Any) -> None:
     cfg = config.data()
@@ -632,6 +617,7 @@ def main() -> None:
     _project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
     images_dir = os.path.join(_project_root, web_cfg.get("upload_dir", "saved_dso"))
     message_bus.init(images_dir, max_history=web_cfg.get("max_history", 500))
+    jobs.init()
 
     mqtt_client = utils.connect_mqtt()
     cfg["globals"]["mqtt_client"] = mqtt_client

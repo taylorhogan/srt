@@ -22,6 +22,7 @@ from control import instructions
 from hardware_control import kasa_utils as ku
 from hardware_control import sonos_utils
 from cmd_processing import social_server
+from cmd_processing import jobs
 from utils import utils, pushover
 from sentry import vision_safety
 from end_points import end
@@ -496,7 +497,7 @@ def update_cmd(words: list[str], account: str) -> None:
         time.sleep(2)
         os._exit(social_server.RESTART_EXIT_CODE)
 
-    threading.Thread(target=_do_update, daemon=True).start()
+    jobs.spawn(_do_update)
 
 
 def optics_cmd(words: list[str], account: str) -> None:
@@ -508,7 +509,7 @@ def optics_cmd(words: list[str], account: str) -> None:
         optics * <n>        — frame n of the last-imaged DSO
         optics <dso> <n>    — frame n of the named DSO
     """
-    threading.Thread(target=_optics_run, args=(words,), daemon=True).start()
+    jobs.spawn(_optics_run, args=(words,))
 
 
 def _optics_run(words: list[str]) -> None:
@@ -684,7 +685,7 @@ def drift_cmd(words: list[str], account: str) -> None:
         drift <dso>     — L frames of the named DSO
         drift *         — same as bare drift (last DSO)
     """
-    threading.Thread(target=_drift_run, args=(words,), daemon=True).start()
+    jobs.spawn(_drift_run, args=(words,))
 
 
 def _drift_run(words: list[str]) -> None:
@@ -842,7 +843,7 @@ def stack_cmd(words: list[str], account: str) -> None:
         stack <dso>           — all filters of the named DSO
         stack <dso> <filter>  — only the named filter (e.g. stack m31 ha)
     """
-    threading.Thread(target=_stack_run, args=(words,), daemon=True).start()
+    jobs.spawn(_stack_run, args=(words,))
 
 
 def _stack_run(words: list[str]) -> None:
@@ -1033,7 +1034,7 @@ def bad_cmd(words: list[str], account: str) -> None:
         bad <dso> go        — actually rename (default is dry-run)
         bad go              — dry-run on last DSO (use `bad * go` to rename)
     """
-    threading.Thread(target=_bad_run, args=(words,), daemon=True).start()
+    jobs.spawn(_bad_run, args=(words,))
 
 
 def _bad_run(words: list[str]) -> None:
@@ -1395,7 +1396,7 @@ def image_cmd(words: list[str], account: str) -> None:
             finally:
                 frame_watcher.stop()
                 set_imaging_state(ImagingState.NONE)
-        threading.Thread(target=_run, daemon=True).start()
+        jobs.spawn(_run)
 
 
 
@@ -1666,12 +1667,12 @@ def doflats_cmd(words: list[str], account: str) -> None:
             do_flats()
         finally:
             set_imaging_state(ImagingState.NONE)
-    threading.Thread(target=_run, daemon=True).start()
+    jobs.spawn(_run)
 
 
 def snr_cmd(words: list[str], account: str) -> None:
     """Post stack-convergence curve in a background thread (non-blocking)."""
-    threading.Thread(target=_snr_run, args=(words,), daemon=True).start()
+    jobs.spawn(_snr_run, args=(words,))
 
 
 def _snr_run(words: list[str]) -> None:
@@ -1845,7 +1846,7 @@ def transit_cmd(words: list[str], account: str) -> None:
 
     Usage: transit <dso> <filter>
     """
-    threading.Thread(target=_transit_run, args=(words,), daemon=True).start()
+    jobs.spawn(_transit_run, args=(words,))
 
 
 def _transit_run(words: list[str]) -> None:
@@ -1911,7 +1912,7 @@ def _transit_run(words: list[str]) -> None:
 
 def image_stats_cmd(words: list[str], account: str) -> None:
     """Post per-frame FWHM/eccentricity graph in a background thread (non-blocking)."""
-    threading.Thread(target=_image_stats_run, args=(words, account), daemon=True).start()
+    jobs.spawn(_image_stats_run, args=(words, account))
 
 
 def _image_stats_run(words: list[str], account: str) -> None:

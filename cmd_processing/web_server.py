@@ -18,7 +18,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile, File, F
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
-from cmd_processing import message_bus
+from cmd_processing import message_bus, jobs
 
 _logger = logging.getLogger(__name__)
 
@@ -62,14 +62,15 @@ async def websocket_endpoint(websocket: WebSocket):
     queue = message_bus.subscribe()
 
     try:
-        # Send message history on connect
-        history = message_bus.get_history()
-        await websocket.send_json({"type": "history", "messages": history})
+        # Send the current jobs snapshot on connect so the client can rehydrate
+        # every card (and its isolated log) after a fresh load or a reconnect.
+        await websocket.send_json({"type": "history", "jobs": jobs.snapshot()})
 
         async def send_loop():
             while True:
-                msg = await queue.get()
-                await websocket.send_json({"type": "message", "data": msg})
+                # Queues now carry fully-typed envelopes (job_event, etc.).
+                envelope = await queue.get()
+                await websocket.send_json(envelope)
 
         async def recv_loop():
             while True:
@@ -92,7 +93,17 @@ async def websocket_endpoint(websocket: WebSocket):
 
 
 def _dispatch_command(cmd_text: str):
-    """Run a command through the existing social_server.do_command dispatch."""
+    """Run a command as a job through the social_server.do_command dispatch.
+
+    A job is created and bound to this dispatch thread, so every message the
+    command posts lands in that job's isolated log. Long commands hand off to a
+    worker thread via ``jobs.spawn`` and own their own terminal transition; for
+    plain synchronous commands we finalize here on return/exception.
+    """
+    cmd_text = cmd_text.strip()
+    job_id = jobs.create(cmd_text)
+    jobs.set_current_job(job_id)
+    jobs.transition(job_id, jobs.RUNNING)
     try:
         from configs import config
         from cmd_processing import social_server, cmd_history
@@ -101,8 +112,6 @@ def _dispatch_command(cmd_text: str):
         super_users = cfg.get("Super Users", {})
         account = next(iter(super_users), "web_user")
 
-        cmd_text = cmd_text.strip()
-
         # !n — expand to the nth history entry and re-run it
         if cmd_text.startswith("!"):
             raw = cmd_text[1:]
@@ -110,19 +119,29 @@ def _dispatch_command(cmd_text: str):
                 n = int(raw)
             except ValueError:
                 message_bus.post_message(f"history: '{raw}' is not a valid number")
+                jobs.finalize(job_id, jobs.ERROR)
                 return
             resolved = cmd_history.get_nth(n)
             if resolved is None:
                 message_bus.post_message(f"history: no entry #{n}")
+                jobs.finalize(job_id, jobs.ERROR)
                 return
             message_bus.post_message(f"!{n} → {resolved}")
             cmd_text = resolved
 
         cmd_history.record(cmd_text)
         social_server.do_command(f"@iris {cmd_text}", None, account)
+
+        # If a worker thread adopted the job (jobs.spawn), it owns the terminal
+        # state; otherwise this synchronous command is now complete.
+        if not jobs.is_async(job_id):
+            jobs.finalize(job_id, jobs.DONE)
     except Exception:
         _logger.exception("Command dispatch failed for: %s", cmd_text)
         message_bus.post_message(f"Error processing command: {cmd_text}")
+        jobs.finalize(job_id, jobs.ERROR)
+    finally:
+        jobs.clear_current_job()
 
 
 @app.post("/api/post")
@@ -169,6 +188,23 @@ async def api_rename_upload(old_filename: str = Form(...), new_name: str = Form(
 @app.get("/api/history")
 async def api_history():
     return {"messages": message_bus.get_history()}
+
+
+@app.get("/api/jobs")
+async def api_jobs():
+    """Return the current jobs snapshot (rehydration / debugging)."""
+    return {"jobs": jobs.snapshot()}
+
+
+@app.post("/api/jobs/{job_id}/cancel")
+async def api_cancel_job(job_id: str):
+    """Request cooperative cancellation of a running job.
+
+    Sets a cancel flag the worker observes at its next checkpoint; the terminal
+    CANCELLED event is emitted by the worker, not optimistically here.
+    """
+    ok = jobs.request_cancel(job_id)
+    return JSONResponse(content={"ok": ok})
 
 
 @app.get("/api/ticker")
