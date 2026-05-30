@@ -436,7 +436,11 @@ def _plot_top_candidates(
             spine.set_edgecolor("#444466")
         ax1.plot(times_rel, rel_flux[:, s], "o", markersize=3, color="#5fa8d3")
         ax1.axhline(1.0, color="#888", linestyle=":", linewidth=0.8)
-        label = f"#{row+1}\n({cand['x']:.0f},{cand['y']:.0f})"
+        label = f"#{row+1}"
+        if cand.get("ra_deg") is not None and cand.get("dec_deg") is not None:
+            label += f"\nRA {cand['ra_deg']:.4f}\nDec {cand['dec_deg']:+.4f}"
+        else:
+            label += f"\n({cand['x']:.0f},{cand['y']:.0f})"
         if cand.get("gaia_g_mag") is not None:
             label += f"\nG={cand['gaia_g_mag']:.1f}"
         ax1.set_ylabel(label, color="white")

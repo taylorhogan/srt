@@ -1183,8 +1183,8 @@ def _bad_run(words: list[str]) -> None:
         else:
             star_count = 0 if ecc is None else None
 
-        if star_count == 0:
-            bad.append((f, "0 stars"))
+        if star_count is not None and star_count < 5:
+            bad.append((f, f"{star_count} stars < 5"))
         elif fwhm is not None and fwhm > _BAD_FWHM_ARCSEC:
             bad.append((f, f"FWHM {fwhm:.2f}\" > {_BAD_FWHM_ARCSEC}\""))
         elif ecc is not None and ecc > _BAD_ECC:
@@ -1219,7 +1219,7 @@ def _bad_run(words: list[str]) -> None:
     if not bad:
         social_server.post_social_message(
             f"{dso_dir.name}: all {len(fits_files)} frames pass thresholds "
-            f"(FWHM≤{_BAD_FWHM_ARCSEC}\", ecc≤{_BAD_ECC}, stars>0)\n"
+            f"(FWHM≤{_BAD_FWHM_ARCSEC}\", ecc≤{_BAD_ECC}, stars≥5)\n"
             f"{_remaining_summary()}"
         )
         return
@@ -2031,7 +2031,9 @@ def _image_stats_run(words: list[str], account: str) -> None:
                 _, fwhm_arcsec, star_count, ecc = fitsfwhm.calculate_fwhm(
                     fits_path, arcsec_per_pixel=arcsec_per_pixel
                 )
-            if star_count == 0:
+            # Need a minimum number of stars before the FWHM/ecc fit is
+            # trustworthy; below the floor, fall back to the HFR header value.
+            if star_count < 5:
                 hfr = hdr.get("HFR")
                 fwhm_arcsec = float(hfr) * 2.0 * arcsec_per_pixel if hfr else None
                 ecc = None
@@ -2117,17 +2119,26 @@ def _image_stats_run(words: list[str], account: str) -> None:
             return None
         return min(vals), _statistics.median(vals), max(vals)
 
-    summary_lines = ["━━ Frame stats (min / median / max) ━━"]
+    # Build rows as (label, [min, median, max] formatted strings), then align
+    # each numeric column to a common width so the slashes line up.
+    rows: list[tuple[str, list[str]]] = []
     stars = _mmm([fr.get("star_count") for fr in frames])
     if stars:
-        summary_lines.append(f"Stars : {stars[0]:.0f} / {stars[1]:.0f} / {stars[2]:.0f}")
+        rows.append(("Stars", [f"{v:.0f}" for v in stars]))
     fwhm = _mmm([fr.get("fwhm_arcsec") for fr in frames])
     if fwhm:
-        summary_lines.append(f"FWHM  : {fwhm[0]:.2f}\" / {fwhm[1]:.2f}\" / {fwhm[2]:.2f}\"")
+        rows.append(("FWHM", [f"{v:.2f}\"" for v in fwhm]))
     ecc = _mmm([fr.get("eccentricity") for fr in frames])
     if ecc:
-        summary_lines.append(f"Ecc   : {ecc[0]:.3f} / {ecc[1]:.3f} / {ecc[2]:.3f}")
-    if len(summary_lines) > 1:
+        rows.append(("Ecc", [f"{v:.3f}" for v in ecc]))
+
+    if rows:
+        label_w = max(len(label) for label, _ in rows)
+        col_w = [max(len(row[i]) for _, row in rows) for i in range(3)]
+        summary_lines = ["━━ Frame stats (min / median / max) ━━"]
+        for label, values in rows:
+            cols = " / ".join(v.rjust(col_w[i]) for i, v in enumerate(values))
+            summary_lines.append(f"{label.ljust(label_w)} : {cols}")
         social_server.post_social_message("\n".join(summary_lines))
 
 
