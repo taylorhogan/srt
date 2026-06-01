@@ -16,6 +16,7 @@ and BLS search are new here.
 
 import json
 import logging
+import multiprocessing as mp
 import os
 import shutil
 import subprocess
@@ -760,6 +761,14 @@ def _register_only(
 # initializer (cheaper than re-pickling them on every task) and tasks pass only
 # a star index. The functions must be module-level to be picklable.
 
+# Pin the pool start method to 'spawn' on every platform. The default is 'fork'
+# on Linux, but these pools are created from a daemon worker thread inside the
+# multithreaded social/scheduler server, and fork()ing a multithreaded process
+# can deadlock a child that inherits a lock held by another thread. 'spawn'
+# starts a clean interpreter (as Windows/macOS already do), so behaviour is
+# uniform and fork-safe. Slightly slower pool startup; negligible here.
+_MP_CTX = mp.get_context("spawn")
+
 _PS: dict = {}  # per-worker read-only state for the per-star search
 
 
@@ -1228,7 +1237,7 @@ def run_transit_search(
     # execution for a single worker (1-core box, or debugging), which also keeps
     # the pool's spawn cost off trivially small jobs.
     if pool_workers > 1:
-        with ProcessPoolExecutor(max_workers=pool_workers,
+        with ProcessPoolExecutor(max_workers=pool_workers, mp_context=_MP_CTX,
                                  initializer=_per_star_init,
                                  initargs=init_args) as pool:
             futs = {pool.submit(_per_star_worker, int(s)): s for s in kept_indices}
@@ -1300,7 +1309,8 @@ def run_transit_search(
         # rel_flux to pickle. Skipped for a single worker.
         perm_workers = min(n_workers, max(1, significance_permutations))
         if perm_workers > 1:
-            with ProcessPoolExecutor(max_workers=perm_workers) as ppool:
+            with ProcessPoolExecutor(max_workers=perm_workers,
+                                     mp_context=_MP_CTX) as ppool:
                 sig = _transit_significance(
                     times_mjd, rel_flux[:, best["_star_idx"]],
                     np.array([c["score"] for c in per_star], dtype=float),
