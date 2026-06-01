@@ -47,6 +47,11 @@ from configs import config as _config
 
 _logger = logging.getLogger(__name__)
 
+
+class TransitCancelled(Exception):
+    """Raised inside run_transit_search when the job's cancel flag is set."""
+
+
 # Serialises the read-modify-write in save_transits so concurrent searches
 # (each runs on its own daemon thread via jobs.spawn) can't lose each other's
 # entry or corrupt the file when they finish at nearly the same time.
@@ -960,14 +965,69 @@ def _plot_candidate_field(
     fig.savefig(output_path, format="jpeg", dpi=130, facecolor=fig.get_facecolor())
 
 
+def _plot_candidate_lightcurve(
+    times_mjd: np.ndarray,
+    rel_curve: np.ndarray,
+    candidate: dict,
+    output_path: Path,
+    title: str,
+) -> None:
+    """Render the top candidate's raw differential light curve for the push.
+
+    Single panel: relative flux vs. days from the first frame, with the detected
+    single-transit box (shaded window + fitted depth level) overlaid.
+    """
+    t0 = float(np.nanmin(times_mjd)) if times_mjd.size else 0.0
+    times_rel = times_mjd - t0
+
+    fig = Figure(figsize=(8, 4.2))
+    FigureCanvasAgg(fig)
+    fig.patch.set_facecolor(_DARK_BG)
+    ax = fig.add_subplot(1, 1, 1)
+    ax.set_facecolor(_DARK_AXES)
+    ax.tick_params(colors="white")
+    for sp in ax.spines.values():
+        sp.set_edgecolor("#444466")
+    ax.plot(times_rel, rel_curve, "o", markersize=3, color="#5fa8d3")
+    ax.axhline(1.0, color="#888", linestyle=":", linewidth=0.8)
+    tc = candidate.get("transit_t_center_mjd")
+    dur = candidate.get("transit_duration_d")
+    depth = candidate.get("transit_depth")
+    if tc and dur and depth:
+        tc_rel = float(tc) - t0
+        half = float(dur) / 2.0
+        ax.axvspan(tc_rel - half, tc_rel + half, color="#ffb86b", alpha=0.15)
+        ax.hlines(1.0 - float(depth), tc_rel - half, tc_rel + half,
+                  color="#ffb86b", linewidth=1.4)
+    sub = []
+    if depth:
+        sub.append(f"depth={float(depth)*100:.2f}%")
+    if dur:
+        sub.append(f"dur={float(dur)*24.0:.2f}h")
+    sub.append(f"score={candidate.get('score', 0):.1f}")
+    ax.set_xlabel("days from first frame", color="white")
+    ax.set_ylabel("relative flux", color="white")
+    ax.set_title(f"{title}   " + "  ".join(sub), color="white", fontsize=10)
+    ax.grid(True, alpha=0.25, color="#444466")
+    fig.tight_layout()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(output_path, format="jpeg", dpi=130, facecolor=fig.get_facecolor())
+
+
 def _notify_push(
     candidate: dict,
     dso_name: str,
     filter_name: str,
     field_z: float,
+    lightcurve_path: Optional[Path],
     field_image_path: Optional[Path],
 ) -> None:
-    """Push a strong-detection alert (best-effort; never raises into the search)."""
+    """Push a strong-detection alert (best-effort; never raises into the search).
+
+    The alert text + raw light curve go in the first message (the light curve is
+    the key diagnostic); the finder/field image follows as a second message,
+    since Pushover allows only one attachment per message.
+    """
     try:
         from utils import pushover
     except Exception:
@@ -992,10 +1052,18 @@ def _notify_push(
            f"field_z={field_z:.1f}{extra_str}. Candidate only — needs a 2nd "
            f"transit to confirm.")
 
-    img = (str(field_image_path) if field_image_path is not None
-           and field_image_path.exists() else None)
+    def _exists(p: Optional[Path]) -> Optional[str]:
+        return str(p) if p is not None and p.exists() else None
+
+    lc_img = _exists(lightcurve_path)
+    field_img = _exists(field_image_path)
     try:
-        pushover.push_message(msg, image=img)
+        pushover.push_message(msg, image=lc_img)
+        if field_img:
+            pushover.push_message(
+                f"{dso_name} [{filter_name}]: finder chart for the candidate above.",
+                image=field_img,
+            )
     except Exception:
         _logger.exception("transit push notification failed")
 
@@ -1006,13 +1074,24 @@ def run_transit_search(
     image_dir: Path,
     output_plot_path: Path,
     progress_cb: Optional[Callable[[str], None]] = None,
+    cancel_cb: Optional[Callable[[], bool]] = None,
 ) -> dict:
-    """Top-level orchestrator. Returns the entry that was saved to transits.json."""
+    """Top-level orchestrator. Returns the entry that was saved to transits.json.
+
+    ``cancel_cb`` is polled at phase boundaries (and within the long loops); when
+    it returns True the search raises :class:`TransitCancelled` so the caller can
+    mark the job cancelled. Cancellation is cooperative — it takes effect at the
+    next checkpoint, not mid-call (a running ASTAP solve or BLAS call finishes).
+    """
     from stacking import stacker  # local import — avoids circular at module load
 
     def _notify(msg: str) -> None:
         if progress_cb:
             progress_cb(msg)
+
+    def _ck() -> None:
+        if cancel_cb and cancel_cb():
+            raise TransitCancelled()
 
     cfg = _transit_cfg()
     min_frames = int(cfg.get("min_frames", 20))
@@ -1114,6 +1193,7 @@ def run_transit_search(
         raise ValueError(
             f"Too few frames survived registration ({len(frames)} < {min_frames})"
         )
+    _ck()
     weights = stacker._fwhm_weights(fwhm_values, accepted)
 
     _notify(f"prep: extracting timestamps for {len(accepted)} frames…")
@@ -1161,6 +1241,7 @@ def run_transit_search(
             done += 1
             if done % tick == 0:
                 _notify(f"photometry: {done}/{n_frames} frames done…")
+                _ck()
 
     _notify(f"photometry: done — {np.isfinite(flux_matrix).mean()*100:.1f}% valid")
 
@@ -1247,12 +1328,18 @@ def run_transit_search(
                 done += 1
                 if done % tick == 0:
                     _notify(f"transit search: BLS {done}/{n_kept} stars…")
+                if cancel_cb and cancel_cb():
+                    # Drop pending work now; running workers (≤ pool_workers)
+                    # finish, then the with-block's shutdown returns.
+                    pool.shutdown(wait=False, cancel_futures=True)
+                    raise TransitCancelled()
     else:
         _per_star_init(*init_args)
         for done, s in enumerate(kept_indices, start=1):
             per_star.append(_per_star_worker(int(s)))
             if done % tick == 0:
                 _notify(f"transit search: BLS {done}/{n_kept} stars…")
+                _ck()
 
     # --- Flag BLS periods shared across many stars (alias systematics) ------ #
     # Real periodic signals don't cluster at one period across unrelated field
@@ -1291,6 +1378,7 @@ def run_transit_search(
     per_star.sort(key=lambda c: c["score"], reverse=True)
     top = per_star[:top_n]
 
+    _ck()
     # Tag the top candidates with sky coordinates + nearest Gaia source.
     if identify_candidates:
         _identify_candidates(
@@ -1343,7 +1431,16 @@ def run_transit_search(
         # candidate (needs a 2nd transit at the predicted period to confirm).
         field_z = sig.get("field_z")
         if field_z is not None and field_z >= field_z_alert:
-            _notify_push(best, dso_name, filter_name, field_z, field_image_path)
+            lc_path = output_plot_path.with_name(
+                output_plot_path.stem + "_lightcurve" + output_plot_path.suffix)
+            try:
+                _plot_candidate_lightcurve(
+                    times_mjd, rel_flux[:, best["_star_idx"]], best, lc_path,
+                    f"{dso_name} [{filter_name}] — candidate light curve")
+            except Exception:
+                _logger.exception("candidate light-curve plot failed")
+                lc_path = None
+            _notify_push(best, dso_name, filter_name, field_z, lc_path, field_image_path)
 
     _notify(f"plotting top {len(top)} candidate(s)…")
     _plot_top_candidates(

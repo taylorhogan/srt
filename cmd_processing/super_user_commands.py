@@ -1881,19 +1881,30 @@ def _transit_run(words: list[str]) -> None:
     def _progress(msg: str) -> None:
         social_server.post_social_message(f"Transit [{dso_arg}/{filter_label}]: {msg}")
 
+    # Capture the job id now (binding is active here) so the cancel check works
+    # regardless of which thread run_transit_search ends up polling it from.
+    _job_id = jobs.get_current_job()
+
+    def _is_cancelled() -> bool:
+        return jobs.is_cancelled(_job_id)
+
     social_server.post_social_message(
         f"Transit search for {dso_arg} [{filter_label}]: starting…"
     )
 
+    from transit_search import transit as _ts
     try:
-        from transit_search import transit as _ts
         entry = _ts.run_transit_search(
             dso_name=dso_arg,
             filter_name=filter_name,
             image_dir=image_dir,
             output_plot_path=out_path,
             progress_cb=_progress,
+            cancel_cb=_is_cancelled,
         )
+    except _ts.TransitCancelled:
+        social_server.post_social_message(f"Transit [{dso_arg}/{filter_label}]: cancelled.")
+        return
     except Exception as exc:
         _logger.exception("_transit_run: failed")
         social_server.post_social_message(f"Transit [{dso_arg}/{filter_label}]: failed — {exc}")
