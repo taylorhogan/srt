@@ -131,6 +131,13 @@ class PublicConfig():
             "skip_fwhm_registration": True,
             # Permutation trials for the top candidate's false-alarm probability.
             "significance_permutations": 500,
+            # Worker processes for the CPU-bound phases (per-star box+BLS search
+            # and the permutation significance test). Those are pure-Python loops
+            # and GIL-bound, so threads don't parallelise them — separate
+            # processes use real cores. 0 = os.cpu_count(). NOTE: running several
+            # searches at once multiplies this; lower it if you routinely run 2+
+            # concurrently and want to avoid CPU oversubscription.
+            "max_workers": 0,
             # Robust field-outlier z-score above which the top candidate is
             # considered a strong single-night detection. When the top
             # candidate's field_z meets/exceeds this, a push notification is

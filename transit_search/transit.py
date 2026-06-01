@@ -22,7 +22,7 @@ import subprocess
 import sys
 import tempfile
 import threading
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Callable, Optional
@@ -748,6 +748,80 @@ def _register_only(
     return registered, accepted
 
 
+# ── Process-pool workers ────────────────────────────────────────────────── #
+# The per-star search and the permutation test are pure-Python loops (see
+# _single_transit_score) and so are GIL-bound: threads can't run two of them at
+# once, which is why a single ThreadPoolExecutor — and running two searches at
+# once on daemon threads — leaves most cores idle. These run on a
+# ProcessPoolExecutor instead, where each worker has its own interpreter.
+#
+# On Windows the pool uses 'spawn', so workers can't see a closure's captured
+# state — read-only per-star inputs are pushed once per worker via the pool
+# initializer (cheaper than re-pickling them on every task) and tasks pass only
+# a star index. The functions must be module-level to be picklable.
+
+_PS: dict = {}  # per-worker read-only state for the per-star search
+
+
+def _per_star_init(rel_flux, times_mjd, positions, baseline_days,
+                   st_kwargs, bls_kwargs) -> None:
+    _PS.update(rel_flux=rel_flux, times_mjd=times_mjd, positions=positions,
+               baseline_days=baseline_days, st_kwargs=st_kwargs,
+               bls_kwargs=bls_kwargs)
+
+
+def _per_star_worker(s: int) -> dict:
+    """Box + BLS search for one star. Mirrors the inline _per_star body."""
+    rel_flux = _PS["rel_flux"]
+    times_mjd = _PS["times_mjd"]
+    positions = _PS["positions"]
+    st_kwargs = _PS["st_kwargs"]
+    bls_kwargs = _PS["bls_kwargs"]
+    curve = rel_flux[:, s]
+    st = _single_transit_score(times_mjd, curve, **st_kwargs)
+    out: dict = {"_star_idx": s,
+                 "x": float(positions[s, 0]),
+                 "y": float(positions[s, 1]),
+                 "max_dip_sigma": _max_dip_sigma(curve),
+                 "transit_score": round(st["score"], 3),
+                 "transit_snr": round(st["snr"], 3),
+                 "transit_depth": round(st["depth"], 5),
+                 "transit_duration_d": round(st["duration_d"], 5),
+                 "transit_t_center_mjd": round(st["t_center_mjd"], 6),
+                 "transit_sigma_oot": round(st["sigma_oot"], 5),
+                 "transit_shape": round(st["shape"], 3),
+                 "transit_n_in": st["n_in"]}
+    bls = _run_bls(times_mjd, curve, _PS["baseline_days"], **bls_kwargs)
+    if bls is not None:
+        power_z = (bls["power"] - bls["power_mean"]) / bls["power_std"] if bls["power_std"] > 0 else 0.0
+        out.update({
+            "bls_period_d": round(bls["period_d"], 5),
+            "bls_depth": round(bls["depth"], 5),
+            "bls_duration_d": round(bls["duration_d"], 5),
+            "bls_power": round(bls["power"], 4),
+            "bls_power_z": round(power_z, 3),
+            "bls_n_in_transit": bls["n_in_transit"],
+        })
+    return out
+
+
+def _perm_batch(times_mjd, rel_curve, finite_idx, vals, st_kwargs,
+                observed_score, seed, n) -> int:
+    """Run ``n`` time-scrambled box searches; return how many reach the score.
+
+    Each batch owns an independent RNG stream (seeded from a SeedSequence) so
+    the result is deterministic regardless of how the work is chunked.
+    """
+    rng = np.random.default_rng(seed)
+    hits = 0
+    for _ in range(n):
+        perm = rel_curve.copy()
+        perm[finite_idx] = rng.permutation(vals)
+        if _single_transit_score(times_mjd, perm, **st_kwargs)["score"] >= observed_score:
+            hits += 1
+    return hits
+
+
 def _transit_significance(
     times_mjd: np.ndarray,
     rel_curve: np.ndarray,
@@ -756,6 +830,8 @@ def _transit_significance(
     st_kwargs: dict,
     n_permutations: int = 500,
     rng_seed: int = 0,
+    pool: Optional[ProcessPoolExecutor] = None,
+    n_workers: int = 1,
 ) -> dict:
     """Quantify how likely the top box detection is real rather than chance.
 
@@ -782,14 +858,21 @@ def _transit_significance(
     finite_idx = np.where(np.isfinite(rel_curve))[0]
     if finite_idx.size >= 30 and n_permutations > 0:
         vals = rel_curve[finite_idx]
-        rng = np.random.default_rng(rng_seed)
-        hits = 0
-        for _ in range(n_permutations):
-            perm = rel_curve.copy()
-            perm[finite_idx] = rng.permutation(vals)
-            s = _single_transit_score(times_mjd, perm, **st_kwargs)["score"]
-            if s >= observed_score:
-                hits += 1
+        # Split into one chunk per worker, each with an independent (but
+        # reproducible) RNG stream so the FAP doesn't depend on the chunking.
+        n_chunks = max(1, n_workers) if pool is not None else 1
+        n_chunks = min(n_chunks, n_permutations)
+        base = n_permutations // n_chunks
+        sizes = [base + (1 if i < n_permutations % n_chunks else 0)
+                 for i in range(n_chunks)]
+        seeds = np.random.SeedSequence(rng_seed).spawn(n_chunks)
+        args = [(times_mjd, rel_curve, finite_idx, vals, st_kwargs,
+                 observed_score, seeds[i], sizes[i]) for i in range(n_chunks)]
+        if pool is not None and n_chunks > 1:
+            hits = sum(f.result() for f in
+                       [pool.submit(_perm_batch, *a) for a in args])
+        else:
+            hits = sum(_perm_batch(*a) for a in args)
         out["perm_fap"] = (hits + 1) / (n_permutations + 1)
 
     # --- dip vs. bump (one-sidedness) -------------------------------------- #
@@ -954,6 +1037,8 @@ def run_transit_search(
     skip_fwhm = bool(cfg.get("skip_fwhm_registration", True))
     significance_permutations = int(cfg.get("significance_permutations", 500))
     field_z_alert = float(cfg.get("field_z_alert", 6.0))
+    max_workers_cfg = int(cfg.get("max_workers", 0))
+    n_workers = max(1, max_workers_cfg if max_workers_cfg > 0 else (os.cpu_count() or 1))
     astap_exe = _config.data().get("hardware", {}).get("astap_exe", "")
     st_kwargs = dict(
         min_dur_h=st_min_dur_h, max_dur_h=st_max_dur_h, n_widths=st_n_widths,
@@ -1125,52 +1210,38 @@ def run_transit_search(
     elif common_mode_correction:
         _notify(f"common-mode: skipped (only {n_kept} kept stars, need ≥20)")
 
-    _notify(f"transit search: per-star box + BLS  (baseline={baseline_days:.2f} d)…")
-
-    def _per_star(s: int) -> dict:
-        curve = rel_flux[:, s]
-        st = _single_transit_score(times_mjd, curve, **st_kwargs)
-        out: dict = {"_star_idx": s,
-                     "x": float(positions[s, 0]),
-                     "y": float(positions[s, 1]),
-                     "max_dip_sigma": _max_dip_sigma(curve),
-                     "transit_score": round(st["score"], 3),
-                     "transit_snr": round(st["snr"], 3),
-                     "transit_depth": round(st["depth"], 5),
-                     "transit_duration_d": round(st["duration_d"], 5),
-                     "transit_t_center_mjd": round(st["t_center_mjd"], 6),
-                     "transit_sigma_oot": round(st["sigma_oot"], 5),
-                     "transit_shape": round(st["shape"], 3),
-                     "transit_n_in": st["n_in"]}
-        bls = _run_bls(
-            times_mjd, curve, baseline_days,
-            max_depth=max_bls_depth,
-            min_cycles=min_bls_cycles,
-            depth_snr_min=depth_snr_min,
-            min_transit_points=min_transit_points,
-            min_power=min_bls_power,
-            max_in_transit_factor=max_in_transit_factor,
-        )
-        if bls is not None:
-            power_z = (bls["power"] - bls["power_mean"]) / bls["power_std"] if bls["power_std"] > 0 else 0.0
-            out.update({
-                "bls_period_d": round(bls["period_d"], 5),
-                "bls_depth": round(bls["depth"], 5),
-                "bls_duration_d": round(bls["duration_d"], 5),
-                "bls_power": round(bls["power"], 4),
-                "bls_power_z": round(power_z, 3),
-                "bls_n_in_transit": bls["n_in_transit"],
-            })
-        return out
+    pool_workers = min(n_workers, n_kept)
+    _notify(
+        f"transit search: per-star box + BLS  (baseline={baseline_days:.2f} d, "
+        f"{pool_workers} worker{'s' if pool_workers != 1 else ''})…"
+    )
+    bls_kwargs = dict(
+        max_depth=max_bls_depth, min_cycles=min_bls_cycles,
+        depth_snr_min=depth_snr_min, min_transit_points=min_transit_points,
+        min_power=min_bls_power, max_in_transit_factor=max_in_transit_factor,
+    )
+    init_args = (rel_flux, times_mjd, positions, baseline_days, st_kwargs, bls_kwargs)
 
     tick = max(1, n_kept // 5)
     per_star: list[dict] = []
-    with ThreadPoolExecutor(max_workers=4) as pool:
-        futs = {pool.submit(_per_star, s): s for s in kept_indices}
-        done = 0
-        for fut in as_completed(futs):
-            per_star.append(fut.result())
-            done += 1
+    # CPU-bound, GIL-heavy work → real processes. Fall back to in-process
+    # execution for a single worker (1-core box, or debugging), which also keeps
+    # the pool's spawn cost off trivially small jobs.
+    if pool_workers > 1:
+        with ProcessPoolExecutor(max_workers=pool_workers,
+                                 initializer=_per_star_init,
+                                 initargs=init_args) as pool:
+            futs = {pool.submit(_per_star_worker, int(s)): s for s in kept_indices}
+            done = 0
+            for fut in as_completed(futs):
+                per_star.append(fut.result())
+                done += 1
+                if done % tick == 0:
+                    _notify(f"transit search: BLS {done}/{n_kept} stars…")
+    else:
+        _per_star_init(*init_args)
+        for done, s in enumerate(kept_indices, start=1):
+            per_star.append(_per_star_worker(int(s)))
             if done % tick == 0:
                 _notify(f"transit search: BLS {done}/{n_kept} stars…")
 
@@ -1224,12 +1295,26 @@ def run_transit_search(
     if top:
         best = top[0]
         _notify(f"significance: testing top candidate ({significance_permutations} permutations)…")
-        sig = _transit_significance(
-            times_mjd, rel_flux[:, best["_star_idx"]],
-            np.array([c["score"] for c in per_star], dtype=float),
-            float(best["score"]), st_kwargs,
-            n_permutations=significance_permutations,
-        )
+        # A fresh, lightweight pool: the permutation workers take their inputs
+        # as explicit args (one small curve), so no per-star initializer / no
+        # rel_flux to pickle. Skipped for a single worker.
+        perm_workers = min(n_workers, max(1, significance_permutations))
+        if perm_workers > 1:
+            with ProcessPoolExecutor(max_workers=perm_workers) as ppool:
+                sig = _transit_significance(
+                    times_mjd, rel_flux[:, best["_star_idx"]],
+                    np.array([c["score"] for c in per_star], dtype=float),
+                    float(best["score"]), st_kwargs,
+                    n_permutations=significance_permutations,
+                    pool=ppool, n_workers=perm_workers,
+                )
+        else:
+            sig = _transit_significance(
+                times_mjd, rel_flux[:, best["_star_idx"]],
+                np.array([c["score"] for c in per_star], dtype=float),
+                float(best["score"]), st_kwargs,
+                n_permutations=significance_permutations,
+            )
         best["significance"] = {k: (round(v, 4) if isinstance(v, float) else v)
                                 for k, v in sig.items()}
         # Annotated reference frame with the candidate circled.
