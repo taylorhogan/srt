@@ -304,6 +304,107 @@ def _max_dip_sigma(rel_curve: np.ndarray) -> float:
     return (med - lowest) / (1.4826 * mad)
 
 
+def _single_transit_score(
+    times_mjd: np.ndarray,
+    rel_curve: np.ndarray,
+    min_dur_h: float = 0.3,
+    max_dur_h: float = 4.0,
+    n_widths: int = 16,
+    min_in_points: int = 12,
+    min_side_points: int = 8,
+    min_side_h: float = 0.4,
+    baseline_quality_floor: float = 0.01,
+    max_depth: float = 0.5,
+) -> dict:
+    """Matched-filter search for a single transit-shaped dip in one light curve.
+
+    A real transit is a flat-bottomed box bracketed by flat baseline on *both*
+    sides, sitting on a photometrically clean baseline. This scores every
+    candidate (centre, width) box and keeps the best, rewarding exactly those
+    properties — which separates a shallow planet transit on a bright star from
+    the deeper artifacts that a plain "lowest dip" statistic favours:
+
+      * ``snr``     = depth·√n_in / sigma_oot      — significance vs baseline noise
+      * ``shape``   = sigma_oot / max(sigma_in, sigma_oot)
+                      ≈ 1 for a flat bottom, < 1 for a ramp or a noise spike
+      * ``quality`` = min(1, q0 / sigma_oot)        — down-weights noisy baselines
+                      (faint stars, blends), where a real transit can't be detected
+      * ``score``   = snr · shape · quality
+
+    Requiring baseline on both sides rejects start/end-of-night systematic ramps;
+    the depth cap rejects unphysical (blended / over-subtracted) excursions.
+    Times are in days (MJD); duration parameters are in hours.
+
+    Returns a dict with keys score, snr, depth, duration_d, t_center_mjd,
+    n_in, shape, sigma_oot (all zero when nothing qualifies).
+    """
+    zero = {"score": 0.0, "snr": 0.0, "depth": 0.0, "duration_d": 0.0,
+            "t_center_mjd": 0.0, "n_in": 0, "shape": 0.0, "sigma_oot": 0.0}
+    finite = np.isfinite(rel_curve)
+    if finite.sum() < 30:
+        return zero
+    t = times_mjd[finite]
+    y = rel_curve[finite]
+    order = np.argsort(t)
+    t, y = t[order], y[order]
+    tlo, thi = float(t[0]), float(t[-1])
+    baseline = thi - tlo
+    if baseline <= 0:
+        return zero
+
+    day = 1.0 / 24.0
+    min_side_d = min_side_h * day
+    # Don't let the widest box leave too little room for two-sided baseline.
+    max_w = min(max_dur_h * day, max(0.0, baseline - 2.0 * min_side_d))
+    min_w = min_dur_h * day
+    if max_w <= min_w:
+        return zero
+
+    best = dict(zero)
+    for w in np.linspace(min_w, max_w, n_widths):
+        half = w / 2.0
+        for tc in t:
+            if tc - half < tlo + min_side_d or tc + half > thi - min_side_d:
+                continue
+            inwin = np.abs(t - tc) <= half
+            n_in = int(inwin.sum())
+            if n_in < min_in_points:
+                continue
+            n_before = int(np.sum(t < tc - half))
+            n_after = int(np.sum(t > tc + half))
+            if n_before < min_side_points or n_after < min_side_points:
+                continue
+            oot = ~inwin
+            base = float(np.median(y[oot]))
+            sig_oot = 1.4826 * float(np.median(np.abs(y[oot] - base)))
+            if sig_oot <= 0:
+                continue
+            yin = y[inwin]
+            depth = base - float(np.mean(yin))
+            if depth <= 0 or depth > max_depth:
+                continue
+            sig_in = 1.4826 * float(np.median(np.abs(yin - np.median(yin))))
+            snr = depth * np.sqrt(n_in) / sig_oot
+            shape = sig_oot / max(sig_in, sig_oot)
+            quality = min(1.0, baseline_quality_floor / sig_oot)
+            # Baseline flatness: a real transit returns to the SAME level on both
+            # sides; a start/end-of-night ramp dips low then rises to baseline (or
+            # vice-versa), so its pre- and post-dip medians differ. Penalise that
+            # mismatch — this is what separates the planet transit from the
+            # per-star extinction/settling ramps common-mode can't fully remove.
+            base_before = float(np.median(y[t < tc - half]))
+            base_after = float(np.median(y[t > tc + half]))
+            trend = abs(base_before - base_after)
+            flatness = sig_oot / max(sig_oot, trend)
+            score = snr * shape * quality * flatness
+            if score > best["score"]:
+                best = {"score": float(score), "snr": float(snr),
+                        "depth": float(depth), "duration_d": float(w),
+                        "t_center_mjd": float(tc), "n_in": n_in,
+                        "shape": float(shape), "sigma_oot": float(sig_oot)}
+    return best
+
+
 def _run_bls(
     times_mjd: np.ndarray,
     rel_curve: np.ndarray,
@@ -436,6 +537,17 @@ def _plot_top_candidates(
             spine.set_edgecolor("#444466")
         ax1.plot(times_rel, rel_flux[:, s], "o", markersize=3, color="#5fa8d3")
         ax1.axhline(1.0, color="#888", linestyle=":", linewidth=0.8)
+        # Overlay the detected single-transit box: shade the in-transit window
+        # and draw the fitted depth level.
+        tc = cand.get("transit_t_center_mjd")
+        dur = cand.get("transit_duration_d")
+        depth = cand.get("transit_depth")
+        if tc and dur and depth:
+            tc_rel = float(tc) - t0
+            half = float(dur) / 2.0
+            ax1.axvspan(tc_rel - half, tc_rel + half, color="#ffb86b", alpha=0.12)
+            ax1.hlines(1.0 - float(depth), tc_rel - half, tc_rel + half,
+                       color="#ffb86b", linewidth=1.2)
         label = f"#{row+1}"
         if cand.get("ra_deg") is not None and cand.get("dec_deg") is not None:
             label += f"\nRA {cand['ra_deg']:.4f}\nDec {cand['dec_deg']:+.4f}"
@@ -465,8 +577,20 @@ def _plot_top_candidates(
                 color="white", fontsize=9,
             )
         else:
-            ax2.text(0.5, 0.5, f"dip σ={cand['max_dip_sigma']:.1f}\n(no BLS)",
-                     ha="center", va="center", color="white", transform=ax2.transAxes)
+            # No periodic BLS detection (e.g. single-night run): summarise the
+            # single-transit box fit instead.
+            depth = cand.get("transit_depth", 0.0) or 0.0
+            dur_h = (cand.get("transit_duration_d", 0.0) or 0.0) * 24.0
+            txt = (
+                f"single-transit box\n"
+                f"depth={depth*100:.2f}%\n"
+                f"dur={dur_h:.2f} h\n"
+                f"SNR={cand.get('transit_snr', 0):.1f}\n"
+                f"shape={cand.get('transit_shape', 0):.2f}\n"
+                f"baseline σ={cand.get('transit_sigma_oot', 0)*100:.2f}%"
+            )
+            ax2.text(0.5, 0.5, txt, ha="center", va="center", color="white",
+                     transform=ax2.transAxes, fontsize=9)
             ax2.set_xticks([])
             ax2.set_yticks([])
         ax2.grid(True, alpha=0.25, color="#444466")
@@ -612,6 +736,15 @@ def run_transit_search(
     max_in_transit_factor = float(cfg.get("max_in_transit_factor", 2.5))
     identify_candidates = bool(cfg.get("identify_candidates", True))
     gaia_match_radius_arcsec = float(cfg.get("gaia_match_radius_arcsec", 3.0))
+    st_min_dur_h = float(cfg.get("single_transit_min_dur_h", 0.3))
+    st_max_dur_h = float(cfg.get("single_transit_max_dur_h", 4.0))
+    st_n_widths = int(cfg.get("single_transit_n_widths", 16))
+    st_min_in_points = int(cfg.get("single_transit_min_in_points", 12))
+    st_min_side_points = int(cfg.get("single_transit_min_side_points", 8))
+    st_min_side_h = float(cfg.get("single_transit_min_side_h", 0.4))
+    st_quality_floor = float(cfg.get("single_transit_baseline_quality_floor", 0.01))
+    st_max_depth = float(cfg.get("single_transit_max_depth", 0.5))
+    bls_score_weight = float(cfg.get("bls_score_weight", 0.5))
     astap_exe = _config.data().get("hardware", {}).get("astap_exe", "")
 
     dso_dir = _find_dso_dir(image_dir, dso_name)
@@ -626,14 +759,20 @@ def run_transit_search(
         raise ValueError(f"No LIGHT frames under {dso_dir}")
 
     by_filter = stacker.group_by_filter(light_files)
-    paths = by_filter.get(filter_name, [])
-    if not paths:
-        # Case-insensitive fallback (e.g. user types "l", FITS header says "L")
-        for key, val in by_filter.items():
-            if key.lower() == filter_name.lower():
-                paths = val
-                filter_name = key  # use the canonical name going forward
-                break
+    if filter_name == "*":
+        # No filter specified (or subs may lack FILTER headers): use every LIGHT
+        # sub regardless of filter, and label the run "all".
+        paths = light_files
+        filter_name = "all"
+    else:
+        paths = by_filter.get(filter_name, [])
+        if not paths:
+            # Case-insensitive fallback (e.g. user types "l", FITS header says "L")
+            for key, val in by_filter.items():
+                if key.lower() == filter_name.lower():
+                    paths = val
+                    filter_name = key  # use the canonical name going forward
+                    break
     if len(paths) < min_frames:
         available = ", ".join(sorted(by_filter.keys())) or "none"
         raise ValueError(
@@ -752,14 +891,29 @@ def run_transit_search(
     elif common_mode_correction:
         _notify(f"common-mode: skipped (only {n_kept} kept stars, need ≥20)")
 
-    _notify(f"transit search: per-star dip + BLS  (baseline={baseline_days:.2f} d)…")
+    _notify(f"transit search: per-star box + BLS  (baseline={baseline_days:.2f} d)…")
 
     def _per_star(s: int) -> dict:
         curve = rel_flux[:, s]
+        st = _single_transit_score(
+            times_mjd, curve,
+            min_dur_h=st_min_dur_h, max_dur_h=st_max_dur_h, n_widths=st_n_widths,
+            min_in_points=st_min_in_points, min_side_points=st_min_side_points,
+            min_side_h=st_min_side_h, baseline_quality_floor=st_quality_floor,
+            max_depth=st_max_depth,
+        )
         out: dict = {"_star_idx": s,
                      "x": float(positions[s, 0]),
                      "y": float(positions[s, 1]),
-                     "max_dip_sigma": _max_dip_sigma(curve)}
+                     "max_dip_sigma": _max_dip_sigma(curve),
+                     "transit_score": round(st["score"], 3),
+                     "transit_snr": round(st["snr"], 3),
+                     "transit_depth": round(st["depth"], 5),
+                     "transit_duration_d": round(st["duration_d"], 5),
+                     "transit_t_center_mjd": round(st["t_center_mjd"], 6),
+                     "transit_sigma_oot": round(st["sigma_oot"], 5),
+                     "transit_shape": round(st["shape"], 3),
+                     "transit_n_in": st["n_in"]}
         bls = _run_bls(
             times_mjd, curve, baseline_days,
             max_depth=max_bls_depth,
@@ -815,11 +969,16 @@ def run_transit_search(
                 cand["bls_shared_period"] = True
 
     for cand in per_star:
-        dip = float(cand.get("max_dip_sigma", 0.0))
+        # Primary signal: the single-transit box score (flat-bottomed dip on a
+        # clean baseline, bracketed by baseline on both sides). This separates a
+        # shallow planet transit on a bright star from the deeper artifacts a
+        # plain "lowest dip" statistic ranks first.
+        st_score = float(cand.get("transit_score", 0.0))
         # A period shared across many stars is a systematic alias, not a transit;
-        # zero its BLS contribution so it can't win on periodicity alone.
+        # zero its BLS contribution so it can't win on periodicity alone. BLS adds
+        # a bonus when a genuine repeat is present (multi-night runs).
         bls_z = 0.0 if cand.get("bls_shared_period") else float(cand.get("bls_power_z", 0.0))
-        cand["score"] = round(0.5 * dip + 0.5 * bls_z, 3)
+        cand["score"] = round(st_score + bls_score_weight * bls_z, 3)
 
     per_star.sort(key=lambda c: c["score"], reverse=True)
     top = per_star[:top_n]

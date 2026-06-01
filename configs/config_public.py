@@ -161,6 +161,28 @@ class PublicConfig():
             # RA/Dec + the nearest Gaia source (id, G mag, separation).
             "identify_candidates": True,
             "gaia_match_radius_arcsec": 3.0,
+            # --- Single-transit box score (primary ranking statistic) --------- #
+            # Each star's light curve is searched for a flat-bottomed dip bracketed
+            # by flat baseline on BOTH sides, sitting on a clean baseline. This is
+            # what surfaces a shallow planet transit on a bright star over the
+            # deeper noise/ramp artifacts a plain "lowest dip" statistic ranks
+            # first. score = (depth·√n_in/σ_oot) · flat_bottom · clean_baseline.
+            "single_transit_min_dur_h": 0.3,   # shortest trial transit width
+            "single_transit_max_dur_h": 4.0,   # longest trial transit width
+            "single_transit_n_widths": 16,     # width grid resolution
+            "single_transit_min_in_points": 12,    # ≥ this many in-transit points
+            "single_transit_min_side_points": 8,   # ≥ this many baseline points each side
+            "single_transit_min_side_h": 0.4,      # ≥ this much baseline time each side
+            # Clean-baseline weight = min(1, floor/σ_oot): a transit can't be
+            # detected on a baseline noisier than its depth, so noisy stars
+            # (faint, blended) are down-weighted toward zero.
+            "single_transit_baseline_quality_floor": 0.01,
+            # Reject dips deeper than this fraction as unphysical (blend / over-
+            # subtracted sky); real planet transits are ≲ a few percent.
+            "single_transit_max_depth": 0.5,
+            # Weight on the BLS periodicity z-score added to the box score (the
+            # box dominates; BLS only adds a bonus on multi-night periodic runs).
+            "bls_score_weight": 0.5,
             "file": "local/transits.json",
         },
 
