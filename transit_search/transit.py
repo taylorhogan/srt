@@ -854,6 +854,46 @@ def _plot_candidate_field(
     fig.savefig(output_path, format="jpeg", dpi=130, facecolor=fig.get_facecolor())
 
 
+def _notify_push(
+    candidate: dict,
+    dso_name: str,
+    filter_name: str,
+    field_z: float,
+    field_image_path: Optional[Path],
+) -> None:
+    """Push a strong-detection alert (best-effort; never raises into the search)."""
+    try:
+        from utils import pushover
+    except Exception:
+        _logger.exception("pushover import failed; skipping transit alert")
+        return
+
+    loc = ""
+    if candidate.get("ra_deg") is not None and candidate.get("dec_deg") is not None:
+        loc = f" @ RA {candidate['ra_deg']:.4f} Dec {candidate['dec_deg']:+.4f}"
+    if candidate.get("gaia_g_mag") is not None:
+        loc += f" (G={candidate['gaia_g_mag']:.1f})"
+    sig = candidate.get("significance", {})
+    fap = sig.get("perm_fap")
+    bump = sig.get("dip_bump")
+    extra = []
+    if fap is not None:
+        extra.append(f"FAP {fap}")
+    if bump is not None:
+        extra.append(f"dip/bump {bump}")
+    extra_str = (" | " + ", ".join(extra)) if extra else ""
+    msg = (f"Possible transit in {dso_name} [{filter_name}]{loc}: "
+           f"field_z={field_z:.1f}{extra_str}. Candidate only — needs a 2nd "
+           f"transit to confirm.")
+
+    img = (str(field_image_path) if field_image_path is not None
+           and field_image_path.exists() else None)
+    try:
+        pushover.push_message(msg, image=img)
+    except Exception:
+        _logger.exception("transit push notification failed")
+
+
 def run_transit_search(
     dso_name: str,
     filter_name: str,
@@ -899,6 +939,7 @@ def run_transit_search(
     bls_score_weight = float(cfg.get("bls_score_weight", 0.5))
     skip_fwhm = bool(cfg.get("skip_fwhm_registration", True))
     significance_permutations = int(cfg.get("significance_permutations", 500))
+    field_z_alert = float(cfg.get("field_z_alert", 6.0))
     astap_exe = _config.data().get("hardware", {}).get("astap_exe", "")
     st_kwargs = dict(
         min_dur_h=st_min_dur_h, max_dur_h=st_max_dur_h, n_widths=st_n_widths,
@@ -1186,6 +1227,14 @@ def run_transit_search(
         except Exception:
             _logger.exception("field image generation failed")
             field_image_path = None
+
+        # Strong single-night detection → push notification. field_z is the
+        # robust field-outlier z-score: a high value means this star stands out
+        # from its neighbours that share the same night's systematics. Still a
+        # candidate (needs a 2nd transit at the predicted period to confirm).
+        field_z = sig.get("field_z")
+        if field_z is not None and field_z >= field_z_alert:
+            _notify_push(best, dso_name, filter_name, field_z, field_image_path)
 
     _notify(f"plotting top {len(top)} candidate(s)…")
     _plot_top_candidates(

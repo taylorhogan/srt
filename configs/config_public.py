@@ -131,6 +131,11 @@ class PublicConfig():
             "skip_fwhm_registration": True,
             # Permutation trials for the top candidate's false-alarm probability.
             "significance_permutations": 500,
+            # Robust field-outlier z-score above which the top candidate is
+            # considered a strong single-night detection. When the top
+            # candidate's field_z meets/exceeds this, a push notification is
+            # sent. Still a candidate, not a confirmation (needs a 2nd transit).
+            "field_z_alert": 6.0,
             # Reject stars whose light curve has a finite flux in fewer than this
             # fraction of frames. Edge stars drift into registration NaN borders
             # on some frames, leaving mostly-NaN curves that read as huge fake dips.
