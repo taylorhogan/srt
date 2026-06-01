@@ -122,7 +122,15 @@ class PublicConfig():
             "sky_annulus_fwhm_mult": (3.0, 5.0),
             "comparison_quantile": 0.25,
             "min_baseline_days_for_bls": 1.0,
-            "top_n_plot": 5,
+            # Report only the single best candidate (plot, field image, JSON).
+            "top_n_plot": 1,
+            # Skip the slow per-frame FWHM Gaussian fitting and just register
+            # (astroalign). The search does its own clean-baseline weighting, so
+            # FWHM weighting isn't needed — this is ~30 s vs ~15 min. Set False to
+            # restore FWHM-weighted registration.
+            "skip_fwhm_registration": True,
+            # Permutation trials for the top candidate's false-alarm probability.
+            "significance_permutations": 500,
             # Reject stars whose light curve has a finite flux in fewer than this
             # fraction of frames. Edge stars drift into registration NaN borders
             # on some frames, leaving mostly-NaN curves that read as huge fake dips.

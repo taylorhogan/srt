@@ -1909,11 +1909,23 @@ def _transit_run(words: list[str]) -> None:
         dur_h = top.get("transit_duration_d", 0.0) * 24.0
         period = top.get("bls_period_d")
         period_str = f" P={period:.3f}d" if period else ""
+        # Confidence from the significance tests (small FAP + large field-z +
+        # large dip/bump ⇒ likely a real, one-sided transit, not noise/systematic).
+        sig = top.get("significance") or {}
+        conf = ""
+        if sig:
+            fap = sig.get("perm_fap")
+            nperm = sig.get("n_permutations", 0)
+            fap_str = (f"<{1.0/(nperm+1):.3f}" if fap is not None and nperm
+                       and fap <= 1.0 / (nperm + 1) else (f"{fap:.3f}" if fap is not None else "n/a"))
+            conf = (f" | confidence: FAP {fap_str}, "
+                    f"field-z {sig.get('field_z', 0):.1f}, "
+                    f"dip/bump {sig.get('dip_bump', 0):.1f}×")
         summary = (
             f"Transit [{dso_arg}/{filter_label}]: {entry['n_stars']} stars, "
             f"{entry['frame_count']} frames over {entry['baseline_days']:.1f}d. "
             f"Top: {loc}{gmag} depth={depth_pct:.2f}% dur={dur_h:.2f}h "
-            f"score={top.get('score', 0):.1f}{period_str}. Manual verification required."
+            f"score={top.get('score', 0):.1f}{period_str}.{conf}"
         )
     else:
         summary = (
@@ -1924,6 +1936,11 @@ def _transit_run(words: list[str]) -> None:
         social_server.post_social_message(summary, str(out_path))
     else:
         social_server.post_social_message(summary)
+
+    # Annotated reference frame showing where the candidate is.
+    field_img = entry.get("field_image")
+    if field_img and os.path.exists(field_img):
+        social_server.post_social_message("Candidate location (circled):", field_img)
 
 
 def image_stats_cmd(words: list[str], account: str) -> None:

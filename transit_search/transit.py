@@ -702,6 +702,158 @@ def _identify_candidates(
             break
 
 
+def _register_only(
+    paths: list,
+    progress_cb: Optional[Callable[[str], None]] = None,
+) -> tuple[list, list]:
+    """Load and astroalign-register frames WITHOUT per-frame FWHM fitting.
+
+    The transit search supplies its own clean-baseline weighting, so the slow
+    per-star Gaussian FWHM measurement in ``stacker._prepare_for_convergence``
+    (~15 min for ~150 small frames) is pure overhead here; registration alone is
+    ~30 s. Frames are weighted uniformly downstream. Returns
+    (registered_frames, accepted_paths) aligned index-for-index.
+    """
+    from stacking import stacker
+    raw: list = []
+    good: list = []
+    for p in paths:
+        try:
+            raw.append(stacker._load_fits_2d(p))
+            good.append(p)
+        except Exception:
+            _logger.warning("register_only: failed to load %s", getattr(p, "name", p))
+    if len(raw) < 2:
+        return raw, good
+    if progress_cb:
+        progress_cb(f"registering {len(raw)} frames (fast path, no per-frame FWHM)…")
+    registered, surviving = stacker._register_frames(raw)
+    accepted = [good[i] for i in surviving]
+    if progress_cb:
+        progress_cb(f"registration done — {len(registered)}/{len(raw)} frames aligned")
+    return registered, accepted
+
+
+def _transit_significance(
+    times_mjd: np.ndarray,
+    rel_curve: np.ndarray,
+    field_scores: np.ndarray,
+    observed_score: float,
+    st_kwargs: dict,
+    n_permutations: int = 500,
+    rng_seed: int = 0,
+) -> dict:
+    """Quantify how likely the top box detection is real rather than chance.
+
+    Three complementary tests (no single one is sufficient on its own):
+
+      * ``perm_fap`` — scramble THIS curve in time many times and re-run the box
+        search; the fraction reaching the observed score is the false-alarm
+        probability under a no-time-structure (white-noise) null. Small ⇒ the
+        dip is real structure, not random scatter.
+      * ``field_fap`` / ``field_z`` — where the observed score falls in the
+        distribution of *all* searched field stars, which share this night's
+        systematics. A strong outlier ⇒ not a systematic the whole field shows.
+      * ``dip_bump`` — observed (downward) score ÷ the best UPWARD box score on
+        the same curve. A transit is a one-sided dip, so ≫ 1; symmetric noise or
+        a sinusoid gives ≈ 1.
+
+    Definitive confirmation still needs a second transit at the predicted period;
+    a single night can't establish periodicity.
+    """
+    out = {"perm_fap": None, "field_fap": None, "field_z": None,
+           "dip_bump": None, "n_permutations": n_permutations}
+
+    # --- permutation FAP (white-noise null) -------------------------------- #
+    finite_idx = np.where(np.isfinite(rel_curve))[0]
+    if finite_idx.size >= 30 and n_permutations > 0:
+        vals = rel_curve[finite_idx]
+        rng = np.random.default_rng(rng_seed)
+        hits = 0
+        for _ in range(n_permutations):
+            perm = rel_curve.copy()
+            perm[finite_idx] = rng.permutation(vals)
+            s = _single_transit_score(times_mjd, perm, **st_kwargs)["score"]
+            if s >= observed_score:
+                hits += 1
+        out["perm_fap"] = (hits + 1) / (n_permutations + 1)
+
+    # --- dip vs. bump (one-sidedness) -------------------------------------- #
+    med = float(np.nanmedian(rel_curve))
+    bump = _single_transit_score(times_mjd, 2.0 * med - rel_curve, **st_kwargs)["score"]
+    out["dip_bump"] = float(observed_score / max(bump, 1e-6))
+
+    # --- field outlier ----------------------------------------------------- #
+    fs = np.asarray(field_scores, dtype=float)
+    fs = fs[np.isfinite(fs)]
+    if fs.size >= 5:
+        # exclude one instance of the top score (the candidate itself)
+        rest = np.sort(fs)[:-1] if fs.size > 1 else fs
+        out["field_fap"] = float((np.sum(fs >= observed_score)) / fs.size)
+        med_f = float(np.median(rest))
+        mad_f = 1.4826 * float(np.median(np.abs(rest - med_f)))
+        out["field_z"] = float((observed_score - med_f) / mad_f) if mad_f > 0 else None
+    return out
+
+
+def _plot_candidate_field(
+    reference: np.ndarray,
+    candidate: dict,
+    output_path: Path,
+    title: str,
+) -> None:
+    """Render the reference stack with the top candidate circled (+ a zoom inset)."""
+    from matplotlib.patches import Circle, Rectangle
+
+    finite = reference[np.isfinite(reference)]
+    if finite.size == 0:
+        return
+    vmin, vmax = np.percentile(finite, [10.0, 99.5])
+    img = np.nan_to_num(reference, nan=float(vmin))
+    h, w = reference.shape
+    x, y = float(candidate["x"]), float(candidate["y"])
+
+    fig = Figure(figsize=(10, 5.2))
+    FigureCanvasAgg(fig)
+    fig.patch.set_facecolor(_DARK_BG)
+
+    ax = fig.add_subplot(1, 2, 1)
+    ax.imshow(img, origin="lower", cmap="gray", vmin=vmin, vmax=vmax)
+    r = 16.0
+    ax.add_patch(Circle((x, y), r, fill=False, color="#ff5050", lw=1.8))
+    ax.annotate("candidate", (x, min(y + r + 10, h - 4)), color="#ff5050",
+                ha="center", va="bottom", fontsize=10, weight="bold")
+    sub = 45
+    ax.add_patch(Rectangle((x - sub, y - sub), 2 * sub, 2 * sub,
+                           fill=False, color="#ffb86b", lw=0.8, ls="--"))
+    ax.set_title("reference stack", color="white", fontsize=10)
+    ax.tick_params(colors="white")
+    for sp in ax.spines.values():
+        sp.set_edgecolor("#444466")
+
+    # Zoom inset around the candidate.
+    ax2 = fig.add_subplot(1, 2, 2)
+    x0, x1 = int(max(0, x - sub)), int(min(w, x + sub))
+    y0, y1 = int(max(0, y - sub)), int(min(h, y + sub))
+    ax2.imshow(img[y0:y1, x0:x1], origin="lower", cmap="gray", vmin=vmin, vmax=vmax,
+               extent=[x0, x1, y0, y1])
+    ax2.add_patch(Circle((x, y), r, fill=False, color="#ff5050", lw=1.8))
+    loc = ""
+    if candidate.get("ra_deg") is not None:
+        loc = f"RA {candidate['ra_deg']:.4f}  Dec {candidate['dec_deg']:+.4f}"
+    if candidate.get("gaia_g_mag") is not None:
+        loc += f"   G={candidate['gaia_g_mag']:.1f}"
+    ax2.set_title("zoom" + (f"   {loc}" if loc else ""), color="white", fontsize=9)
+    ax2.tick_params(colors="white")
+    for sp in ax2.spines.values():
+        sp.set_edgecolor("#444466")
+
+    fig.suptitle(title, color="white", fontsize=12)
+    fig.tight_layout(rect=(0, 0, 1, 0.96))
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(output_path, format="jpeg", dpi=130, facecolor=fig.get_facecolor())
+
+
 def run_transit_search(
     dso_name: str,
     filter_name: str,
@@ -745,7 +897,15 @@ def run_transit_search(
     st_quality_floor = float(cfg.get("single_transit_baseline_quality_floor", 0.01))
     st_max_depth = float(cfg.get("single_transit_max_depth", 0.5))
     bls_score_weight = float(cfg.get("bls_score_weight", 0.5))
+    skip_fwhm = bool(cfg.get("skip_fwhm_registration", True))
+    significance_permutations = int(cfg.get("significance_permutations", 500))
     astap_exe = _config.data().get("hardware", {}).get("astap_exe", "")
+    st_kwargs = dict(
+        min_dur_h=st_min_dur_h, max_dur_h=st_max_dur_h, n_widths=st_n_widths,
+        min_in_points=st_min_in_points, min_side_points=st_min_side_points,
+        min_side_h=st_min_side_h, baseline_quality_floor=st_quality_floor,
+        max_depth=st_max_depth,
+    )
 
     dso_dir = _find_dso_dir(image_dir, dso_name)
     if dso_dir is None:
@@ -780,14 +940,27 @@ def run_transit_search(
             f" (available filters: {available})"
         )
 
-    _notify(f"prep: registering {len(paths)} '{filter_name}' frames at full res…")
-    frames, accepted, fwhm_values = stacker._prepare_for_convergence(
-        paths,
-        max_fwhm_multiplier=1.5,
-        register=True,
-        downscale_to=None,
-        progress_cb=progress_cb,
-    )
+    sample_fwhm = 0.0
+    if skip_fwhm:
+        # Fast path: register only (no per-frame FWHM fitting — the search does its
+        # own clean-baseline weighting). Measure FWHM on a few frames just to size
+        # the photometry aperture sensibly. ~30 s vs ~15 min.
+        _notify(f"prep: registering {len(paths)} '{filter_name}' frames (fast path)…")
+        frames, accepted = _register_only(paths, progress_cb=progress_cb)
+        fwhm_values = {}
+        sample_paths = accepted[:: max(1, len(accepted) // 3)][:3]
+        sample_vals = [stacker._measure_fwhm(p) for p in sample_paths]
+        sample_vals = [v for v in sample_vals if v > 0]
+        sample_fwhm = float(np.median(sample_vals)) if sample_vals else 0.0
+    else:
+        _notify(f"prep: registering {len(paths)} '{filter_name}' frames at full res…")
+        frames, accepted, fwhm_values = stacker._prepare_for_convergence(
+            paths,
+            max_fwhm_multiplier=1.5,
+            register=True,
+            downscale_to=None,
+            progress_cb=progress_cb,
+        )
     if len(frames) < min_frames:
         raise ValueError(
             f"Too few frames survived registration ({len(frames)} < {min_frames})"
@@ -806,7 +979,13 @@ def run_transit_search(
     if len(positions) < 4:
         raise ValueError(f"Only {len(positions)} stars detected; cannot build a comparison ensemble")
 
-    measured_fwhm = float(np.median([v for v in fwhm_values.values() if v > 0]) or det_fwhm)
+    _measured = [v for v in fwhm_values.values() if v > 0]
+    if _measured:
+        measured_fwhm = float(np.median(_measured))
+    elif sample_fwhm > 0:
+        measured_fwhm = sample_fwhm
+    else:
+        measured_fwhm = det_fwhm
     aperture_r = max(2.0, ap_mult * measured_fwhm)
     sky_in = sky_in_mult * measured_fwhm
     sky_out = sky_out_mult * measured_fwhm
@@ -895,13 +1074,7 @@ def run_transit_search(
 
     def _per_star(s: int) -> dict:
         curve = rel_flux[:, s]
-        st = _single_transit_score(
-            times_mjd, curve,
-            min_dur_h=st_min_dur_h, max_dur_h=st_max_dur_h, n_widths=st_n_widths,
-            min_in_points=st_min_in_points, min_side_points=st_min_side_points,
-            min_side_h=st_min_side_h, baseline_quality_floor=st_quality_floor,
-            max_depth=st_max_depth,
-        )
+        st = _single_transit_score(times_mjd, curve, **st_kwargs)
         out: dict = {"_star_idx": s,
                      "x": float(positions[s, 0]),
                      "y": float(positions[s, 1]),
@@ -991,7 +1164,30 @@ def run_transit_search(
             progress_cb=progress_cb,
         )
 
-    _notify(f"plotting top {len(top)} candidates…")
+    # --- Significance of the top candidate --------------------------------- #
+    field_image_path = None
+    if top:
+        best = top[0]
+        _notify(f"significance: testing top candidate ({significance_permutations} permutations)…")
+        sig = _transit_significance(
+            times_mjd, rel_flux[:, best["_star_idx"]],
+            np.array([c["score"] for c in per_star], dtype=float),
+            float(best["score"]), st_kwargs,
+            n_permutations=significance_permutations,
+        )
+        best["significance"] = {k: (round(v, 4) if isinstance(v, float) else v)
+                                for k, v in sig.items()}
+        # Annotated reference frame with the candidate circled.
+        field_image_path = output_plot_path.with_name(
+            output_plot_path.stem + "_field" + output_plot_path.suffix)
+        try:
+            ftitle = f"{dso_name} [{filter_name}] — top candidate"
+            _plot_candidate_field(reference, best, field_image_path, ftitle)
+        except Exception:
+            _logger.exception("field image generation failed")
+            field_image_path = None
+
+    _notify(f"plotting top {len(top)} candidate(s)…")
     _plot_top_candidates(
         times_mjd, rel_flux, top, output_plot_path,
         title=f"{dso_name} [{filter_name}]",
@@ -1010,6 +1206,8 @@ def run_transit_search(
             for c in top
         ],
     }
+    if field_image_path is not None and field_image_path.exists():
+        entry["field_image"] = str(field_image_path)
     save_transits(dso_dir.name, filter_name, entry)
     _notify("done.")
     return entry
