@@ -1902,13 +1902,18 @@ def _transit_run(words: list[str]) -> None:
     cands = entry.get("candidates", [])
     if cands:
         top = cands[0]
+        loc = (f"RA {top['ra_deg']:.4f} Dec {top['dec_deg']:+.4f}"
+               if top.get("ra_deg") is not None else f"({top['x']:.0f},{top['y']:.0f})")
+        gmag = f" G={top['gaia_g_mag']:.1f}" if top.get("gaia_g_mag") is not None else ""
+        depth_pct = top.get("transit_depth", 0.0) * 100
+        dur_h = top.get("transit_duration_d", 0.0) * 24.0
         period = top.get("bls_period_d")
-        period_str = f"P={period:.3f}d depth={top.get('bls_depth', 0):.3f}" if period else "no BLS"
+        period_str = f" P={period:.3f}d" if period else ""
         summary = (
             f"Transit [{dso_arg}/{filter_label}]: {entry['n_stars']} stars, "
             f"{entry['frame_count']} frames over {entry['baseline_days']:.1f}d. "
-            f"Top: ({top['x']:.0f},{top['y']:.0f}) dip σ={top['max_dip_sigma']:.1f}  {period_str}. "
-            f"Manual verification required."
+            f"Top: {loc}{gmag} depth={depth_pct:.2f}% dur={dur_h:.2f}h "
+            f"score={top.get('score', 0):.1f}{period_str}. Manual verification required."
         )
     else:
         summary = (
