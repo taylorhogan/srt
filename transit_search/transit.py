@@ -21,6 +21,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, datetime, timezone
 from pathlib import Path
@@ -44,6 +45,11 @@ if __package__ is None or __package__ == "":
 from configs import config as _config
 
 _logger = logging.getLogger(__name__)
+
+# Serialises the read-modify-write in save_transits so concurrent searches
+# (each runs on its own daemon thread via jobs.spawn) can't lose each other's
+# entry or corrupt the file when they finish at nearly the same time.
+_save_lock = threading.Lock()
 
 _DARK_BG = "#0d0d1a"
 _DARK_AXES = "#1a1a2e"
@@ -75,25 +81,33 @@ def load_transits() -> dict:
 
 
 def save_transits(dso_name: str, filter_name: str, entry: dict) -> None:
-    """Merge entry under data[dso][filter] and atomically rewrite the file."""
+    """Merge entry under data[dso][filter] and atomically rewrite the file.
+
+    The read-modify-write and atomic replace are held under ``_save_lock`` so two
+    concurrent searches don't lose each other's entry, and each write goes to a
+    uniquely-named temp file so their atomic replaces can't clobber one another.
+    """
     path = _transit_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    data = load_transits()
     dso_key = dso_name.lower().replace(" ", "")
-    existing = data.get(dso_key, {})
-    existing[filter_name] = entry
-    data[dso_key] = existing
-    tmp = path.with_suffix(".tmp")
-    try:
-        with open(tmp, "w") as f:
-            json.dump(data, f, indent=2)
-        tmp.replace(path)
-    except Exception:
-        _logger.exception("Failed to save transits.json")
+    with _save_lock:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        data = load_transits()
+        existing = data.get(dso_key, {})
+        existing[filter_name] = entry
+        data[dso_key] = existing
+        fd, tmp_name = tempfile.mkstemp(
+            dir=str(path.parent), prefix=path.name + ".", suffix=".tmp")
+        tmp = Path(tmp_name)
         try:
-            tmp.unlink(missing_ok=True)
+            with os.fdopen(fd, "w") as f:
+                json.dump(data, f, indent=2)
+            tmp.replace(path)
         except Exception:
-            pass
+            _logger.exception("Failed to save transits.json")
+            try:
+                tmp.unlink(missing_ok=True)
+            except Exception:
+                pass
 
 
 def _find_dso_dir(image_dir: Path, name: str) -> Optional[Path]:
