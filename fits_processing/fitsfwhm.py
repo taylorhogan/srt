@@ -115,7 +115,7 @@ def _fit_stars(
             fitted = fitter(init_model, x_grid, y_grid, stamp)
             sigma_x = abs(fitted.x_stddev.value)
             sigma_y = abs(fitted.y_stddev.value)
-            fwhm = _FWHM_SIGMA_FACTOR * (sigma_x + sigma_y) / 2.0
+            fwhm = _FWHM_SIGMA_FACTOR * np.sqrt(sigma_x * sigma_y)
 
             # Reject bad FWHM range
             if not (0.5 < fwhm < _STAMP_HALF):

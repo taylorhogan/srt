@@ -32,7 +32,7 @@ import os
 import sys
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from enum import Enum, auto
 from pathlib import Path
 from typing import Callable, Optional
@@ -728,9 +728,14 @@ def _prepare_for_convergence(
 
     if progress_cb:
         progress_cb(f"measuring FWHM for {len(paths)} frames…")
+    tick = max(1, len(paths) // 5)
     with ThreadPoolExecutor(max_workers=4) as pool:
-        fwhm_results = list(pool.map(_measure_fwhm, paths))
-    fwhm_values: dict[Path, float] = dict(zip(paths, fwhm_results))
+        futs = {pool.submit(_measure_fwhm, p): p for p in paths}
+        fwhm_values: dict[Path, float] = {}
+        for i, fut in enumerate(as_completed(futs), 1):
+            fwhm_values[futs[fut]] = fut.result()
+            if progress_cb and i % tick == 0:
+                progress_cb(f"FWHM: {i}/{len(paths)} frames…")
 
     accepted = list(paths)
     measured = np.array([v for v in fwhm_values.values() if v > 0.0])
