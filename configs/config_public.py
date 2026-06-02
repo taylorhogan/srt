@@ -110,9 +110,9 @@ class PublicConfig():
         },
 
         "convergence": {
-            "tail_slope_threshold": 0.30,   # %/frame — abs(slope) below this = converged
+            "tail_slope_threshold": 0.20,   # %/frame — abs(slope) below this = converged
             "rmse_done_threshold": 5.0,     # % — final-point RMSE must also be below this
-            "min_frames_per_filter": 30,    # don't evaluate until this many frames
+            "min_frames_per_filter": 16,    # don't evaluate until this many frames
             "file": "local/convergence.json",
         },
 
