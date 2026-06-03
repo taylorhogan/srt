@@ -70,6 +70,41 @@ def _read_cpu_percent() -> Optional[float]:
         return None
 
 
+# Outside-temperature cache (Open-Meteo current_weather), refreshed every 5 min.
+_outside_temp_f: Optional[float] = None
+_outside_temp_fetched: float = 0.0
+_OUTSIDE_TEMP_TTL = 300.0
+
+
+def _read_outside_temp_f() -> Optional[float]:
+    """Current outside temperature in °F via Open-Meteo (no key). Cached ~5 min.
+
+    Blocking (uses requests) — call via asyncio.to_thread. Returns the last
+    cached value on failure, or None if never fetched.
+    """
+    global _outside_temp_f, _outside_temp_fetched
+    import time as _time
+    if _outside_temp_f is not None and (_time.time() - _outside_temp_fetched) < _OUTSIDE_TEMP_TTL:
+        return _outside_temp_f
+    try:
+        import requests
+        from configs import config
+        loc = config.data()["location"]
+        r = requests.get(
+            "https://api.open-meteo.com/v1/forecast",
+            params={"latitude": loc["latitude"], "longitude": loc["longitude"],
+                    "current_weather": True, "timezone": "auto"},
+            timeout=10,
+        )
+        r.raise_for_status()
+        temp_c = float(r.json()["current_weather"]["temperature"])
+        _outside_temp_f = round(temp_c * 9 / 5 + 32, 1)
+        _outside_temp_fetched = _time.time()
+    except Exception:
+        _logger.exception("outside temperature fetch failed")
+    return _outside_temp_f
+
+
 def init(images_dir: str) -> None:
     global _images_dir
     _images_dir = images_dir
@@ -233,6 +268,13 @@ async def api_cancel_job(job_id: str):
     return JSONResponse(content={"ok": ok})
 
 
+@app.post("/api/jobs/{job_id}/remove")
+async def api_remove_job(job_id: str):
+    """Remove a finished job card; broadcasts a 'removed' event to all clients."""
+    ok = jobs.remove(job_id)
+    return JSONResponse(content={"ok": ok})
+
+
 @app.get("/api/ticker")
 async def api_ticker():
     """Return current observatory status metrics for the header ticker."""
@@ -267,15 +309,23 @@ async def api_ticker():
             {"label": "State",     "value": imaging},
         ]
 
-        # Append Pegasus environment data if available
+        # Append Pegasus (inside-observatory) environment data if available
         try:
             from hardware_control.pegasus import get_temperature_humidity
             env = await asyncio.to_thread(get_temperature_humidity)
             if env:
-                metrics.append({"label": "Temp",     "value": f"{env['temperature_f']}°F"})
-                metrics.append({"label": "Humidity", "value": f"{env['humidity']}%"})
+                metrics.append({"label": "Inside Temp", "value": f"{env['temperature_f']}°F"})
+                metrics.append({"label": "Humidity",    "value": f"{env['humidity']}%"})
         except Exception:
             pass  # Unity not running or device unavailable
+
+        # Outside temperature via Open-Meteo (no key needed)
+        try:
+            outside_f = await asyncio.to_thread(_read_outside_temp_f)
+            if outside_f is not None:
+                metrics.append({"label": "Outside Temp", "value": f"{outside_f}°F"})
+        except Exception:
+            pass
 
         # Moon phase
         try:
@@ -359,6 +409,7 @@ async def api_imaging_ticker():
                 instructions = _json.load(f)
             in_proc = next((i for i in instructions if i.get("status") == "in process"), None)
             if in_proc:
+                data["target"] = in_proc.get("dso")
                 # Read RA/Dec from the already-generated NINA sequence rather than
                 # hitting Simbad on every ticker poll (avoids network failures).
                 dso = None
@@ -411,3 +462,53 @@ async def api_imaging_ticker():
             content={"ok": False, "active": False, "frame_count": 0, "last_frame": None},
             headers={"Cache-Control": "no-store"},
         )
+
+
+def _render_latest_image() -> dict:
+    """Render the newest LIGHT FITS to a JPEG in the served images dir (blocking).
+
+    Mirrors social_server.latest_cmd's render, but writes to a fixed filename
+    under the /images mount and returns its URL instead of posting to the feed.
+    """
+    import time as _time
+    from configs import config
+    from fits_processing import fitstojpg, fitsfwhm, sky_brightness as sb
+
+    if _images_dir is None:
+        return {"ok": False}
+    cfg = config.data()
+    image_dir = cfg["nina"]["image_dir"]
+    arcsec = cfg["nina"]["arc_sec_per_pixel"]
+    latest_fits = fitstojpg.get_latest_file(image_dir, "fits")
+    if latest_fits is None:
+        return {"ok": False}
+
+    filter_name = None
+    try:
+        from astropy.io import fits as _fits
+        with _fits.open(str(latest_fits)) as hdul:
+            filter_name = str(hdul[0].header.get("FILTER", "")).strip() or None
+    except Exception:
+        pass
+
+    sky_data = sb.measure_sky(Path(str(latest_fits)), arcsec_per_pixel=arcsec)
+    out = Path(_images_dir) / "latest_imaging.jpg"
+    fitsfwhm.save_fwhm(
+        Path(str(latest_fits)), out,
+        arcsec_per_pixel=arcsec,
+        annotate=False,
+        filter_name=filter_name,
+        sky_data=sky_data,
+    )
+    return {"ok": True, "image_url": f"/images/latest_imaging.jpg?t={int(_time.time())}"}
+
+
+@app.get("/api/latest_image")
+async def api_latest_image():
+    """Lazily render the newest frame to a JPEG and return its served URL."""
+    try:
+        result = await asyncio.to_thread(_render_latest_image)
+    except Exception:
+        _logger.exception("api_latest_image error")
+        result = {"ok": False}
+    return JSONResponse(content=result, headers={"Cache-Control": "no-store"})

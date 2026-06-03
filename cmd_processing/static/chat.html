@@ -102,6 +102,9 @@
   }
   .card:active { transform: scale(0.99); }
   .card.system { border-left-color: #58a6ff; background: #11161d; }
+  .card.swipeable { touch-action: pan-y; }
+  .card.dragging { transition: none; }
+  .card.removing { transition: transform .2s ease, opacity .2s ease; }
 
   .card-top { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
   .card-title {
@@ -124,6 +127,7 @@
     font-size: 11.5px; color: #7d8590; margin-top: 8px;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
+  .card-img { width: 100%; max-height: 220px; object-fit: cover; border-radius: 6px; margin-top: 9px; display: block; cursor: zoom-in; }
   .card-bottom { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
   .progress-wrap { flex: 1; height: 3px; border-radius: 3px; background: #21262d; overflow: hidden; }
   .progress-bar { height: 100%; border-radius: 3px; transition: width .4s ease; }
@@ -267,6 +271,10 @@
   // ── Job model state ─────────────────────────────────────────────
   const SYSTEM_ID = 'system';
   const jobs = new Map();          // id -> job
+  let imaging = { active: false }; // latest /api/imaging_ticker payload
+  let lastImageFrameCount = null;  // frame_count the detail image was rendered at
+  let latestImageUrl = null;       // cached URL of the rendered latest frame
+  let fetchingImage = false;       // in-flight guard for /api/latest_image
   let openDetailId = null;
   let now = Date.now();
 
@@ -313,6 +321,22 @@
   // ── Helpers ─────────────────────────────────────────────────────
   function fmtTime(epochSec) { return new Date(epochSec * 1000).toLocaleTimeString([], { hour12: false }); }
   function fmtClock(ms) { return new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); }
+  function fmtTimeLeft(secs) {
+    if (secs == null) return null;
+    const h = Math.floor(secs / 3600), m = Math.floor((secs % 3600) / 60);
+    return h > 0 ? `${h}h ${m}m` : `${m}m`;
+  }
+  function imagingSummary() {
+    const lf = imaging.last_frame || {};
+    const parts = [];
+    if (lf.filter) parts.push(lf.filter);
+    parts.push(`${imaging.frame_count || 0} frames`);
+    if (lf.fwhm_arcsec != null) parts.push(`FWHM ${lf.fwhm_arcsec.toFixed(2)}″`);
+    if (lf.eccentricity != null) parts.push(`ecc ${lf.eccentricity.toFixed(2)}`);
+    const left = fmtTimeLeft(imaging.remaining_seconds);
+    if (left) parts.push(`${left} left`);
+    return parts.join(' · ');
+  }
 
   function linkify(text) {
     const esc = (text || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -364,6 +388,9 @@
       if (ev.status !== undefined) job.status = ev.status;
       // §7 unread: never steal focus — just count, unless its sheet is open.
       if (openDetailId !== ev.id && job.kind !== 'system') job.unread = (job.unread || 0) + 1;
+    } else if (ev.kind === 'removed') {
+      jobs.delete(ev.id);
+      if (openDetailId === ev.id) closeDetail();
     }
     renderPanel();
     if (openDetailId && (ev.id === openDetailId || ev.kind === 'created')) renderSheet();
@@ -404,6 +431,52 @@
     panel.scrollTop = wasAtBottom ? panel.scrollHeight : prevScroll;
   }
 
+  // Swipe-left to dismiss a finished card. Pointer Events cover touch + mouse;
+  // `touch-action: pan-y` (set via .swipeable) keeps native vertical scrolling.
+  function attachSwipe(card, jobId, onSwiped) {
+    const LOCK = 8;        // px before we commit to a horizontal drag
+    let startX = 0, startY = 0, dx = 0, dragging = false, decided = false;
+
+    card.addEventListener('pointerdown', (e) => {
+      if (e.button !== undefined && e.button !== 0) return;
+      startX = e.clientX; startY = e.clientY; dx = 0; dragging = false; decided = false;
+    });
+    card.addEventListener('pointermove', (e) => {
+      if (startX === 0 && startY === 0) return;
+      const mx = e.clientX - startX, my = e.clientY - startY;
+      if (!decided) {
+        if (Math.abs(mx) < LOCK && Math.abs(my) < LOCK) return;
+        decided = true;
+        dragging = mx < 0 && Math.abs(mx) > Math.abs(my); // leftward + horizontal
+        if (dragging) { card.classList.add('dragging'); card.setPointerCapture(e.pointerId); }
+      }
+      if (!dragging) return;
+      dx = Math.min(0, mx);
+      card.style.transform = `translateX(${dx}px)`;
+      card.style.opacity = String(Math.max(0.3, 1 + dx / (card.offsetWidth || 1)));
+    });
+    function release() {
+      card.classList.remove('dragging');
+      const threshold = Math.max(80, (card.offsetWidth || 0) * 0.35);
+      if (dragging && -dx >= threshold) {
+        onSwiped();
+        card.classList.add('removing');
+        card.style.transform = 'translateX(-100%)';
+        card.style.opacity = '0';
+        removeJob(jobId);
+        jobs.delete(jobId);          // optimistic; 'removed' broadcast is idempotent
+        setTimeout(renderPanel, 200);
+      } else {
+        if (dragging) onSwiped();    // a horizontal drag shouldn't open the sheet
+        card.style.transform = '';
+        card.style.opacity = '';
+      }
+      startX = 0; startY = 0; dx = 0; dragging = false; decided = false;
+    }
+    card.addEventListener('pointerup', release);
+    card.addEventListener('pointercancel', release);
+  }
+
   function renderCard(job) {
     const meta = STATUS_META[job.status] || STATUS_META.QUEUED;
     const accent = KIND_COLOR[job.kind] || KIND_COLOR.quick;
@@ -411,25 +484,43 @@
     const isSystem = job.kind === 'system';
 
     const card = document.createElement('div');
-    card.className = 'card' + (running ? ' running' : '') + (isSystem ? ' system' : '');
+    const swipeable = !isSystem && TERMINAL.has(job.status);
+    card.className = 'card' + (running ? ' running' : '') + (isSystem ? ' system' : '') + (swipeable ? ' swipeable' : '');
     card.style.borderLeftColor = accent;
-    card.onclick = () => openDetail(job.id);
+    let swiped = false;
+    card.onclick = () => { if (swiped) { swiped = false; return; } openDetail(job.id); };
+    if (swipeable) attachSwipe(card, job.id, () => { swiped = true; });
+
+    // Dual-mode feed card: live imaging summary while imaging, normal feed when idle.
+    const imagingMode = isSystem && imaging.active;
+    if (imagingMode) { card.style.borderLeftColor = '#3fb950'; }
 
     const top = document.createElement('div'); top.className = 'card-top';
     const title = document.createElement('div'); title.className = 'card-title';
-    title.appendChild(document.createTextNode(job.title));
+    title.appendChild(document.createTextNode(imagingMode ? `Imaging ${imaging.target || ''}`.trim() : job.title));
     if (job.unread > 0) { const u = document.createElement('span'); u.className = 'unread'; u.textContent = job.unread; title.appendChild(u); }
     const badge = document.createElement('span'); badge.className = 'badge';
-    badge.style.color = meta.color; badge.style.borderColor = meta.color + '66';
-    if (running) { const p = document.createElement('span'); p.className = 'pulse'; p.style.background = meta.color; badge.appendChild(p); }
-    badge.appendChild(document.createTextNode(meta.label));
+    const badgeColor = imagingMode ? '#3fb950' : meta.color;
+    const badgeLabel = imagingMode ? 'IMAGING' : meta.label;
+    badge.style.color = badgeColor; badge.style.borderColor = badgeColor + '66';
+    if (running || imagingMode) { const p = document.createElement('span'); p.className = 'pulse'; p.style.background = badgeColor; badge.appendChild(p); }
+    badge.appendChild(document.createTextNode(badgeLabel));
     top.appendChild(title); top.appendChild(badge);
     card.appendChild(top);
 
     const log = document.createElement('div'); log.className = 'card-log';
-    log.textContent = lastLogText(job);
+    log.textContent = imagingMode ? imagingSummary() : lastLogText(job);
     if (job.status === 'QUEUED' && job.resource_class === 'mount_exclusive') log.textContent = 'Waiting for mount…';
     card.appendChild(log);
+
+    // Imaging card shows the newest sub eagerly. The image is pre-rendered on
+    // each new frame (see fetchImagingTicker), so it's already here, not lazy.
+    if (imagingMode && latestImageUrl) {
+      const img = document.createElement('img'); img.className = 'card-img';
+      img.src = latestImageUrl; img.alt = 'latest frame';
+      img.onclick = (e) => { e.stopPropagation(); openLightbox(latestImageUrl); };
+      card.appendChild(img);
+    }
 
     if (!isSystem) {
       const bottom = document.createElement('div'); bottom.className = 'card-bottom';
@@ -485,6 +576,7 @@
   function closeDetail() { openDetailId = null; backdrop.classList.remove('open'); }
 
   function renderSheet() {
+    if (openDetailId === SYSTEM_ID && imaging.active) { renderImagingSheet(); return; }
     const job = jobs.get(openDetailId);
     if (!job) { closeDetail(); return; }
     const meta = STATUS_META[job.status] || STATUS_META.QUEUED;
@@ -522,10 +614,82 @@
     else { btn.className = 'sheet-btn close'; btn.textContent = 'Close'; btn.onclick = closeDetail; }
     foot.appendChild(btn);
   }
+  // Imaging-mode detail: live stats table + lazily-rendered latest frame image.
+  function renderImagingSheet() {
+    const lf = imaging.last_frame || {};
+    document.getElementById('sheet-title').textContent = `Imaging ${imaging.target || ''}`.trim() || 'Imaging';
+    document.getElementById('sheet-cmd').textContent = '';
+    const badge = document.getElementById('sheet-badge');
+    badge.textContent = 'IMAGING'; badge.style.color = '#3fb950'; badge.style.borderColor = '#3fb95066';
+
+    const logEl = document.getElementById('sheet-log');
+    logEl.innerHTML = '';
+
+    const rows = [
+      ['Target', imaging.target || '—'],
+      ['Filter', lf.filter || '—'],
+      ['Frames', String(imaging.frame_count || 0)],
+      ['FWHM', lf.fwhm_arcsec != null ? lf.fwhm_arcsec.toFixed(2) + '″' : '—'],
+      ['Eccentricity', lf.eccentricity != null ? lf.eccentricity.toFixed(3) : '—'],
+      ['Stars', lf.star_count != null ? String(lf.star_count) : '—'],
+      ['Sky', lf.sky_adu_per_s != null ? lf.sky_adu_per_s.toFixed(1) + ' ADU/s'
+              : lf.sky_mag_arcsec2 != null ? lf.sky_mag_arcsec2.toFixed(2) + ' mag' : '—'],
+      ['Time left', fmtTimeLeft(imaging.remaining_seconds) || '—'],
+    ];
+    const tbl = document.createElement('table');
+    rows.forEach(([k, v]) => {
+      const tr = document.createElement('tr');
+      const th = document.createElement('th'); th.textContent = k;
+      const td = document.createElement('td'); td.textContent = v;
+      tr.appendChild(th); tr.appendChild(td); tbl.appendChild(tr);
+    });
+    const tblLine = document.createElement('div'); tblLine.className = 'log-line';
+    tblLine.appendChild(tbl); logEl.appendChild(tblLine);
+
+    const imgLine = document.createElement('div'); imgLine.className = 'log-line';
+    const stale = imaging.frame_count !== lastImageFrameCount;
+    if (latestImageUrl && !stale) {
+      const img = document.createElement('img'); img.src = latestImageUrl; img.alt = 'latest frame';
+      img.onclick = () => openLightbox(latestImageUrl); imgLine.appendChild(img);
+    } else {
+      const note = document.createElement('span'); note.className = 'log-text';
+      note.textContent = 'Rendering latest frame…'; imgLine.appendChild(note);
+      fetchLatestImage();
+    }
+    logEl.appendChild(imgLine);
+
+    const foot = document.getElementById('sheet-foot');
+    foot.innerHTML = '';
+    const btn = document.createElement('button');
+    btn.className = 'sheet-btn close'; btn.textContent = 'Close'; btn.onclick = closeDetail;
+    foot.appendChild(btn);
+  }
+
+  function fetchLatestImage() {
+    if (fetchingImage) return;
+    fetchingImage = true;
+    const atCount = imaging.frame_count;
+    fetch('/api/latest_image', { cache: 'no-store' })
+      .then((r) => r.json())
+      .then((d) => {
+        if (d.ok && d.image_url) {
+          latestImageUrl = d.image_url; lastImageFrameCount = atCount;
+          renderPanel();   // refresh the card thumbnail, not only the open sheet
+          if (openDetailId === SYSTEM_ID && imaging.active) renderSheet();
+        }
+      })
+      .catch(() => {})
+      .finally(() => { fetchingImage = false; });
+  }
+
   backdrop.addEventListener('click', (e) => { if (e.target === backdrop) closeDetail(); });
 
   function cancelJob(id) {
     fetch(`/api/jobs/${id}/cancel`, { method: 'POST' }).catch(() => {});
+  }
+
+  function removeJob(id) {
+    fetch(`/api/jobs/${id}/remove`, { method: 'POST' }).catch(() => {});
   }
 
   // ── WebSocket ───────────────────────────────────────────────────
@@ -656,9 +820,20 @@
       const data = await resp.json();
       if (data.ok && data.active) { imagingBar.style.display = 'flex'; applyImagingTicker(data); }
       else imagingBar.style.display = 'none';
+      // Drive the dual-mode feed card: imaging summary while active, feed when idle.
+      const prevActive = imaging.active, prevCount = imaging.frame_count;
+      imaging = (data && data.ok) ? data : { active: false };
+      if (imaging.active !== prevActive || imaging.frame_count !== prevCount) {
+        // A new sub is available → render it now so the card/sheet show the
+        // latest frame and its stats immediately, instead of waiting for a tap.
+        if (imaging.active && imaging.frame_count !== lastImageFrameCount) fetchLatestImage();
+        if (!imaging.active) { latestImageUrl = null; lastImageFrameCount = null; }
+        renderPanel();
+        if (openDetailId === SYSTEM_ID) renderSheet();
+      }
     } catch (_) {}
   }
-  fetchImagingTicker(); setInterval(fetchImagingTicker, 30000);
+  fetchImagingTicker(); setInterval(fetchImagingTicker, 15000);
 
   // ── Clock / elapsed tick ────────────────────────────────────────
   function tick() { now = Date.now(); headClock.textContent = fmtClock(now); updateElapsed(); }

@@ -290,6 +290,27 @@ def is_cancelled(job_id: Optional[str]) -> bool:
         return job_id in _cancelled
 
 
+# ── Removal ───────────────────────────────────────────────────────
+
+def remove(job_id: str) -> bool:
+    """Remove a finished job card and broadcast a 'removed' event.
+
+    Only terminal jobs may be removed; the pinned system feed and any
+    live (queued/running) job are refused so a removed job's later
+    ``append_log`` cannot fall back into the system feed.
+    """
+    with _lock:
+        job = _jobs.get(job_id)
+        if job is None or job_id == SYSTEM_JOB_ID or job["status"] not in _TERMINAL:
+            return False
+        del _jobs[job_id]
+        if job_id in _order:
+            _order.remove(job_id)
+        _cancelled.discard(job_id)
+    _broadcast({"kind": "removed", "id": job_id})
+    return True
+
+
 # ── Worker spawn (replaces threading.Thread for long commands) ────
 
 def spawn(target: Callable[..., Any], args: tuple = (), kwargs: Optional[dict] = None) -> threading.Thread:
