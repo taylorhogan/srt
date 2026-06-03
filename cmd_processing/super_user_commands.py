@@ -21,6 +21,8 @@ from configs import config
 from control import instructions
 from hardware_control import kasa_utils as ku
 from hardware_control import sonos_utils
+from hardware_control import pwi4_utils
+from hardware_control import pegasus
 from cmd_processing import social_server
 from cmd_processing import jobs
 from utils import utils, pushover
@@ -129,15 +131,140 @@ def open_roof_with_option(check: bool) -> bool:
 
 
 def unsafe_cmd(words: list[str], account: str) -> None:
-    """Mark conditions as unsafe — writes USER UNSAFE to safety.txt.
+    """Emergency stop: kill NINA, park the scope, close the roof, and shut down.
 
-    Any in-progress imaging run will abort at its next safety gate.
+    Replaces the old soft "mark unsafe" behavior. Brings the observatory to a
+    safe state from any point in a run while honoring the absolute hardware
+    rules — the scope is parked only with the roof confirmed open, and the roof
+    is closed only with the scope confirmed parked. If the scope cannot be
+    confirmed parked, the roof is LEFT OPEN and an alert is sent rather than
+    risking a collision. Runs on a background thread so the chat stays
+    responsive and shows a progress card.
     Command: ``stop!``
     """
-    social_server.post_social_message("User has stopped imaging")
+    social_server.post_social_message(
+        "⛔ EMERGENCY STOP — killing NINA, parking scope, closing roof, shutting down"
+    )
+    pushover.push_message("EMERGENCY STOP initiated")
+    jobs.spawn(_emergency_stop_sequence)
+
+
+def _power_off_pegasus_train() -> None:
+    """Final shutdown step: power off the Pegasus imaging-train ports.
+
+    Called LAST because the vision-safety camera is powered through the Pegasus
+    box — cutting these ports blinds it, so it must happen only after all
+    roof/mount/vision work is complete. Never raises.
+    """
+    try:
+        if pegasus.power_off_imaging_train():
+            _logger.info("emergency: Pegasus imaging-train ports powered off")
+        else:
+            _logger.warning("emergency: Pegasus power-off not fully acknowledged")
+    except Exception:
+        _logger.exception("emergency: Pegasus power-off failed")
+
+
+def _emergency_stop_sequence() -> None:
+    """Body of the emergency stop (see :func:`unsafe_cmd`).
+
+    Never closes the roof unless the scope is confirmed parked. The authoritative
+    parked check is mount telemetry (``pwi4_utils.get_is_parked``); vision tells
+    us the roof position and needs the inside light on to be reliable.
+    """
     utils.set_install_dir()
-    with open("safety.txt", "w") as file:
-        file.write("USER UNSAFE")
+    inside_view = config.data()["camera safety"]["scope_view"]
+
+    # 1. Signal the running imaging worker to unwind (skips the flats sequence),
+    #    and set the safety flag so any safety-gated code also bails.
+    request_abort()
+    try:
+        with open("safety.txt", "w") as file:
+            file.write("USER UNSAFE")
+    except Exception:
+        _logger.exception("emergency: failed to write safety.txt")
+
+    # 2. Kill NINA only — PWI4 must stay alive so we can park the mount.
+    _kill_nina()
+    try:
+        from fits_processing import frame_watcher
+        frame_watcher.stop()
+    except Exception:
+        _logger.exception("emergency: frame_watcher.stop failed")
+
+    # 3. Read observatory state. Turn the inside light on first so vision is
+    #    reliable (during imaging the room is dark); the parked check uses mount
+    #    telemetry and is light-independent.
+    dev_map = None
+    try:
+        dev_map = asyncio.run(ku.make_discovery_map())
+        turn_inside_light_on(dev_map)
+        time.sleep(30)  # let the camera adjust to the lit room before vision
+    except Exception:
+        _logger.exception("emergency: could not turn on inside light")
+
+    parked, closed, is_open, _ = get_status_with_lights()
+    mount_parked = pwi4_utils.get_is_parked()
+    _logger.info(
+        "emergency: vision parked=%s closed=%s open=%s; mount_parked=%s",
+        parked, closed, is_open, mount_parked,
+    )
+
+    # 4. Branch on roof position (safety-critical).
+    if is_open:
+        # Roof confirmed open → safe to slew/park the scope.
+        if not mount_parked:
+            social_server.post_social_message("Roof open — parking scope")
+            pwi4_utils.park_scope()
+            mount_parked = pwi4_utils.get_is_parked()
+
+        if mount_parked:
+            # Parked + roof open → end.do_main() closes the roof + full shutdown
+            # (it re-confirms parked via vision before toggling the roof).
+            social_server.post_social_message("Scope parked — closing roof and shutting down")
+            end.do_main()
+            # LAST: blinds the vision camera (powered through the Pegasus box).
+            _power_off_pegasus_train()
+        else:
+            # Never close the roof over a scope we can't confirm is parked.
+            msg = "EMERGENCY: scope would NOT park — roof LEFT OPEN, manual help needed"
+            social_server.post_social_message(msg)
+            pushover.push_message(msg, inside_view)
+            set_imaging_state(ImagingState.NONE)
+
+    elif closed:
+        # Roof already closed.
+        if mount_parked:
+            # Already a safe geometry → power down only. Do NOT call end.do_main()
+            # here: it unconditionally toggles the roof when parked, which would
+            # re-open a closed roof.
+            social_server.post_social_message("Roof already closed, scope parked — powering down")
+            try:
+                if dev_map is not None:
+                    asyncio.run(ku.kasa_do(dev_map, {
+                        "Telescope mount": 'off',
+                        "Roof motor": 'off',
+                        "Iris inside light": 'off',
+                    }))
+                requests.get(config.data()["hardware"]["dehumidifier_relay_url"] + "?turn=on")
+            except Exception:
+                _logger.exception("emergency: lightweight shutdown failed")
+            # LAST: blinds the vision camera (powered through the Pegasus box).
+            _power_off_pegasus_train()
+            set_imaging_state(ImagingState.NONE)
+        else:
+            # Unparked scope under a closed roof — no safe automatic action.
+            msg = "EMERGENCY: roof closed but scope NOT parked — manual help needed"
+            social_server.post_social_message(msg)
+            pushover.push_message(msg, inside_view)
+            set_imaging_state(ImagingState.NONE)
+
+    else:
+        # Roof position ambiguous (neither confidently open nor closed).
+        msg = "EMERGENCY: roof position ambiguous — no safe automatic action, manual help needed"
+        social_server.post_social_message(msg)
+        pushover.push_message(msg, inside_view)
+        set_imaging_state(ImagingState.NONE)
 
 
 def safe_cmd(words: list[str], account: str) -> None:
@@ -161,6 +288,30 @@ class ImagingState(Enum):
     DONE_MAIN    = "DONE_MAIN"
     IN_FLATS     = "IN_FLATS"
     DONE_FLATS   = "DONE_FLATS"
+
+
+# ── Emergency abort signal ─────────────────────────────────────────
+# Cooperative stop flag observed by doit_cmd's poll loops so an emergency
+# stop (stop!) can unwind a running imaging job cleanly — in particular,
+# WITHOUT falling through into the flats sequence, which would power the
+# mount back on and relaunch NINA. Cleared by image_cmd/doflats_cmd at the
+# start of every fresh run so a stale abort can never kill a new run.
+_abort_event = threading.Event()
+
+
+def request_abort() -> None:
+    """Signal any in-progress imaging run to abort at its next checkpoint."""
+    _abort_event.set()
+
+
+def clear_abort() -> None:
+    """Clear the abort flag. Called when starting a fresh imaging/flats run."""
+    _abort_event.clear()
+
+
+def is_aborting() -> bool:
+    """Return True if an emergency abort has been requested."""
+    return _abort_event.is_set()
 
 
 def set_imaging_state(state: ImagingState) -> None:
@@ -1381,6 +1532,8 @@ def image_cmd(words: list[str], account: str) -> None:
     else:
         from fits_processing import frame_watcher
         cfg = config.data()
+        # Clear any stale emergency-abort flag so it can't kill this fresh run.
+        clear_abort()
         # Claim the run synchronously, before returning, so callers that poll
         # get_imaging_state() (e.g. the scheduler's imaging_task) never observe
         # NONE and conclude the run finished before the worker thread has even
@@ -1530,6 +1683,12 @@ def doit_cmd(words: list[str], account: str) -> None:
         prelude_timeout = 10 * 60  # 10 minutes max
         prelude_start = time.time()
         while get_imaging_state() != ImagingState.DONE_PRELUDE:
+            if is_aborting():
+                # Emergency stop fired — the emergency handler owns the safe
+                # shutdown from here, so just unwind without touching hardware.
+                _logger.info("Prelude wait aborted by emergency stop")
+                set_imaging_state(ImagingState.NONE)
+                return
             if time.time() - prelude_start > prelude_timeout:
                 pushover.push_message("Prelude timed out, stopping", inside_view)
                 set_imaging_state(ImagingState.NONE)
@@ -1578,8 +1737,14 @@ def doit_cmd(words: list[str], account: str) -> None:
             home_and_park(None, None)
 
         _logger.info("Waiting for imaging state to return to NONE")
-        while get_imaging_state() != ImagingState.NONE:
+        while get_imaging_state() != ImagingState.NONE and not is_aborting():
             time.sleep(60)
+        if is_aborting():
+            # Emergency stop fired — do NOT fall through into flats (which would
+            # power the mount back on and relaunch NINA). The emergency handler
+            # owns the safe shutdown from here.
+            _logger.info("Main imaging wait aborted by emergency stop — skipping flats")
+            return
         _logger.info("Imaging state is NONE — main phase complete")
 
         # Kill NINA before starting flats so there is no leftover process
@@ -1661,6 +1826,8 @@ def doflats_cmd(words: list[str], account: str) -> None:
     if is_imaging():
         pushover.push_message("Already imaging, cannot start flats")
         return
+    # Clear any stale emergency-abort flag so it can't kill this fresh run.
+    clear_abort()
     def _run():
         set_imaging_state(ImagingState.ACTIVE)
         try:
