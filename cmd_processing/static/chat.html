@@ -272,9 +272,10 @@
   const SYSTEM_ID = 'system';
   const jobs = new Map();          // id -> job
   let imaging = { active: false }; // latest /api/imaging_ticker payload
-  let lastImageFrameCount = null;  // frame_count the detail image was rendered at
-  let latestImageUrl = null;       // cached URL of the rendered latest frame
-  let fetchingImage = false;       // in-flight guard for /api/latest_image
+  let lastImageFrameCount = null;  // frame_count when artifacts were last fetched
+  let latestImageUrl = null;       // URL of the eagerly-rendered latest frame
+  let statsImageUrl = null;        // URL of the eagerly-rendered stats graph
+  let fetchingArtifacts = false;   // in-flight guard for /api/imaging_artifacts
   let openDetailId = null;
   let now = Date.now();
 
@@ -614,49 +615,41 @@
     else { btn.className = 'sheet-btn close'; btn.textContent = 'Close'; btn.onclick = closeDetail; }
     foot.appendChild(btn);
   }
-  // Imaging-mode detail: live stats table + lazily-rendered latest frame image.
+  // Imaging-mode detail: latest-frame image + per-DSO stats graph (both
+  // pre-rendered by frame_watcher, fetched eagerly when a new sub arrives).
   function renderImagingSheet() {
-    const lf = imaging.last_frame || {};
     document.getElementById('sheet-title').textContent = `Imaging ${imaging.target || ''}`.trim() || 'Imaging';
-    document.getElementById('sheet-cmd').textContent = '';
+    document.getElementById('sheet-cmd').textContent = imaging.frame_count != null
+      ? String(imaging.frame_count) + ' frames' : '';
     const badge = document.getElementById('sheet-badge');
     badge.textContent = 'IMAGING'; badge.style.color = '#3fb950'; badge.style.borderColor = '#3fb95066';
 
     const logEl = document.getElementById('sheet-log');
     logEl.innerHTML = '';
 
-    const rows = [
-      ['Target', imaging.target || '—'],
-      ['Filter', lf.filter || '—'],
-      ['Frames', String(imaging.frame_count || 0)],
-      ['FWHM', lf.fwhm_arcsec != null ? lf.fwhm_arcsec.toFixed(2) + '″' : '—'],
-      ['Eccentricity', lf.eccentricity != null ? lf.eccentricity.toFixed(3) : '—'],
-      ['Stars', lf.star_count != null ? String(lf.star_count) : '—'],
-      ['Sky', lf.sky_adu_per_s != null ? lf.sky_adu_per_s.toFixed(1) + ' ADU/s'
-              : lf.sky_mag_arcsec2 != null ? lf.sky_mag_arcsec2.toFixed(2) + ' mag' : '—'],
-      ['Time left', fmtTimeLeft(imaging.remaining_seconds) || '—'],
-    ];
-    const tbl = document.createElement('table');
-    rows.forEach(([k, v]) => {
-      const tr = document.createElement('tr');
-      const th = document.createElement('th'); th.textContent = k;
-      const td = document.createElement('td'); td.textContent = v;
-      tr.appendChild(th); tr.appendChild(td); tbl.appendChild(tr);
-    });
-    const tblLine = document.createElement('div'); tblLine.className = 'log-line';
-    tblLine.appendChild(tbl); logEl.appendChild(tblLine);
+    const stale = imaging.frame_count !== lastImageFrameCount;
+    if (stale) fetchImagingArtifacts();
 
     const imgLine = document.createElement('div'); imgLine.className = 'log-line';
-    const stale = imaging.frame_count !== lastImageFrameCount;
-    if (latestImageUrl && !stale) {
+    if (latestImageUrl) {
       const img = document.createElement('img'); img.src = latestImageUrl; img.alt = 'latest frame';
       img.onclick = () => openLightbox(latestImageUrl); imgLine.appendChild(img);
     } else {
       const note = document.createElement('span'); note.className = 'log-text';
       note.textContent = 'Rendering latest frame…'; imgLine.appendChild(note);
-      fetchLatestImage();
     }
     logEl.appendChild(imgLine);
+
+    const statsLine = document.createElement('div'); statsLine.className = 'log-line';
+    if (statsImageUrl) {
+      const img = document.createElement('img'); img.src = statsImageUrl; img.alt = 'stats graph';
+      img.onclick = () => openLightbox(statsImageUrl); statsLine.appendChild(img);
+    } else {
+      const note = document.createElement('span'); note.className = 'log-text';
+      note.textContent = 'Stats graph will appear after the next sub is analysed.';
+      statsLine.appendChild(note);
+    }
+    logEl.appendChild(statsLine);
 
     const foot = document.getElementById('sheet-foot');
     foot.innerHTML = '';
@@ -665,21 +658,25 @@
     foot.appendChild(btn);
   }
 
-  function fetchLatestImage() {
-    if (fetchingImage) return;
-    fetchingImage = true;
+  function fetchImagingArtifacts() {
+    if (fetchingArtifacts) return;
+    fetchingArtifacts = true;
     const atCount = imaging.frame_count;
-    fetch('/api/latest_image', { cache: 'no-store' })
+    fetch('/api/imaging_artifacts', { cache: 'no-store' })
       .then((r) => r.json())
       .then((d) => {
-        if (d.ok && d.image_url) {
-          latestImageUrl = d.image_url; lastImageFrameCount = atCount;
-          renderPanel();   // refresh the card thumbnail, not only the open sheet
+        if (!d || !d.ok) return;
+        let changed = false;
+        if (d.image_url && d.image_url !== latestImageUrl) { latestImageUrl = d.image_url; changed = true; }
+        if (d.stats_url && d.stats_url !== statsImageUrl) { statsImageUrl = d.stats_url; changed = true; }
+        lastImageFrameCount = atCount;
+        if (changed) {
+          renderPanel();
           if (openDetailId === SYSTEM_ID && imaging.active) renderSheet();
         }
       })
       .catch(() => {})
-      .finally(() => { fetchingImage = false; });
+      .finally(() => { fetchingArtifacts = false; });
   }
 
   backdrop.addEventListener('click', (e) => { if (e.target === backdrop) closeDetail(); });
@@ -824,10 +821,13 @@
       const prevActive = imaging.active, prevCount = imaging.frame_count;
       imaging = (data && data.ok) ? data : { active: false };
       if (imaging.active !== prevActive || imaging.frame_count !== prevCount) {
-        // A new sub is available → render it now so the card/sheet show the
-        // latest frame and its stats immediately, instead of waiting for a tap.
-        if (imaging.active && imaging.frame_count !== lastImageFrameCount) fetchLatestImage();
-        if (!imaging.active) { latestImageUrl = null; lastImageFrameCount = null; }
+        // A new sub is available → fetch the freshly-rendered artifacts now so
+        // the card/sheet show the latest frame and its stats immediately,
+        // instead of waiting for a tap.
+        if (imaging.active && imaging.frame_count !== lastImageFrameCount) fetchImagingArtifacts();
+        if (!imaging.active) {
+          latestImageUrl = null; statsImageUrl = null; lastImageFrameCount = null;
+        }
         renderPanel();
         if (openDetailId === SYSTEM_ID) renderSheet();
       }

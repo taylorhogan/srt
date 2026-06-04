@@ -467,40 +467,22 @@ async def api_imaging_ticker():
 def _render_latest_image() -> dict:
     """Render the newest LIGHT FITS to a JPEG in the served images dir (blocking).
 
-    Mirrors social_server.latest_cmd's render, but writes to a fixed filename
-    under the /images mount and returns its URL instead of posting to the feed.
+    On-demand fallback for `/api/latest_image`; the frame_watcher also writes
+    the same artifact eagerly via fits_processing.imaging_artifacts.
     """
-    import time as _time
     from configs import config
-    from fits_processing import fitstojpg, fitsfwhm, sky_brightness as sb
+    from fits_processing import imaging_artifacts as _ia
 
     if _images_dir is None:
         return {"ok": False}
     cfg = config.data()
-    image_dir = cfg["nina"]["image_dir"]
+    image_dir = Path(cfg["nina"]["image_dir"])
     arcsec = cfg["nina"]["arc_sec_per_pixel"]
-    latest_fits = fitstojpg.get_latest_file(image_dir, "fits")
-    if latest_fits is None:
+    out = Path(_images_dir) / _ia.LATEST_IMAGE_NAME
+    rendered = _ia.render_latest_image(image_dir, arcsec, out)
+    if rendered is None:
         return {"ok": False}
-
-    filter_name = None
-    try:
-        from astropy.io import fits as _fits
-        with _fits.open(str(latest_fits)) as hdul:
-            filter_name = str(hdul[0].header.get("FILTER", "")).strip() or None
-    except Exception:
-        pass
-
-    sky_data = sb.measure_sky(Path(str(latest_fits)), arcsec_per_pixel=arcsec)
-    out = Path(_images_dir) / "latest_imaging.jpg"
-    fitsfwhm.save_fwhm(
-        Path(str(latest_fits)), out,
-        arcsec_per_pixel=arcsec,
-        annotate=False,
-        filter_name=filter_name,
-        sky_data=sky_data,
-    )
-    return {"ok": True, "image_url": f"/images/latest_imaging.jpg?t={int(_time.time())}"}
+    return {"ok": True, "image_url": f"/images/{_ia.LATEST_IMAGE_NAME}?t={int(rendered.stat().st_mtime)}"}
 
 
 @app.get("/api/latest_image")
@@ -512,3 +494,24 @@ async def api_latest_image():
         _logger.exception("api_latest_image error")
         result = {"ok": False}
     return JSONResponse(content=result, headers={"Cache-Control": "no-store"})
+
+
+@app.get("/api/imaging_artifacts")
+async def api_imaging_artifacts():
+    """Return URLs for the pre-rendered latest-image + stats-plot artifacts.
+
+    The frame_watcher rebuilds both whenever a new sub lands; this endpoint
+    just reports what is currently on disk (no rendering).  Each URL carries
+    the file's mtime as a cache buster so the UI sees fresh content.
+    """
+    from fits_processing import imaging_artifacts as _ia
+    if _images_dir is None:
+        return JSONResponse({"ok": False}, headers={"Cache-Control": "no-store"})
+    out = {"ok": True}
+    img = Path(_images_dir) / _ia.LATEST_IMAGE_NAME
+    stats = Path(_images_dir) / _ia.STATS_PLOT_NAME
+    if img.exists():
+        out["image_url"] = f"/images/{_ia.LATEST_IMAGE_NAME}?t={int(img.stat().st_mtime)}"
+    if stats.exists():
+        out["stats_url"] = f"/images/{_ia.STATS_PLOT_NAME}?t={int(stats.stat().st_mtime)}"
+    return JSONResponse(out, headers={"Cache-Control": "no-store"})

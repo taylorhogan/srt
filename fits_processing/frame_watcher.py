@@ -39,12 +39,22 @@ _last_frame: Optional[dict] = None
 _stop_event: Optional[threading.Event] = None
 _ticker_path: Optional[Path] = None  # file-based IPC so other processes can read state
 
+# Coalescing single-slot rebuild trigger: setting the event asks a worker to
+# rebuild the latest-image + stats artifacts. Multiple new frames during one
+# render coalesce into a single follow-up rebuild.
+_artifact_request = threading.Event()
+_artifact_worker_started = False
+_artifact_image_dir: Optional[Path] = None
+_artifact_arcsec: float = 1.0
+_last_artifact_cache: Optional[Path] = None  # cache path of the most recent frame's DSO
+
 
 # ── public API ────────────────────────────────────────────────────────────────
 
 def start(image_dir: Path, arcsec_per_pixel: float) -> None:
     """Start the watcher thread.  No-op if already running."""
     global _active, _frame_count, _last_frame, _stop_event, _ticker_path
+    global _artifact_image_dir, _artifact_arcsec, _artifact_worker_started
     with _lock:
         if _active:
             return
@@ -52,6 +62,8 @@ def start(image_dir: Path, arcsec_per_pixel: float) -> None:
         _frame_count = 0
         _last_frame  = None
         _ticker_path = Path(image_dir) / "frame_ticker.json"
+        _artifact_image_dir = Path(image_dir)
+        _artifact_arcsec = float(arcsec_per_pixel)
 
     _stop_event = threading.Event()
     _write_ticker(True)
@@ -61,6 +73,15 @@ def start(image_dir: Path, arcsec_per_pixel: float) -> None:
         daemon=True,
         name="frame-watcher",
     ).start()
+    # Long-lived single-slot artifact rebuilder. Survives across imaging
+    # sessions: stop()/start() just flip _active.
+    if not _artifact_worker_started:
+        _artifact_worker_started = True
+        threading.Thread(
+            target=_artifact_worker,
+            daemon=True,
+            name="frame-watcher-artifacts",
+        ).start()
 
 
 def stop() -> None:
@@ -247,9 +268,71 @@ def _run(image_dir: Path, arcsec_per_pixel: float, stop_event: threading.Event) 
                     entries = _load_cache(cache_path)
                     entries.append(frame)
                     _save_cache(cache_path, entries)
+                    _request_artifact_rebuild(cache_path)
 
         except Exception as exc:
             print(f"frame_watcher: poll error: {exc}")
 
         _write_ticker(True)  # heartbeat so the web server can detect staleness
         stop_event.wait(timeout=_POLL_SECONDS)
+
+
+def _request_artifact_rebuild(cache_path: Path) -> None:
+    """Schedule a single coalesced rebuild of the imaging artifacts."""
+    global _last_artifact_cache
+    with _lock:
+        _last_artifact_cache = cache_path
+    _artifact_request.set()
+
+
+def _images_output_dir() -> Optional[Path]:
+    """Resolve the web server's images dir (where /images is mounted from)."""
+    try:
+        from configs import config as _config
+        cfg = _config.data()
+        rel = cfg.get("web_chat", {}).get("upload_dir", "saved_dso")
+        root = Path(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+        out = root / rel
+        out.mkdir(parents=True, exist_ok=True)
+        return out
+    except Exception:
+        return None
+
+
+def _artifact_worker() -> None:
+    """Single-slot rebuilder: render latest-image and stats-plot artifacts.
+
+    Coalescing: many sub arrivals during one render produce a single follow-up
+    render, because _artifact_request is an Event (not a queue).
+    """
+    from fits_processing import imaging_artifacts as _ia
+
+    while True:
+        _artifact_request.wait()
+        _artifact_request.clear()
+
+        with _lock:
+            cache_path = _last_artifact_cache
+            image_dir = _artifact_image_dir
+            arcsec = _artifact_arcsec
+        out_dir = _images_output_dir()
+        if image_dir is None or out_dir is None:
+            continue
+
+        try:
+            _ia.render_latest_image(
+                image_dir=image_dir,
+                arcsec_per_pixel=arcsec,
+                output_path=out_dir / _ia.LATEST_IMAGE_NAME,
+            )
+        except Exception:
+            pass  # render_latest_image already logs
+
+        if cache_path is not None:
+            try:
+                _ia.render_stats_plot_from_cache_path(
+                    cache_path=cache_path,
+                    output_path=out_dir / _ia.STATS_PLOT_NAME,
+                )
+            except Exception:
+                pass
