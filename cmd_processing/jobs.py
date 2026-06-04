@@ -80,12 +80,13 @@ _CLASSIFY = {
 
 def init() -> None:
     """Reset the registry and (re)create the pinned system job."""
-    global _jobs, _order, _counter, _cancelled
+    global _jobs, _order, _counter, _cancelled, _resources
     with _lock:
         _jobs = {}
         _order = []
         _counter = 0
         _cancelled = set()
+        _resources = {}
         _ensure_system_locked()
 
 
@@ -274,12 +275,27 @@ def is_async(job_id: str) -> bool:
 
 # ── Cancellation (cooperative) ────────────────────────────────────
 
+# Canonical cancellation signal; defined in utils so low-level processing
+# modules can raise it without importing cmd_processing. Re-exported here so
+# callers can use jobs.Cancelled.
+from utils.cancellation import Cancelled  # noqa: E402,F401
+
+
+# job id -> list of cancellable resources (e.g. ProcessPoolExecutor). On cancel
+# we best-effort tear these down so pools die promptly instead of draining.
+_resources: dict = {}
+
+
 def request_cancel(job_id: str) -> bool:
     with _lock:
         job = _jobs.get(job_id)
         if job is None or job["status"] in _TERMINAL or job_id == SYSTEM_JOB_ID:
             return False
         _cancelled.add(job_id)
+        resources = list(_resources.get(job_id, ()))
+    # Tear down outside the lock — shutdown() can block briefly.
+    for resource in resources:
+        _terminate_resource(resource)
     return True
 
 
@@ -288,6 +304,52 @@ def is_cancelled(job_id: Optional[str]) -> bool:
         return False
     with _lock:
         return job_id in _cancelled
+
+
+def raise_if_cancelled(job_id: Optional[str]) -> None:
+    """Raise :class:`Cancelled` if a cancel has been requested for this job."""
+    if is_cancelled(job_id):
+        raise Cancelled()
+
+
+def cancel_cb_for(job_id: Optional[str]) -> Callable[[], bool]:
+    """Return a zero-arg ``() -> bool`` predicate reporting this job's cancel
+    state — the shape long analysis functions accept as ``cancel_cb``."""
+    return lambda: is_cancelled(job_id)
+
+
+def register_resource(job_id: Optional[str], resource: Any) -> None:
+    """Register a cancellable resource (e.g. a process/thread pool) for a job so
+    :func:`request_cancel` can tear it down promptly. No-op without a job id."""
+    if not job_id:
+        return
+    with _lock:
+        _resources.setdefault(job_id, []).append(resource)
+
+
+def unregister_resource(job_id: Optional[str], resource: Any) -> None:
+    """Drop a previously registered resource (call in the worker's ``finally``)."""
+    if not job_id:
+        return
+    with _lock:
+        bucket = _resources.get(job_id)
+        if bucket and resource in bucket:
+            bucket.remove(resource)
+            if not bucket:
+                del _resources[job_id]
+
+
+def _terminate_resource(resource: Any) -> None:
+    """Best-effort teardown of a cancellable resource. Never raises."""
+    try:
+        if hasattr(resource, "shutdown"):           # concurrent.futures Executor
+            resource.shutdown(wait=False, cancel_futures=True)
+        elif hasattr(resource, "terminate"):        # multiprocessing.Pool / Process
+            resource.terminate()
+        elif callable(resource):                    # plain cleanup callback
+            resource()
+    except Exception:
+        _logger.exception("Failed to terminate cancellable resource")
 
 
 # ── Removal ───────────────────────────────────────────────────────
@@ -307,6 +369,7 @@ def remove(job_id: str) -> bool:
         if job_id in _order:
             _order.remove(job_id)
         _cancelled.discard(job_id)
+        _resources.pop(job_id, None)
     _broadcast({"kind": "removed", "id": job_id})
     return True
 
@@ -331,6 +394,11 @@ def spawn(target: Callable[..., Any], args: tuple = (), kwargs: Optional[dict] =
             target(*args, **kwargs)
             if job_id:
                 finalize(job_id, DONE)
+        except Cancelled:
+            # Cooperative cancellation — terminal CANCELLED, not an error.
+            if job_id:
+                append_log(job_id, message_bus.make_entry("■ Cancelled."))
+                transition(job_id, CANCELLED)
         except Exception:
             _logger.exception("Job worker failed")
             if job_id:

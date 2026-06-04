@@ -48,6 +48,15 @@ if __package__ is None or __package__ == "":
 
 _logger = logging.getLogger(__name__)
 
+from utils.cancellation import Cancelled
+
+
+def _ckpt(cancel_cb: Optional[Callable[[], bool]]) -> None:
+    """Raise :class:`Cancelled` if ``cancel_cb`` reports a cancellation."""
+    if cancel_cb is not None and cancel_cb():
+        raise Cancelled()
+
+
 try:
     from fits_processing.fitsfwhm import calculate_fwhm as _calculate_fwhm
     _FWHM_AVAILABLE = True
@@ -385,6 +394,7 @@ def stack(
     max_fwhm_multiplier: Optional[float] = None,
     register: bool = True,
     progress_cb: Optional[Callable[[str], None]] = None,
+    cancel_cb: Optional[Callable[[], bool]] = None,
 ) -> tuple[np.ndarray, dict]:
     """
     Stack a list of FITS light frames with optional calibration and FWHM weighting.
@@ -435,6 +445,7 @@ def stack(
         if progress_cb:
             progress_cb(f"measuring FWHM for {len(light_paths)} frames…")
         for p in light_paths:
+            _ckpt(cancel_cb)
             fwhm_values[p] = _measure_fwhm(p)
             _logger.debug("  %s → FWHM %.2f px", p.name, fwhm_values[p])
 
@@ -482,6 +493,7 @@ def stack(
     _logger.info(
         "Loading and calibrating %d frames (rejected %d)…", len(accepted), len(rejected)
     )
+    _ckpt(cancel_cb)
     calibrated = [_calibrate(_load_fits_2d(p), master_bias, master_dark, master_flat)
                   for p in accepted]
 
@@ -545,6 +557,7 @@ def stack(
         for y0 in range(0, H, TILE):
             y1 = min(y0 + TILE, H)
             for x0 in range(0, W, TILE):
+                _ckpt(cancel_cb)
                 x1 = min(x0 + TILE, W)
                 cube_tile = np.stack(
                     [np.asarray(m[y0:y1, x0:x1]) for m in mmaps], axis=0,
@@ -705,6 +718,7 @@ def _prepare_for_convergence(
     register: bool = True,
     downscale_to: Optional[int] = 512,
     progress_cb: Optional[Callable[[str], None]] = None,
+    cancel_cb: Optional[Callable[[], bool]] = None,
 ) -> tuple[list[np.ndarray], list[Path], dict[Path, float]]:
     """
     Load, FWHM-filter, register, and downscale a set of FITS paths for convergence
@@ -736,6 +750,7 @@ def _prepare_for_convergence(
             fwhm_values[futs[fut]] = fut.result()
             if progress_cb and i % tick == 0:
                 progress_cb(f"FWHM: {i}/{len(paths)} frames…")
+    _ckpt(cancel_cb)
 
     accepted = list(paths)
     measured = np.array([v for v in fwhm_values.values() if v > 0.0])
@@ -792,6 +807,7 @@ def _prepare_for_convergence(
     for i, p in enumerate(accepted):
         if i == actual_ref_idx:
             continue
+        _ckpt(cancel_cb)
         try:
             frame = _load_fits_2d(p)
             transform, (src_pts, dst_pts) = _astroalign.find_transform(frame, reference)
@@ -851,6 +867,7 @@ def convergence_curve(
     max_fwhm_multiplier: float = 1.5,
     register: bool = True,
     progress_cb: Optional[Callable[[str], None]] = None,
+    cancel_cb: Optional[Callable[[], bool]] = None,
 ) -> tuple[list[int], list[float], float]:
     """
     Measure how quickly stacking converges to the golden (all-frames) stack.
@@ -888,6 +905,7 @@ def convergence_curve(
         max_fwhm_multiplier=max_fwhm_multiplier,
         register=register,
         progress_cb=progress_cb,
+        cancel_cb=cancel_cb,
     )
 
     n = len(frames)
@@ -909,6 +927,7 @@ def convergence_curve(
         _label = f"{filter_name} golden  {n} frames" if filter_name else f"golden  {n} frames"
         _save_jpg(golden, golden_output_path, title=_label)
 
+    _ckpt(cancel_cb)
     if progress_cb:
         progress_cb(f"sampling convergence ({n} frames, {len(_fib_counts(n))} points)…")
 

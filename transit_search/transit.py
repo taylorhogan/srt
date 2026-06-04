@@ -44,12 +44,17 @@ if __package__ is None or __package__ == "":
         sys.path.insert(0, _root)
 
 from configs import config as _config
+from utils.cancellation import Cancelled
 
 _logger = logging.getLogger(__name__)
 
 
-class TransitCancelled(Exception):
-    """Raised inside run_transit_search when the job's cancel flag is set."""
+class TransitCancelled(Cancelled):
+    """Raised inside run_transit_search when the job's cancel flag is set.
+
+    Subclasses the shared :class:`utils.cancellation.Cancelled` so the job
+    machinery treats it uniformly with other cancellations.
+    """
 
 
 # Serialises the read-modify-write in save_transits so concurrent searches

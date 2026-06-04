@@ -666,6 +666,8 @@ def optics_cmd(words: list[str], account: str) -> None:
 def _optics_run(words: list[str]) -> None:
     from fits_processing import fitsfwhm, sky_brightness as sb
 
+    _job_id = jobs.get_current_job()
+
     cfg = config.data()
     _project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
     image_dir = Path(cfg["nina"]["image_dir"])
@@ -754,12 +756,14 @@ def _optics_run(words: list[str]) -> None:
         f"Optics for {dso_dir.name} frame {frame_idx}/{total_frames}"
     )
 
+    jobs.raise_if_cancelled(_job_id)
     metrics = fitsfwhm.compute_optical_metrics(fits_path, arcsec_per_pixel=arcsec_per_pixel)
     if metrics:
         metrics_table_path = Path(os.path.join(scratch_dir, "optical_metrics_table.jpg"))
         fitsfwhm.save_optical_metrics_table(metrics, metrics_table_path)
         social_server.post_social_message("Optical quality metrics", str(metrics_table_path))
 
+    jobs.raise_if_cancelled(_job_id)
     fwhm_heatmap_path = Path(os.path.join(scratch_dir, "fwhm_heatmap.jpg"))
     ecc_heatmap_path  = Path(os.path.join(scratch_dir, "ecc_heatmap.jpg"))
     fwhm_out, ecc_out = fitsfwhm.save_fwhm_heatmaps(
@@ -769,18 +773,21 @@ def _optics_run(words: list[str]) -> None:
     social_server.post_social_message("FWHM heatmap", str(fwhm_out))
     social_server.post_social_message("Eccentricity heatmap", str(ecc_out))
 
+    jobs.raise_if_cancelled(_job_id)
     dist_plot_path = Path(os.path.join(scratch_dir, "fwhm_vs_distance.jpg"))
     dist_out = fitsfwhm.save_fwhm_vs_distance(
         fits_path, dist_plot_path, arcsec_per_pixel=arcsec_per_pixel,
     )
     social_server.post_social_message("FWHM vs distance from centre", str(dist_out))
 
+    jobs.raise_if_cancelled(_job_id)
     angle_map_path = Path(os.path.join(scratch_dir, "ecc_angle_map.jpg"))
     angle_out = fitsfwhm.save_eccentricity_angle_map(
         fits_path, angle_map_path, arcsec_per_pixel=arcsec_per_pixel,
     )
     social_server.post_social_message("Elongation angle map", str(angle_out))
 
+    jobs.raise_if_cancelled(_job_id)
     sky_heatmap_path = Path(os.path.join(scratch_dir, "sky_heatmap.jpg"))
     sky_heatmap_out, sky_data = sb.save_sky_heatmap(
         fits_path, sky_heatmap_path, arcsec_per_pixel=arcsec_per_pixel,
@@ -844,6 +851,9 @@ def _drift_run(words: list[str]) -> None:
     import matplotlib.pyplot as plt
     from astropy.visualization import ZScaleInterval
     from stacking import stacker
+
+    _job_id = jobs.get_current_job()
+    _cancel = jobs.cancel_cb_for(_job_id)
 
     cfg = config.data()
     image_dir = Path(cfg["nina"]["image_dir"])
@@ -923,7 +933,7 @@ def _drift_run(words: list[str]) -> None:
         social_server.post_social_message(f"Drift [L]: {msg}")
 
     frames, accepted, fwhm_values = stacker._prepare_for_convergence(
-        l_files, progress_cb=_progress,
+        l_files, progress_cb=_progress, cancel_cb=_cancel,
     )
     n = len(frames)
     arr = np.stack(frames, axis=0)
@@ -956,6 +966,7 @@ def _drift_run(words: list[str]) -> None:
         subset_mean = np.where(denom > 0, numer / np.where(denom > 0, denom, 1.0), golden)
         return k, np.abs(subset_mean - golden)
 
+    jobs.raise_if_cancelled(_job_id)
     with ThreadPoolExecutor() as pool:
         diffs = dict(pool.map(_compute_diff_k, counts))
 
@@ -979,6 +990,7 @@ def _drift_run(words: list[str]) -> None:
         plt.close(fig)
         return k, out_path
 
+    jobs.raise_if_cancelled(_job_id)
     with ThreadPoolExecutor() as pool:
         results = dict(pool.map(_render_k, counts))
 
@@ -1001,6 +1013,9 @@ def _stack_run(words: list[str]) -> None:
     from stacking import stacker
     from fits_processing import fitsfwhm
     from astropy.io import fits as _fits
+
+    _job_id = jobs.get_current_job()
+    _cancel = jobs.cancel_cb_for(_job_id)
 
     cfg = config.data()
     image_dir = Path(cfg["nina"]["image_dir"])
@@ -1112,6 +1127,7 @@ def _stack_run(words: list[str]) -> None:
     )
 
     for filter_name, paths in sorted(groups.items()):
+        jobs.raise_if_cancelled(_job_id)
         def _progress(msg: str, _fn: str = filter_name, _dso: str = dso_dir.name) -> None:
             social_server.post_social_message(f"{_dso} {_fn}: {msg}")
 
@@ -1125,7 +1141,10 @@ def _stack_run(words: list[str]) -> None:
                 flat_paths=flat_paths,
                 max_fwhm_multiplier=1.5,
                 progress_cb=_progress,
+                cancel_cb=_cancel,
             )
+        except jobs.Cancelled:
+            raise
         except Exception as exc:
             social_server.post_social_message(
                 f"{dso_dir.name} {filter_name}: stack failed — {exc}"
@@ -1193,6 +1212,8 @@ def _bad_run(words: list[str]) -> None:
     import warnings as _warnings
     from concurrent.futures import ThreadPoolExecutor, as_completed
     from fits_processing import fitsfwhm
+
+    _job_id = jobs.get_current_job()
 
     cfg = config.data()
     image_dir = Path(cfg["nina"]["image_dir"])
@@ -1305,9 +1326,14 @@ def _bad_run(words: list[str]) -> None:
         new_entries: list[dict] = [None] * len(need_analysis)
         max_workers = min(8, len(need_analysis))
         with ThreadPoolExecutor(max_workers=max_workers) as pool:
-            future_map = {pool.submit(_analyse, f): i for i, f in enumerate(need_analysis)}
-            for fut in as_completed(future_map):
-                new_entries[future_map[fut]] = fut.result()
+            jobs.register_resource(_job_id, pool)
+            try:
+                future_map = {pool.submit(_analyse, f): i for i, f in enumerate(need_analysis)}
+                for fut in as_completed(future_map):
+                    jobs.raise_if_cancelled(_job_id)
+                    new_entries[future_map[fut]] = fut.result()
+            finally:
+                jobs.unregister_resource(_job_id, pool)
         for entry in new_entries:
             cached_by_path[str(Path(entry["path"]))] = entry
         tmp = cache_path.with_suffix(".tmp")
@@ -1854,6 +1880,9 @@ def _snr_run(words: list[str]) -> None:
     """
     from stacking import stacker
 
+    _job_id = jobs.get_current_job()
+    _cancel = jobs.cancel_cb_for(_job_id)
+
     cfg = config.data()
     image_dir = Path(cfg["nina"]["image_dir"])
 
@@ -1928,6 +1957,7 @@ def _snr_run(words: list[str]) -> None:
 
     saved: dict[str, dict] = {}
     for fn, paths in by_filter.items():
+        jobs.raise_if_cancelled(_job_id)
         out = Path(scratch_dir) / f"convergence_{fn}.jpg"
         gold = Path(scratch_dir) / f"golden_{fn}.jpg"
         def _progress(msg: str, _fn: str = fn) -> None:
@@ -1939,7 +1969,10 @@ def _snr_run(words: list[str]) -> None:
                 output_path=out,
                 golden_output_path=gold,
                 progress_cb=_progress,
+                cancel_cb=_cancel,
             )
+        except jobs.Cancelled:
+            raise
         except Exception as exc:
             social_server.post_social_message(f"Convergence [{fn}]: failed — {exc}")
             continue
@@ -2144,6 +2177,8 @@ def _image_stats_run(words: list[str], account: str) -> None:
     from fits_processing import fitsfwhm
     from fits_processing import sky_brightness as sb
 
+    _job_id = jobs.get_current_job()
+
     cfg = config.data()
     image_dir = Path(cfg["nina"]["image_dir"])
     arcsec_per_pixel = cfg["nina"]["arc_sec_per_pixel"]
@@ -2279,9 +2314,14 @@ def _image_stats_run(words: list[str], account: str) -> None:
         new_entries: list[dict] = [None] * len(need_analysis)
         max_workers = min(8, len(need_analysis))
         with ThreadPoolExecutor(max_workers=max_workers) as pool:
-            future_map = {pool.submit(_analyse_fits, f): i for i, f in enumerate(need_analysis)}
-            for fut in as_completed(future_map):
-                new_entries[future_map[fut]] = fut.result()
+            jobs.register_resource(_job_id, pool)
+            try:
+                future_map = {pool.submit(_analyse_fits, f): i for i, f in enumerate(need_analysis)}
+                for fut in as_completed(future_map):
+                    jobs.raise_if_cancelled(_job_id)
+                    new_entries[future_map[fut]] = fut.result()
+            finally:
+                jobs.unregister_resource(_job_id, pool)
 
         # Merge new entries into the cache and save
         for entry in new_entries:

@@ -21,6 +21,24 @@ iris.log
 cmd_history.json
 local/
 scratch/
+my_instructions.json
+my_calendar.json
+my_instruction_back.json
+my_cal.back.json
+scheduler_state.json
+todo.txt
+
+# Generated images / captures
+saved_dso/
+base_images/
+cal.png
+example_table.jpg
+instructions.png
+test_*.jpg
+test_*.fits
+
+# Personal / non-project files
+*.scad
 
 # macOS
 .DS_Store
