@@ -1,0 +1,283 @@
+"""Structured help for every chat command.
+
+Single source of truth for what each command does, the arguments it accepts,
+and how to invoke it. Read by the `help` and `help <command>` handlers.
+
+Each entry:
+    category : "general" | "super"
+    summary  : one-line description
+    usage    : list of "<cmd> <args>" forms
+    examples : (optional) list of concrete invocations
+"""
+
+from typing import Optional
+
+
+_ALIASES: dict[str, str] = {
+    "?": "help",
+}
+
+
+HELP: dict[str, dict] = {
+    # ------------------------------------------------------------------ general
+    "help": {
+        "category": "general",
+        "summary": "Show command list, or detailed help for one command.",
+        "usage": ["help", "help <command>", "?", "? <command>"],
+        "examples": ["help", "help snr", "? transit"],
+    },
+    "tonight": {
+        "category": "general",
+        "summary": "Show tonight's best DSO with weather and sky chart.",
+        "usage": ["tonight"],
+    },
+    "best": {
+        "category": "general",
+        "summary": "Report when the named DSO is best imaged (rises, air mass, hours).",
+        "usage": ["best <dso>"],
+        "examples": ["best m 13", "best ngc 891"],
+    },
+    "image": {
+        "category": "general",
+        "summary": "Add a DSO to the imaging queue.",
+        "usage": ["image <dso>"],
+        "examples": ["image m 31", "image ngc 7331"],
+    },
+    "db": {
+        "category": "general",
+        "summary": "Display the current imaging queue.",
+        "usage": ["db"],
+    },
+    "version": {
+        "category": "general",
+        "summary": "Post the running SRT version string.",
+        "usage": ["version"],
+    },
+    "status": {
+        "category": "general",
+        "summary": "Post observatory status (roof, mount, scheduler, weather).",
+        "usage": ["status"],
+    },
+    "latest": {
+        "category": "general",
+        "summary": "Post the most recently captured FITS as an annotated JPEG.",
+        "usage": ["latest"],
+    },
+    "schedule": {
+        "category": "general",
+        "summary": "Generate a NINA sequence for tonight's best object.",
+        "usage": ["schedule"],
+    },
+    "calendar": {
+        "category": "general",
+        "summary": "Post the per-day imaging history calendar image.",
+        "usage": ["calendar"],
+    },
+    "show": {
+        "category": "general",
+        "summary": "Fetch and post a sky-survey preview of a DSO.",
+        "usage": ["show <dso>"],
+        "examples": ["show ngc 891"],
+    },
+    "speedtest": {
+        "category": "general",
+        "summary": "Run an internet speed test and post results.",
+        "usage": ["speedtest"],
+    },
+    "history": {
+        "category": "general",
+        "summary": "Show recent command history (defaults to last few entries).",
+        "usage": ["history", "history <n>"],
+        "examples": ["history", "history 10"],
+    },
+
+    # --------------------------------------------------------------- super-user
+    "image!!": {
+        "category": "super",
+        "summary": "Start a full imaging run for a DSO right now (super-user image).",
+        "usage": ["image!! <dso>"],
+        "examples": ["image!! m 31"],
+    },
+    "stop!": {
+        "category": "super",
+        "summary": "Emergency stop: kill NINA, park the scope, close the roof, shut down.",
+        "usage": ["stop!"],
+    },
+    "safe!": {
+        "category": "super",
+        "summary": "Mark conditions as safe for imaging (writes USER SAFE to safety.txt).",
+        "usage": ["safe!"],
+    },
+    "announce": {
+        "category": "super",
+        "summary": "Say text on a Sonos speaker in the observatory.",
+        "usage": ["announce <speaker_name> <text...>"],
+        "examples": ["announce Observatory roof closing in one minute"],
+    },
+    "sequence": {
+        "category": "super",
+        "summary": "Generate a NINA sequence file for the named DSO.",
+        "usage": ["sequence <dso>"],
+        "examples": ["sequence m 31"],
+    },
+    "mode": {
+        "category": "super",
+        "summary": "Set the scheduler to auto or manual mode.",
+        "usage": ["mode auto", "mode manual"],
+    },
+    "prioritize": {
+        "category": "super",
+        "summary": "Give a DSO top scheduling priority, or reset all to equal priority.",
+        "usage": ["prioritize", "prioritize <dso>"],
+        "examples": ["prioritize", "prioritize ngc 7331"],
+    },
+    "doflats": {
+        "category": "super",
+        "summary": "Run a flat-frame capture sequence in the background.",
+        "usage": ["doflats"],
+    },
+    "todo": {
+        "category": "super",
+        "summary": "Show or append items to the project todo list.",
+        "usage": ["todo", "todo <text...>"],
+        "examples": ["todo", "todo investigate Ha gradient on M31"],
+    },
+    "active": {
+        "category": "super",
+        "summary": "List all DSOs that have LIGHT frames, with sub counts per filter.",
+        "usage": ["active"],
+    },
+    "stats": {
+        "category": "super",
+        "summary": "Post per-frame FWHM, eccentricity, and sky-brightness graph.",
+        "usage": ["stats", "stats <dso>"],
+        "examples": ["stats", "stats m31"],
+    },
+    "snr": {
+        "category": "super",
+        "summary": "Post stack-convergence (RMSE vs frame count) curves per filter.",
+        "usage": ["snr", "snr <dso>"],
+        "examples": ["snr", "snr m31"],
+    },
+    "transit": {
+        "category": "super",
+        "summary": "Search saved subs for transit-like dips on every star in the field.",
+        "usage": ["transit <dso> <filter>"],
+        "examples": ["transit m31 L", "transit ngc7331 Ha"],
+    },
+    "log": {
+        "category": "super",
+        "summary": "Post the last N lines of iris.log.",
+        "usage": ["log", "log <n>"],
+        "examples": ["log 50"],
+    },
+    "update": {
+        "category": "super",
+        "summary": "Pull latest code from git and restart the server.",
+        "usage": ["update"],
+    },
+    "optics": {
+        "category": "super",
+        "summary": "Post optical-quality diagnostic plots for a FITS frame.",
+        "usage": [
+            "optics",
+            "optics <dso>",
+            "optics * <n>",
+            "optics <dso> <n>",
+        ],
+        "examples": ["optics", "optics m31", "optics m31 3", "optics * 12"],
+    },
+    "drift": {
+        "category": "super",
+        "summary": "Post ZScale difference images: first-k-frames stack vs golden (L filter).",
+        "usage": ["drift", "drift <dso>", "drift *"],
+        "examples": ["drift", "drift m31"],
+    },
+    "stack": {
+        "category": "super",
+        "summary": "Stack all LIGHT frames of a DSO (per filter) and post each as JPEG.",
+        "usage": ["stack", "stack <dso>", "stack <dso> <filter>"],
+        "examples": ["stack", "stack m31", "stack m31 ha"],
+    },
+    "bad": {
+        "category": "super",
+        "summary": "Flag (and optionally rename) LIGHT frames that fail quality thresholds.",
+        "usage": [
+            "bad",
+            "bad <dso>",
+            "bad <dso> go",
+            "bad go",
+        ],
+        "examples": ["bad m31", "bad m31 go"],
+    },
+    "dbb": {
+        "category": "super",
+        "summary": "Rebuild the imaging queue from scratch (rehash + recreate table).",
+        "usage": ["dbb"],
+    },
+    "dbr": {
+        "category": "super",
+        "summary": "Rehash the imaging queue and regenerate the instructions table.",
+        "usage": ["dbr"],
+    },
+    "dbd": {
+        "category": "super",
+        "summary": "Delete an entry from the imaging queue by ID.",
+        "usage": ["dbd <id>"],
+        "examples": ["dbd 17"],
+    },
+    "dbc": {
+        "category": "super",
+        "summary": "Mark an imaging queue entry as completed by ID.",
+        "usage": ["dbc <id>"],
+        "examples": ["dbc 17"],
+    },
+}
+
+
+def _resolve(name: str) -> Optional[str]:
+    key = name.strip().lower()
+    key = _ALIASES.get(key, key)
+    return key if key in HELP else None
+
+
+def get(name: str) -> Optional[dict]:
+    """Return the help entry for a command name (resolving aliases). None if unknown."""
+    key = _resolve(name)
+    return HELP[key] if key else None
+
+
+def format_command(name: str) -> str:
+    """Format detailed help for one command."""
+    entry = get(name)
+    if entry is None:
+        return (
+            f"No help for '{name}'. Type 'help' for the list of commands."
+        )
+    key = _resolve(name) or name
+    lines = [f"{key} — {entry['summary']}"]
+    if entry.get("usage"):
+        lines.append("Usage:")
+        for u in entry["usage"]:
+            lines.append(f"  {u}")
+    if entry.get("examples"):
+        lines.append("Examples:")
+        for e in entry["examples"]:
+            lines.append(f"  {e}")
+    return "\n".join(lines)
+
+
+def format_list(include_super: bool) -> str:
+    """Format the full command list (general always; super-user if include_super)."""
+    width = max(len(n) for n in HELP)
+    gen = sorted((n, e) for n, e in HELP.items() if e["category"] == "general")
+    sup = sorted((n, e) for n, e in HELP.items() if e["category"] == "super")
+    lines = ["Commands (type 'help <name>' for details):", "", "General:"]
+    for n, e in gen:
+        lines.append(f"  {n.ljust(width)}  {e['summary']}")
+    if include_super:
+        lines.append("")
+        lines.append("Super-user:")
+        for n, e in sup:
+            lines.append(f"  {n.ljust(width)}  {e['summary']}")
+    return "\n".join(lines)

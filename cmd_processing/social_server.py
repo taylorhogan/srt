@@ -203,18 +203,18 @@ def history_cmd(words: list[str], index: int, m: Mastodon, account: str) -> None
 
 
 def help_cmd(words: list[str], index: int, m: Mastodon, account: str) -> None:
-    reply = "Available commands are\n"
-    for word in keywords:
-        action = keywords.get(word.strip(), "no_key")
-        example = action.__doc__
-        if example is None:
-            reply += word + "\n"
-        else:
-            stripped = example.replace("\n", "")
-            reply += word + "  " + stripped + "\n"
-    reply += "\nFull docs: https://github.com/taylorhogan/srt/blob/main/docs/commands.md"
-    post_social_message(reply)
-    su.print_help(account)
+    """Show command list, or detailed help for one command. Usage: help [<cmd>] or ? [<cmd>]"""
+    from cmd_processing import help_registry as hr
+
+    # words = [<mention>, <cmd-name>, <maybe target>, ...]
+    target = words[index + 1].strip() if len(words) > index + 1 else ""
+    if target:
+        post_social_message(hr.format_command(target))
+        return
+    post_social_message(
+        hr.format_list(include_super=su.is_super_user(account))
+        + "\n\nFull docs: https://github.com/taylorhogan/srt/blob/main/docs/commands.md"
+    )
 
 
 def _last_sunset(cfg: dict) -> datetime.datetime:

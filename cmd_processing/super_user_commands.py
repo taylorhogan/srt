@@ -447,17 +447,6 @@ def shutdown(words: list[str], account: str) -> None:
     return
 
 
-def print_help(account: str) -> None:
-    """Post the list of available super-user commands to the web chat. Only responds to super users."""
-    if not is_super_user(account):
-        return
-    reply = "Available SU commands are\n"
-    keywords = get_super_user_commands()
-    for word in keywords:
-        reply += word + "\n"
-    social_server.post_social_message(reply)
-
-
 def dbb_cmd(words: list[str], account: str) -> None:
     """Rehash and fully rebuild the imaging queue from scratch. Command: ``dbb``"""
     instructions.rehash_db()
