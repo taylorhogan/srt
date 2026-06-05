@@ -149,9 +149,10 @@ HELP: dict[str, dict] = {
     },
     "stats": {
         "category": "super",
-        "summary": "Post per-frame FWHM, eccentricity, and sky-brightness graph.",
-        "usage": ["stats", "stats <dso>"],
-        "examples": ["stats", "stats m31"],
+        "summary": "Post per-frame FWHM, eccentricity, sky-brightness, and star-count "
+                   "graph for the latest session (add 'all' for full history).",
+        "usage": ["stats", "stats <dso>", "stats <dso> all"],
+        "examples": ["stats", "stats m31", "stats m31 all"],
     },
     "snr": {
         "category": "super",

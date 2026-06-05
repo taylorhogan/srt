@@ -917,6 +917,16 @@ def save_stats_plot_from_cache(
 
     output_path = Path(output_path)
 
+    # Defensive: callers may pass frames out of chronological order. Sort by
+    # observation time so the per-day background bands stay contiguous (frames
+    # with an unparseable time are kept, ordered last, in their original order).
+    def _sort_key(d: dict) -> tuple:
+        try:
+            return (0, _dt.fromisoformat(d["time"]))
+        except Exception:
+            return (1, _dt.max)
+    frames = sorted(frames, key=_sort_key)
+
     # Assign sequential frame numbers across all frames (preserving order)
     n_total = len(frames)
     fwhm_nums, fwhms, eccs, star_colors = [], [], [], []

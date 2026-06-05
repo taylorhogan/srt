@@ -100,8 +100,18 @@ def _post_imaging_summary(imaging_start: datetime) -> None:
 
     logger.info("Found %d FITS files since imaging start", len(fits_files))
 
-    # Load the per-frame cache written by frame_watcher during imaging
+    # Scope to the imaged DSO only. The scan above globs the whole image tree,
+    # so without this any *other* target's frames whose mtime falls in the window
+    # (e.g. a dataset imported mid-day for transit analysis) would be written into
+    # this DSO's frame_stats.json and pollute its stats graph.
     dso_dir = _dso_dir(fits_files[-1])
+    if dso_dir is not None:
+        fits_files = [f for f in fits_files if dso_dir in f.parents]
+    if not fits_files:
+        social_server.post_social_message("Imaging complete — no new FITS files found")
+        return
+
+    # Load the per-frame cache written by frame_watcher during imaging
     cached: dict[str, dict] = {}
     cache_path: Path | None = (dso_dir / "frame_stats.json") if dso_dir else None
     if cache_path and cache_path.exists():
@@ -257,21 +267,36 @@ def do_main():
                     else:
                         social_server.post_social_message("Vision Safety says roof is NOT closed")
                     logger.info("step 4")
-                    # turn on dehumidifier
-                    r = requests.get(cfg["hardware"]["dehumidifier_relay_url"] + "?turn=on")
-                    # turn off lights
-                    instructions = (dict
-                        (
-                        {
-                            "Iris inside light": 'off',
-                            "Roof motor": 'off',
-                        }
-                    ))
-                    logger.info("step 5")
-                    asyncio.run(ku.kasa_do(dev_map, instructions))
-                    logger.info("step 6")
+                    # Turn off the inside light + roof motor FIRST so a later
+                    # failure (e.g. an unreachable dehumidifier relay) can never
+                    # skip the light-off and leave the observatory lit.
+                    try:
+                        instructions = (dict
+                            (
+                            {
+                                "Iris inside light": 'off',
+                                "Roof motor": 'off',
+                            }
+                        ))
+                        logger.info("step 5")
+                        asyncio.run(ku.kasa_do(dev_map, instructions))
+                        logger.info("step 6")
+                    except Exception:
+                        logger.exception("Failed to turn off inside light / roof motor")
+                    # Turn on dehumidifier (best-effort; bounded + isolated so a
+                    # relay blip can't abort the rest of the shutdown).
+                    try:
+                        requests.get(cfg["hardware"]["dehumidifier_relay_url"] + "?turn=on", timeout=10)
+                    except Exception:
+                        logger.exception("Failed to turn on dehumidifier")
                 else:
                     social_server.post_social_message("Vision Safety says Scope is NOT parked")
+                    # Roof stays open (scope not confirmed parked), but the inside
+                    # light was switched on for vision and must still be turned off.
+                    try:
+                        asyncio.run(ku.kasa_do(dev_map, {"Iris inside light": 'off'}))
+                    except Exception:
+                        logger.exception("Failed to turn off inside light (scope-not-parked path)")
 
             else:
                 social_server.post_social_message("Mount says Iris is NOT parked, roof will remain open")

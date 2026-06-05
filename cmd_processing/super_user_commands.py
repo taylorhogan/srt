@@ -34,6 +34,12 @@ from nina_gen import nina_sequence_gen
 
 _logger = utils.set_logger()
 
+# Single-flight guard for SNR/convergence. Each run loads and registers
+# full-frame subs across every filter; overlapping runs (a manual `snr` on top
+# of the automatic end-of-night run) can exhaust memory and crash the in-process
+# web server, so only one is allowed at a time.
+_snr_lock = threading.Lock()
+
 def is_inside_light_on(dev_map: dict) -> bool:
     """Check whether the observatory inside light is currently on via Kasa."""
     inst = {"Iris inside light": "ison"}
@@ -408,6 +414,24 @@ def _kill_nina() -> None:
         social_server.post_social_message("NINA process terminated")
     else:
         _logger.info("NINA.exe was not running (nothing to kill)")
+
+
+def is_nina_running() -> bool:
+    """Return True if a NINA.exe process is currently running.
+
+    Used as a hardware-truth check independent of ``imaging.txt`` (the state
+    file can be cleared by a process restart while NINA keeps imaging), so we
+    never launch a second imaging run on top of a live one.
+    """
+    try:
+        result = subprocess.run(
+            ["tasklist", "/FI", "IMAGENAME eq NINA.exe"],
+            capture_output=True, text=True, shell=True,
+        )
+        return "NINA.exe" in (result.stdout or "")
+    except Exception:
+        _logger.exception("is_nina_running check failed")
+        return False
 
 
 def on_nina(words: Optional[list[str]], account: Optional[str]) -> None:
@@ -1542,8 +1566,11 @@ def is_imaging() -> bool:
 
 def image_cmd(words: list[str], account: str) -> None:
     """Start a full imaging run in a background thread (non-blocking)."""
-    if is_imaging():
-        pushover.push_message("Already imaging, cannot restart")
+    if is_imaging() or is_nina_running():
+        # is_nina_running() catches the case where a process restart cleared
+        # imaging.txt but NINA is still capturing — starting again would run two
+        # imaging sequences against the same mount/camera.
+        pushover.push_message("Already imaging (or NINA still running), cannot restart")
     else:
         from fits_processing import frame_watcher
         cfg = config.data()
@@ -1798,6 +1825,15 @@ def do_flats() -> None:
     asyncio.run(ku.kasa_do(dev_map, {"Telescope mount": 'on'}))
     _logger.info("Mount powered on")
 
+    # Flats must be dark — force the inside light off before capturing, regardless
+    # of what the End Sequence left it at (a failed shutdown step can leave it on
+    # and contaminate the flats).
+    try:
+        asyncio.run(ku.kasa_do(dev_map, {"Iris inside light": 'off'}))
+        _logger.info("Inside light forced off before flats")
+    except Exception:
+        _logger.exception("Failed to force inside light off before flats")
+
     # Visually verify mount is parked and roof is closed before flats.
     # Only checks — does not move the scope or roof.
     _logger.info("Visual safety check before flats")
@@ -1858,6 +1894,23 @@ def snr_cmd(words: list[str], account: str) -> None:
 
 
 def _snr_run(words: list[str]) -> None:
+    """Run SNR convergence under a single-flight lock.
+
+    Only one convergence run may execute at a time (see :data:`_snr_lock`). If a
+    run is already in progress this call is skipped rather than piling a second
+    memory-heavy run on top — that overlap can crash the in-process web server.
+    """
+    if not _snr_lock.acquire(blocking=False):
+        social_server.post_social_message("SNR already running — skipping this request")
+        _logger.info("SNR skipped: another convergence run is already in progress")
+        return
+    try:
+        _snr_run_locked(words)
+    finally:
+        _snr_lock.release()
+
+
+def _snr_run_locked(words: list[str]) -> None:
     """Worker for snr_cmd.
 
     Usage:
@@ -2152,8 +2205,13 @@ def _image_stats_run(words: list[str], account: str) -> None:
     """Worker for image_stats_cmd.
 
     Usage:
-        stats           — all LIGHT frames for the DSO currently being imaged
-        stats <dso>     — all LIGHT frames for the named DSO
+        stats            — latest session for the DSO currently being imaged
+        stats <dso>      — latest session for the named DSO
+        stats <dso> all  — full multi-night history for the named DSO
+
+    By default only the most recent observing session is plotted (see
+    imaging_artifacts.gather_dso_frames) so a single big night can't dominate
+    the frame-count x-axis. A trailing "all" opts into the full history.
 
     For each FITS file in scope the path is looked up in <dso_dir>/frame_stats.json.
     Cached entries are used as-is; only files missing from the cache are opened and
@@ -2172,7 +2230,14 @@ def _image_stats_run(words: list[str], account: str) -> None:
     image_dir = Path(cfg["nina"]["image_dir"])
     arcsec_per_pixel = cfg["nina"]["arc_sec_per_pixel"]
 
-    dso_arg = " ".join(words[2:]).strip() if len(words) > 2 else None
+    # A trailing "all" token requests the full multi-night history; the default
+    # is the most recent observing session only (so one big night can't dominate).
+    extra = list(words[2:])
+    latest_session_only = True
+    if extra and extra[-1].lower() == "all":
+        latest_session_only = False
+        extra = extra[:-1]
+    dso_arg = " ".join(extra).strip() or None
 
     social_server.post_social_message("Stats: scanning for FITS files…")
 
@@ -2329,8 +2394,13 @@ def _image_stats_run(words: list[str], account: str) -> None:
     else:
         social_server.post_social_message(f"All {cached_count} frames served from cache")
 
-    # Build the ordered frame list matching the original fits_files order
-    frames = [cached_by_path[str(f)] for f in fits_files if str(f) in cached_by_path]
+    # Build the frame list via the shared helper (reconciled with disk + sorted,
+    # latest session by default) so this tile and the eager imaging-card render
+    # never diverge. `stats <dso> all` opts into the full multi-night history.
+    from fits_processing import imaging_artifacts
+    frames = imaging_artifacts.gather_dso_frames(
+        dso_dir, latest_session_only=latest_session_only
+    )
 
     _project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
     scratch_dir = os.path.join(_project_root, cfg["scratch"]["directory"])

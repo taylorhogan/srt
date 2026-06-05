@@ -28,6 +28,75 @@ LATEST_IMAGE_NAME = "latest_imaging.jpg"
 STATS_PLOT_NAME = "imaging_stats.jpg"
 
 
+def gather_dso_frames(
+    dso_dir: Path,
+    latest_session_only: bool = True,
+    session_gap_hours: float = 6.0,
+) -> list:
+    """Return a DSO's cached per-frame stats, reconciled with disk and ordered.
+
+    Reads ``<dso_dir>/frame_stats.json``, drops entries whose FITS file no longer
+    exists, and sorts the survivors chronologically by **file mtime** (the real
+    capture time — the DATE-OBS header can be bogus, e.g. an unsynced camera
+    clock stamping frames ``2017-12-20``).
+
+    When ``latest_session_only`` is True (the default) only the most recent
+    observing session is returned: frames are cut at the last gap in mtime larger
+    than ``session_gap_hours``.  Without this, the per-DSO cache accumulates every
+    night the target was ever imaged (plus any junk dumped into its LIGHT folder),
+    and the frame-count x-axis lets the biggest day dominate the whole plot.
+
+    Both the eager imaging-card render and the ``stats`` command use this so the
+    two can't drift.
+    """
+    cache_path = Path(dso_dir) / "frame_stats.json"
+    if not cache_path.exists():
+        return []
+    try:
+        with open(cache_path) as f:
+            entries = json.load(f)
+    except Exception:
+        _logger.exception("gather_dso_frames: failed to read %s", cache_path)
+        return []
+    if not isinstance(entries, list):
+        return []
+
+    dso_dir = Path(dso_dir).resolve()
+    on_disk: list[tuple[float, dict]] = []
+    for e in entries:
+        if not isinstance(e, dict):
+            continue
+        p = e.get("path")
+        if not p:
+            continue
+        fp = Path(p)
+        # Defend against cross-target contamination: a DSO's cache must only
+        # contain frames physically under that DSO's folder. (Caches have been
+        # seen mixing multiple targets, e.g. HAT-P-32 frames in ngc5907's cache.)
+        try:
+            if not fp.resolve().is_relative_to(dso_dir):
+                continue
+        except (OSError, ValueError):
+            continue
+        try:
+            mtime = fp.stat().st_mtime
+        except OSError:
+            continue  # FITS no longer on disk — drop the stale cache entry
+        on_disk.append((mtime, e))
+    on_disk.sort(key=lambda t: t[0])
+
+    if latest_session_only and len(on_disk) > 1:
+        gap = session_gap_hours * 3600.0
+        start = 0
+        for i in range(len(on_disk) - 1, 0, -1):
+            if on_disk[i][0] - on_disk[i - 1][0] > gap:
+                start = i
+                break
+        on_disk = on_disk[start:]
+
+    return [e for _, e in on_disk]
+
+
 def render_latest_image(
     image_dir: Path,
     arcsec_per_pixel: float,
@@ -83,13 +152,10 @@ def render_stats_plot_from_cache_path(
     cache_path = Path(cache_path)
     if not cache_path.exists():
         return None
-    try:
-        with open(cache_path) as f:
-            frames = json.load(f)
-    except Exception:
-        _logger.exception("render_stats_plot: failed to read %s", cache_path)
-        return None
-    if not isinstance(frames, list) or not frames:
+    # Reconcile against disk + sort chronologically so the card matches the
+    # fresh `stats` tile (raw cache order can put a day out of place).
+    frames = gather_dso_frames(cache_path.parent)
+    if not frames:
         return None
 
     output_path = Path(output_path)

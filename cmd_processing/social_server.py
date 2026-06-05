@@ -595,6 +595,51 @@ def start_interface() -> None:
     uvicorn.run(web_server.app, host=host, port=port, log_level="info", loop="asyncio")
 
 
+def _startup_orphan_check() -> None:
+    """After a (re)launch, detect an imaging run that was interrupted with the
+    roof still open and the scope unparked, and alert the operator.
+
+    This is the safety net for the combined-failure case (e.g. a machine-wide
+    OOM that kills both this server and NINA): a plain relaunch would otherwise
+    leave the roof open with nothing to notice. Alert-only by default; set
+    ``web_chat.auto_safe_on_orphan = True`` to also run the emergency safe
+    shutdown automatically.
+    """
+    logger = logging.getLogger(__name__)
+    try:
+        time.sleep(20)  # let the process settle and the scheduler reset its state
+        from sentry import vision_safety
+        from hardware_control import pwi4_utils
+        from utils import pushover
+        cfg = config.data()
+
+        if su.is_nina_running():
+            return  # imaging genuinely in progress — not an orphan
+
+        parked, closed, is_open, _ = vision_safety.visual_status()
+        try:
+            mount_parked = pwi4_utils.get_is_parked()
+        except Exception:
+            mount_parked = parked
+
+        if is_open and not mount_parked:
+            inside_view = cfg["camera safety"]["scope_view"]
+            msg = (
+                "Iris startup check: roof appears OPEN with no NINA running and the "
+                "mount not parked — possible interrupted run. Check the observatory."
+            )
+            logger.warning(msg)
+            try:
+                pushover.push_message(msg, inside_view)
+            except Exception:
+                logger.exception("startup orphan check: pushover failed")
+            if cfg.get("web_chat", {}).get("auto_safe_on_orphan", False):
+                logger.warning("auto_safe_on_orphan enabled — running emergency safe shutdown")
+                su.unsafe_cmd(["", "stop!"], "iris")
+    except Exception:
+        logger.exception("startup orphan check failed")
+
+
 def main() -> None:
     utils.set_install_dir()
     cfg = config.data()
@@ -625,6 +670,11 @@ def main() -> None:
     mqtt_client.subscribe(utils.topic_from_sched)
     mqtt_client.on_message = wait_for_mqtt_message
     mqtt_client.loop_start()
+
+    # Safety net: if this launch is recovering from a crash that interrupted an
+    # imaging run, detect a roof-open/unparked orphan and alert (see function).
+    threading.Thread(target=_startup_orphan_check, daemon=True,
+                     name="startup-orphan-check").start()
 
     try:
         start_interface()
