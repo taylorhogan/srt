@@ -498,11 +498,11 @@
 
     const top = document.createElement('div'); top.className = 'card-top';
     const title = document.createElement('div'); title.className = 'card-title';
-    title.appendChild(document.createTextNode(imagingMode ? `Imaging ${imaging.target || ''}`.trim() : job.title));
+    title.appendChild(document.createTextNode(imagingMode ? `Live ${imaging.target || ''}`.trim() : job.title));
     if (job.unread > 0) { const u = document.createElement('span'); u.className = 'unread'; u.textContent = job.unread; title.appendChild(u); }
     const badge = document.createElement('span'); badge.className = 'badge';
     const badgeColor = imagingMode ? '#3fb950' : meta.color;
-    const badgeLabel = imagingMode ? 'IMAGING' : meta.label;
+    const badgeLabel = imagingMode ? 'LIVE' : meta.label;
     badge.style.color = badgeColor; badge.style.borderColor = badgeColor + '66';
     if (running || imagingMode) { const p = document.createElement('span'); p.className = 'pulse'; p.style.background = badgeColor; badge.appendChild(p); }
     badge.appendChild(document.createTextNode(badgeLabel));
@@ -618,7 +618,7 @@
   // Imaging-mode detail: latest-frame image + per-DSO stats graph (both
   // pre-rendered by frame_watcher, fetched eagerly when a new sub arrives).
   function renderImagingSheet() {
-    document.getElementById('sheet-title').textContent = `Imaging ${imaging.target || ''}`.trim() || 'Imaging';
+    document.getElementById('sheet-title').textContent = `Live ${imaging.target || ''}`.trim() || 'Live';
     document.getElementById('sheet-cmd').textContent = imaging.frame_count != null
       ? String(imaging.frame_count) + ' frames' : '';
     const badge = document.getElementById('sheet-badge');
