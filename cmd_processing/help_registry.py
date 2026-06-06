@@ -37,6 +37,12 @@ HELP: dict[str, dict] = {
         "usage": ["best <dso>"],
         "examples": ["best m 13", "best ngc 891"],
     },
+    "bestradec": {
+        "category": "general",
+        "summary": "Best night for an explicit RA/Dec; with a name, queues it for imaging.",
+        "usage": ["bestradec <ra> <dec>", "bestradec <name> <ra> <dec>"],
+        "examples": ["bestradec 12:30:49 +12:23:28", "bestradec wr134 20:10:14 +36:10:35"],
+    },
     "image": {
         "category": "general",
         "summary": "Add a DSO to the imaging queue.",

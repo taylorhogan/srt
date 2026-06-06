@@ -96,6 +96,79 @@ def best_cmd(words: list[str], index: int, m: Mastodon, account: str) -> None:
             post_social_message(dso_name + " Not a known object\n")
 
 
+def best_radec_cmd(words: list[str], index: int, m: Mastodon, account: str) -> None:
+    """
+       Like 'best' but for an explicit RA/Dec position.
+
+       With a name, the position is queued for imaging (best night > 3h),
+       carrying its RA/Dec so it never needs a Simbad name lookup. Without a
+       name it is analysis-only (reports the best night, queues nothing).
+
+       example: bestradec wr134 20:10:14 +36:10:35   (named ⇒ queueable)
+                bestradec 12:30:49 +12:23:28          (RA hours, Dec deg)
+                bestradec 187.7 12.39                 (decimal degrees)
+    """
+    from astropy.coordinates import SkyCoord
+    import astropy.units as u
+    from astroplan import FixedTarget
+    import re
+
+    args = words[index + 1:]
+    if len(args) >= 3:
+        name, ra_str, dec_str = args[0].strip(), args[1].strip(), args[2].strip()
+    elif len(args) == 2:
+        name, ra_str, dec_str = None, args[0].strip(), args[1].strip()
+    else:
+        post_social_message(
+            "Usage: bestradec [<name>] <ra> <dec>  "
+            "(e.g. wr134 20:10:14 +36:10:35, or 187.7 12.39; name enables queueing)")
+        return
+
+    # In colon-delimited sexagesimal the h/m/s/d letters are redundant; a stray
+    # one (e.g. '10:1:20s') makes astropy silently misparse to a wild value
+    # rather than erroring, so strip letters whenever a ':' is present.
+    def _clean(tok: str) -> str:
+        return re.sub(r"[a-zA-Z]", "", tok) if ":" in tok else tok
+    ra_str, dec_str = _clean(ra_str), _clean(dec_str)
+
+    # Sexagesimal (h:m:s / d:m:s) ⇒ RA in hours, Dec in degrees; otherwise treat
+    # both as decimal degrees.
+    sexagesimal = any(c in ra_str + dec_str for c in (":", "h", "d"))
+    try:
+        if sexagesimal:
+            coord = SkyCoord(ra_str, dec_str, unit=(u.hourangle, u.deg))
+        else:
+            coord = SkyCoord(float(ra_str) * u.deg, float(dec_str) * u.deg)
+    except Exception as e:
+        post_social_message(f"Could not parse RA/Dec '{ra_str} {dec_str}': {e}")
+        return
+
+    pos = (f"RA {coord.ra.to_string(unit=u.hour, sep=':', precision=0)} "
+           f"Dec {coord.dec.to_string(sep=':', precision=0, alwayssign=True)}")
+    label = f"{name} ({pos})" if name else pos
+    target = FixedTarget(coord=coord, name=name or pos)
+    best_date, best_time, max_altitude = astro_dso_visibility.best_day_for_dso(target)
+    if best_date is None:
+        post_social_message(f"{label} is never above horizon")
+        return
+
+    formatted_date = best_date.strftime("%Y-%m-%d")
+    formatted_air_mass = "{:.2f}".format(astro_dso_visibility.air_mass(max_altitude))
+    post_social_message(
+        f"{label} is above horizon for {best_time} on {formatted_date} "
+        f"with air mass of {formatted_air_mass} (max altitude {max_altitude:.1f}°)")
+
+    # Queue named positions worth imaging, storing RA/Dec so the scheduler and
+    # queue resolve coordinates without a name lookup. Mirrors 'best' (> 3h).
+    if name and best_time.seconds / 3600 > 3:
+        if instructions.add_dso_object_instruction(
+                name, "", account,
+                ra_deg=float(coord.ra.deg), dec_deg=float(coord.dec.deg)):
+            post_social_message(f"{name} added to the imaging queue (RA/Dec stored)\n")
+        else:
+            post_social_message(f"{name} already in the queue\n")
+
+
 def tonight_cmd(words: list[str], index: int, m: Mastodon, account: str) -> bool:
     print("in tonight cmd", words, index)
     cfg = config.data()
@@ -435,6 +508,7 @@ def speedtest_cmd(words: list[str], index: int, m: Mastodon, account: str) -> No
 keywords = {
     "tonight": tonight_cmd,
     "best": best_cmd,
+    "bestradec": best_radec_cmd,
     "image": image_cmd,
     "db": db_cmd,
     "version": version_cmd,
