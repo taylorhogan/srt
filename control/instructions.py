@@ -337,6 +337,16 @@ def get_instruction_by_dso(dso_name):
     return None
 
 
+def resolve_target_by_name(dso_name):
+    """Resolve a name to a FixedTarget, preferring a queued record's stored
+    RA/Dec so positional targets resolve without a Simbad lookup. Falls back to
+    a plain name lookup when the name isn't queued."""
+    instruction = get_instruction_by_dso(dso_name)
+    if instruction is not None:
+        return astro_dso_visibility.resolve_target(instruction)
+    return astro_dso_visibility.is_a_dso_object(dso_name)
+
+
 def get_sorted_instructions():
     from fits_processing.convergence import is_dso_done
 

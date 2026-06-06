@@ -88,7 +88,7 @@ if __package__ is None or __package__ == "":
         sys.path.insert(0, project_root)
 
 from iris_astronomy import astro_dso_visibility, obs_calendar, weather
-from iris_astronomy.astro_dso_visibility import best_object_tonight, is_a_dso_object
+from iris_astronomy.astro_dso_visibility import best_object_tonight
 from iris_astronomy.weather import get_sunrise_sunset
 from configs import config
 from control import instructions
@@ -313,8 +313,9 @@ def _imaging_plan_message(dso_name: str, best_good_hours: float, best_start: dat
 def _generate_nina_sequence(dso_name: str):
     """Resolve DSO coordinates and write a N.I.N.A sequence file to disk.
 
-    Looks up *dso_name* in the astropy/Simbad catalogue via
-    ``is_a_dso_object``, extracts RA/Dec, then calls
+    Resolves *dso_name* via ``instructions.resolve_target_by_name`` — stored
+    RA/Dec from the queued record wins, falling back to a Simbad name lookup —
+    extracts RA/Dec, then calls
     ``nina_sequence_gen.generate_sequence`` to patch the JSON template
     (``cfg["nina"]["sequence_input"]``) and write the output sequence
     (``cfg["nina"]["sequence_output"]``).
@@ -334,8 +335,7 @@ def _generate_nina_sequence(dso_name: str):
     """
     # Prefer the queued record's stored RA/Dec (positional targets have no
     # resolvable name); fall back to a Simbad name lookup for named DSOs.
-    instr = instructions.get_instruction_by_dso(dso_name)
-    dso = astro_dso_visibility.resolve_target(instr) if instr else is_a_dso_object(dso_name)
+    dso = instructions.resolve_target_by_name(dso_name)
     if dso is None:
         LOGGER.error("Could not resolve coordinates for %s", dso_name)
         return

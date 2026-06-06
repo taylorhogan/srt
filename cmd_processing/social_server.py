@@ -181,7 +181,7 @@ def tonight_cmd(words: list[str], index: int, m: Mastodon, account: str) -> bool
         post_html_message(grid_html)
 
     if best_name:
-        obj = astro_dso_visibility.is_a_dso_object(best_name)
+        obj = instructions.resolve_target_by_name(best_name)
         if obj is not None:
             horizon, image, sky, weather_ok = astro_dso_visibility.show_plots(obj)
 
@@ -356,7 +356,7 @@ def schedule_cmd(words: list[str], index: int, m: Mastodon, account: str) -> Non
         post_social_message("No suitable object found for tonight")
         return
 
-    dso = astro_dso_visibility.is_a_dso_object(best_name)
+    dso = instructions.resolve_target_by_name(best_name)
     if dso is None:
         post_social_message(f"{best_name} is not a known object")
         return

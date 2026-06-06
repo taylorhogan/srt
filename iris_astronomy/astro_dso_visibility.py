@@ -743,7 +743,9 @@ def best_object_tonight(instructions_path: Path | str) -> tuple[str, Optional[da
     rows: list[tuple[str, int, float, str, Optional[datetime.datetime], list[str]]] = []
     for obj in waiting:
         dso_name = obj["dso"]
-        dso = is_a_dso_object(dso_name)
+        # Stored RA/Dec wins over a name lookup so positional targets are not
+        # silently dropped here (they have no resolvable name).
+        dso = resolve_target(obj)
         if dso is None:
             print(f"DEBUG: could not resolve DSO: {dso_name}")
             continue

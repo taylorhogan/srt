@@ -549,7 +549,7 @@ def sequence_cmd(words: list[str], account: str) -> None:
     if len(words) > 3:
         dso_name = dso_name + " " + words[3]
 
-    dso = astro_dso_visibility.is_a_dso_object(dso_name)
+    dso = instructions.resolve_target_by_name(dso_name)
     if dso is None:
         social_server.post_social_message(f"{dso_name} is not a known object")
         return
