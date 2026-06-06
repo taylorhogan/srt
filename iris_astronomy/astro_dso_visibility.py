@@ -97,6 +97,22 @@ def is_a_dso_object(name: str) -> Optional[FixedTarget]:
         return None
 
 
+def resolve_target(instruction: dict) -> Optional[FixedTarget]:
+    """Resolve an instruction record to a FixedTarget.
+
+    Stored RA/Dec (``ra_deg``/``dec_deg``) is authoritative when present, so an
+    explicit position is never silently overridden by a name lookup. Falls back
+    to resolving the ``dso`` name via Simbad when no coordinates are stored.
+    """
+    ra = instruction.get("ra_deg")
+    dec = instruction.get("dec_deg")
+    if ra is not None and dec is not None:
+        from astropy.coordinates import SkyCoord
+        coord = SkyCoord(float(ra) * u.deg, float(dec) * u.deg)
+        return FixedTarget(coord=coord, name=instruction.get("dso", ""))
+    return is_a_dso_object(instruction["dso"])
+
+
 def get_horizon_from_azimuth(this_az: float, az: list[float], al: list[float]) -> float:
     for idx in range(len(az) - 1):
         if this_az >= az[idx] and this_az <= az[idx + 1]:

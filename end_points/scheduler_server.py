@@ -332,7 +332,10 @@ def _generate_nina_sequence(dso_name: str):
         no file is written and N.I.N.A will use whatever sequence was
         there previously.
     """
-    dso = is_a_dso_object(dso_name)
+    # Prefer the queued record's stored RA/Dec (positional targets have no
+    # resolvable name); fall back to a Simbad name lookup for named DSOs.
+    instr = instructions.get_instruction_by_dso(dso_name)
+    dso = astro_dso_visibility.resolve_target(instr) if instr else is_a_dso_object(dso_name)
     if dso is None:
         LOGGER.error("Could not resolve coordinates for %s", dso_name)
         return

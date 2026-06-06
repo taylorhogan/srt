@@ -107,7 +107,9 @@ def calc_and_store_hours_above_horizon(force=False):
         instructions = json.load(f)
     for instruction in instructions:
         dso = text = instruction["dso"]
-        obj = astro_dso_visibility.is_a_dso_object(dso)
+        # Stored RA/Dec wins over a name lookup (positional targets have no
+        # resolvable name); falls back to Simbad for named DSOs.
+        obj = astro_dso_visibility.resolve_target(instruction)
         if obj is not None:
             above, max_altitude  = astro_dso_visibility.get_above_horizon_time(obj, Time.now())
             instruction["above_horizon"] = str(above)
@@ -118,7 +120,9 @@ def calc_and_store_hours_above_horizon(force=False):
 
         value = instruction.get("best",None)
 
-        if value is None or force is True:
+        if obj is None:
+            instruction['best'] = 'None'
+        elif value is None or force is True:
             best_date, best_time, max_altitude = astro_dso_visibility.best_day_for_dso(obj)
             if best_date is None:
                 instruction['best'] = 'None'
@@ -292,7 +296,8 @@ def set_priority_instruction_db(dso_name: str, priority: int) -> bool:
     return matched
 
 
-def add_dso_object_instruction(dso_name, recipe, requestor, priority=5):
+def add_dso_object_instruction(dso_name, recipe, requestor, priority=5,
+                               ra_deg=None, dec_deg=None):
     normalized = dso_name.lower().replace(" ", "")
     now = datetime.now()
     formatted_date = now.strftime("%Y-%m-%d")
@@ -311,10 +316,25 @@ def add_dso_object_instruction(dso_name, recipe, requestor, priority=5):
         "status": "waiting",
         "priority": priority
     }
+    # Persist an explicit position so this target resolves without a name lookup.
+    if ra_deg is not None and dec_deg is not None:
+        new_instruction["ra_deg"] = ra_deg
+        new_instruction["dec_deg"] = dec_deg
     instructions.append(new_instruction)
     with open(_INSTRUCTIONS_PATH, 'w') as f:
         f.writelines(json.dumps(instructions, indent=4))
     return True
+
+
+def get_instruction_by_dso(dso_name):
+    """Return the instruction record matching dso_name (normalized), or None."""
+    normalized = _normalize_dso(dso_name)
+    with open(_INSTRUCTIONS_PATH, 'r') as f:
+        instructions = json.load(f)
+    for instruction in instructions:
+        if _normalize_dso(instruction["dso"]) == normalized:
+            return instruction
+    return None
 
 
 def get_sorted_instructions():
