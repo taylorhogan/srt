@@ -2167,13 +2167,29 @@ def _transit_run(words: list[str]) -> None:
         sig = top.get("significance") or {}
         conf = ""
         if sig:
+            # A metric can be None for distinct reasons; say which, rather than a
+            # bare "n/a". perm_fap is only None when the permutation test was
+            # skipped for too few finite epochs (it needs ≥30); a falsy
+            # n_permutations means the whole dict is an uncomputed placeholder.
+            nperm = sig.get("n_permutations") or 0
             fap = sig.get("perm_fap")
-            nperm = sig.get("n_permutations", 0)
-            fap_str = (f"<{1.0/(nperm+1):.3f}" if fap is not None and nperm
-                       and fap <= 1.0 / (nperm + 1) else (f"{fap:.3f}" if fap is not None else "n/a"))
-            conf = (f" | confidence: FAP {fap_str}, "
-                    f"field-z {sig.get('field_z', 0):.1f}, "
-                    f"dip/bump {sig.get('dip_bump', 0):.1f}×")
+            if fap is not None:
+                fap_str = (f"<{1.0/(nperm+1):.3f}" if nperm and fap <= 1.0 / (nperm + 1)
+                           else f"{fap:.3f}")
+            elif not nperm:
+                fap_str = "n/a (not computed)"
+            else:
+                fap_str = "n/a (<30 epochs)"
+            # field_z None with field_fap present ⇒ MAD==0 (degenerate/flat
+            # field); both None ⇒ too few comparison stars (<5).
+            fz = sig.get("field_z")
+            if fz is not None:
+                fz_str = f"{fz:.1f}"
+            else:
+                fz_str = "n/a (flat field)" if sig.get("field_fap") is not None else "n/a (<5 stars)"
+            db = sig.get("dip_bump")
+            db_str = f"{db:.1f}×" if db is not None else "n/a"
+            conf = f" | confidence: FAP {fap_str}, field-z {fz_str}, dip/bump {db_str}"
         summary = (
             f"Transit [{dso_arg}/{filter_label}]: {entry['n_stars']} stars, "
             f"{entry['frame_count']} frames over {entry['baseline_days']:.1f}d. "
