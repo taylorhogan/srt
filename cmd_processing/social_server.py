@@ -655,7 +655,12 @@ def start_interface() -> None:
     images_dir = os.path.join(_project_root, web_cfg.get("upload_dir", "saved_dso"))
     web_server.init(images_dir)
 
-    post_social_message("Starting Version " + cfg["version"]["date"])
+    import socket
+    try:
+        hostname = socket.gethostname()
+    except Exception:
+        hostname = "unknown"
+    post_social_message(f"Starting Version {cfg['version']['date']} on {hostname}")
 
     # Optionally also listen on Mastodon
     if web_cfg.get("mastodon_mirror", False):

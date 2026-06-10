@@ -2039,47 +2039,12 @@ def _snr_run_locked(words: list[str]) -> None:
         except Exception:
             _logger.exception("_snr_run: failed to save convergence for %s", dso_dir.name)
 
-        slope_threshold = float(cfg.get("convergence", {}).get("tail_slope_threshold", 0.40))
-        rmse_threshold  = float(cfg.get("convergence", {}).get("rmse_done_threshold",   5.0))
-        min_frames      = int(cfg.get("convergence", {}).get("min_frames_per_filter",    30))
-
-        lines: list[str] = []
-        for fn, info in sorted(saved.items()):
-            n          = info["frame_count"]
-            slope_abs  = abs(info["tail_slope_pct"])
-            rmse       = info.get("final_rmse_pct")
-
-            needed_min = max(0, min_frames - n)
-            needed_slope = (
-                max(0, int(n * (slope_abs / slope_threshold - 1)))
-                if slope_threshold > 0 and n > 0 else 0
-            )
-            rmse_over = rmse is not None and rmse > rmse_threshold
-
-            if needed_min > 0:
-                lines.append(
-                    f"  {fn}: {n} frames — need {needed_min} more to reach minimum ({min_frames} required)"
-                )
-            elif needed_slope > 0 and rmse_over:
-                lines.append(
-                    f"  {fn}: {n} frames — need ~{needed_slope} more"
-                    f" (slope {slope_abs:.2f}% > {slope_threshold:.2f}% target,"
-                    f" RMSE {rmse:.1f}% > {rmse_threshold:.1f}% limit)"
-                )
-            elif needed_slope > 0:
-                lines.append(
-                    f"  {fn}: {n} frames — need ~{needed_slope} more"
-                    f" (slope {slope_abs:.2f}% > {slope_threshold:.2f}% target)"
-                )
-            elif rmse_over:
-                lines.append(
-                    f"  {fn}: {n} frames — slope converged but RMSE {rmse:.1f}% still above {rmse_threshold:.1f}% limit"
-                )
-            else:
-                lines.append(f"  {fn}: done ✓  ({n} frames, slope {slope_abs:.2f}%, RMSE {rmse:.1f}%)")
-
+        lines = [
+            f"  {fn}: slope {info['tail_slope_pct']:+.4f}%/frame"
+            for fn, info in sorted(saved.items())
+        ]
         social_server.post_social_message(
-            f"{dso_dir.name} — exposures needed:\n" + "\n".join(lines)
+            f"{dso_dir.name} — convergence slopes:\n" + "\n".join(lines)
         )
 
 

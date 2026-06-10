@@ -199,11 +199,56 @@ def _count_sources(frame: np.ndarray) -> int:
         return 0
 
 
+def _reference_index_by_fwhm(fwhm_scores: list[float]) -> Optional[int]:
+    """Return the index of the frame with the sharpest stars (lowest positive
+    FWHM), or None if no frame has a measured FWHM.
+
+    This is the preferred reference picker: the sharpest frame gives astroalign
+    the cleanest control points and aligns the rest most reliably. The old
+    "most detected sources" heuristic (_best_reference_idx) reliably picked the
+    *worst* frame on low-SNR channels — the blurriest/noisiest sub also has the
+    most detections, and astroalign could not match its bloated/noise centroids.
+    Observed on ngc5907 B: the most-sources frame (also the worst FWHM, 13.8 px)
+    aligned only 1/17 others, while every other candidate aligned 16-17/17.
+
+    Guards against mis-measured FWHM: on a noise-dominated frame the per-star
+    Gaussian fits collapse onto hot pixels, so the mean FWHM reads sub-pixel
+    (~0.7 px). Picking that frame is just as bad as the old heuristic (observed
+    on ngc5907 R: a 0.74 px "sharpest" reference aligned only 1/34). A real star
+    cannot be much sharper than the session median, so we discard any frame whose
+    FWHM is below 0.5x the median of measured frames before taking the minimum.
+    """
+    positive = [(f, i) for i, f in enumerate(fwhm_scores) if f and f > 0.0]
+    if not positive:
+        return None
+    median_fwhm = float(np.median([f for f, _ in positive]))
+    floor = 0.5 * median_fwhm
+    plausible = [(f, i) for f, i in positive if f >= floor]
+    if not plausible:
+        # Every measured frame is implausibly sharp (degenerate fits across the
+        # board) — fall back to the source-count picker rather than trust them.
+        _logger.warning(
+            "FWHM reference picker: all %d measured frames below floor %.2f px "
+            "(median %.2f px) — falling back to source count",
+            len(positive), floor, median_fwhm,
+        )
+        return None
+    n_excluded = len(positive) - len(plausible)
+    best_fwhm, best_idx = min(plausible)
+    _logger.info(
+        "Registration reference = frame %d (sharpest plausible, FWHM %.2f px; "
+        "median %.2f px, excluded %d mis-measured)",
+        best_idx, best_fwhm, median_fwhm, n_excluded,
+    )
+    return best_idx
+
+
 def _best_reference_idx(frames: list[np.ndarray]) -> int:
     """
     Sample up to 10 evenly-spaced frames and return the index of the one
-    with the most detected sources — this gives astroalign the best chance
-    of successfully aligning all other frames.
+    with the most detected sources. Fallback reference picker used only when no
+    FWHM is available — prefer _reference_index_by_fwhm (see its docstring for
+    why source count is a poor criterion on noisy channels).
     """
     step = max(1, len(frames) // 10)
     candidates = list(range(0, len(frames), step))[:10]
@@ -222,9 +267,21 @@ def _best_reference_idx(frames: list[np.ndarray]) -> int:
 _REG_MIN_MATCHED_STARS = 10
 _REG_MAX_MEDIAN_RESIDUAL_PX = 2.0
 
+# astroalign builds its matching triangles from only the N brightest detected
+# sources (default 50). When two frames have very different noise floors — e.g.
+# subs taken on nights with different sky background — their brightest-50 sets
+# don't overlap, and registration fails with "triangles exhausted" even though
+# the field is identical. Raising this so enough real stars enter both sets
+# bridges those frames. Measured on ngc5907 R (background 600 vs 250 across
+# nights): 50 -> 8/35 frames registered, 200 -> 35/35. 200 is also faster than
+# 100 here, because failed matches are what burn time (they exhaust the full
+# triangle list before giving up).
+_REG_MAX_CONTROL_POINTS = 200
+
 
 def _register_frames(
     frames: list[np.ndarray],
+    fwhm_scores: Optional[list[float]] = None,
 ) -> tuple[list[np.ndarray], list[int]]:
     """
     Register all frames to the best reference frame using an affine transform.
@@ -245,7 +302,9 @@ def _register_frames(
     if not _REGISTER_AVAILABLE or len(frames) < 2:
         return frames, list(range(len(frames)))
 
-    ref_idx = _best_reference_idx(frames)
+    ref_idx = _reference_index_by_fwhm(fwhm_scores) if fwhm_scores is not None else None
+    if ref_idx is None:
+        ref_idx = _best_reference_idx(frames)
     reference = frames[ref_idx]
     registered = [reference]
     surviving_indices = [ref_idx]
@@ -255,7 +314,9 @@ def _register_frames(
         if i == ref_idx:
             continue
         try:
-            transform, (src_pts, dst_pts) = _astroalign.find_transform(frame, reference)
+            transform, (src_pts, dst_pts) = _astroalign.find_transform(
+                frame, reference, max_control_points=_REG_MAX_CONTROL_POINTS
+            )
         except Exception as exc:
             failed += 1
             _logger.warning("Registration failed for frame %d: %s", i, exc)
@@ -501,7 +562,8 @@ def stack(
         _logger.info("Registering %d frames to reference…", len(calibrated))
         if progress_cb:
             progress_cb(f"registering {len(calibrated)} frames…")
-        calibrated, surviving_indices = _register_frames(calibrated)
+        ref_fwhm = [fwhm_values.get(p, 0.0) for p in accepted] if fwhm_values else None
+        calibrated, surviving_indices = _register_frames(calibrated, fwhm_scores=ref_fwhm)
         accepted = [accepted[i] for i in surviving_indices]
         _logger.info("%d frames remain after registration", len(calibrated))
         if progress_cb:
@@ -785,13 +847,18 @@ def _prepare_for_convergence(
             f = None
         return frames_out, accepted, fwhm_values
 
-    # Pick reference from a sample of up to 10 evenly-spaced frames.
-    step = max(1, len(accepted) // 10)
-    sample_indices = list(range(0, len(accepted), step))[:10]
-    sample_frames = [_load_fits_2d(accepted[i]) for i in sample_indices]
-    ref_sample_idx = _best_reference_idx(sample_frames)
-    sample_frames = None  # free full-res copies
-    actual_ref_idx = sample_indices[ref_sample_idx]
+    # Pick the reference as the sharpest frame (lowest FWHM); FWHM is always
+    # measured above. Falls back to source-count sampling only if no frame had a
+    # measurable FWHM. (The old source-count-only pick selected the blurriest
+    # frame on noisy channels and failed registration — see
+    # _reference_index_by_fwhm.)
+    actual_ref_idx = _reference_index_by_fwhm([fwhm_values.get(p, 0.0) for p in accepted])
+    if actual_ref_idx is None:
+        step = max(1, len(accepted) // 10)
+        sample_indices = list(range(0, len(accepted), step))[:10]
+        sample_frames = [_load_fits_2d(accepted[i]) for i in sample_indices]
+        actual_ref_idx = sample_indices[_best_reference_idx(sample_frames)]
+        sample_frames = None  # free full-res copies
     _logger.info("Convergence: reference = accepted[%d]", actual_ref_idx)
 
     if progress_cb:
@@ -810,7 +877,9 @@ def _prepare_for_convergence(
         _ckpt(cancel_cb)
         try:
             frame = _load_fits_2d(p)
-            transform, (src_pts, dst_pts) = _astroalign.find_transform(frame, reference)
+            transform, (src_pts, dst_pts) = _astroalign.find_transform(
+                frame, reference, max_control_points=_REG_MAX_CONTROL_POINTS
+            )
         except Exception as exc:
             failed += 1
             _logger.warning("Convergence registration failed for frame %d: %s", i, exc)
