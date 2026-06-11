@@ -1,7 +1,7 @@
 import asyncio
 from datetime import datetime, timedelta
 import logging
-import os, sys
+import os, re, sys
 import subprocess
 import threading
 import time
@@ -810,7 +810,7 @@ def _optics_run(words: list[str]) -> None:
 
 
 def active_cmd(words: list[str], account: str) -> None:
-    """List all DSOs that have LIGHT frames, with sub counts per filter."""
+    """Show, per DSO, a date×filter grid of how many LIGHT subs were taken."""
     cfg = config.data()
     image_dir = Path(cfg["nina"]["image_dir"])
 
@@ -824,28 +824,142 @@ def active_cmd(words: list[str], account: str) -> None:
         social_server.post_social_message(f"active: scan failed — {exc}")
         return
 
-    results: dict[str, dict[str, int]] = {}
+    # results[dso][observing_night][filter] = sub count
+    results: dict[str, dict[str, dict[str, int]]] = {}
     for dso_dir in dso_dirs:
-        by_filter: dict[str, int] = {}
+        grid: dict[str, dict[str, int]] = {}
         for f in dso_dir.rglob("*.fits"):
             if f.parent.name.upper() != "LIGHT":
                 continue
-            filter_name = f.parent.parent.name
-            by_filter[filter_name] = by_filter.get(filter_name, 0) + 1
-        if by_filter:
-            results[dso_dir.name] = by_filter
+            night, filter_name = _frame_night_filter(f)
+            row = grid.setdefault(night, {})
+            row[filter_name] = row.get(filter_name, 0) + 1
+        if grid:
+            results[dso_dir.name] = grid
 
     if not results:
         social_server.post_social_message("No LIGHT frames found in image directory")
         return
 
-    lines = []
-    for dso, filters in sorted(results.items()):
-        total = sum(filters.values())
-        filter_str = "  ".join(f"{k}: {v}" for k, v in sorted(filters.items()))
-        lines.append(f"{dso} ({total})  {filter_str}")
+    social_server.post_html_message(_active_tiles_html(results))
 
-    social_server.post_social_message("\n".join(lines))
+
+# Canonical filter order for the active/live displays; anything else falls in
+# afterwards alphabetically. Mirrors FILTER_ORDER in static/chat.html.
+_FILTER_ORDER = ["L", "R", "G", "B", "Ha", "OIII", "SII"]
+
+# NINA layout: <DSO>/<scope>/<night>/LIGHT/<date>_<time>_<FILTER>_<...>.fits
+# (e.g. 2026-05-17_22-44-45_L_158_300.00s_0073.fits). The night folder already
+# follows the noon-rollover convention, so it doubles as the observing night.
+_DATE_RE  = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+_FNAME_RE = re.compile(r"^\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}_([^_]+)_")
+
+
+def _frame_night_filter(f: Path) -> tuple[str, str]:
+    """Return (observing_night, filter) for a LIGHT frame.
+
+    Fast path parses both from the NINA path/filename. Frames with a
+    non-standard name (e.g. transit captures) fall back to reading the FITS
+    header, then to file mtime, so they still land in a sensible date column.
+    """
+    night_dir = f.parent.parent.name           # folder above LIGHT
+    m = _FNAME_RE.match(f.name)
+    if m and _DATE_RE.match(night_dir):
+        return night_dir, m.group(1)
+
+    filt = "Unknown"
+    try:
+        from astropy.io import fits
+        hdr = fits.getheader(f)
+        filt = str(hdr.get("FILTER", "Unknown")).strip() or "Unknown"
+        date_obs = hdr.get("DATE-OBS")
+        if date_obs:
+            dt = datetime.fromisoformat(str(date_obs).rstrip("Z"))
+            return (dt - timedelta(hours=12)).date().isoformat(), filt
+    except Exception:
+        pass
+
+    night = night_dir if _DATE_RE.match(night_dir) else None
+    if night is None:
+        try:
+            night = (datetime.fromtimestamp(f.stat().st_mtime)
+                     - timedelta(hours=12)).date().isoformat()
+        except OSError:
+            night = "unknown"
+    return night, filt
+
+
+def _filter_sort_key(name: str):
+    try:
+        return (0, _FILTER_ORDER.index(name))
+    except ValueError:
+        return (1, name.lower())
+
+
+def _active_tiles_html(results: dict[str, dict[str, dict[str, int]]]) -> str:
+    """Render one tile per DSO: a date×filter grid of sub counts.
+
+    Each tile is a self-contained card — columns are filters, rows are
+    observing nights (newest first), the cell is the number of subs, with a
+    per-night Σ column and a per-filter totals footer. Tiles wrap to fill the
+    available width.
+    """
+    from html import escape
+
+    BORDER, ROW, DIM, TEXT, ACCENT, BRIGHT = (
+        "#30363d", "#21262d", "#8b949e", "#c9d1d9", "#3fb950", "#e6edf3")
+    TILE_BG, TILE_BORDER, DOT = "#0d1117", "#30363d", "#475061"
+
+    th = (f'padding:3px 7px;border-bottom:1px solid {BORDER};color:{DIM};'
+          f'font-size:10.5px;font-weight:600;white-space:nowrap;')
+    td = f'padding:3px 7px;border-bottom:1px solid {ROW};color:{TEXT};font-variant-numeric:tabular-nums;'
+
+    out = [
+        f'<div style="font-size:13px;font-weight:600;color:{ACCENT};margin-bottom:10px;">'
+        f'Active targets — {len(results)} object{"s" if len(results) != 1 else ""}</div>',
+        '<div style="display:flex;flex-wrap:wrap;gap:12px;align-items:flex-start;">',
+    ]
+
+    for dso, grid in sorted(results.items()):
+        filters = sorted({f for row in grid.values() for f in row}, key=_filter_sort_key)
+        dso_total = sum(sum(row.values()) for row in grid.values())
+
+        t = [
+            f'<div style="background:{TILE_BG};border:1px solid {TILE_BORDER};'
+            f'border-radius:8px;padding:10px 12px;min-width:240px;">',
+            f'<div style="display:flex;justify-content:space-between;align-items:baseline;'
+            f'gap:14px;margin-bottom:7px;">'
+            f'<span style="font-size:12.5px;font-weight:600;color:{BRIGHT};white-space:nowrap;">{escape(dso)}</span>'
+            f'<span style="font-size:11px;color:{DIM};">{dso_total} subs</span></div>',
+            '<table style="border-collapse:collapse;width:100%;font-size:11px;">',
+            f'<thead><tr><th style="{th}text-align:left;">Date</th>',
+        ]
+        for f in filters:
+            t.append(f'<th style="{th}text-align:right;">{escape(f)}</th>')
+        t.append(f'<th style="{th}text-align:right;">Σ</th></tr></thead><tbody>')
+
+        for night in sorted(grid.keys(), reverse=True):
+            row = grid[night]
+            night_total = sum(row.values())
+            t.append(f'<tr><td style="{td}white-space:nowrap;color:{DIM};">{escape(night)}</td>')
+            for f in filters:
+                n = row.get(f)
+                cell = str(n) if n else f'<span style="color:{DOT};">·</span>'
+                t.append(f'<td style="{td}text-align:right;">{cell}</td>')
+            t.append(f'<td style="{td}text-align:right;color:{BRIGHT};font-weight:600;">{night_total}</td></tr>')
+
+        grand = {f: sum(row.get(f, 0) for row in grid.values()) for f in filters}
+        foot = f'padding:4px 7px;border-top:2px solid {BORDER};font-weight:600;'
+        t.append(f'<tr><td style="{foot}color:{DIM};">All</td>')
+        for f in filters:
+            t.append(f'<td style="{foot}text-align:right;color:{DIM};">{grand[f]}</td>')
+        t.append(f'<td style="{foot}text-align:right;color:{ACCENT};font-weight:700;">{dso_total}</td></tr>')
+
+        t.append('</tbody></table></div>')
+        out.append("".join(t))
+
+    out.append('</div>')
+    return "".join(out)
 
 
 def drift_cmd(words: list[str], account: str) -> None:

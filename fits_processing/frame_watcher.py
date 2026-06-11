@@ -35,6 +35,7 @@ _STABILITY_WAIT = 2.5  # seconds to confirm file isn't still being written
 _lock   = threading.Lock()
 _active = False
 _frame_count    = 0
+_filter_counts: dict = {}  # filter name -> subs taken this session ("tonight")
 _last_frame: Optional[dict] = None
 _stop_event: Optional[threading.Event] = None
 _ticker_path: Optional[Path] = None  # file-based IPC so other processes can read state
@@ -53,13 +54,14 @@ _last_artifact_cache: Optional[Path] = None  # cache path of the most recent fra
 
 def start(image_dir: Path, arcsec_per_pixel: float) -> None:
     """Start the watcher thread.  No-op if already running."""
-    global _active, _frame_count, _last_frame, _stop_event, _ticker_path
+    global _active, _frame_count, _filter_counts, _last_frame, _stop_event, _ticker_path
     global _artifact_image_dir, _artifact_arcsec, _artifact_worker_started
     with _lock:
         if _active:
             return
         _active      = True
         _frame_count = 0
+        _filter_counts = {}
         _last_frame  = None
         _ticker_path = Path(image_dir) / "frame_ticker.json"
         _artifact_image_dir = Path(image_dir)
@@ -98,9 +100,10 @@ def get_ticker() -> dict:
     """Return current ticker state (thread-safe copy)."""
     with _lock:
         return {
-            "active":       _active,
-            "frame_count":  _frame_count,
-            "last_frame":   dict(_last_frame) if _last_frame else None,
+            "active":        _active,
+            "frame_count":   _frame_count,
+            "filter_counts": dict(_filter_counts),
+            "last_frame":    dict(_last_frame) if _last_frame else None,
         }
 
 
@@ -112,6 +115,7 @@ def _write_ticker(active: bool) -> None:
         return
     with _lock:
         count = _frame_count
+        filters = dict(_filter_counts)
         last  = dict(_last_frame) if _last_frame else None
     tmp = _ticker_path.with_suffix(".tmp")
     try:
@@ -119,6 +123,7 @@ def _write_ticker(active: bool) -> None:
             json.dump({
                 "active":         active,
                 "frame_count":    count,
+                "filter_counts":  filters,
                 "last_frame":     last,
                 "last_heartbeat": datetime.utcnow().isoformat(),
             }, f, default=str)
@@ -261,6 +266,8 @@ def _run(image_dir: Path, arcsec_per_pixel: float, stop_event: threading.Event) 
                 with _lock:
                     _last_frame  = frame
                     _frame_count += 1
+                    filt = (frame.get("filter") or "Unknown").strip() or "Unknown"
+                    _filter_counts[filt] = _filter_counts.get(filt, 0) + 1
 
                 dso = _dso_dir(fits_path, image_dir)
                 if dso:

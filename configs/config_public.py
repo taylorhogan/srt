@@ -206,9 +206,19 @@ class PublicConfig():
             "file": "local/transits.json",
         },
 
+        # Per-machine overrides, keyed by socket.gethostname(). At config load
+        # (configs/config.py:data()) the entry for the current host is overlaid
+        # onto the shared config, so a key like "image_dir" replaces
+        # cfg["nina"]["image_dir"] without any call site changing. Add a new
+        # block here for each machine you run on. The top-level "nina"/"machine"
+        # defaults below are the fallback for hosts with no entry.
         "machine": {
+            "iris-pc": {
+                "image_dir": "C:/Users/iriso/Documents/N.I.N.A/Targets",
+            },
             "spark-3129": {
                 "subs_dir": "/home/taylor/Desktop/Targets",
+                "image_dir": "/home/taylor/Desktop/Targets",
             },
         },
 
