@@ -1596,6 +1596,7 @@ def get_super_user_commands() -> dict[str, Callable]:
         "stats": image_stats_cmd,
         "snr": snr_cmd,
         "transit": transit_cmd,
+        "hr": hr_cmd,
         "log": log_cmd,
         "update": update_cmd,
         "optics": optics_cmd,
@@ -2160,6 +2161,131 @@ def _snr_run_locked(words: list[str]) -> None:
         social_server.post_social_message(
             f"{dso_dir.name} — convergence slopes:\n" + "\n".join(lines)
         )
+
+
+def hr_cmd(words: list[str], account: str) -> None:
+    """Build a Gaia-calibrated colour–magnitude (H–R) diagram. Background job.
+
+    Usage: hr <dso> [bluefilter redfilter]
+        hr m13            — auto-pick the two most-imaged filters
+        hr m13 B R        — use B for colour-blue, R for colour-red
+    """
+    jobs.spawn(_hr_run, args=(words,))
+
+
+def _hr_run(words: list[str]) -> None:
+    """Worker for hr_cmd: stack two filters, plate-solve, photometer, plot CMD."""
+    from stacking import stacker
+    from photometry import cmd_diagram
+
+    _job_id = jobs.get_current_job()
+    _cancel = jobs.cancel_cb_for(_job_id)
+
+    cfg = config.data()
+    image_dir = Path(cfg["nina"]["image_dir"])
+    _project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    scratch_dir = Path(os.path.join(_project_root, cfg["scratch"]["directory"]))
+    astap_exe = cfg.get("hardware", {}).get("astap_exe", "")
+    arcsec = float(cfg["nina"]["arc_sec_per_pixel"])
+
+    args = words[2:]
+    # `hr <dso> <blue> <red>` — three-or-more tokens means the last two are
+    # filters; otherwise the whole tail is the DSO name and filters auto-pick.
+    requested_filters: Optional[tuple[str, str]] = None
+    if len(args) >= 3:
+        requested_filters = (args[-2], args[-1])
+        dso_arg = " ".join(args[:-2]).strip()
+    else:
+        dso_arg = " ".join(args).strip()
+    if not dso_arg:
+        social_server.post_social_message(
+            "Usage: hr <dso> [bluefilter redfilter]  (e.g. `hr m13` or `hr m13 B R`)")
+        return
+
+    def _is_light(f: Path) -> bool:
+        return f.parent.name.upper() == "LIGHT"
+
+    def _find_dso_dir_by_name(name: str) -> Optional[Path]:
+        target = name.lower().replace(" ", "").replace("_", "")
+        candidates = [
+            d for d in image_dir.iterdir()
+            if d.is_dir() and target in d.name.lower().replace(" ", "").replace("_", "")
+        ]
+        if not candidates:
+            return None
+        if len(candidates) == 1:
+            return candidates[0]
+        def _latest(d: Path) -> float:
+            try:
+                return max(f.stat().st_mtime for f in d.rglob("*.fits") if _is_light(f))
+            except ValueError:
+                return 0.0
+        return max(candidates, key=_latest)
+
+    dso_dir = _find_dso_dir_by_name(dso_arg)
+    if dso_dir is None:
+        social_server.post_social_message(f"hr: no image directory found for '{dso_arg}'")
+        return
+
+    fits_files = [f for f in dso_dir.rglob("*.fits") if _is_light(f)]
+    if not fits_files:
+        social_server.post_social_message(f"hr: no LIGHT frames for {dso_dir.name}")
+        return
+
+    by_filter = stacker.group_by_filter(fits_files)
+
+    # Resolve filters: explicit request (case-insensitive) or auto-pick.
+    if requested_filters:
+        lookup = {k.lower(): k for k in by_filter}
+        resolved = [lookup.get(f.lower()) for f in requested_filters]
+        if None in resolved:
+            social_server.post_social_message(
+                f"hr: filter not found. {dso_dir.name} has: "
+                f"{', '.join(sorted(by_filter)) or '(none)'}")
+            return
+        blue, red = resolved
+        if blue == red:
+            social_server.post_social_message(
+                "hr: need two different filters to form a colour")
+            return
+    else:
+        pair = cmd_diagram.choose_filters(by_filter, min_frames=2)
+        if pair is None:
+            social_server.post_social_message(
+                f"hr: need two filters for a colour. {dso_dir.name} has: "
+                f"{', '.join(f'{k}×{len(v)}' for k, v in sorted(by_filter.items()))}")
+            return
+        blue, red = pair
+
+    out = scratch_dir / f"cmd_{dso_dir.name}_{blue}_{red}.jpg"
+
+    def _progress(msg: str) -> None:
+        social_server.post_social_message(f"HR [{dso_dir.name} {blue}/{red}]: {msg}")
+
+    _progress(f"building CMD from {len(by_filter[blue])} {blue} + "
+              f"{len(by_filter[red])} {red} subs…")
+
+    try:
+        stats = cmd_diagram.build_cmd(
+            by_filter[blue], by_filter[red], blue, red, dso_dir.name, out,
+            astap_exe, arcsec, progress_cb=_progress, cancel_cb=_cancel,
+        )
+    except jobs.Cancelled:
+        raise
+    except RuntimeError as exc:
+        social_server.post_social_message(f"HR [{dso_dir.name}]: {exc}")
+        return
+    except Exception as exc:
+        _logger.exception("_hr_run failed")
+        social_server.post_social_message(f"HR [{dso_dir.name}]: failed — {exc}")
+        return
+
+    social_server.post_social_message(
+        f"Colour–magnitude diagram — {dso_dir.name}  ({blue}−{red})\n"
+        f"{stats['n_stars']} stars · {stats['n_gaia']} Gaia anchors · "
+        f"ZP {blue} {stats['zp_blue']:+.2f}, {red} {stats['zp_red']:+.2f}",
+        str(out),
+    )
 
 
 def transit_cmd(words: list[str], account: str) -> None:

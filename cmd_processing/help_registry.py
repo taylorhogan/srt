@@ -150,7 +150,7 @@ HELP: dict[str, dict] = {
     },
     "active": {
         "category": "super",
-        "summary": "List all DSOs that have LIGHT frames, with sub counts per filter.",
+        "summary": "Per-DSO tiles: a date×filter grid of how many subs were taken.",
         "usage": ["active"],
     },
     "stats": {
@@ -171,6 +171,13 @@ HELP: dict[str, dict] = {
         "summary": "Search saved subs for transit-like dips on every star in the field.",
         "usage": ["transit <dso> <filter>"],
         "examples": ["transit m31 L", "transit ngc7331 Ha"],
+    },
+    "hr": {
+        "category": "super",
+        "summary": "Build a Gaia-calibrated colour–magnitude (H–R) diagram from two "
+                   "filters. Best on a star cluster.",
+        "usage": ["hr <dso>", "hr <dso> <bluefilter> <redfilter>"],
+        "examples": ["hr m13", "hr m13 B R"],
     },
     "log": {
         "category": "super",
