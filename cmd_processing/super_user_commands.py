@@ -10,8 +10,6 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Optional
 
-import requests
-
 if __package__ is None or __package__ == "":
     project_root = os.path.abspath(os.path.join(os.path.dirname(__file__),  '..'))
     if project_root not in sys.path:
@@ -21,6 +19,7 @@ from configs import config
 from control import instructions
 from hardware_control import kasa_utils as ku
 from hardware_control import sonos_utils
+from hardware_control import utl_shelly
 from hardware_control import pwi4_utils
 from hardware_control import pegasus
 from cmd_processing import social_server
@@ -70,12 +69,9 @@ def toggle_roof(dev_map: dict) -> None:
     inst = {"Roof motor": 'on'}
     asyncio.run(ku.kasa_do(dev_map, inst))
     time.sleep(10)
-    try:
-        r = requests.get(config.data()["hardware"]["roof_relay_url"], timeout=10)
-        r.raise_for_status()
-    except requests.RequestException as e:
-        _logger.error("Failed to trigger relay in toggle_roof: %s", e)
-        raise
+    if utl_shelly.fire_roof_relay() is None:
+        _logger.error("Failed to trigger relay in toggle_roof")
+        raise RuntimeError("toggle_roof: roof relay trigger failed")
     time.sleep(45)
     inst = {"Roof motor": 'off'}
     asyncio.run(ku.kasa_do(dev_map, inst))
@@ -252,7 +248,7 @@ def _emergency_stop_sequence() -> None:
                         "Roof motor": 'off',
                         "Iris inside light": 'off',
                     }))
-                requests.get(config.data()["hardware"]["dehumidifier_relay_url"] + "?turn=on")
+                utl_shelly.set_dehumidifier(True)
             except Exception:
                 _logger.exception("emergency: lightweight shutdown failed")
             # LAST: blinds the vision camera (powered through the Pegasus box).
@@ -377,11 +373,8 @@ def open_if_mount_off_cmd(words: list[str], account: str) -> None:
 
         inst = {"Roof motor": 'on', "Iris inside light": 'off'}
         asyncio.run(ku.kasa_do(dev_map, inst))
-        try:
-            r = requests.get(config.data()["hardware"]["roof_relay_url"], timeout=10)
-            r.raise_for_status()
-        except requests.RequestException as e:
-            _logger.error("Failed to trigger relay in open_if_mount_off_cmd: %s", e)
+        if utl_shelly.fire_roof_relay() is None:
+            _logger.error("Failed to trigger relay in open_if_mount_off_cmd")
             return
         time.sleep(30)
         inst = {"Roof motor": 'off', "Telescope mount": 'on'}

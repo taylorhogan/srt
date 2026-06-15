@@ -1,30 +1,47 @@
-import requests
-import json
+import logging
+import os, sys
 
-def control_shelly(ip_address, command, parameter=None):
-    """Controls a Shelly device.
+if __package__ is None or __package__ == "":
+    project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+    if project_root not in sys.path:
+        sys.path.insert(0, project_root)
+
+import requests
+
+from configs import config
+
+logger = logging.getLogger(__name__)
+
+
+def fire_roof_relay(timeout=10):
+    """Fire the Shelly relay that toggles the roof motor.
+
+    The roof relay is momentary: GETting the configured URL pulses the relay
+    and the roof moves in whichever direction its current position dictates.
+    There is no separate open/close — callers must enforce the hardware safety
+    rule (scope parked) before calling this.
+    """
+    url = config.data()["hardware"]["roof_relay_url"]
+    return _get(url, timeout=timeout)
+
+
+def set_dehumidifier(on, timeout=10):
+    """Turn the dehumidifier Shelly relay on or off.
 
     Args:
-        ip_address: The IP address of the Shelly device.
-        command: The command to send (e.g., "on", "off", "toggle").
-        parameter: Optional parameter for the command (e.g., brightness level).
+        on: True to energise the relay (turn=on), False for turn=off.
     """
-    url = f"http://{ip_address}/relay/"
-    headers = {'Content-Type': 'application/json'}
-    payload = {
-        "method": "Switch.Set",
-        "params": {
-            "id": 0,
-            "on": command == "on"
-        }
-    }
+    base = config.data()["hardware"]["dehumidifier_relay_url"]
+    url = f"{base}?turn={'on' if on else 'off'}"
+    return _get(url, timeout=timeout)
 
-    if parameter is not None:
-      payload["params"]["brightness"] = parameter
 
+def _get(url, timeout=10):
     try:
-        response = requests.post(url, headers=headers, data=json.dumps(payload))
+        response = requests.get(url, timeout=timeout)
         response.raise_for_status()
-        print("Shelly control successful.")
+        logger.info("Shelly control successful: %s", url)
+        return response
     except requests.exceptions.RequestException as e:
-        print(f"Error controlling Shelly: {e}")
+        logger.warning("Error controlling Shelly (%s): %s", url, e)
+        return None

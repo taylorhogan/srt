@@ -9,7 +9,6 @@ import time
 import warnings
 
 import numpy as np
-import requests
 
 if __package__ is None or __package__ == "":
     project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
@@ -19,7 +18,7 @@ if __package__ is None or __package__ == "":
 from configs import config
 
 from fits_processing import fitsfwhm, sky_brightness as sb
-from hardware_control import pwi4_utils, kasa_utils as ku
+from hardware_control import pwi4_utils, kasa_utils as ku, utl_shelly
 from cmd_processing import super_user_commands, social_server
 from sentry import vision_safety
 from utils import pushover, utils
@@ -285,10 +284,7 @@ def do_main():
                         logger.exception("Failed to turn off inside light / roof motor")
                     # Turn on dehumidifier (best-effort; bounded + isolated so a
                     # relay blip can't abort the rest of the shutdown).
-                    try:
-                        requests.get(cfg["hardware"]["dehumidifier_relay_url"] + "?turn=on", timeout=10)
-                    except Exception:
-                        logger.exception("Failed to turn on dehumidifier")
+                    utl_shelly.set_dehumidifier(True)
                 else:
                     social_server.post_social_message("Vision Safety says Scope is NOT parked")
                     # Roof stays open (scope not confirmed parked), but the inside

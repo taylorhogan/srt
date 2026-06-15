@@ -3,8 +3,6 @@ import logging
 
 import os,sys
 
-import requests
-
 if __package__ is None or __package__ == "":
     project_root = os.path.abspath(os.path.join(os.path.dirname(__file__),  '..'))
     if project_root not in sys.path:
@@ -12,6 +10,7 @@ if __package__ is None or __package__ == "":
 
 from cmd_processing import super_user_commands
 from hardware_control import kasa_utils as ku
+from hardware_control import utl_shelly
 from configs import config
 from utils import utils
 
@@ -46,7 +45,7 @@ if __name__ == "__main__":
     asyncio.run(ku.kasa_do(dev_map, instructions))
     logger.info('Turning off lights')
 
-    r = requests.get(cfg["hardware"]["dehumidifier_relay_url"] + "?turn=off")
+    utl_shelly.set_dehumidifier(False)
     logger.info('Turning off dehumidifier')
     logger.info('End Start Sequence')
     print ("Done with startup")
