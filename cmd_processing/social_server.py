@@ -799,12 +799,16 @@ def main() -> None:
     message_bus.init(images_dir, max_history=web_cfg.get("max_history", 500))
     jobs.init()
 
-    mqtt_client = utils.connect_mqtt()
-    cfg["globals"]["mqtt_client"] = mqtt_client
-
-    mqtt_client.subscribe(utils.topic_from_sched)
-    mqtt_client.on_message = wait_for_mqtt_message
-    mqtt_client.loop_start()
+    try:
+        mqtt_client = utils.connect_mqtt()
+        cfg["globals"]["mqtt_client"] = mqtt_client
+        mqtt_client.subscribe(utils.topic_from_sched)
+        mqtt_client.on_message = wait_for_mqtt_message
+        mqtt_client.loop_start()
+    except ConnectionRefusedError:
+        logger.warning("MQTT broker not available — continuing without it; "
+                       "scheduler updates will not be received")
+        cfg["globals"]["mqtt_client"] = None
 
     # Safety net: if this launch is recovering from a crash that interrupted an
     # imaging run, detect a roof-open/unparked orphan and alert (see function).

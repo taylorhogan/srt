@@ -12,9 +12,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 # Install uv (once)
 curl -LsSf https://astral.sh/uv/install.sh | sh
 
-# Create and activate virtualenv
-uv venv venv
-source venv/bin/activate
+# Create and activate virtualenv (Python 3.13+ required, per pyproject.toml).
+# Use uv's default .venv path — `uv pip` auto-discovers it; a differently
+# named venv will be silently ignored by uv and cause import errors.
+uv venv --python 3.13
+source .venv/bin/activate
 
 # Install dependencies
 uv pip install -r requirements.txt
