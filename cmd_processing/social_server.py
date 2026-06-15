@@ -641,6 +641,58 @@ def handle_mention(notification: Any) -> None:
         do_notification(notification, mastodon)
 
 
+def _tailscale_ip() -> Optional[str]:
+    """This host's Tailscale IPv4, or None. Best-effort, short timeout."""
+    try:
+        out = subprocess.run(
+            ["tailscale", "ip", "-4"], capture_output=True, text=True, timeout=3
+        )
+        if out.returncode == 0:
+            ip = out.stdout.strip().splitlines()[0].strip() if out.stdout.strip() else ""
+            return ip or None
+    except Exception:
+        pass
+    return None
+
+
+def _primary_ip() -> Optional[str]:
+    """Best-effort primary outbound IPv4 (the address other hosts would reach)."""
+    import socket
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        s.connect(("8.8.8.8", 80))  # selects the default route; sends nothing
+        return s.getsockname()[0]
+    except Exception:
+        return None
+    finally:
+        s.close()
+
+
+def _webchat_urls(host: str, port: int, hostname: str) -> list[str]:
+    """Build a deduped list of clickable web-chat URLs.
+
+    When bound to all interfaces (0.0.0.0/::), advertise the addresses an
+    operator would actually use: the Tailscale IP first (Iris is reached over
+    Tailscale), then the MagicDNS/LAN hostname, then the LAN IP, then localhost.
+    When bound to a specific host, just use that.
+    """
+    if host not in ("0.0.0.0", "", "::"):
+        return [f"http://{host}:{port}"]
+    candidates = [
+        _tailscale_ip(),
+        hostname if hostname and hostname != "unknown" else None,
+        _primary_ip(),
+        "localhost",
+    ]
+    urls: list[str] = []
+    for c in candidates:
+        if c:
+            u = f"http://{c}:{port}"
+            if u not in urls:
+                urls.append(u)
+    return urls
+
+
 def start_interface() -> None:
     """Start the web chat server (FastAPI/uvicorn)."""
     import uvicorn
@@ -661,6 +713,10 @@ def start_interface() -> None:
     except Exception:
         hostname = "unknown"
     post_social_message(f"Starting Version {cfg['version']['date']} on {hostname}")
+
+    urls = _webchat_urls(host, port, hostname)
+    if urls:
+        post_social_message("Web chat ready at " + "   ".join(urls))
 
     # Optionally also listen on Mastodon
     if web_cfg.get("mastodon_mirror", False):
