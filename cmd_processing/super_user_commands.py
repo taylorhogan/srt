@@ -1266,7 +1266,6 @@ def _stack_run(words: list[str]) -> None:
                 bias_paths=_bias_paths,
                 dark_paths=_dark_paths,
                 flat_paths=flat_paths,
-                max_fwhm_multiplier=1.5,
                 progress_cb=_progress,
                 cancel_cb=_cancel,
             )

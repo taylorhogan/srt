@@ -366,15 +366,28 @@ def _register_frames(
 
 def _measure_fwhm(path: Path) -> float:
     """Return mean FWHM in pixels, or 0.0 if measurement fails / no stars found."""
+    return _measure_fwhm_and_stars(path)[0]
+
+
+def _measure_fwhm_and_stars(path: Path) -> tuple[float, int]:
+    """Return (mean FWHM px, detected star count).
+
+    Both come from the same source-detection pass in _calculate_fwhm, so this
+    costs no more than measuring FWHM alone. Returns (0.0, 0) if detection
+    fails entirely; returns (0.0, count) if stars were found but the FWHM fit
+    was degenerate — callers treat FWHM 0.0 as "unmeasured".
+    """
     if not _FWHM_AVAILABLE:
-        return 0.0
+        return 0.0, 0
     try:
         fwhm_px, _, count, _ = _calculate_fwhm(path, arcsec_per_pixel=_get_arcsec_per_pixel())
+        count = int(count)
         if count > 0 and fwhm_px > 0:
-            return float(fwhm_px)
+            return float(fwhm_px), count
+        return 0.0, count
     except Exception as exc:
-        _logger.warning("FWHM measurement failed for %s: %s", path.name, exc)
-    return 0.0
+        _logger.warning("FWHM/star measurement failed for %s: %s", path.name, exc)
+    return 0.0, 0
 
 
 def _combine_tile(
@@ -440,6 +453,80 @@ def _fwhm_weights(fwhm_values: dict, accepted: list[Path]) -> np.ndarray:
     return weights
 
 
+def _select_by_quality(
+    paths: list[Path],
+    fwhm_values: dict[Path, float],
+    star_counts: dict[Path, int],
+    max_fwhm: Optional[float] = None,
+    max_fwhm_multiplier: Optional[float] = None,
+    min_star_fraction: Optional[float] = None,
+) -> tuple[list[Path], list[Path], dict]:
+    """The single frame-quality gate shared by every stacking path.
+
+    A frame is rejected when, relative to the session medians of the *measured*
+    frames, it is:
+      * too blurry — FWHM > max_fwhm (or > max_fwhm_multiplier × median FWHM), or
+      * too sparse — star count < min_star_fraction × median star count, or
+      * unmeasurable — FWHM 0.0 while its peers measured fine (noise-dominated).
+
+    Self-tunes to the night's seeing because thresholds are relative to the
+    medians. It is a no-op (keeps every frame) when no frame has a measurable
+    FWHM, so it can never reject everything on a host without photutils, and
+    when no criterion is active (all thresholds None).
+
+    Returns (accepted, rejected, summary). summary carries the resolved
+    thresholds/medians for logging and progress messages.
+    """
+    measured_fwhm = np.array([v for v in fwhm_values.values() if v > 0.0])
+    if measured_fwhm.size == 0:
+        return list(paths), [], {"gated": False}
+
+    median_fwhm = float(np.median(measured_fwhm))
+    if max_fwhm is None and max_fwhm_multiplier:
+        max_fwhm = median_fwhm * max_fwhm_multiplier
+
+    measured_stars = np.array([s for s in star_counts.values() if s > 0], dtype=float)
+    median_stars = float(np.median(measured_stars)) if measured_stars.size else None
+    min_stars = (
+        median_stars * min_star_fraction
+        if (median_stars is not None and min_star_fraction) else None
+    )
+
+    arcsec = _get_arcsec_per_pixel()
+    summary = {
+        "gated": max_fwhm is not None or min_stars is not None,
+        "median_fwhm": median_fwhm,
+        "max_fwhm": max_fwhm,
+        "median_stars": median_stars,
+        "min_stars": min_stars,
+        "arcsec": arcsec,
+    }
+    crit = []
+    if max_fwhm is not None:
+        crit.append(f'FWHM <= {max_fwhm * arcsec:.2f}"')
+    if min_stars is not None:
+        crit.append(f"stars >= {min_stars:.0f}")
+    summary["crit_str"] = " & ".join(crit) if crit else "no cut"
+
+    if not summary["gated"]:
+        return list(paths), [], summary
+
+    accepted: list[Path] = []
+    rejected: list[Path] = []
+    for p in paths:
+        f = fwhm_values.get(p, 0.0)
+        s = star_counts.get(p, 0)
+        if f <= 0.0:
+            rejected.append(p)
+        elif max_fwhm is not None and f > max_fwhm:
+            rejected.append(p)
+        elif min_stars is not None and s < min_stars:
+            rejected.append(p)
+        else:
+            accepted.append(p)
+    return accepted, rejected, summary
+
+
 # ---------------------------------------------------------------------------
 # Core stacking
 # ---------------------------------------------------------------------------
@@ -452,7 +539,8 @@ def stack(
     flat_paths: Optional[list[Path]] = None,
     sigma: float = 3.0,
     max_fwhm: Optional[float] = None,
-    max_fwhm_multiplier: Optional[float] = None,
+    max_fwhm_multiplier: Optional[float] = 1.25,
+    min_star_fraction: Optional[float] = 0.5,
     register: bool = True,
     progress_cb: Optional[Callable[[str], None]] = None,
     cancel_cb: Optional[Callable[[], bool]] = None,
@@ -467,20 +555,28 @@ def stack(
         dark_paths:   Dark calibration frames.
         flat_paths:   Flat calibration frames.
         sigma:        Rejection sigma for SIGMA_CLIP (default 3.0).
-        max_fwhm:     Reject frames whose FWHM (pixels) exceeds this value.
-                      Frames where FWHM cannot be measured are kept.
+        max_fwhm:     Reject frames whose FWHM (pixels) exceeds this absolute
+                      value. Overrides max_fwhm_multiplier when set.
         max_fwhm_multiplier:
-                      If set and max_fwhm is None, derive max_fwhm as
-                      multiplier × median(measured FWHM). Lets the caller say
-                      "reject frames worse than 1.5× the typical sub" without
-                      knowing the seeing in advance.
+                      Derive max_fwhm as multiplier × median(measured FWHM) when
+                      max_fwhm is None (default 1.25). Lets the caller say "reject
+                      frames worse than 1.25× the typical sub" without knowing the
+                      seeing in advance. Pass None to disable the FWHM cut.
+        min_star_fraction:
+                      Reject frames with fewer than this × median(star count)
+                      detected stars (default 0.5). Pass None to disable.
+
+    Frame selection goes through the shared _select_by_quality gate, the same
+    one the convergence/snr analysis uses, so "good frames" means the same thing
+    everywhere. Frames whose FWHM cannot be measured (while peers measured fine)
+    are rejected as noise-dominated.
 
     Returns:
         (stacked_array, info_dict)
 
         info_dict keys:
             n_frames     – number of frames that entered the stack
-            rejected     – list of Path objects that were rejected by max_fwhm
+            rejected     – list of Path objects rejected by the quality gate
             method       – name of the method used
             fwhm_values  – {str(path): fwhm_px} for every measured frame
     """
@@ -493,58 +589,54 @@ def stack(
     master_dark = build_master_dark(dark_paths or [], master_bias)
     master_flat = build_master_flat(flat_paths or [], master_bias, master_dark)
 
-    # Measure FWHM when needed
+    # Measure FWHM + star count (one detection pass) whenever a method needs
+    # FWHM weights or any quality criterion is active. Both come from the same
+    # _measure_fwhm_and_stars call, so star counts are free.
     need_fwhm = (
         method == StackMethod.FWHM_WEIGHTED
         or method == StackMethod.SIGMA_CLIP_FWHM
         or max_fwhm is not None
         or max_fwhm_multiplier is not None
+        or min_star_fraction is not None
     )
     fwhm_values: dict[Path, float] = {}
+    star_counts: dict[Path, int] = {}
     if need_fwhm:
-        _logger.info("Measuring FWHM for %d frames…", len(light_paths))
+        _logger.info("Measuring FWHM + star counts for %d frames…", len(light_paths))
         if progress_cb:
-            progress_cb(f"measuring FWHM for {len(light_paths)} frames…")
+            progress_cb(f"measuring FWHM + star counts for {len(light_paths)} frames…")
         for p in light_paths:
             _ckpt(cancel_cb)
-            fwhm_values[p] = _measure_fwhm(p)
-            _logger.debug("  %s → FWHM %.2f px", p.name, fwhm_values[p])
+            fwhm_values[p], star_counts[p] = _measure_fwhm_and_stars(p)
+            _logger.debug("  %s → FWHM %.2f px, %d stars", p.name, fwhm_values[p], star_counts[p])
 
-    if max_fwhm is None and max_fwhm_multiplier is not None:
-        measured = np.array([v for v in fwhm_values.values() if v > 0.0])
-        if measured.size > 0:
-            median_fwhm = float(np.median(measured))
-            max_fwhm = median_fwhm * max_fwhm_multiplier
-            _logger.info(
-                "max_fwhm auto-derived: median %.2f px × %.2f = %.2f px",
-                median_fwhm, max_fwhm_multiplier, max_fwhm,
-            )
-
-    # Reject frames that exceed max_fwhm (unmeasured frames are kept)
-    rejected: list[Path] = []
-    accepted: list[Path] = []
-    for p in light_paths:
-        fwhm = fwhm_values.get(p, 0.0)
-        if max_fwhm is not None and fwhm > 0.0 and fwhm > max_fwhm:
-            rejected.append(p)
-            _logger.info("Rejected %s (FWHM %.2f px > max %.2f px)", p.name, fwhm, max_fwhm)
-        else:
-            accepted.append(p)
+    # Shared quality gate — identical logic to the convergence/snr analysis.
+    accepted, rejected, q = _select_by_quality(
+        light_paths, fwhm_values, star_counts,
+        max_fwhm=max_fwhm,
+        max_fwhm_multiplier=max_fwhm_multiplier,
+        min_star_fraction=min_star_fraction,
+    )
 
     if not accepted:
         raise ValueError(
-            f"All {len(light_paths)} frames were rejected by max_fwhm={max_fwhm}"
+            f"All {len(light_paths)} frames were rejected by the quality gate "
+            f"({q.get('crit_str', 'n/a')})"
         )
 
+    if rejected:
+        _logger.info(
+            "Quality gate: rejected %d/%d frames (keep %s; median FWHM %.2f px, "
+            "median stars %s)",
+            len(rejected), len(light_paths), q["crit_str"], q["median_fwhm"],
+            f'{q["median_stars"]:.0f}' if q.get("median_stars") is not None else "n/a",
+        )
     if need_fwhm and progress_cb:
-        measured_vals = [v for v in fwhm_values.values() if v > 0.0]
-        arcsec = _get_arcsec_per_pixel()
-        if measured_vals:
-            median_px = float(np.median(measured_vals))
+        if q.get("median_fwhm") is not None:
             progress_cb(
-                f"FWHM done — median {median_px * arcsec:.2f}″, "
+                f'quality gate — median {q["median_fwhm"] * q["arcsec"]:.2f}", '
                 f"keeping {len(accepted)}/{len(light_paths)} frames"
-                + (f", rejected {len(rejected)} blurry" if rejected else "")
+                + (f", rejected {len(rejected)}" if rejected else "")
             )
         else:
             progress_cb(
@@ -734,7 +826,7 @@ def _write_stack(
     header["NFRAMES"] = (info["n_frames"], "Number of frames stacked")
     header.add_history(f"Stacked {info['n_frames']} frames with method {info['method']}")
     if info["rejected"]:
-        header.add_history(f"Rejected {len(info['rejected'])} frame(s) via max_fwhm={max_fwhm}")
+        header.add_history(f"Rejected {len(info['rejected'])} frame(s) by quality gate (FWHM/star count)")
     output_path.parent.mkdir(parents=True, exist_ok=True)
     fits.writeto(str(output_path), result, header, overwrite=True)
 
@@ -776,7 +868,8 @@ def _fib_counts(max_n: int) -> list[int]:
 
 def _prepare_for_convergence(
     paths: list[Path],
-    max_fwhm_multiplier: float = 1.5,
+    max_fwhm_multiplier: float = 1.25,
+    min_star_fraction: float = 0.5,
     register: bool = True,
     downscale_to: Optional[int] = 512,
     progress_cb: Optional[Callable[[str], None]] = None,
@@ -803,36 +896,51 @@ def _prepare_for_convergence(
         raise ValueError("No paths provided")
 
     if progress_cb:
-        progress_cb(f"measuring FWHM for {len(paths)} frames…")
+        progress_cb(f"measuring FWHM + star counts for {len(paths)} frames…")
     tick = max(1, len(paths) // 5)
     with ThreadPoolExecutor(max_workers=4) as pool:
-        futs = {pool.submit(_measure_fwhm, p): p for p in paths}
+        futs = {pool.submit(_measure_fwhm_and_stars, p): p for p in paths}
         fwhm_values: dict[Path, float] = {}
+        star_counts: dict[Path, int] = {}
         for i, fut in enumerate(as_completed(futs), 1):
-            fwhm_values[futs[fut]] = fut.result()
+            p = futs[fut]
+            fwhm_values[p], star_counts[p] = fut.result()
             if progress_cb and i % tick == 0:
-                progress_cb(f"FWHM: {i}/{len(paths)} frames…")
+                progress_cb(f"FWHM + stars: {i}/{len(paths)} frames…")
     _ckpt(cancel_cb)
 
-    accepted = list(paths)
-    measured = np.array([v for v in fwhm_values.values() if v > 0.0])
-    if measured.size > 0 and max_fwhm_multiplier is not None:
-        max_fwhm = float(np.median(measured)) * max_fwhm_multiplier
-        accepted = [p for p in paths
-                    if fwhm_values.get(p, 0.0) == 0.0 or fwhm_values[p] <= max_fwhm]
-        n_rejected = len(paths) - len(accepted)
-        if n_rejected:
-            _logger.info("Convergence prep: rejected %d blurry frames", n_rejected)
-            if progress_cb:
-                progress_cb(f"FWHM done — rejected {n_rejected} blurry, {len(accepted)} remain")
-        elif progress_cb:
-            arcsec = _get_arcsec_per_pixel()
-            progress_cb(f"FWHM done — median {float(np.median(measured)) * arcsec:.2f}″, all {len(accepted)} frames kept")
+    # Shared quality gate (see _select_by_quality): reject blurry / sparse /
+    # unmeasurable subs relative to the session median. Same logic the real
+    # stack() uses, so the convergence analysis and the stacked output agree on
+    # which frames are good.
+    accepted, rejected, q = _select_by_quality(
+        paths, fwhm_values, star_counts,
+        max_fwhm_multiplier=max_fwhm_multiplier,
+        min_star_fraction=min_star_fraction,
+    )
+    if not q.get("gated"):
+        if progress_cb:
+            progress_cb(f"FWHM unmeasurable — using all {len(accepted)} frames")
+    elif rejected:
+        _logger.info(
+            "Convergence prep: rejected %d/%d frames (keep %s; median FWHM "
+            "%.2f px, median stars %s)",
+            len(rejected), len(paths), q["crit_str"], q["median_fwhm"],
+            f'{q["median_stars"]:.0f}' if q["median_stars"] is not None else "n/a",
+        )
+        if progress_cb:
+            progress_cb(
+                f"quality cut — rejected {len(rejected)}/{len(paths)} "
+                f"(keep {q['crit_str']}), {len(accepted)} remain"
+            )
     elif progress_cb:
-        progress_cb(f"FWHM unmeasurable — using all {len(accepted)} frames")
+        progress_cb(
+            f'quality cut — median {q["median_fwhm"] * q["arcsec"]:.2f}", '
+            f"all {len(accepted)} frames kept"
+        )
 
     if not accepted:
-        raise ValueError("All frames rejected by FWHM threshold")
+        raise ValueError("All frames rejected by FWHM/star-count threshold")
 
     if not register or not _REGISTER_AVAILABLE or len(accepted) < 2:
         if progress_cb:
@@ -933,7 +1041,8 @@ def convergence_curve(
     output_path: Optional[Path] = None,
     golden_output_path: Optional[Path] = None,
     n_trials: int = 20,
-    max_fwhm_multiplier: float = 1.5,
+    max_fwhm_multiplier: float = 1.25,
+    min_star_fraction: float = 0.5,
     register: bool = True,
     progress_cb: Optional[Callable[[str], None]] = None,
     cancel_cb: Optional[Callable[[], bool]] = None,
@@ -952,7 +1061,10 @@ def convergence_curve(
         filter_name:         Label used in the plot title.
         output_path:         If given, save the plot as a JPEG to this path.
         n_trials:            Random subsets to average per frame count (default 20).
-        max_fwhm_multiplier: Reject frames worse than this × median FWHM (default 1.5).
+        max_fwhm_multiplier: Reject frames whose FWHM exceeds this × median FWHM
+                             (default 1.25). Unmeasured frames are also rejected.
+        min_star_fraction:   Reject frames with fewer than this × median star
+                             count (default 0.5).
         register:            Register frames before stacking (default True).
         progress_cb:         Called with a status string at each major milestone.
 
@@ -972,6 +1084,7 @@ def convergence_curve(
     frames, accepted, fwhm_values = _prepare_for_convergence(
         paths,
         max_fwhm_multiplier=max_fwhm_multiplier,
+        min_star_fraction=min_star_fraction,
         register=register,
         progress_cb=progress_cb,
         cancel_cb=cancel_cb,

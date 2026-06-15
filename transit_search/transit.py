@@ -1189,7 +1189,6 @@ def run_transit_search(
         _notify(f"prep: registering {len(paths)} '{filter_name}' frames at full res…")
         frames, accepted, fwhm_values = stacker._prepare_for_convergence(
             paths,
-            max_fwhm_multiplier=1.5,
             register=True,
             downscale_to=None,
             progress_cb=progress_cb,
