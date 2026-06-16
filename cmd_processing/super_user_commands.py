@@ -2409,6 +2409,14 @@ def _hr_run(words: list[str]) -> None:
             social_server.post_social_message(
                 "hr: need two different filters to form a colour")
             return
+        # Normalise to wavelength order (blue→red). build_cmd pins the "blue"
+        # filter onto Gaia BP and the "red" onto RP, so a reversed pair (e.g.
+        # `hr m92 r b`) miscalibrates and flips the colour axis. The auto-pick
+        # path already sorts; do the same here so explicit order can't matter.
+        if cmd_diagram.filter_rank(blue) > cmd_diagram.filter_rank(red):
+            blue, red = red, blue
+            social_server.post_social_message(
+                f"hr: swapped to wavelength order — blue {blue}, red {red}")
     else:
         pair = cmd_diagram.choose_filters(by_filter, min_frames=2)
         if pair is None:

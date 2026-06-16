@@ -42,7 +42,8 @@ _FILTER_WAVELENGTH_RANK = {
 }
 
 
-def _filter_rank(name: str) -> int:
+def filter_rank(name: str) -> int:
+    """Blue→red ordering rank for a filter name (lower = bluer). Unknown → 4."""
     return _FILTER_WAVELENGTH_RANK.get(name.strip().upper(), 4)
 
 
@@ -60,8 +61,8 @@ def choose_filters(
         return None
     # Two most-imaged filters, then order by wavelength rank.
     top2 = sorted(usable, key=lambda f: len(usable[f]), reverse=True)[:2]
-    blue, red = sorted(top2, key=_filter_rank)
-    if _filter_rank(blue) == _filter_rank(red):
+    blue, red = sorted(top2, key=filter_rank)
+    if filter_rank(blue) == filter_rank(red):
         return None
     return blue, red
 
