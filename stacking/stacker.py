@@ -390,6 +390,25 @@ def _measure_fwhm_and_stars(path: Path) -> tuple[float, int]:
     return 0.0, 0
 
 
+def _split_cached(
+    paths: list[Path],
+    precomputed: "Optional[dict[Path, tuple[float, int]]]",
+) -> "tuple[dict[Path, tuple[float, int]], list[Path]]":
+    """Split *paths* into cache hits and misses against *precomputed*.
+
+    *precomputed* maps a frame path to its already-measured (FWHM px, star
+    count) — typically loaded from a `stats`/`bad` frame_stats.json cache so the
+    stacker doesn't redo the detection pass. Returns ({path: (fwhm_px, count)}
+    for hits, [paths still needing measurement]). A None/empty map means every
+    path is a miss (unchanged behaviour).
+    """
+    if not precomputed:
+        return {}, list(paths)
+    hits = {p: precomputed[p] for p in paths if p in precomputed}
+    misses = [p for p in paths if p not in precomputed]
+    return hits, misses
+
+
 def _combine_tile(
     cube_tile: np.ndarray,
     method: "StackMethod",
@@ -544,6 +563,7 @@ def stack(
     register: bool = True,
     progress_cb: Optional[Callable[[str], None]] = None,
     cancel_cb: Optional[Callable[[], bool]] = None,
+    precomputed_fwhm_stars: Optional[dict[Path, tuple[float, int]]] = None,
 ) -> tuple[np.ndarray, dict]:
     """
     Stack a list of FITS light frames with optional calibration and FWHM weighting.
@@ -565,6 +585,12 @@ def stack(
         min_star_fraction:
                       Reject frames with fewer than this × median(star count)
                       detected stars (default 0.5). Pass None to disable.
+        precomputed_fwhm_stars:
+                      Optional {path: (fwhm_px, star_count)} of already-measured
+                      frames (e.g. from a `stats`/`bad` frame_stats.json cache),
+                      so the detection pass is skipped for cached frames. Frames
+                      absent from the map are measured normally. Defaults to None
+                      (measure everything, unchanged behaviour).
 
     Frame selection goes through the shared _select_by_quality gate, the same
     one the convergence/snr analysis uses, so "good frames" means the same thing
@@ -602,13 +628,20 @@ def stack(
     fwhm_values: dict[Path, float] = {}
     star_counts: dict[Path, int] = {}
     if need_fwhm:
-        _logger.info("Measuring FWHM + star counts for %d frames…", len(light_paths))
-        if progress_cb:
-            progress_cb(f"measuring FWHM + star counts for {len(light_paths)} frames…")
-        for p in light_paths:
-            _ckpt(cancel_cb)
-            fwhm_values[p], star_counts[p] = _measure_fwhm_and_stars(p)
-            _logger.debug("  %s → FWHM %.2f px, %d stars", p.name, fwhm_values[p], star_counts[p])
+        hits, misses = _split_cached(light_paths, precomputed_fwhm_stars)
+        for p, (fw, sc) in hits.items():
+            fwhm_values[p], star_counts[p] = fw, sc
+        if hits:
+            _logger.info("Reused %d/%d cached FWHM/star measurements",
+                         len(hits), len(light_paths))
+        if misses:
+            _logger.info("Measuring FWHM + star counts for %d frames…", len(misses))
+            if progress_cb:
+                progress_cb(f"measuring FWHM + star counts for {len(misses)} frames…")
+            for p in misses:
+                _ckpt(cancel_cb)
+                fwhm_values[p], star_counts[p] = _measure_fwhm_and_stars(p)
+                _logger.debug("  %s → FWHM %.2f px, %d stars", p.name, fwhm_values[p], star_counts[p])
 
     # Shared quality gate — identical logic to the convergence/snr analysis.
     accepted, rejected, q = _select_by_quality(
@@ -874,6 +907,7 @@ def _prepare_for_convergence(
     downscale_to: Optional[int] = 512,
     progress_cb: Optional[Callable[[str], None]] = None,
     cancel_cb: Optional[Callable[[], bool]] = None,
+    precomputed_fwhm_stars: Optional[dict[Path, tuple[float, int]]] = None,
 ) -> tuple[list[np.ndarray], list[Path], dict[Path, float]]:
     """
     Load, FWHM-filter, register, and downscale a set of FITS paths for convergence
@@ -895,18 +929,24 @@ def _prepare_for_convergence(
     if not paths:
         raise ValueError("No paths provided")
 
-    if progress_cb:
-        progress_cb(f"measuring FWHM + star counts for {len(paths)} frames…")
-    tick = max(1, len(paths) // 5)
-    with ThreadPoolExecutor(max_workers=4) as pool:
-        futs = {pool.submit(_measure_fwhm_and_stars, p): p for p in paths}
-        fwhm_values: dict[Path, float] = {}
-        star_counts: dict[Path, int] = {}
-        for i, fut in enumerate(as_completed(futs), 1):
-            p = futs[fut]
-            fwhm_values[p], star_counts[p] = fut.result()
-            if progress_cb and i % tick == 0:
-                progress_cb(f"FWHM + stars: {i}/{len(paths)} frames…")
+    hits, misses = _split_cached(paths, precomputed_fwhm_stars)
+    fwhm_values: dict[Path, float] = {}
+    star_counts: dict[Path, int] = {}
+    for p, (fw, sc) in hits.items():
+        fwhm_values[p], star_counts[p] = fw, sc
+    if hits:
+        _logger.info("Reused %d/%d cached FWHM/star measurements", len(hits), len(paths))
+    if misses:
+        if progress_cb:
+            progress_cb(f"measuring FWHM + star counts for {len(misses)} frames…")
+        tick = max(1, len(misses) // 5)
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            futs = {pool.submit(_measure_fwhm_and_stars, p): p for p in misses}
+            for i, fut in enumerate(as_completed(futs), 1):
+                p = futs[fut]
+                fwhm_values[p], star_counts[p] = fut.result()
+                if progress_cb and i % tick == 0:
+                    progress_cb(f"FWHM + stars: {i}/{len(misses)} frames…")
     _ckpt(cancel_cb)
 
     # Shared quality gate (see _select_by_quality): reject blurry / sparse /
@@ -1046,6 +1086,7 @@ def convergence_curve(
     register: bool = True,
     progress_cb: Optional[Callable[[str], None]] = None,
     cancel_cb: Optional[Callable[[], bool]] = None,
+    precomputed_fwhm_stars: Optional[dict[Path, tuple[float, int]]] = None,
 ) -> tuple[list[int], list[float], float]:
     """
     Measure how quickly stacking converges to the golden (all-frames) stack.
@@ -1088,6 +1129,7 @@ def convergence_curve(
         register=register,
         progress_cb=progress_cb,
         cancel_cb=cancel_cb,
+        precomputed_fwhm_stars=precomputed_fwhm_stars,
     )
 
     n = len(frames)

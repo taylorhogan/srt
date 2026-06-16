@@ -2324,6 +2324,46 @@ def _snr_run_locked(words: list[str]) -> None:
         )
 
 
+def _load_precomputed_fwhm_stars(
+    dso_dir: Path, paths: list[Path], arcsec_per_pixel: float
+) -> dict[Path, tuple[float, int]]:
+    """Build a {path: (fwhm_px, star_count)} map from a DSO's frame_stats.json.
+
+    Lets the stacker reuse the FWHM/star measurements already cached by the
+    `stats`/`bad` commands instead of redoing the detection pass. The cache
+    stores FWHM in arcseconds; the stacker works in pixels, so convert with
+    *arcsec_per_pixel*. Only paths present in *paths* are returned; a missing,
+    unreadable, or value-less cache yields an empty map (stacker measures
+    normally). Matching is by normalised absolute path so cache keys written on
+    a different run still line up.
+    """
+    import json as _json
+
+    cache_path = dso_dir / "frame_stats.json"
+    if not cache_path.exists() or not arcsec_per_pixel:
+        return {}
+    try:
+        with open(cache_path) as fh:
+            rows = _json.load(fh)
+    except Exception:
+        _logger.warning("hr: could not read %s", cache_path, exc_info=True)
+        return {}
+    by_norm = {
+        os.path.normcase(os.path.abspath(r["path"])): r
+        for r in rows
+        if isinstance(r, dict) and r.get("path")
+    }
+    out: dict[Path, tuple[float, int]] = {}
+    for p in paths:
+        r = by_norm.get(os.path.normcase(os.path.abspath(str(p))))
+        if not r:
+            continue
+        fa = r.get("fwhm_arcsec")
+        fwhm_px = float(fa) / arcsec_per_pixel if fa else 0.0
+        out[p] = (fwhm_px, int(r.get("star_count") or 0))
+    return out
+
+
 def hr_cmd(words: list[str], account: str) -> None:
     """Build a Gaia-calibrated colour–magnitude (H–R) diagram. Background job.
 
@@ -2434,10 +2474,18 @@ def _hr_run(words: list[str]) -> None:
     _progress(f"building CMD from {len(by_filter[blue])} {blue} + "
               f"{len(by_filter[red])} {red} subs…")
 
+    # Reuse FWHM/star measurements cached by `stats`/`bad` so the stacker skips
+    # redoing the detection pass on frames it already knows.
+    precomputed = _load_precomputed_fwhm_stars(
+        dso_dir, by_filter[blue] + by_filter[red], arcsec)
+    if precomputed:
+        _progress(f"reusing {len(precomputed)} cached FWHM/star measurements")
+
     try:
         stats = cmd_diagram.build_cmd(
             by_filter[blue], by_filter[red], blue, red, dso_dir.name, out,
             astap_exe, arcsec, progress_cb=_progress, cancel_cb=_cancel,
+            precomputed_fwhm_stars=precomputed,
         )
     except jobs.Cancelled:
         raise

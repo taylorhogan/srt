@@ -172,6 +172,7 @@ def build_cmd(
     gaia_mag_limit: float = 19.0,
     progress_cb: Optional[Callable[[str], None]] = None,
     cancel_cb: Optional[Callable[[], bool]] = None,
+    precomputed_fwhm_stars: Optional[dict] = None,
 ) -> dict:
     """Build a Gaia-calibrated colour–magnitude diagram and save it as a JPEG.
 
@@ -201,7 +202,7 @@ def build_cmd(
         _say(f"stacking {len(paths)} {name} subs…")
         data, _info = stacker.stack(
             paths, register=True, progress_cb=lambda m, n=name: _say(f"[{n}] {m}"),
-            cancel_cb=cancel_cb,
+            cancel_cb=cancel_cb, precomputed_fwhm_stars=precomputed_fwhm_stars,
         )
         stacks[name] = data
         headers[name] = fits.getheader(paths[0])
