@@ -331,38 +331,44 @@ def _plot_cmd(color, mag, gaia_color, gaia_g, blue_name, red_name, dso_name,
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
+    from matplotlib.lines import Line2D
 
-    BG, MEASURED, GAIA, FG = "#0d1117", "#58a6ff", "#30475e", "#c9d1d9"
+    BG, GAIA, FG = "#0d1117", "#30475e", "#c9d1d9"
+    CMAP = "RdYlBu_r"  # blue (small B−R, hot) → red (large B−R, cool)
+
     finite_g = np.isfinite(gaia_color) & np.isfinite(gaia_g)
     g_color, g_mag = gaia_color[finite_g], gaia_g[finite_g]
+    color, mag = np.asarray(color), np.asarray(mag)
+
+    # Shared colour/magnitude ranges over both populations: the panels line up,
+    # and a measured point's hue matches its x-position (same scale as the axis).
+    all_color = np.concatenate([color, g_color]) if g_color.size else color
+    all_mag = np.concatenate([mag, g_mag]) if g_mag.size else mag
+    cmin, cmax = (float(np.nanmin(all_color)), float(np.nanmax(all_color))) if all_color.size else (0.0, 1.0)
+    mmin, mmax = (float(np.nanmin(all_mag)), float(np.nanmax(all_mag))) if all_mag.size else (0.0, 1.0)
 
     def _draw_gaia(ax, alpha):
         if g_color.size:
-            ax.scatter(g_color, g_mag, s=6, c=GAIA, alpha=alpha, linewidths=0,
-                       label=f"Gaia field ({g_color.size} stars)")
+            ax.scatter(g_color, g_mag, s=6, c=GAIA, alpha=alpha, linewidths=0)
 
     def _draw_measured(ax):
-        ax.scatter(color, mag, s=14, c=MEASURED, alpha=0.85, linewidths=0,
-                   label=f"measured ({color.size} stars)")
+        # False-colour each star by its colour index: blue = hot, red = cool.
+        return ax.scatter(color, mag, s=14, c=color, cmap=CMAP, vmin=cmin, vmax=cmax,
+                          alpha=0.9, linewidths=0)
 
     fig, axes = plt.subplots(1, 3, figsize=(18, 8), dpi=110,
-                             sharex=True, sharey=True)
+                             sharex=True, sharey=True, constrained_layout=True)
     fig.patch.set_facecolor(BG)
 
-    _draw_measured(axes[0])
-    axes[0].set_title(f"Measured ({observatory_name})", color="#e6edf3")
+    sc = _draw_measured(axes[0])
+    axes[0].set_title(f"Measured ({observatory_name}) — {color.size} stars", color="#e6edf3")
     _draw_gaia(axes[1], 0.6)
-    axes[1].set_title("Gaia DR3 reference", color="#e6edf3")
+    axes[1].set_title(f"Gaia DR3 reference — {g_color.size} stars", color="#e6edf3")
     _draw_gaia(axes[2], 0.45)          # faint, behind…
     _draw_measured(axes[2])            # …measured on top
     axes[2].set_title("Combined (overlay)", color="#e6edf3")
 
-    # Shared axis range from the union of both populations, so the panels line up.
-    all_color = np.concatenate([np.asarray(color), g_color]) if g_color.size else np.asarray(color)
-    all_mag = np.concatenate([np.asarray(mag), g_mag]) if g_mag.size else np.asarray(mag)
     if all_color.size:
-        cmin, cmax = np.nanmin(all_color), np.nanmax(all_color)
-        mmin, mmax = np.nanmin(all_mag), np.nanmax(all_mag)
         cpad, mpad = 0.05 * (cmax - cmin + 1e-6), 0.05 * (mmax - mmin + 1e-6)
         axes[0].set_xlim(cmin - cpad, cmax + cpad)
         axes[0].set_ylim(mmax + mpad, mmin - mpad)  # inverted: brighter at top
@@ -376,14 +382,24 @@ def _plot_cmd(color, mag, gaia_color, gaia_g, blue_name, red_name, dso_name,
         for spine in ax.spines.values():
             spine.set_color("#30363d")
         ax.grid(True, color="#21262d", linewidth=0.6)
-        leg = ax.legend(facecolor="#161b22", edgecolor="#30363d", labelcolor=FG,
-                        fontsize=9, loc="upper right")
+
+    # Grey proxy legend on the combined panel so the backdrop is labelled.
+    if g_color.size:
+        proxy = Line2D([], [], marker="o", linestyle="", markersize=6,
+                       markerfacecolor=GAIA, markeredgecolor="none", label="Gaia DR3 field")
+        leg = axes[2].legend(handles=[proxy], facecolor="#161b22", edgecolor="#30363d",
+                             labelcolor=FG, fontsize=9, loc="upper right")
         leg.get_frame().set_alpha(0.9)
 
+    # Shared colourbar showing the measured stars' temperature false-colour.
+    cbar = fig.colorbar(sc, ax=axes.ravel().tolist(), fraction=0.025, pad=0.01)
+    cbar.set_label(f"measured star colour  {blue_name} − {red_name}   "
+                   f"(blue = hot  →  red = cool)", color=FG)
+    cbar.ax.tick_params(colors="#8b949e")
+    cbar.outline.set_edgecolor("#30363d")
+
     fig.suptitle(f"Colour–magnitude diagram — {dso_name}   ·   "
-                 f"{n_gaia} Gaia calibration stars",
-                 color="#e6edf3", fontsize=14)
-    fig.tight_layout(rect=(0, 0, 1, 0.96))
+                 f"{n_gaia} Gaia calibration stars", color="#e6edf3", fontsize=14)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(output_path, format="jpeg", dpi=150, bbox_inches="tight",
                 facecolor=fig.get_facecolor())
