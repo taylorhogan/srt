@@ -1302,16 +1302,24 @@ def _stack_run(words: list[str]) -> None:
         )
 
 
-_BAD_FWHM_ARCSEC = 3.5
-_BAD_ECC = 0.45
+# Frame quality is judged relative to the per-filter median rather than against
+# absolute thresholds, so the cuts adapt to the night's seeing and each filter's
+# intrinsic star yield. A frame fails if it has no stars, fewer than half the
+# median star count, more than 1.5x the median FWHM, or more than 1.5x the median
+# eccentricity (all medians taken within the frame's own filter).
+_BAD_STAR_FRACTION = 0.5   # reject frames below this fraction of the median star count
+_BAD_FWHM_FACTOR = 1.5     # reject frames above this multiple of the median FWHM
+_BAD_ECC_FACTOR = 1.5      # reject frames above this multiple of the median eccentricity
 
 
 def bad_cmd(words: list[str], account: str) -> None:
     """Rename LIGHT frames that fail quality thresholds to .bad.
 
-    Failing == 0 stars detected OR FWHM > 3.5″ OR eccentricity > 0.45.
+    Quality is judged per-filter, relative to that filter's median. A frame
+    fails if it has no stars, fewer than 50% of the median star count, more
+    than 1.5x the median FWHM, or more than 1.5x the median eccentricity.
     Renames `<frame>.fits` to `<frame>.fits.bad` so they're skipped by
-    the stacker (which only globs *.fits).
+    the stacker (which only globs *.fits). Reverse with `dab`.
 
     Reuses the frame_stats.json cache populated by the `stats` command;
     any uncached frames are measured on the spot and written back to the
@@ -1466,26 +1474,6 @@ def _bad_run(words: list[str]) -> None:
             except Exception:
                 pass
 
-    # Decide which frames are bad. Legacy `stats` cache entries don't carry
-    # `star_count`; in those rows, `eccentricity is None` is the project's
-    # marker for "no stars detected" (see _image_stats_run).
-    bad: list[tuple[Path, str]] = []  # (path, reason)
-    for f in fits_files:
-        entry = cached_by_path.get(str(f), {})
-        fwhm = entry.get("fwhm_arcsec")
-        ecc = entry.get("eccentricity")
-        if "star_count" in entry:
-            star_count = entry["star_count"]
-        else:
-            star_count = 0 if ecc is None else None
-
-        if star_count is not None and star_count < 5:
-            bad.append((f, f"{star_count} stars < 5"))
-        elif fwhm is not None and fwhm > _BAD_FWHM_ARCSEC:
-            bad.append((f, f"FWHM {fwhm:.2f}\" > {_BAD_FWHM_ARCSEC}\""))
-        elif ecc is not None and ecc > _BAD_ECC:
-            bad.append((f, f"ecc {ecc:.2f} > {_BAD_ECC}"))
-
     from stacking import stacker as _stacker
 
     def _filter_for(f: Path) -> str:
@@ -1495,12 +1483,74 @@ def _bad_run(words: list[str]) -> None:
             return str(name).strip()
         return _stacker.read_filter(f)
 
+    # Pull each frame's cached measurements. Legacy `stats` cache entries don't
+    # carry `star_count`; in those rows, `eccentricity is None` is the project's
+    # marker for "no stars detected" (see _image_stats_run).
+    def _measures(f: Path) -> tuple[Optional[int], Optional[float], Optional[float]]:
+        entry = cached_by_path.get(str(f), {})
+        fwhm = entry.get("fwhm_arcsec")
+        ecc = entry.get("eccentricity")
+        if "star_count" in entry:
+            star_count = entry["star_count"]
+        else:
+            star_count = 0 if ecc is None else None
+        return star_count, fwhm, ecc
+
+    filt_by_frame: dict[Path, str] = {f: (_filter_for(f) or "Unknown") for f in fits_files}
+
+    # Quality is judged relative to the per-filter median, so blue frames are
+    # compared against blue and red against red (star counts and FWHM differ a
+    # lot between filters). Medians are taken over frames that actually carry a
+    # measurement (star_count > 0; FWHM/ecc not None).
+    from statistics import median as _median
+
+    star_samples: dict[str, list[int]] = {}
+    fwhm_samples: dict[str, list[float]] = {}
+    ecc_samples: dict[str, list[float]] = {}
+    for f in fits_files:
+        fn = filt_by_frame[f]
+        sc, fwhm, ecc = _measures(f)
+        if sc:                       # > 0
+            star_samples.setdefault(fn, []).append(sc)
+        if fwhm is not None:
+            fwhm_samples.setdefault(fn, []).append(fwhm)
+        if ecc is not None:
+            ecc_samples.setdefault(fn, []).append(ecc)
+
+    med_stars = {fn: _median(v) for fn, v in star_samples.items() if v}
+    med_fwhm = {fn: _median(v) for fn, v in fwhm_samples.items() if v}
+    med_ecc = {fn: _median(v) for fn, v in ecc_samples.items() if v}
+
+    # Decide which frames are bad against their filter's median thresholds.
+    bad: list[tuple[Path, str]] = []  # (path, reason)
+    for f in fits_files:
+        fn = filt_by_frame[f]
+        star_count, fwhm, ecc = _measures(f)
+        m_stars = med_stars.get(fn)
+        m_fwhm = med_fwhm.get(fn)
+        m_ecc = med_ecc.get(fn)
+
+        if star_count == 0:
+            bad.append((f, "no stars detected"))
+        elif (star_count is not None and m_stars is not None
+              and star_count < _BAD_STAR_FRACTION * m_stars):
+            bad.append((f, f"{star_count} stars < {_BAD_STAR_FRACTION:.0%} of "
+                           f"{fn} median {m_stars:.0f}"))
+        elif (fwhm is not None and m_fwhm is not None
+              and fwhm > _BAD_FWHM_FACTOR * m_fwhm):
+            bad.append((f, f"FWHM {fwhm:.2f}\" > {_BAD_FWHM_FACTOR}x "
+                           f"{fn} median {m_fwhm:.2f}\""))
+        elif (ecc is not None and m_ecc is not None
+              and ecc > _BAD_ECC_FACTOR * m_ecc):
+            bad.append((f, f"ecc {ecc:.2f} > {_BAD_ECC_FACTOR}x "
+                           f"{fn} median {m_ecc:.2f}"))
+
     # Per-filter totals before/after the would-be rename
     total_by_filter: dict[str, int] = {}
     bad_by_filter: dict[str, int] = {}
     bad_set = {p for p, _ in bad}
     for f in fits_files:
-        fn = _filter_for(f) or "Unknown"
+        fn = filt_by_frame[f]
         total_by_filter[fn] = total_by_filter.get(fn, 0) + 1
         if f in bad_set:
             bad_by_filter[fn] = bad_by_filter.get(fn, 0) + 1
@@ -1514,8 +1564,9 @@ def _bad_run(words: list[str]) -> None:
 
     if not bad:
         social_server.post_social_message(
-            f"{dso_dir.name}: all {len(fits_files)} frames pass thresholds "
-            f"(FWHM≤{_BAD_FWHM_ARCSEC}\", ecc≤{_BAD_ECC}, stars≥5)\n"
+            f"{dso_dir.name}: all {len(fits_files)} frames pass per-filter "
+            f"thresholds (stars≥{_BAD_STAR_FRACTION:.0%} median, "
+            f"FWHM≤{_BAD_FWHM_FACTOR}x median, ecc≤{_BAD_ECC_FACTOR}x median)\n"
             f"{_remaining_summary()}"
         )
         return
@@ -1568,6 +1619,123 @@ def _bad_run(words: list[str]) -> None:
         )
 
 
+def dab_cmd(words: list[str], account: str) -> None:
+    """Restore frames previously flagged by `bad` back to active (reverse of `bad`).
+
+    Renames `<frame>.fits.bad` back to `<frame>.fits` so the stacker picks them
+    up again. `dab` is `bad` backwards, and so is what it does.
+
+    Usage:
+        dab                 — dry-run on last-imaged DSO
+        dab <dso>           — dry-run on named DSO
+        dab <dso> go        — actually restore (default is dry-run)
+        dab go              — dry-run on last DSO (use `dab * go` to restore)
+    """
+    jobs.spawn(_dab_run, args=(words,))
+
+
+def _dab_run(words: list[str]) -> None:
+    _job_id = jobs.get_current_job()
+
+    cfg = config.data()
+    image_dir = Path(cfg["nina"]["image_dir"])
+
+    # Parse args: optional <dso> and optional trailing "go"
+    extra = list(words[2:]) if len(words) > 2 else []
+    do_rename = False
+    if extra and extra[-1].lower() == "go":
+        do_rename = True
+        extra = extra[:-1]
+    dso_arg = " ".join(extra).strip() or None
+    if dso_arg == "*":
+        dso_arg = None
+
+    def _is_light_bad(f: Path) -> bool:
+        # <frame>.fits.bad living directly under a LIGHT directory
+        return f.parent.name.upper() == "LIGHT"
+
+    def _find_dso_dir(path: Path) -> Optional[Path]:
+        d = path.parent
+        while d.parent != image_dir and d.parent != d:
+            d = d.parent
+        return d if d.parent == image_dir else None
+
+    def _find_dso_dir_by_name(name: str) -> Optional[Path]:
+        target = name.lower().replace(" ", "").replace("_", "")
+        candidates = [
+            d for d in image_dir.iterdir()
+            if d.is_dir() and target in d.name.lower().replace(" ", "").replace("_", "")
+        ]
+        if not candidates:
+            return None
+        if len(candidates) == 1:
+            return candidates[0]
+        def _latest(d: Path) -> float:
+            try:
+                return max(f.stat().st_mtime for f in d.rglob("*.fits.bad") if _is_light_bad(f))
+            except ValueError:
+                return 0.0
+        return max(candidates, key=_latest)
+
+    if dso_arg:
+        dso_dir = _find_dso_dir_by_name(dso_arg)
+        if dso_dir is None:
+            social_server.post_social_message(f"No image directory found for '{dso_arg}'")
+            return
+    else:
+        all_bad = sorted(
+            (f for f in image_dir.rglob("*.fits.bad") if _is_light_bad(f)),
+            key=lambda f: f.stat().st_mtime,
+        )
+        if not all_bad:
+            social_server.post_social_message("No .bad frames found")
+            return
+        dso_dir = _find_dso_dir(all_bad[-1])
+
+    bad_files = sorted(
+        f for f in dso_dir.rglob("*.fits.bad") if _is_light_bad(f)
+    ) if dso_dir else []
+    if not bad_files:
+        social_server.post_social_message(f"{dso_dir.name}: no .bad frames to restore")
+        return
+
+    verb = "Restored" if do_rename else "Would restore"
+    lines = [f"{verb} {len(bad_files)} flagged frame(s) in {dso_dir.name}:"]
+    for f in bad_files[:40]:
+        lines.append(f"  {f.name} → {f.with_suffix('').name}")
+    if len(bad_files) > 40:
+        lines.append(f"  …and {len(bad_files) - 40} more")
+    if not do_rename:
+        lines.append(f"Re-run as `dab {dso_arg or '*'} go` to actually restore.")
+    social_server.post_social_message("\n".join(lines))
+
+    if not do_rename:
+        return
+
+    failed: list[tuple[Path, str]] = []
+    restored = 0
+    for f in bad_files:
+        jobs.raise_if_cancelled(_job_id)
+        target = f.with_suffix("")  # strip the trailing .bad → <frame>.fits
+        try:
+            if target.exists():
+                failed.append((f, "active frame already exists"))
+                continue
+            f.rename(target)
+            restored += 1
+        except Exception as exc:
+            failed.append((f, str(exc)))
+
+    social_server.post_social_message(
+        f"{dso_dir.name}: restored {restored}/{len(bad_files)} frame(s)."
+    )
+    if failed:
+        social_server.post_social_message(
+            f"Restore skipped/failed for {len(failed)} frame(s); first: "
+            f"{failed[0][0].name} — {failed[0][1]}"
+        )
+
+
 def get_super_user_commands() -> dict[str, Callable]:
     """Return the command-name → handler mapping for all super-user commands."""
     return {
@@ -1595,6 +1763,7 @@ def get_super_user_commands() -> dict[str, Callable]:
         "drift": drift_cmd,
         "stack": stack_cmd,
         "bad": bad_cmd,
+        "dab": dab_cmd,
     }
 
 

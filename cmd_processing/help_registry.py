@@ -215,7 +215,7 @@ HELP: dict[str, dict] = {
     },
     "bad": {
         "category": "super",
-        "summary": "Flag (and optionally rename) LIGHT frames that fail quality thresholds.",
+        "summary": "Flag (and optionally rename) LIGHT frames that fail per-filter median quality thresholds.",
         "usage": [
             "bad",
             "bad <dso>",
@@ -223,6 +223,17 @@ HELP: dict[str, dict] = {
             "bad go",
         ],
         "examples": ["bad m31", "bad m31 go"],
+    },
+    "dab": {
+        "category": "super",
+        "summary": "Restore frames previously flagged by `bad` back to active (reverse of `bad`).",
+        "usage": [
+            "dab",
+            "dab <dso>",
+            "dab <dso> go",
+            "dab go",
+        ],
+        "examples": ["dab m31", "dab m31 go"],
     },
     "dbb": {
         "category": "super",
