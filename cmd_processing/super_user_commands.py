@@ -2486,6 +2486,7 @@ def _hr_run(words: list[str]) -> None:
             by_filter[blue], by_filter[red], blue, red, dso_dir.name, out,
             astap_exe, arcsec, progress_cb=_progress, cancel_cb=_cancel,
             precomputed_fwhm_stars=precomputed,
+            observatory_name=cfg["location"].get("observatory_name", "this telescope"),
         )
     except jobs.Cancelled:
         raise

@@ -173,6 +173,7 @@ def build_cmd(
     progress_cb: Optional[Callable[[str], None]] = None,
     cancel_cb: Optional[Callable[[], bool]] = None,
     precomputed_fwhm_stars: Optional[dict] = None,
+    observatory_name: str = "this telescope",
 ) -> dict:
     """Build a Gaia-calibrated colour–magnitude diagram and save it as a JPEG.
 
@@ -287,7 +288,7 @@ def build_cmd(
     # ── 6. Plot ──────────────────────────────────────────────────────────────
     _ckpt()
     _plot_cmd(color, mag, g_bp - g_rp, g_g, blue_name, red_name, dso_name,
-              int(has_gaia.sum()), output_path)
+              int(has_gaia.sum()), output_path, observatory_name=observatory_name)
 
     return {
         "n_stars": int(color.size),
@@ -321,7 +322,7 @@ def _query_gaia(center, radius_deg: float, mag_limit: float, progress_cb):
 
 
 def _plot_cmd(color, mag, gaia_color, gaia_g, blue_name, red_name, dso_name,
-              n_gaia, output_path: Path) -> None:
+              n_gaia, output_path: Path, observatory_name: str = "this telescope") -> None:
     """Render the colour–magnitude diagram to a JPEG (dark theme).
 
     Three panels sharing axes for direct comparison: the measured stars alone,
@@ -349,7 +350,7 @@ def _plot_cmd(color, mag, gaia_color, gaia_g, blue_name, red_name, dso_name,
     fig.patch.set_facecolor(BG)
 
     _draw_measured(axes[0])
-    axes[0].set_title("Measured (this telescope)", color="#e6edf3")
+    axes[0].set_title(f"Measured ({observatory_name})", color="#e6edf3")
     _draw_gaia(axes[1], 0.6)
     axes[1].set_title("Gaia DR3 reference", color="#e6edf3")
     _draw_gaia(axes[2], 0.45)          # faint, behind…
