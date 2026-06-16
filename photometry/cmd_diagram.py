@@ -322,39 +322,67 @@ def _query_gaia(center, radius_deg: float, mag_limit: float, progress_cb):
 
 def _plot_cmd(color, mag, gaia_color, gaia_g, blue_name, red_name, dso_name,
               n_gaia, output_path: Path) -> None:
-    """Render the colour–magnitude diagram to a JPEG (dark theme)."""
+    """Render the colour–magnitude diagram to a JPEG (dark theme).
+
+    Three panels sharing axes for direct comparison: the measured stars alone,
+    the Gaia reference sequence alone, and the two overlaid.
+    """
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
-    fig, ax = plt.subplots(figsize=(7, 8), dpi=110)
-    fig.patch.set_facecolor("#0d1117")
-    ax.set_facecolor("#0d1117")
-
-    # Gaia field stars as a faint reference sequence behind the measured points.
+    BG, MEASURED, GAIA, FG = "#0d1117", "#58a6ff", "#30475e", "#c9d1d9"
     finite_g = np.isfinite(gaia_color) & np.isfinite(gaia_g)
-    if finite_g.any():
-        ax.scatter(gaia_color[finite_g], gaia_g[finite_g], s=6, c="#30475e",
-                   alpha=0.45, linewidths=0, label="Gaia field (BP−RP, G)")
+    g_color, g_mag = gaia_color[finite_g], gaia_g[finite_g]
 
-    ax.scatter(color, mag, s=14, c="#58a6ff", alpha=0.85, linewidths=0,
-               label=f"measured ({color.size} stars)")
+    def _draw_gaia(ax, alpha):
+        if g_color.size:
+            ax.scatter(g_color, g_mag, s=6, c=GAIA, alpha=alpha, linewidths=0,
+                       label=f"Gaia field ({g_color.size} stars)")
 
-    ax.invert_yaxis()  # brighter at top
-    ax.set_xlabel(f"colour  {blue_name} − {red_name}  (Gaia BP/RP scale)",
-                  color="#c9d1d9")
-    ax.set_ylabel(f"magnitude  {red_name}  (Gaia RP scale)", color="#c9d1d9")
-    ax.set_title(f"Colour–magnitude diagram — {dso_name}\n"
-                 f"{n_gaia} Gaia calibration stars", color="#e6edf3")
-    ax.tick_params(colors="#8b949e")
-    for spine in ax.spines.values():
-        spine.set_color("#30363d")
-    ax.grid(True, color="#21262d", linewidth=0.6)
-    leg = ax.legend(facecolor="#161b22", edgecolor="#30363d", labelcolor="#c9d1d9",
-                    fontsize=9, loc="upper right")
-    leg.get_frame().set_alpha(0.9)
+    def _draw_measured(ax):
+        ax.scatter(color, mag, s=14, c=MEASURED, alpha=0.85, linewidths=0,
+                   label=f"measured ({color.size} stars)")
 
-    fig.tight_layout()
+    fig, axes = plt.subplots(1, 3, figsize=(18, 8), dpi=110,
+                             sharex=True, sharey=True)
+    fig.patch.set_facecolor(BG)
+
+    _draw_measured(axes[0])
+    axes[0].set_title("Measured (this telescope)", color="#e6edf3")
+    _draw_gaia(axes[1], 0.6)
+    axes[1].set_title("Gaia DR3 reference", color="#e6edf3")
+    _draw_gaia(axes[2], 0.45)          # faint, behind…
+    _draw_measured(axes[2])            # …measured on top
+    axes[2].set_title("Combined (overlay)", color="#e6edf3")
+
+    # Shared axis range from the union of both populations, so the panels line up.
+    all_color = np.concatenate([np.asarray(color), g_color]) if g_color.size else np.asarray(color)
+    all_mag = np.concatenate([np.asarray(mag), g_mag]) if g_mag.size else np.asarray(mag)
+    if all_color.size:
+        cmin, cmax = np.nanmin(all_color), np.nanmax(all_color)
+        mmin, mmax = np.nanmin(all_mag), np.nanmax(all_mag)
+        cpad, mpad = 0.05 * (cmax - cmin + 1e-6), 0.05 * (mmax - mmin + 1e-6)
+        axes[0].set_xlim(cmin - cpad, cmax + cpad)
+        axes[0].set_ylim(mmax + mpad, mmin - mpad)  # inverted: brighter at top
+
+    for i, ax in enumerate(axes):
+        ax.set_facecolor(BG)
+        ax.set_xlabel(f"colour  {blue_name} − {red_name}  (Gaia BP/RP scale)", color=FG)
+        if i == 0:
+            ax.set_ylabel(f"magnitude  {red_name}  (Gaia RP scale)", color=FG)
+        ax.tick_params(colors="#8b949e")
+        for spine in ax.spines.values():
+            spine.set_color("#30363d")
+        ax.grid(True, color="#21262d", linewidth=0.6)
+        leg = ax.legend(facecolor="#161b22", edgecolor="#30363d", labelcolor=FG,
+                        fontsize=9, loc="upper right")
+        leg.get_frame().set_alpha(0.9)
+
+    fig.suptitle(f"Colour–magnitude diagram — {dso_name}   ·   "
+                 f"{n_gaia} Gaia calibration stars",
+                 color="#e6edf3", fontsize=14)
+    fig.tight_layout(rect=(0, 0, 1, 0.96))
     output_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(output_path, format="jpeg", dpi=150, bbox_inches="tight",
                 facecolor=fig.get_facecolor())
