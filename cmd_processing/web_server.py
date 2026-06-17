@@ -394,28 +394,23 @@ async def api_imaging_ticker():
                 except Exception:
                     pass
         remaining_seconds = None
-        try:
-            import json as _json
-            import datetime as _dt
-            import pytz
-            import astropy.units as _u
-            from astropy.coordinates import SkyCoord as _SkyCoord
-            from astroplan import FixedTarget as _FixedTarget
-            from iris_astronomy import astro_dso_visibility
-            from astropy.time import Time as _AstroTime
+        # Time left above the custom horizon for the active target. Gate on the
+        # live `active` heartbeat: the instruction status lifecycle is
+        # waiting→completed and never sets "in process", so the old in_proc gate
+        # was always None and this stayed blank. RA/Dec come from the generated
+        # NINA sequence (no Simbad call on every poll).
+        if data.get("active"):
+            try:
+                import json as _json
+                import datetime as _dt
+                import pytz
+                import astropy.units as _u
+                from astropy.coordinates import SkyCoord as _SkyCoord
+                from astroplan import FixedTarget as _FixedTarget
+                from iris_astronomy import astro_dso_visibility
+                from astropy.time import Time as _AstroTime
 
-            cfg2 = config.data()
-            instr_path = os.path.join(
-                os.path.abspath(os.path.join(os.path.dirname(__file__), "..")),
-                cfg2["location"]["instructions"],
-            )
-            with open(instr_path) as f:
-                instructions = _json.load(f)
-            in_proc = next((i for i in instructions if i.get("status") == "in process"), None)
-            if in_proc:
-                data["target"] = in_proc.get("dso")
-                # Read RA/Dec from the already-generated NINA sequence rather than
-                # hitting Simbad on every ticker poll (avoids network failures).
+                cfg2 = config.data()
                 dso = None
                 seq_path = Path(cfg2["nina"]["sequence_output"])
                 if seq_path.exists():
@@ -441,7 +436,7 @@ async def api_imaging_ticker():
                     if coords:
                         ra_h, dec_d = coords
                         sc = _SkyCoord(ra=ra_h * _u.hour, dec=dec_d * _u.deg)
-                        dso = _FixedTarget(coord=sc, name=in_proc["dso"])
+                        dso = _FixedTarget(coord=sc, name=data.get("target") or "target")
                 if dso:
                     finish = astro_dso_visibility.get_finish_time(dso, _AstroTime.now())
                     if finish is not None:
@@ -452,8 +447,8 @@ async def api_imaging_ticker():
                         secs = int((finish - now_local).total_seconds())
                         if secs > 0:
                             remaining_seconds = secs
-        except Exception:
-            _logger.exception("remaining_seconds calculation failed")
+            except Exception:
+                _logger.exception("remaining_seconds calculation failed")
         data["remaining_seconds"] = remaining_seconds
 
         return JSONResponse(
