@@ -415,21 +415,27 @@ def _branch_anchors(m_color, m_mag) -> dict:
     if c.size < 30:
         return anchors
 
-    # Horizontal branch: the brightest concentration of *blue* members. Only HB
-    # stars are both bright and blue (the RGB is red; the lower main sequence is
-    # blue-ish but faint and far more numerous), so scanning the blue subset
-    # bright→faint for the first real peak avoids locking onto the faint MS.
-    blue = m[c < np.percentile(c, 30)]
-    if blue.size >= 15:
-        h, edges = np.histogram(blue, bins=20)
+    # Horizontal branch: among the bluer members, the HB is the *brightest*
+    # concentration. The lower main sequence is also blue-ish but ~3 mag fainter
+    # and far more numerous, so it forms the dominant (faint) histogram peak,
+    # with a sparse gap above it (the instability strip). The HB is therefore the
+    # brightest peak on the bright side of that dominant faint peak — a floor
+    # tied to the global max fails because the faint MS dwarfs the HB.
+    bm = m[c < np.percentile(c, 35)]
+    if bm.size >= 15:
+        h, edges = np.histogram(bm, bins=25)
         centers = 0.5 * (edges[:-1] + edges[1:])
-        floor = max(5.0, 0.2 * float(h.max()))
-        for i in range(len(h)):
-            left = h[i - 1] if i > 0 else 0
-            right = h[i + 1] if i < len(h) - 1 else 0
-            if h[i] >= floor and h[i] >= left and h[i] >= right:
-                anchors["hb_mag"] = float(centers[i])
-                break
+        gmax = int(np.argmax(h))
+        if centers[gmax] <= np.median(bm):
+            anchors["hb_mag"] = float(centers[gmax])        # bright peak dominates → it's the HB
+        else:
+            # The faint MS pile (peak + its rising flank) dwarfs the HB, so look
+            # well above it — brightward of ~1.5 mag over the gap — for the HB peak.
+            region = centers < (centers[gmax] - 1.5)
+            if region.any():
+                masked = np.where(region, h, 0)
+                if masked.max() >= max(8.0, 0.1 * float(h.max())):
+                    anchors["hb_mag"] = float(centers[int(np.argmax(masked))])
     hb = anchors.get("hb_mag", float(np.median(m)))
 
     # Red giant branch: red ridge brighter than the HB (for the label).
@@ -437,15 +443,17 @@ def _branch_anchors(m_color, m_mag) -> dict:
     if red.sum() >= 5:
         anchors["rgb"] = (float(np.median(c[red])), float(np.median(m[red])))
 
-    # Main-sequence turn-off: the bright, blue corner *below* the HB (so the
-    # bluer horizontal branch doesn't masquerade as the turn-off).
-    sub = m > hb + 0.8
-    if sub.sum() >= 8:
+    # Main-sequence turn-off: the bright edge of the dense main-sequence pile
+    # well below the HB (the brightest MS stars, where the MS bends toward the
+    # subgiants). A bright percentile of the sub-HB members is robust to the
+    # bluest-straggler outliers that an extreme-blue cut would latch onto.
+    sub = m > hb + 1.5
+    if sub.sum() >= 10:
         cs, ms = c[sub], m[sub]
-        edge = cs < np.percentile(cs, 12)        # bluest sliver of the sub-HB locus
-        if edge.sum() >= 3:
-            anchors["to"] = (float(np.median(cs[edge])),
-                             float(np.percentile(ms[edge], 15)))  # brightest = TO
+        to_m = float(np.percentile(ms, 20))
+        near = np.abs(ms - to_m) < 0.3
+        to_c = float(np.median(cs[near])) if near.any() else float(np.median(cs))
+        anchors["to"] = (to_c, to_m)
     return anchors
 
 
