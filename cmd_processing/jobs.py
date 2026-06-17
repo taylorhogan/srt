@@ -18,7 +18,9 @@ Threading model:
   dispatch thread detects this handoff (``async_handoff``) and does not finalize.
 """
 
+import atexit
 import logging
+import multiprocessing
 import threading
 import time
 from typing import Any, Callable, Optional
@@ -412,6 +414,107 @@ def spawn(target: Callable[..., Any], args: tuple = (), kwargs: Optional[dict] =
     t = threading.Thread(target=_runner, daemon=True)
     t.start()
     return t
+
+
+# ── Process-isolated worker spawn (true CPU parallelism, no GIL) ───
+
+# Live child processes, tracked so we can tear them down on shutdown.
+_child_procs: set = set()
+
+
+def _child_main(job_id: Optional[str], target: Callable[..., Any],
+                args: tuple, kwargs: Optional[dict]) -> None:
+    """Entry point that runs inside a freshly spawned child process.
+
+    Binds the job id so the worker's posts route to the right card — this
+    process never initialises the in-process message bus, so
+    ``social_server.post_social_message`` uses its HTTP ``/api/post`` fallback,
+    which we tag with the job id. Outcome is signalled via the exit code
+    (0 = ok, 1 = error, 2 = cancelled); the parent monitor owns the job's
+    terminal transition.
+    """
+    import sys as _sys
+    kwargs = kwargs or {}
+    # Importing config configures this process's file logging.
+    try:
+        from configs import config
+        config.data()
+    except Exception:
+        pass
+    set_current_job(job_id)
+    try:
+        target(*args, **kwargs)
+        _sys.exit(0)
+    except Cancelled:
+        _sys.exit(2)
+    except SystemExit:
+        raise
+    except Exception:
+        _logger.exception("Process-isolated job failed")
+        try:
+            from cmd_processing import social_server
+            social_server.post_social_message("✕ Job failed — see log.")
+        except Exception:
+            pass
+        _sys.exit(1)
+
+
+def spawn_process(target: Callable[..., Any], args: tuple = (),
+                  kwargs: Optional[dict] = None) -> "multiprocessing.Process":
+    """Run ``target`` in its own OS process — true parallelism, no shared GIL.
+
+    Mirrors :func:`spawn` for heavy, GIL-bound commands. The child reports
+    progress/results back to its job card over the existing job-id-tagged
+    ``/api/post`` HTTP path; a monitor thread maps the child's exit code to the
+    terminal state (DONE/ERROR, or CANCELLED if a cancel was requested).
+    Cancellation tears the process down via :func:`register_resource`
+    (``Process.terminate``).
+    """
+    kwargs = kwargs or {}
+    job_id = get_current_job()
+    if job_id:
+        mark_async(job_id)
+
+    ctx = multiprocessing.get_context("spawn")
+    # daemon=False: workers may create their own pools, which daemonic
+    # processes are forbidden from doing.
+    proc = ctx.Process(target=_child_main, args=(job_id, target, args, kwargs),
+                       daemon=False)
+    proc.start()
+    if job_id:
+        register_resource(job_id, proc)
+    with _lock:
+        _child_procs.add(proc)
+
+    def _monitor():
+        proc.join()
+        with _lock:
+            _child_procs.discard(proc)
+        if not job_id:
+            return
+        unregister_resource(job_id, proc)
+        if is_cancelled(job_id):
+            finalize(job_id, CANCELLED)
+        elif proc.exitcode == 0:
+            finalize(job_id, DONE)
+        else:
+            finalize(job_id, ERROR)
+
+    threading.Thread(target=_monitor, daemon=True).start()
+    return proc
+
+
+@atexit.register
+def _terminate_child_procs() -> None:
+    """Best-effort teardown of any live child processes on interpreter exit."""
+    with _lock:
+        procs = list(_child_procs)
+    for p in procs:
+        try:
+            if p.is_alive():
+                p.terminate()
+        except Exception:
+            pass
 
 
 def finalize(job_id: str, status: str) -> None:

@@ -624,10 +624,17 @@ def post_social_message(message: str, image: Optional[str] = None, vis: Optional
         message_bus.post_message(message, image)
     else:
         try:
+            from cmd_processing import jobs
             port = cfg.get("web_chat", {}).get("port", 8095)
             data = {"message": message}
             if image:
                 data["image_path"] = image
+            # In a process-isolated worker the job is bound on this thread;
+            # forward it so the post lands on that worker's card, not the
+            # system feed.
+            job_id = jobs.get_current_job()
+            if job_id:
+                data["job_id"] = job_id
             _requests_lib.post(f"http://localhost:{port}/api/post", data=data, timeout=30)
         except Exception:
             logger.exception("Failed to post message via web chat API")

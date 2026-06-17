@@ -665,8 +665,11 @@ def optics_cmd(words: list[str], account: str) -> None:
         optics <dso>        — latest frame of the named DSO
         optics * <n>        — frame n of the last-imaged DSO
         optics <dso> <n>    — frame n of the named DSO
+
+    Process-isolated (jobs.spawn_process) so the analysis runs on its own core,
+    in true parallel with a concurrent command.
     """
-    jobs.spawn(_optics_run, args=(words,))
+    jobs.spawn_process(_optics_run, args=(words,))
 
 
 def _optics_run(words: list[str]) -> None:
@@ -2165,8 +2168,12 @@ def doflats_cmd(words: list[str], account: str) -> None:
 
 
 def snr_cmd(words: list[str], account: str) -> None:
-    """Post stack-convergence curve in a background thread (non-blocking)."""
-    jobs.spawn(_snr_run, args=(words,))
+    """Post stack-convergence curve in a separate process (non-blocking).
+
+    Process-isolated (jobs.spawn_process) so a heavy snr stack runs on its own
+    core without GIL contention with a concurrent hr/other command.
+    """
+    jobs.spawn_process(_snr_run, args=(words,))
 
 
 def _snr_run(words: list[str]) -> None:
@@ -2370,8 +2377,11 @@ def hr_cmd(words: list[str], account: str) -> None:
     Usage: hr <dso> [bluefilter redfilter]
         hr m13            — auto-pick the two most-imaged filters
         hr m13 B R        — use B for colour-blue, R for colour-red
+
+    Process-isolated (jobs.spawn_process) so the heavy stack/photometry runs on
+    its own core, in true parallel with a concurrent snr/other command.
     """
-    jobs.spawn(_hr_run, args=(words,))
+    jobs.spawn_process(_hr_run, args=(words,))
 
 
 def _hr_run(words: list[str]) -> None:
@@ -2507,11 +2517,14 @@ def _hr_run(words: list[str]) -> None:
 
 
 def transit_cmd(words: list[str], account: str) -> None:
-    """Search saved subs for transit-like dips. Background thread (non-blocking).
+    """Search saved subs for transit-like dips. Runs in a separate process.
 
     Usage: transit <dso> [filter]   (filter optional; omit or use * for all subs)
+
+    Process-isolated (jobs.spawn_process) so the heavy search runs on its own
+    core, in true parallel with a concurrent command.
     """
-    jobs.spawn(_transit_run, args=(words,))
+    jobs.spawn_process(_transit_run, args=(words,))
 
 
 def _transit_run(words: list[str]) -> None:

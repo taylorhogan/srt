@@ -58,7 +58,8 @@ def broadcast(envelope: dict) -> None:
                 pass
 
 
-def post_message(text: str, image_path: Optional[str] = None, html: Optional[str] = None) -> dict:
+def post_message(text: str, image_path: Optional[str] = None, html: Optional[str] = None,
+                 job_id: Optional[str] = None) -> dict:
     image_url = None
 
     if image_path and _images_dir:
@@ -75,10 +76,12 @@ def post_message(text: str, image_path: Optional[str] = None, html: Optional[str
 
     entry = make_entry(text, image_url=image_url, html=html)
 
-    # Resolve the active job (falls back to the pinned system feed) and route the
-    # entry into that job's isolated log; the registry broadcasts the job event.
+    # Resolve the target job and route the entry into its isolated log; the
+    # registry broadcasts the job event. An explicit job_id (e.g. forwarded from
+    # a process-isolated worker via /api/post) wins; otherwise fall back to the
+    # calling thread's current job, then the pinned system feed.
     from cmd_processing import jobs
-    job_id = jobs.get_current_job() or jobs.SYSTEM_JOB_ID
+    job_id = job_id or jobs.get_current_job() or jobs.SYSTEM_JOB_ID
     entry["job_id"] = job_id
 
     with _lock:

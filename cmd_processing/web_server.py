@@ -211,11 +211,14 @@ async def api_post(
     image: Optional[UploadFile] = File(None),
     image_path: Optional[str] = Form(None),
     html: Optional[str] = Form(None),
+    job_id: Optional[str] = Form(None),
 ):
     """Cross-process message injection endpoint.
 
-    Used by the scheduler process, _preview_worker, and standalone scripts
-    that cannot access the in-process message bus directly.
+    Used by the scheduler process, _preview_worker, process-isolated command
+    workers, and standalone scripts that cannot access the in-process message
+    bus directly. A ``job_id`` (sent by process-isolated workers) routes the
+    entry to that job's card; without one it lands in the system feed.
     """
     actual_image_path = None
 
@@ -230,7 +233,8 @@ async def api_post(
     elif image_path:
         actual_image_path = image_path
 
-    message_bus.post_message(message, actual_image_path, html=html or None)
+    message_bus.post_message(message, actual_image_path, html=html or None,
+                             job_id=job_id or None)
     return {"ok": True, "filename": saved_filename}
 
 
