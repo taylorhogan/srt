@@ -159,6 +159,63 @@ def _robust_zero_point(offsets: np.ndarray, n_sigma: float = 3.0) -> Optional[fl
     return float(np.median(vals))
 
 
+def _select_members(pmra, pmdec, parallax) -> "np.ndarray":
+    """Boolean mask of likely cluster members from Gaia astrometry.
+
+    Cluster members share a common proper motion and parallax (distance); field
+    stars scatter across both. Seed the proper-motion clump from the densest bin
+    of the 2-D PM histogram, then iteratively sigma-clip in (pmra, pmdec,
+    parallax) to converge on that dominant concentration. Returns an all-False
+    mask when there's too little astrometry or no clear clump (e.g. a non-cluster
+    field), so callers can fall back gracefully.
+    """
+    pmra = np.asarray(pmra, dtype=np.float64)
+    pmdec = np.asarray(pmdec, dtype=np.float64)
+    plx = np.asarray(parallax, dtype=np.float64)
+    out = np.zeros(pmra.shape, dtype=bool)
+    valid = np.isfinite(pmra) & np.isfinite(pmdec) & np.isfinite(plx)
+    if valid.sum() < 20:
+        return out
+
+    a, d, p = pmra[valid], pmdec[valid], plx[valid]
+
+    # Seed the PM centre at the densest histogram bin, over a robust range.
+    lo_a, hi_a = np.percentile(a, [1, 99])
+    lo_d, hi_d = np.percentile(d, [1, 99])
+    if hi_a <= lo_a or hi_d <= lo_d:
+        return out
+    hist, ea, ed = np.histogram2d(a, d, bins=64, range=[[lo_a, hi_a], [lo_d, hi_d]])
+    i, j = np.unravel_index(int(np.argmax(hist)), hist.shape)
+    ca, cd = 0.5 * (ea[i] + ea[i + 1]), 0.5 * (ed[j] + ed[j + 1])
+
+    # Start from stars near that peak, then refine by joint sigma-clipping.
+    sel = (np.abs(a - ca) < max(2.0, 0.1 * (hi_a - lo_a))) & \
+          (np.abs(d - cd) < max(2.0, 0.1 * (hi_d - lo_d)))
+    if sel.sum() < 10:
+        return out
+
+    def _sigma(x, floor):
+        s = 1.4826 * np.median(np.abs(x - np.median(x)))
+        return max(float(s), floor)
+
+    for _ in range(6):
+        ca, cd, cp = np.median(a[sel]), np.median(d[sel]), np.median(p[sel])
+        sa, sd, sp = _sigma(a[sel], 0.3), _sigma(d[sel], 0.3), _sigma(p[sel], 0.05)
+        keep = ((np.abs(a - ca) < 3 * sa) & (np.abs(d - cd) < 3 * sd)
+                & (np.abs(p - cp) < 3 * sp))
+        if keep.sum() < 10:
+            break
+        if keep.sum() == sel.sum():
+            sel = keep
+            break
+        sel = keep
+
+    if sel.sum() < 10:
+        return out
+    out[np.where(valid)[0][sel]] = True
+    return out
+
+
 def build_cmd(
     blue_paths: list[Path],
     red_paths: list[Path],
@@ -270,6 +327,9 @@ def build_cmd(
     g_bp = np.asarray(gaia_tbl["phot_bp_mean_mag"], dtype=np.float64)
     g_rp = np.asarray(gaia_tbl["phot_rp_mean_mag"], dtype=np.float64)
     g_g = np.asarray(gaia_tbl["phot_g_mean_mag"], dtype=np.float64)
+    g_pmra = np.asarray(gaia_tbl["pmra"], dtype=np.float64)
+    g_pmdec = np.asarray(gaia_tbl["pmdec"], dtype=np.float64)
+    g_plx = np.asarray(gaia_tbl["parallax"], dtype=np.float64)
 
     g_idx, g_sep, _ = pair_sky.match_to_catalog_sky(gaia_sky)
     has_gaia = g_sep.arcsec <= match_radius_arcsec
@@ -285,14 +345,30 @@ def build_cmd(
     _say(f"calibrated: ZP({blue_name})={zp_blue:.2f}, ZP({red_name})={zp_red:.2f}; "
          f"{int(has_gaia.sum())} Gaia anchors")
 
-    # ── 6. Plot ──────────────────────────────────────────────────────────────
+    # ── 6. Gaia cluster membership (proper motion + parallax) ─────────────────
+    member = _select_members(g_pmra, g_pmdec, g_plx)
+    mem_color, mem_g = (g_bp - g_rp)[member], g_g[member]
+    _say(f"Gaia membership: {int(member.sum())}/{len(g_g)} field stars share the "
+         f"cluster proper motion + parallax")
+
+    # ── 7. Morphology → rough age from the Δmag(turn-off − HB) gap ────────────
+    anchors = _cluster_age(_branch_anchors(mem_color, mem_g), band=red_name)
+    if anchors.get("age") is not None:
+        _say(f"morphology: Δ{red_name}(TO−HB) ≈ {anchors['delta_mag']:.2f} mag "
+             f"→ age ≈ {anchors['age']:.0f} Gyr (rough)")
+
+    # ── 8. Plot ──────────────────────────────────────────────────────────────
     _ckpt()
-    _plot_cmd(color, mag, g_bp - g_rp, g_g, blue_name, red_name, dso_name,
-              int(has_gaia.sum()), output_path, observatory_name=observatory_name)
+    _plot_cmd(color, mag, g_bp - g_rp, g_g, mem_color, mem_g, blue_name, red_name,
+              dso_name, int(has_gaia.sum()), output_path,
+              observatory_name=observatory_name, anchors=anchors)
 
     return {
         "n_stars": int(color.size),
         "n_gaia": int(has_gaia.sum()),
+        "n_members": int(member.sum()),
+        "age_gyr": anchors.get("age"),
+        "delta_mag": anchors.get("delta_mag"),
         "zp_blue": round(zp_blue, 3),
         "zp_red": round(zp_red, 3),
         "output": str(output_path),
@@ -305,7 +381,7 @@ def _query_gaia(center, radius_deg: float, mag_limit: float, progress_cb):
         from astroquery.gaia import Gaia
         adql = (
             "SELECT source_id, ra, dec, phot_g_mean_mag, "
-            "phot_bp_mean_mag, phot_rp_mean_mag "
+            "phot_bp_mean_mag, phot_rp_mean_mag, pmra, pmdec, parallax "
             "FROM gaiadr3.gaia_source "
             "WHERE 1=CONTAINS(POINT('ICRS', ra, dec), "
             f"CIRCLE('ICRS', {center.ra.deg:.6f}, {center.dec.deg:.6f}, {radius_deg:.5f})) "
@@ -321,79 +397,192 @@ def _query_gaia(center, radius_deg: float, mag_limit: float, progress_cb):
         return None
 
 
-def _plot_cmd(color, mag, gaia_color, gaia_g, blue_name, red_name, dso_name,
-              n_gaia, output_path: Path, observatory_name: str = "this telescope") -> None:
+def _branch_anchors(m_color, m_mag) -> dict:
+    """Robust morphological anchors for the member CMD (heuristic, not a fit).
+
+    Returns a dict that may contain:
+      - ``hb_mag``: horizontal-branch / RR-Lyrae magnitude (the pile-up of the
+        bluer-half members),
+      - ``rgb`` (colour, mag): a point on the red giant branch (red ridge above
+        the HB),
+      - ``to`` (colour, mag): the main-sequence turn-off — the bright, blue
+        corner of the sequence below the HB.
+    Empty when the member sample is too sparse to be meaningful.
+    """
+    anchors: dict = {}
+    finite = np.isfinite(m_color) & np.isfinite(m_mag)
+    c, m = np.asarray(m_color)[finite], np.asarray(m_mag)[finite]
+    if c.size < 30:
+        return anchors
+
+    # Horizontal branch: the brightest concentration of *blue* members. Only HB
+    # stars are both bright and blue (the RGB is red; the lower main sequence is
+    # blue-ish but faint and far more numerous), so scanning the blue subset
+    # bright→faint for the first real peak avoids locking onto the faint MS.
+    blue = m[c < np.percentile(c, 30)]
+    if blue.size >= 15:
+        h, edges = np.histogram(blue, bins=20)
+        centers = 0.5 * (edges[:-1] + edges[1:])
+        floor = max(5.0, 0.2 * float(h.max()))
+        for i in range(len(h)):
+            left = h[i - 1] if i > 0 else 0
+            right = h[i + 1] if i < len(h) - 1 else 0
+            if h[i] >= floor and h[i] >= left and h[i] >= right:
+                anchors["hb_mag"] = float(centers[i])
+                break
+    hb = anchors.get("hb_mag", float(np.median(m)))
+
+    # Red giant branch: red ridge brighter than the HB (for the label).
+    red = (c > np.percentile(c, 75)) & (m < hb)
+    if red.sum() >= 5:
+        anchors["rgb"] = (float(np.median(c[red])), float(np.median(m[red])))
+
+    # Main-sequence turn-off: the bright, blue corner *below* the HB (so the
+    # bluer horizontal branch doesn't masquerade as the turn-off).
+    sub = m > hb + 0.8
+    if sub.sum() >= 8:
+        cs, ms = c[sub], m[sub]
+        edge = cs < np.percentile(cs, 12)        # bluest sliver of the sub-HB locus
+        if edge.sum() >= 3:
+            anchors["to"] = (float(np.median(cs[edge])),
+                             float(np.percentile(ms[edge], 15)))  # brightest = TO
+    return anchors
+
+
+def _cluster_age(anchors: dict, band: str = "mag") -> dict:
+    """Augment *anchors* with a rough age from the Δmag(turn-off − HB) gap.
+
+    The vertical method: the HB is a near-standard candle, so the turn-off's
+    magnitude *relative* to it is distance/reddening-independent and tracks age.
+    Calibration is approximate (V-band: ΔV≈3.5 ↔ ~13 Gyr, ~6.7 Gyr/mag) and is
+    applied here to an instrumental band, so treat the age as a ballpark only.
+    """
+    anchors["band"] = band
+    hb, to = anchors.get("hb_mag"), anchors.get("to")
+    if hb is None or to is None:
+        return anchors
+    dv = to[1] - hb            # turn-off is fainter than the HB → positive
+    if dv <= 0:
+        return anchors
+    anchors["delta_mag"] = float(dv)
+    anchors["age"] = float(min(15.0, max(1.0, 13.0 + 6.7 * (dv - 3.5))))
+    return anchors
+
+
+def _annotate_branches(ax, anchors: dict) -> None:
+    """Draw the branch labels and the Δmag(TO−HB) age gauge from *anchors*."""
+    LABEL, ARROW, AGE = "#e6edf3", "#8b949e", "#f0a500"
+    hb = anchors.get("hb_mag")
+    band = anchors.get("band", "mag")
+    if hb is not None:
+        ax.axhline(hb, color=ARROW, ls="--", lw=0.8, alpha=0.7)
+        ax.text(0.02, hb, "horizontal branch · RR Lyrae level", color=LABEL,
+                fontsize=8, va="bottom", ha="left",
+                transform=ax.get_yaxis_transform())
+    if "rgb" in anchors:
+        rc, rm = anchors["rgb"]
+        ax.annotate("red giant branch", xy=(rc, rm), xytext=(rc + 0.35, rm),
+                    color=LABEL, fontsize=8, va="center", ha="left",
+                    arrowprops=dict(arrowstyle="->", color=ARROW, lw=0.8))
+    if "to" in anchors:
+        tc, tm = anchors["to"]
+        ax.annotate("main-sequence turn-off", xy=(tc, tm),
+                    xytext=(tc + 0.4, tm + 0.4), color=LABEL, fontsize=8,
+                    va="center", ha="left",
+                    arrowprops=dict(arrowstyle="->", color=ARROW, lw=0.8))
+    # Δmag(TO−HB) age gauge: a vertical caliper between the two levels.
+    if hb is not None and "to" in anchors and anchors.get("age") is not None:
+        tc, tm = anchors["to"]
+        ax.annotate("", xy=(tc, hb), xytext=(tc, tm),
+                    arrowprops=dict(arrowstyle="<->", color=AGE, lw=1.3))
+        ax.text(tc + 0.06, 0.5 * (hb + tm),
+                f"Δ{band}(TO−HB) ≈ {anchors['delta_mag']:.2f}\n≈ {anchors['age']:.0f} Gyr (rough)",
+                color=AGE, fontsize=8, va="center", ha="left")
+
+
+def _plot_cmd(color, mag, gaia_color, gaia_g, mem_color, mem_g, blue_name, red_name,
+              dso_name, n_gaia, output_path: Path,
+              observatory_name: str = "this telescope", anchors: "Optional[dict]" = None) -> None:
     """Render the colour–magnitude diagram to a JPEG (dark theme).
 
-    Three panels sharing axes for direct comparison: the measured stars alone,
-    the Gaia reference sequence alone, and the two overlaid.
+    Four panels (2×2) sharing axes: the measured stars, the full Gaia DR3 field,
+    the Gaia stars selected as cluster members by proper motion + parallax (the
+    field stripped away → the clean cluster locus), and an annotated copy of the
+    member sequence with the main evolutionary branches labelled.
     """
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
-    from matplotlib.lines import Line2D
 
     BG, GAIA, FG = "#0d1117", "#30475e", "#c9d1d9"
     CMAP = "RdYlBu_r"  # blue (small B−R, hot) → red (large B−R, cool)
 
     finite_g = np.isfinite(gaia_color) & np.isfinite(gaia_g)
     g_color, g_mag = gaia_color[finite_g], gaia_g[finite_g]
+    finite_m = np.isfinite(mem_color) & np.isfinite(mem_g)
+    m_color, m_mag = mem_color[finite_m], mem_g[finite_m]
     color, mag = np.asarray(color), np.asarray(mag)
 
-    # Shared colour/magnitude ranges over both populations: the panels line up,
-    # and a measured point's hue matches its x-position (same scale as the axis).
+    # Shared colour/magnitude ranges over all populations: the panels line up,
+    # and a point's hue matches its x-position (same scale as the axis).
     all_color = np.concatenate([color, g_color]) if g_color.size else color
     all_mag = np.concatenate([mag, g_mag]) if g_mag.size else mag
     cmin, cmax = (float(np.nanmin(all_color)), float(np.nanmax(all_color))) if all_color.size else (0.0, 1.0)
     mmin, mmax = (float(np.nanmin(all_mag)), float(np.nanmax(all_mag))) if all_mag.size else (0.0, 1.0)
 
-    def _draw_gaia(ax, alpha):
-        if g_color.size:
-            ax.scatter(g_color, g_mag, s=6, c=GAIA, alpha=alpha, linewidths=0)
-
-    def _draw_measured(ax):
+    def _draw_temp(ax, x, y, alpha=0.9):
         # False-colour each star by its colour index: blue = hot, red = cool.
-        return ax.scatter(color, mag, s=14, c=color, cmap=CMAP, vmin=cmin, vmax=cmax,
-                          alpha=0.9, linewidths=0)
+        return ax.scatter(x, y, s=12, c=x, cmap=CMAP, vmin=cmin, vmax=cmax,
+                          alpha=alpha, linewidths=0)
 
-    fig, axes = plt.subplots(1, 3, figsize=(18, 8), dpi=110,
+    fig, axes = plt.subplots(2, 2, figsize=(15, 12), dpi=110,
                              sharex=True, sharey=True, constrained_layout=True)
     fig.patch.set_facecolor(BG)
+    a_meas, a_field, a_mem, a_ann = axes[0, 0], axes[0, 1], axes[1, 0], axes[1, 1]
 
-    sc = _draw_measured(axes[0])
-    axes[0].set_title(f"Measured ({observatory_name}) — {color.size} stars", color="#e6edf3")
-    _draw_gaia(axes[1], 0.6)
-    axes[1].set_title(f"Gaia DR3 reference — {g_color.size} stars", color="#e6edf3")
-    _draw_gaia(axes[2], 0.45)          # faint, behind…
-    _draw_measured(axes[2])            # …measured on top
-    axes[2].set_title("Combined (overlay)", color="#e6edf3")
+    sc = _draw_temp(a_meas, color, mag)
+    a_meas.set_title(f"Measured ({observatory_name}) — {color.size} stars", color="#e6edf3")
+
+    if g_color.size:
+        a_field.scatter(g_color, g_mag, s=6, c=GAIA, alpha=0.6, linewidths=0)
+    a_field.set_title(f"Gaia DR3 field — {g_color.size} stars", color="#e6edf3")
+
+    if m_color.size:
+        _draw_temp(a_mem, m_color, m_mag)
+        a_mem.set_title(f"Gaia members (PM + parallax) — {m_color.size} stars",
+                        color="#e6edf3")
+        _draw_temp(a_ann, m_color, m_mag, alpha=0.55)
+        if anchors is None:
+            anchors = _cluster_age(_branch_anchors(m_color, m_mag), band=red_name)
+        _annotate_branches(a_ann, anchors)
+        a_ann.set_title("Annotated members", color="#e6edf3")
+    else:
+        for ax in (a_mem, a_ann):
+            ax.text(0.5, 0.5, "no cluster members\n(no PM/parallax clump)",
+                    transform=ax.transAxes, ha="center", va="center",
+                    color="#8b949e", fontsize=11)
+        a_mem.set_title("Gaia members (PM + parallax) — none", color="#e6edf3")
+        a_ann.set_title("Annotated members — none", color="#e6edf3")
 
     if all_color.size:
         cpad, mpad = 0.05 * (cmax - cmin + 1e-6), 0.05 * (mmax - mmin + 1e-6)
-        axes[0].set_xlim(cmin - cpad, cmax + cpad)
-        axes[0].set_ylim(mmax + mpad, mmin - mpad)  # inverted: brighter at top
+        a_meas.set_xlim(cmin - cpad, cmax + cpad)
+        a_meas.set_ylim(mmax + mpad, mmin - mpad)  # inverted: brighter at top
 
-    for i, ax in enumerate(axes):
+    for ax in axes.ravel():
         ax.set_facecolor(BG)
-        ax.set_xlabel(f"colour  {blue_name} − {red_name}  (Gaia BP/RP scale)", color=FG)
-        if i == 0:
-            ax.set_ylabel(f"magnitude  {red_name}  (Gaia RP scale)", color=FG)
         ax.tick_params(colors="#8b949e")
         for spine in ax.spines.values():
             spine.set_color("#30363d")
         ax.grid(True, color="#21262d", linewidth=0.6)
+    for ax in (a_mem, a_ann):       # bottom row
+        ax.set_xlabel(f"colour  {blue_name} − {red_name}  (Gaia BP/RP scale)", color=FG)
+    for ax in (a_meas, a_mem):      # left column
+        ax.set_ylabel(f"magnitude  {red_name}  (Gaia RP scale)", color=FG)
 
-    # Grey proxy legend on the combined panel so the backdrop is labelled.
-    if g_color.size:
-        proxy = Line2D([], [], marker="o", linestyle="", markersize=6,
-                       markerfacecolor=GAIA, markeredgecolor="none", label="Gaia DR3 field")
-        leg = axes[2].legend(handles=[proxy], facecolor="#161b22", edgecolor="#30363d",
-                             labelcolor=FG, fontsize=9, loc="upper right")
-        leg.get_frame().set_alpha(0.9)
-
-    # Shared colourbar showing the measured stars' temperature false-colour.
-    cbar = fig.colorbar(sc, ax=axes.ravel().tolist(), fraction=0.025, pad=0.01)
-    cbar.set_label(f"measured star colour  {blue_name} − {red_name}   "
+    # Shared colourbar for the temperature false-colour (measured + members).
+    cbar = fig.colorbar(sc, ax=axes.ravel().tolist(), fraction=0.04, pad=0.01)
+    cbar.set_label(f"star colour  {blue_name} − {red_name}   "
                    f"(blue = hot  →  red = cool)", color=FG)
     cbar.ax.tick_params(colors="#8b949e")
     cbar.outline.set_edgecolor("#30363d")

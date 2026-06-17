@@ -2508,10 +2508,17 @@ def _hr_run(words: list[str]) -> None:
         social_server.post_social_message(f"HR [{dso_dir.name}]: failed — {exc}")
         return
 
+    age_str = (
+        f"\nΔ{red}(TO−HB) ≈ {stats['delta_mag']:.2f} mag → age ≈ "
+        f"{stats['age_gyr']:.0f} Gyr (rough)"
+        if stats.get("age_gyr") else ""
+    )
     social_server.post_social_message(
         f"Colour–magnitude diagram — {dso_dir.name}  ({blue}−{red})\n"
         f"{stats['n_stars']} stars · {stats['n_gaia']} Gaia anchors · "
-        f"ZP {blue} {stats['zp_blue']:+.2f}, {red} {stats['zp_red']:+.2f}",
+        f"{stats.get('n_members', 0)} cluster members · "
+        f"ZP {blue} {stats['zp_blue']:+.2f}, {red} {stats['zp_red']:+.2f}"
+        f"{age_str}",
         str(out),
     )
 
