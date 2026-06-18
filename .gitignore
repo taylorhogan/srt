@@ -42,3 +42,4 @@ test_*.fits
 
 # macOS
 .DS_Store
+docs/M92_HR_Report.pdf
