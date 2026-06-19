@@ -1128,8 +1128,11 @@ def stack_cmd(words: list[str], account: str) -> None:
         stack                 — all filters of the last-imaged DSO
         stack <dso>           — all filters of the named DSO
         stack <dso> <filter>  — only the named filter (e.g. stack m31 ha)
+
+    Process-isolated (jobs.spawn_process) so the heavy stacking runs on its own
+    core, in true parallel with a concurrent command.
     """
-    jobs.spawn(_stack_run, args=(words,))
+    jobs.spawn_process(_stack_run, args=(words,))
 
 
 def _stack_run(words: list[str]) -> None:
