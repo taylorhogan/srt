@@ -116,13 +116,44 @@ def _detect_and_measure(data: np.ndarray, thresh_sigma: float = 5.0):
 
     Returns (x, y, instrumental_mag) arrays for stars with positive flux. The
     aperture radius is scaled to the typical stellar profile in the frame.
+
+    Dense globular clusters (e.g. M13) put a very large number of connected
+    pixels above threshold; sep's deblend pixel buffer (default 300k) overflows
+    on a multi-megapixel stack. We raise that ceiling up front, and if extract
+    still overflows we step the threshold up and retry rather than aborting the
+    whole CMD job.
     """
     import sep
+
+    # 4M-pixel deblend buffer: comfortably covers a crowded globular core in a
+    # ~60 Mpx stack without a meaningful memory cost.
+    try:
+        sep.set_extract_pixstack(4_000_000)
+    except Exception:
+        pass
 
     data = np.ascontiguousarray(data, dtype=np.float32)
     bkg = sep.Background(data)
     data_sub = data - bkg.back()
-    objs = sep.extract(data_sub, thresh=thresh_sigma, err=bkg.globalrms)
+
+    objs = None
+    thresh = thresh_sigma
+    for _attempt in range(4):
+        try:
+            objs = sep.extract(data_sub, thresh=thresh, err=bkg.globalrms)
+            break
+        except Exception as exc:
+            # The pixstack-overflow case is recoverable: a higher threshold
+            # admits far fewer core pixels. Anything else is a real failure.
+            if "pixel buffer full" not in str(exc):
+                raise
+            thresh *= 1.5
+            _logger.warning(
+                "sep.extract pixstack overflow; retrying at thresh=%.1fσ", thresh)
+    if objs is None:
+        raise RuntimeError(
+            "star detection failed: field too crowded even at "
+            f"{thresh / 1.5:.1f}σ (sep pixel buffer exhausted)")
     if len(objs) == 0:
         return np.array([]), np.array([]), np.array([])
 
