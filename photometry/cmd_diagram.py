@@ -28,6 +28,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+import time
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -406,26 +407,52 @@ def build_cmd(
     }
 
 
-def _query_gaia(center, radius_deg: float, mag_limit: float, progress_cb):
-    """Cone-search Gaia DR3 for sources in the field, brighter than mag_limit."""
+def _query_gaia(center, radius_deg: float, mag_limit: float, progress_cb,
+                max_attempts: int = 6):
+    """Cone-search Gaia DR3 for sources in the field, brighter than mag_limit.
+
+    The Gaia archive is "in evolution" ahead of DR4 and warns it may be unstable
+    and 500/time out on transient windows that can last ~a minute. A 15-min
+    stacking run precedes this call, so it's worth being patient: retry with
+    exponential backoff (capped) spanning ~1 min before giving up.
+    """
     try:
         from astroquery.gaia import Gaia
-        adql = (
-            "SELECT source_id, ra, dec, phot_g_mean_mag, "
-            "phot_bp_mean_mag, phot_rp_mean_mag, pmra, pmdec, parallax "
-            "FROM gaiadr3.gaia_source "
-            "WHERE 1=CONTAINS(POINT('ICRS', ra, dec), "
-            f"CIRCLE('ICRS', {center.ra.deg:.6f}, {center.dec.deg:.6f}, {radius_deg:.5f})) "
-            f"AND phot_g_mean_mag < {mag_limit} "
-            "AND phot_bp_mean_mag IS NOT NULL AND phot_rp_mean_mag IS NOT NULL"
-        )
-        job = Gaia.launch_job_async(adql)
-        return job.get_results()
     except Exception:
-        _logger.exception("Gaia query failed")
+        _logger.exception("Gaia query failed (astroquery import)")
         if progress_cb:
             progress_cb("Gaia query failed")
         return None
+
+    adql = (
+        "SELECT source_id, ra, dec, phot_g_mean_mag, "
+        "phot_bp_mean_mag, phot_rp_mean_mag, pmra, pmdec, parallax "
+        "FROM gaiadr3.gaia_source "
+        "WHERE 1=CONTAINS(POINT('ICRS', ra, dec), "
+        f"CIRCLE('ICRS', {center.ra.deg:.6f}, {center.dec.deg:.6f}, {radius_deg:.5f})) "
+        f"AND phot_g_mean_mag < {mag_limit} "
+        "AND phot_bp_mean_mag IS NOT NULL AND phot_rp_mean_mag IS NOT NULL"
+    )
+
+    for attempt in range(1, max_attempts + 1):
+        try:
+            job = Gaia.launch_job_async(adql)
+            return job.get_results()
+        except Exception:
+            _logger.warning("Gaia query attempt %d/%d failed",
+                            attempt, max_attempts, exc_info=True)
+            if attempt == max_attempts:
+                _logger.exception("Gaia query failed after %d attempts",
+                                  max_attempts)
+                if progress_cb:
+                    progress_cb("Gaia query failed")
+                return None
+            backoff = min(2.0 * (2 ** (attempt - 1)), 30.0)  # 2,4,8,16,30 → ~60s total
+            if progress_cb:
+                progress_cb(
+                    f"Gaia query failed (attempt {attempt}/{max_attempts}); "
+                    f"retrying in {backoff:.0f}s…")
+            time.sleep(backoff)
 
 
 def _branch_anchors(m_color, m_mag) -> dict:
