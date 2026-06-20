@@ -379,20 +379,28 @@ def build_cmd(
 
     # ── 6. Gaia cluster membership (proper motion + parallax) ─────────────────
     member = _select_members(g_pmra, g_pmdec, g_plx)
-    mem_color, mem_g = (g_bp - g_rp)[member], g_g[member]
+    # Plot every Gaia population on RP (not G) so it shares the Measured panel's
+    # RP-calibrated y-axis — required for the Iris+Gaia overlay to line up, and
+    # more correct given the axis is already labelled "RP scale".
+    mem_color, mem_mag = (g_bp - g_rp)[member], g_rp[member]
+    # Which of *our* measured stars belong to the cluster: their matched Gaia
+    # source is flagged a member. Lets us overlay Iris photometry on the cluster
+    # sequence and see how much the deeper/sharper Gaia catalog adds.
+    my_member = has_gaia & member[g_idx]
     _say(f"Gaia membership: {int(member.sum())}/{len(g_g)} field stars share the "
-         f"cluster proper motion + parallax")
+         f"cluster proper motion + parallax; {int(my_member.sum())} measured here")
 
     # ── 7. Morphology → rough age from the Δmag(turn-off − HB) gap ────────────
-    anchors = _cluster_age(_branch_anchors(mem_color, mem_g), band=red_name)
+    anchors = _cluster_age(_branch_anchors(mem_color, mem_mag), band=red_name)
     if anchors.get("age") is not None:
         _say(f"morphology: Δ{red_name}(TO−HB) ≈ {anchors['delta_mag']:.2f} mag "
              f"→ age ≈ {anchors['age']:.0f} Gyr (rough)")
 
     # ── 8. Plot ──────────────────────────────────────────────────────────────
     _ckpt()
-    _plot_cmd(color, mag, g_bp - g_rp, g_g, mem_color, mem_g, blue_name, red_name,
+    _plot_cmd(color, mag, g_bp - g_rp, g_rp, mem_color, mem_mag, blue_name, red_name,
               dso_name, int(has_gaia.sum()), output_path,
+              my_color=color[my_member], my_mag=mag[my_member],
               observatory_name=observatory_name, anchors=anchors)
 
     return {
@@ -566,15 +574,18 @@ def _annotate_branches(ax, anchors: dict) -> None:
                 color=AGE, fontsize=8, va="center", ha="left")
 
 
-def _plot_cmd(color, mag, gaia_color, gaia_g, mem_color, mem_g, blue_name, red_name,
-              dso_name, n_gaia, output_path: Path,
+def _plot_cmd(color, mag, gaia_color, gaia_mag, mem_color, mem_mag, blue_name, red_name,
+              dso_name, n_gaia, output_path: Path, my_color=None, my_mag=None,
               observatory_name: str = "this telescope", anchors: "Optional[dict]" = None) -> None:
     """Render the colour–magnitude diagram to a JPEG (dark theme).
 
     Four panels (2×2) sharing axes: the measured stars, the full Gaia DR3 field,
     the Gaia stars selected as cluster members by proper motion + parallax (the
-    field stripped away → the clean cluster locus), and an annotated copy of the
-    member sequence with the main evolutionary branches labelled.
+    field stripped away → the clean cluster locus), and — bottom-right — an
+    overlay of *our* measured cluster members (``my_color``/``my_mag``, in
+    temperature colour) on top of the faint Gaia member sequence, with the
+    evolutionary branches annotated. The overlay shows how much of the cluster
+    Iris resolves versus what the deeper/sharper Gaia catalog fills in.
     """
     import matplotlib
     matplotlib.use("Agg")
@@ -583,10 +594,10 @@ def _plot_cmd(color, mag, gaia_color, gaia_g, mem_color, mem_g, blue_name, red_n
     BG, GAIA, FG = "#0d1117", "#30475e", "#c9d1d9"
     CMAP = "RdYlBu_r"  # blue (small B−R, hot) → red (large B−R, cool)
 
-    finite_g = np.isfinite(gaia_color) & np.isfinite(gaia_g)
-    g_color, g_mag = gaia_color[finite_g], gaia_g[finite_g]
-    finite_m = np.isfinite(mem_color) & np.isfinite(mem_g)
-    m_color, m_mag = mem_color[finite_m], mem_g[finite_m]
+    finite_g = np.isfinite(gaia_color) & np.isfinite(gaia_mag)
+    g_color, g_mag = gaia_color[finite_g], gaia_mag[finite_g]
+    finite_m = np.isfinite(mem_color) & np.isfinite(mem_mag)
+    m_color, m_mag = mem_color[finite_m], mem_mag[finite_m]
     color, mag = np.asarray(color), np.asarray(mag)
 
     # Shared colour/magnitude ranges over all populations: the panels line up,
@@ -617,18 +628,36 @@ def _plot_cmd(color, mag, gaia_color, gaia_g, mem_color, mem_g, blue_name, red_n
         _draw_temp(a_mem, m_color, m_mag)
         a_mem.set_title(f"Gaia members (PM + parallax) — {m_color.size} stars",
                         color="#e6edf3")
-        _draw_temp(a_ann, m_color, m_mag, alpha=0.55)
+        # Bottom-right: overlay our measured cluster members on the Gaia member
+        # sequence. Gaia members drawn faintly underneath; Iris photometry on top
+        # in temperature colour. The gap between them is the crowded core / faint
+        # stars only Gaia resolves.
+        a_ann.scatter(m_color, m_mag, s=10, c=GAIA, alpha=0.6, linewidths=0,
+                      label=f"Gaia members · {m_color.size}")
+        n_mine = 0
+        if my_color is not None:
+            mc, mm = np.asarray(my_color), np.asarray(my_mag)
+            keep = np.isfinite(mc) & np.isfinite(mm)
+            n_mine = int(keep.sum())
+            if n_mine:
+                a_ann.scatter(mc[keep], mm[keep], s=14, c=mc[keep], cmap=CMAP,
+                              vmin=cmin, vmax=cmax, alpha=0.95, linewidths=0,
+                              label=f"{observatory_name} · {n_mine}")
         if anchors is None:
             anchors = _cluster_age(_branch_anchors(m_color, m_mag), band=red_name)
         _annotate_branches(a_ann, anchors)
-        a_ann.set_title("Annotated members", color="#e6edf3")
+        a_ann.set_title(f"{observatory_name} + Gaia members", color="#e6edf3")
+        leg = a_ann.legend(loc="lower left", fontsize=8, framealpha=0.25,
+                           facecolor=BG, edgecolor="#30363d")
+        for txt in leg.get_texts():
+            txt.set_color(FG)
     else:
         for ax in (a_mem, a_ann):
             ax.text(0.5, 0.5, "no cluster members\n(no PM/parallax clump)",
                     transform=ax.transAxes, ha="center", va="center",
                     color="#8b949e", fontsize=11)
         a_mem.set_title("Gaia members (PM + parallax) — none", color="#e6edf3")
-        a_ann.set_title("Annotated members — none", color="#e6edf3")
+        a_ann.set_title(f"{observatory_name} + Gaia members — none", color="#e6edf3")
 
     if all_color.size:
         cpad, mpad = 0.05 * (cmax - cmin + 1e-6), 0.05 * (mmax - mmin + 1e-6)
