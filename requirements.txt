@@ -99,6 +99,7 @@ speedtest-cli
 gpiozero
 torch
 torchvision
+tensorboard
 fastapi
 uvicorn[standard]
 websockets
