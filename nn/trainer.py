@@ -14,7 +14,7 @@ from typing import Optional
 import numpy as np
 import torch
 import torch.nn as nn
-from torch.utils.data import DataLoader, Dataset, random_split
+from torch.utils.data import DataLoader, Dataset
 
 from nn.noise2noise_model import UNet
 
@@ -106,6 +106,66 @@ class N2NDataset(Dataset):
         return inp, tgt
 
 
+def _holdout_frames(
+    frames: list[np.ndarray],
+    group_ids: Optional[list[str]],
+    val_frac: float,
+    progress_cb: Callable[[str], None],
+) -> tuple[list, Optional[list], list, Optional[list]]:
+    """Split frames into disjoint train/val pools for a real held-out metric.
+
+    When DSO group_ids are available, whole groups are held out so the model
+    never trains on a validation scene — val then measures generalization to
+    novel scenes, which is both the real inference condition and what exposes
+    scene memorization. Needs at least two pairable groups (>=2 frames each);
+    otherwise falls back to a disjoint per-frame holdout.
+
+    Returns (train_frames, train_groups, val_frames, val_groups); the *_groups
+    entries are None when group_ids is None, and the val_* lists are empty when
+    no valid holdout could be carved out.
+    """
+    n = len(frames)
+    rng = np.random.default_rng(0)
+
+    def pick(indices: list[int]):
+        gids = [group_ids[i] for i in indices] if group_ids is not None else None
+        return [frames[i] for i in indices], gids
+
+    if group_ids is not None:
+        groups: dict[str, list[int]] = {}
+        for idx, gid in enumerate(group_ids):
+            groups.setdefault(gid, []).append(idx)
+        # Only groups with >=2 frames can form within-DSO N2N pairs
+        pairable = [g for g, idxs in groups.items() if len(idxs) >= 2]
+        if len(pairable) >= 2:
+            target = val_frac * n
+            val_groups: list[str] = []
+            acc = 0
+            for g in rng.permutation(pairable):
+                # Stop once we hit the target, and always leave at least one
+                # pairable group for training
+                if acc >= target or len(val_groups) >= len(pairable) - 1:
+                    break
+                val_groups.append(str(g))
+                acc += len(groups[g])
+            val_set = set(val_groups)
+            va = [i for g in val_groups for i in groups[g]]
+            tr = [i for g, idxs in groups.items() if g not in val_set for i in idxs]
+            progress_cb(
+                f"Held-out DSOs for validation: {', '.join(sorted(val_set))} "
+                f"({len(va)}/{n} frames); training on {n - len(va)}"
+            )
+            return (*pick(tr), *pick(va))
+        progress_cb("Fewer than two pairable DSOs — using a per-frame holdout for validation")
+
+    # Per-frame holdout: still disjoint, but val frames share scenes with train
+    perm = list(rng.permutation(n))
+    n_val = int(round(val_frac * n))
+    if n - n_val < 2:
+        n_val = max(0, n - 2)
+    return (*pick(perm[n_val:]), *pick(perm[:n_val]))
+
+
 def train(
     filter_name: str,
     frames: list[np.ndarray],
@@ -125,12 +185,23 @@ def train(
     device = "cuda" if torch.cuda.is_available() else "cpu"
     progress_cb(f"[{filter_name}] Training on {len(frames)} frames — device: {device}")
 
-    dataset = N2NDataset(frames, group_ids=group_ids, patch_size=patch_size, pairs_per_epoch=pairs_per_epoch)
-    val_size = max(1, int(0.2 * len(dataset)))
-    train_size = len(dataset) - val_size
-    train_ds, val_ds = random_split(dataset, [train_size, val_size])
+    # Hold out frames the model never trains on, so val measures generalization.
+    # The previous random_split was a no-op: N2NDataset ignores the sample index
+    # and redraws a random pair on every access, so train/val drew from the same
+    # frame pool and val never measured anything held out.
+    tr_frames, tr_groups, va_frames, va_groups = _holdout_frames(
+        frames, group_ids, val_frac=0.2, progress_cb=progress_cb
+    )
+    train_ds = N2NDataset(tr_frames, group_ids=tr_groups, patch_size=patch_size, pairs_per_epoch=pairs_per_epoch)
     train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, num_workers=2, pin_memory=(device == "cuda"))
-    val_loader   = DataLoader(val_ds,   batch_size=batch_size, shuffle=False, num_workers=2, pin_memory=(device == "cuda"))
+
+    val_loader = None
+    if va_frames:
+        val_pairs = max(batch_size, int(0.2 * pairs_per_epoch))
+        val_ds = N2NDataset(va_frames, group_ids=va_groups, patch_size=patch_size, pairs_per_epoch=val_pairs)
+        val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False, num_workers=2, pin_memory=(device == "cuda"))
+    else:
+        progress_cb(f"[{filter_name}] No held-out validation set possible — checkpointing on train loss")
 
     model = UNet().to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
@@ -166,27 +237,36 @@ def train(
             train_loss += loss.item()
         train_loss /= len(train_loader)
 
-        model.eval()
-        val_loss = 0.0
-        with torch.no_grad():
-            for inp, tgt in val_loader:
-                inp, tgt = inp.to(device), tgt.to(device)
-                val_loss += criterion(model(inp), tgt).item()
-        val_loss /= len(val_loader)
+        val_loss = None
+        if val_loader is not None:
+            model.eval()
+            v = 0.0
+            with torch.no_grad():
+                for inp, tgt in val_loader:
+                    inp, tgt = inp.to(device), tgt.to(device)
+                    v += criterion(model(inp), tgt).item()
+            val_loss = v / len(val_loader)
         scheduler.step()
 
-        if writer is not None:
-            writer.add_scalars("loss", {"train": train_loss, "val": val_loss}, epoch)
+        # Select the checkpoint on held-out val when available, else train loss
+        metric = val_loss if val_loss is not None else train_loss
 
-        if val_loss < best_val_loss:
-            best_val_loss = val_loss
+        if writer is not None:
+            scalars = {"train": train_loss}
+            if val_loss is not None:
+                scalars["val"] = val_loss
+            writer.add_scalars("loss", scalars, epoch)
+
+        if metric < best_val_loss:
+            best_val_loss = metric
             torch.save({"model_state": model.state_dict(), "filter": filter_name, "epoch": epoch}, model_path)
 
         if epoch % 10 == 0 or epoch == epochs:
             elapsed = time.time() - t0
+            val_str = f"{val_loss:.6f}" if val_loss is not None else "n/a"
             progress_cb(
                 f"[{filter_name}] epoch {epoch}/{epochs}  "
-                f"train={train_loss:.6f}  val={val_loss:.6f}  "
+                f"train={train_loss:.6f}  val={val_str}  "
                 f"best={best_val_loss:.6f}  elapsed={elapsed:.0f}s"
             )
 
