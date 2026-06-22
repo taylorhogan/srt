@@ -144,7 +144,7 @@ def collect_all_frames(
     Only frames whose FITS FILTER header matches filter_name AND whose EXPTIME
     rounds to exptime_s are returned.
 
-    Returns (frames, dso_names) where dso_names[i] is the DSO directory name
+    Returns (frames, dso_names) where dso_names[i] is the normalized DSO key
     for frames[i]. This is used by N2NDataset to restrict pairs to within the
     same DSO — N2N requires pairs to be two noisy views of the same scene.
     """
@@ -156,8 +156,15 @@ def collect_all_frames(
     for fits_path in sorted(subs_dir.rglob("*.fits")):
         if fits_path.parent.name.upper() != "LIGHT":
             continue
-        # Directory layout: subs_dir/{DSO}/LIGHT/{frame}.fits
-        dso_dir_name = fits_path.parent.parent.name
+        # Layout varies in depth: subs_dir/{DSO}/[rig/]{date}/LIGHT/{frame}.fits.
+        # The DSO is always the first path component under subs_dir — NOT
+        # parent.parent, which lands on the date when a rig/date level exists.
+        # Normalize (lowercase, no spaces) so "M 13" and "m13" group as one
+        # scene, matching the canonical DSO key used elsewhere in the codebase.
+        try:
+            dso_dir_name = fits_path.relative_to(subs_dir).parts[0].lower().replace(" ", "")
+        except ValueError:
+            dso_dir_name = fits_path.parent.parent.name.lower().replace(" ", "")
         try:
             with _fits.open(fits_path) as hdul:
                 hdr = hdul[0].header
