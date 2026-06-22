@@ -36,6 +36,29 @@ def set_dehumidifier(on, timeout=10):
     return _get(url, timeout=timeout)
 
 
+def read_current_monitor(channel=None, timeout=10):
+    """Read one channel of the Shelly 3EM Gen3 current monitor.
+
+    Unlike the roof/dehumidifier relays (Gen1 REST), this device uses the
+    Gen2/3 RPC API: GET {base}/rpc/EM1.GetStatus?id=<channel>. Returns the
+    parsed status dict (voltage, current, act_power, pf, freq, ...) or None
+    on error.
+    """
+    cfg = config.data()["hardware"]
+    base = cfg["current_monitor_url"]
+    if channel is None:
+        channel = cfg.get("current_monitor_channel", 0)
+    url = f"{base}/rpc/EM1.GetStatus?id={channel}"
+    response = _get(url, timeout=timeout)
+    if response is None:
+        return None
+    try:
+        return response.json()
+    except ValueError as e:
+        logger.warning("Bad JSON from current monitor (%s): %s", url, e)
+        return None
+
+
 def _get(url, timeout=10):
     try:
         response = requests.get(url, timeout=timeout)

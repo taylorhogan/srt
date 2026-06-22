@@ -26,6 +26,7 @@ from cmd_processing import social_server
 from cmd_processing import jobs
 from utils import utils, pushover
 from sentry import vision_safety
+from sentry import roof_current_signature as rcs
 from end_points import end
 from iris_astronomy import astro_dso_visibility
 from nina_gen import nina_sequence_gen
@@ -60,21 +61,41 @@ def turn_inside_light_off(dev_map: dict) -> None:
     time.sleep(2)
 
 
-def toggle_roof(dev_map: dict) -> None:
+def toggle_roof(dev_map: dict, capture_direction: Optional[str] = None) -> None:
     """Power the roof motor, trigger the Shelly relay to move the roof, then power off.
 
     The roof direction (open/close) depends on its current position — the relay
     simply toggles. Waits 45 seconds for the roof to complete its travel.
+
+    `capture_direction` ("open"/"close") only labels the banked current
+    signature; it does not change which way the roof moves.
     """
     inst = {"Roof motor": 'on'}
     asyncio.run(ku.kasa_do(dev_map, inst))
     time.sleep(10)
+
+    # Best-effort: bank the motor's current signature for anomaly detection.
+    # Never let a capture problem disrupt the roof sequence (the helpers swallow
+    # their own errors); only start it if a current monitor is configured.
+    capture = None
+    if config.data()["hardware"].get("current_monitor_url"):
+        capture = rcs.start_background_capture(direction=capture_direction, seconds=48)
+
     if utl_shelly.fire_roof_relay() is None:
         _logger.error("Failed to trigger relay in toggle_roof")
+        if capture is not None:
+            rcs.finish_background_capture(capture, save=False)
         raise RuntimeError("toggle_roof: roof relay trigger failed")
     time.sleep(45)
     inst = {"Roof motor": 'off'}
     asyncio.run(ku.kasa_do(dev_map, inst))
+
+    if capture is not None:
+        sig = rcs.finish_background_capture(capture, status="unlabeled")
+        if sig is not None:
+            res = rcs.compare(sig)
+            if res.get("is_anomaly"):
+                _logger.warning("Roof current signature anomaly: %s", "; ".join(res["reasons"]))
 
 
 

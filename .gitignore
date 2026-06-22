@@ -23,6 +23,9 @@ local/
 scratch/
 my_instructions.json
 my_calendar.json
+sentry/roof_signatures/
+sentry/library_spectrograms/
+sentry/detected_spectrograms/
 my_instruction_back.json
 my_cal.back.json
 scheduler_state.json

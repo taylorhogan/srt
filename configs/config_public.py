@@ -7,7 +7,7 @@ class PublicConfig():
 
         },
         "version": {
-            "date": "2026.6.22.1"
+            "date": "2026.6.22.2"
         },
 
         "logger": {
@@ -98,6 +98,11 @@ class PublicConfig():
             "roof_relay_url": "http://192.168.87.41/relay/0?turn=on",
             # Shelly relay base URL for the dehumidifier; append ?turn=on / ?turn=off.
             "dehumidifier_relay_url": "http://192.168.87.28/relay/0",
+            # Shelly 3EM Gen3 (S3EM, EM1 mode) used as a 120V current monitor.
+            # Unlike the Gen1 relays above this speaks the Gen2/3 RPC API:
+            # GET {base}/rpc/EM1.GetStatus?id=<channel> -> {voltage, current, ...}.
+            "current_monitor_url": "http://192.168.87.46",
+            "current_monitor_channel": 0,
             # ASTAP plate solver (also used by N.I.N.A) — used to give transit
             # candidates real sky coordinates and Gaia identifications.
             "astap_exe": "C:/Program Files/astap/astap.exe",
