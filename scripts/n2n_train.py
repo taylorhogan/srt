@@ -80,6 +80,7 @@ def main() -> None:
     batch_size   = int(nn_cfg.get("batch_size", 8))
     patch_size   = int(nn_cfg.get("patch_size", 256))
     pairs_per_ep = int(nn_cfg.get("pairs_per_epoch", 2000))
+    val_dsos     = int(nn_cfg.get("val_dsos", 2))
 
     print(f"Scanning {subs_dir} for filter '{filter_name}' {exptime_s}s LIGHT frames…")
     t0 = time.time()
@@ -110,6 +111,7 @@ def main() -> None:
         batch_size=batch_size,
         patch_size=patch_size,
         pairs_per_epoch=pairs_per_ep,
+        val_dsos=val_dsos,
         progress_cb=print,
     )
 

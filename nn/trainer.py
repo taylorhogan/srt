@@ -111,14 +111,18 @@ def _holdout_frames(
     group_ids: Optional[list[str]],
     val_frac: float,
     progress_cb: Callable[[str], None],
+    min_val_groups: int = 2,
 ) -> tuple[list, Optional[list], list, Optional[list]]:
     """Split frames into disjoint train/val pools for a real held-out metric.
 
     When DSO group_ids are available, whole groups are held out so the model
     never trains on a validation scene — val then measures generalization to
     novel scenes, which is both the real inference condition and what exposes
-    scene memorization. Needs at least two pairable groups (>=2 frames each);
-    otherwise falls back to a disjoint per-frame holdout.
+    scene memorization. Holds out at least ``min_val_groups`` DSOs (a single
+    held-out scene makes the val curve noisy), continuing past that until
+    ``val_frac`` of the frames are held out, while always leaving at least one
+    pairable group for training. Needs at least two pairable groups (>=2
+    frames each); otherwise falls back to a disjoint per-frame holdout.
 
     Returns (train_frames, train_groups, val_frames, val_groups); the *_groups
     entries are None when group_ids is None, and the val_* lists are empty when
@@ -142,9 +146,12 @@ def _holdout_frames(
             val_groups: list[str] = []
             acc = 0
             for g in rng.permutation(pairable):
-                # Stop once we hit the target, and always leave at least one
-                # pairable group for training
-                if acc >= target or len(val_groups) >= len(pairable) - 1:
+                # Hold out at least min_val_groups DSOs, then keep going until
+                # val_frac of frames is reached; always leave >=1 pairable
+                # group for training
+                if len(val_groups) >= len(pairable) - 1:
+                    break
+                if len(val_groups) >= min_val_groups and acc >= target:
                     break
                 val_groups.append(str(g))
                 acc += len(groups[g])
@@ -176,6 +183,7 @@ def train(
     lr: float = 1e-3,
     patch_size: int = 256,
     pairs_per_epoch: int = 2000,
+    val_dsos: int = 2,
     progress_cb: Callable[[str], None] = print,
 ) -> dict:
     """Train a Noise2Noise U-Net and save the best checkpoint.
@@ -190,7 +198,7 @@ def train(
     # and redraws a random pair on every access, so train/val drew from the same
     # frame pool and val never measured anything held out.
     tr_frames, tr_groups, va_frames, va_groups = _holdout_frames(
-        frames, group_ids, val_frac=0.2, progress_cb=progress_cb
+        frames, group_ids, val_frac=0.2, progress_cb=progress_cb, min_val_groups=val_dsos
     )
     train_ds = N2NDataset(tr_frames, group_ids=tr_groups, patch_size=patch_size, pairs_per_epoch=pairs_per_epoch)
     train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, num_workers=2, pin_memory=(device == "cuda"))
