@@ -213,11 +213,13 @@ _STATUS_STYLE = {
 }
 
 
-def _instructions_table_html(sorted_l, per_page=20):
+def _instructions_table_html(sorted_l, per_page=None):
     """Render the imaging queue as a styled HTML table for the web chat.
 
     Matches the look of the other chat tables (dark card, dim header row,
     tabular-nums, status pills) instead of the old matplotlib PNG.
+
+    `per_page` caps the number of rows shown; None (default) shows all.
     """
     from html import escape
 
@@ -226,7 +228,7 @@ def _instructions_table_html(sorted_l, per_page=20):
     td = (f'padding:5px 9px;border-bottom:1px solid {_TBL_ROW};color:{_TBL_TEXT};'
           f'font-variant-numeric:tabular-nums;vertical-align:top;')
 
-    rows = sorted_l[:per_page]
+    rows = sorted_l if per_page is None else sorted_l[:per_page]
     headers = [('DSO', 'left'), ('Requestor', 'left'), ('State', 'left'),
                ('Best Date', 'left'), ('Tonight', 'right'),
                ('Air Mass', 'right'), ('ID', 'right')]
@@ -240,7 +242,7 @@ def _instructions_table_html(sorted_l, per_page=20):
 
     out = [
         f'<div style="font-size:13px;font-weight:600;color:{_TBL_ACCENT};'
-        f'margin-bottom:10px;">Imaging queue — showing {len(rows)} of {len(sorted_l)}</div>',
+        f'margin-bottom:10px;">Imaging queue — {len(rows)} object{"s" if len(rows) != 1 else ""}</div>',
         f'<div style="background:{_TBL_BG};border:1px solid {_TBL_TILE_BORDER};'
         f'border-radius:8px;padding:10px 12px;display:inline-block;'
         f'max-width:100%;overflow-x:auto;">',
