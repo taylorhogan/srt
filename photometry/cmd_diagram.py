@@ -398,7 +398,7 @@ def build_cmd(
 
     # ── 8. Plot ──────────────────────────────────────────────────────────────
     _ckpt()
-    _plot_cmd(color, mag, g_bp - g_rp, g_rp, mem_color, mem_mag, blue_name, red_name,
+    _plot_cmd(color, mag, mem_color, mem_mag, blue_name, red_name,
               dso_name, int(has_gaia.sum()), output_path,
               my_color=color[my_member], my_mag=mag[my_member],
               observatory_name=observatory_name, anchors=anchors)
@@ -574,18 +574,19 @@ def _annotate_branches(ax, anchors: dict) -> None:
                 color=AGE, fontsize=8, va="center", ha="left")
 
 
-def _plot_cmd(color, mag, gaia_color, gaia_mag, mem_color, mem_mag, blue_name, red_name,
+def _plot_cmd(color, mag, mem_color, mem_mag, blue_name, red_name,
               dso_name, n_gaia, output_path: Path, my_color=None, my_mag=None,
               observatory_name: str = "this telescope", anchors: "Optional[dict]" = None) -> None:
     """Render the colour–magnitude diagram to a JPEG (dark theme).
 
-    Four panels (2×2) sharing axes: the measured stars, the full Gaia DR3 field,
-    the Gaia stars selected as cluster members by proper motion + parallax (the
-    field stripped away → the clean cluster locus), and — bottom-right — an
-    overlay of *our* measured cluster members (``my_color``/``my_mag``, in
-    temperature colour) on top of the faint Gaia member sequence, with the
-    evolutionary branches annotated. The overlay shows how much of the cluster
-    Iris resolves versus what the deeper/sharper Gaia catalog fills in.
+    Four panels (2×2) sharing axes, telling one story left→right / top→bottom:
+      1. every star Iris measured (cluster + field);
+      2. the Gaia stars that are part of the DSO (PM + parallax members);
+      3. Iris's stars stripped to those DSO members (field removed);
+      4. those Iris members overlaid on the faint Gaia member sequence with the
+         evolutionary branches annotated.
+    Panels 3–4 use ``my_color``/``my_mag`` — the AND of "measured by us" and
+    "Gaia cluster member".
     """
     import matplotlib
     matplotlib.use("Agg")
@@ -594,16 +595,23 @@ def _plot_cmd(color, mag, gaia_color, gaia_mag, mem_color, mem_mag, blue_name, r
     BG, GAIA, FG = "#0d1117", "#30475e", "#c9d1d9"
     CMAP = "RdYlBu_r"  # blue (small B−R, hot) → red (large B−R, cool)
 
-    finite_g = np.isfinite(gaia_color) & np.isfinite(gaia_mag)
-    g_color, g_mag = gaia_color[finite_g], gaia_mag[finite_g]
     finite_m = np.isfinite(mem_color) & np.isfinite(mem_mag)
     m_color, m_mag = mem_color[finite_m], mem_mag[finite_m]
     color, mag = np.asarray(color), np.asarray(mag)
 
-    # Shared colour/magnitude ranges over all populations: the panels line up,
-    # and a point's hue matches its x-position (same scale as the axis).
-    all_color = np.concatenate([color, g_color]) if g_color.size else color
-    all_mag = np.concatenate([mag, g_mag]) if g_mag.size else mag
+    # Iris stars stripped to the DSO members: the AND of "measured by us" and
+    # "Gaia cluster member" (a subset of color/mag).
+    if my_color is not None and my_mag is not None:
+        my_c, my_m = np.asarray(my_color, float), np.asarray(my_mag, float)
+        keep_my = np.isfinite(my_c) & np.isfinite(my_m)
+        my_c, my_m = my_c[keep_my], my_m[keep_my]
+    else:
+        my_c = my_m = np.array([])
+
+    # Shared colour/magnitude ranges over the plotted populations: the panels
+    # line up, and a point's hue matches its x-position (same scale as the axis).
+    all_color = np.concatenate([color, m_color]) if m_color.size else color
+    all_mag = np.concatenate([mag, m_mag]) if m_mag.size else mag
     cmin, cmax = (float(np.nanmin(all_color)), float(np.nanmax(all_color))) if all_color.size else (0.0, 1.0)
     mmin, mmax = (float(np.nanmin(all_mag)), float(np.nanmax(all_mag))) if all_mag.size else (0.0, 1.0)
 
@@ -615,34 +623,36 @@ def _plot_cmd(color, mag, gaia_color, gaia_mag, mem_color, mem_mag, blue_name, r
     fig, axes = plt.subplots(2, 2, figsize=(15, 12), dpi=110,
                              sharex=True, sharey=True, constrained_layout=True)
     fig.patch.set_facecolor(BG)
-    a_meas, a_field, a_mem, a_ann = axes[0, 0], axes[0, 1], axes[1, 0], axes[1, 1]
+    a_iris, a_gmem = axes[0, 0], axes[0, 1]
+    a_strip, a_ann = axes[1, 0], axes[1, 1]
 
-    sc = _draw_temp(a_meas, color, mag)
-    a_meas.set_title(f"Measured ({observatory_name}) — {color.size} stars", color="#e6edf3")
-
-    if g_color.size:
-        a_field.scatter(g_color, g_mag, s=6, c=GAIA, alpha=0.6, linewidths=0)
-    a_field.set_title(f"Gaia DR3 field — {g_color.size} stars", color="#e6edf3")
+    # 1. Every star Iris measured (cluster + field).
+    sc = _draw_temp(a_iris, color, mag)
+    a_iris.set_title(f"Measured ({observatory_name}) — {color.size} stars", color="#e6edf3")
 
     if m_color.size:
-        _draw_temp(a_mem, m_color, m_mag)
-        a_mem.set_title(f"Gaia members (PM + parallax) — {m_color.size} stars",
-                        color="#e6edf3")
-        # Bottom-right: overlay our measured cluster members on the Gaia member
-        # sequence. Gaia members drawn faintly underneath; Iris photometry on top
-        # in temperature colour. The gap between them is the crowded core / faint
-        # stars only Gaia resolves.
+        # 2. The Gaia stars that are part of the DSO (PM + parallax members).
+        _draw_temp(a_gmem, m_color, m_mag)
+        a_gmem.set_title(f"Gaia members (PM + parallax) — {m_color.size} stars",
+                         color="#e6edf3")
+
+        # 3. Iris's stars stripped to those DSO members (field removed).
+        if my_c.size:
+            _draw_temp(a_strip, my_c, my_m)
+        else:
+            a_strip.text(0.5, 0.5, "no measured stars\nmatched a cluster member",
+                         transform=a_strip.transAxes, ha="center", va="center",
+                         color="#8b949e", fontsize=11)
+        a_strip.set_title(f"Measured members ({observatory_name}, field stripped) "
+                          f"— {my_c.size} stars", color="#e6edf3")
+
+        # 4. Iris members overlaid on the faint Gaia member sequence, annotated.
+        # The gap between them is the crowded core / faint stars only Gaia resolves.
         a_ann.scatter(m_color, m_mag, s=10, c=GAIA, alpha=0.6, linewidths=0,
                       label=f"Gaia members · {m_color.size}")
-        n_mine = 0
-        if my_color is not None:
-            mc, mm = np.asarray(my_color), np.asarray(my_mag)
-            keep = np.isfinite(mc) & np.isfinite(mm)
-            n_mine = int(keep.sum())
-            if n_mine:
-                a_ann.scatter(mc[keep], mm[keep], s=14, c=mc[keep], cmap=CMAP,
-                              vmin=cmin, vmax=cmax, alpha=0.95, linewidths=0,
-                              label=f"{observatory_name} · {n_mine}")
+        if my_c.size:
+            a_ann.scatter(my_c, my_m, s=14, c=my_c, cmap=CMAP, vmin=cmin, vmax=cmax,
+                          alpha=0.95, linewidths=0, label=f"{observatory_name} · {my_c.size}")
         if anchors is None:
             anchors = _cluster_age(_branch_anchors(m_color, m_mag), band=red_name)
         _annotate_branches(a_ann, anchors)
@@ -652,17 +662,18 @@ def _plot_cmd(color, mag, gaia_color, gaia_mag, mem_color, mem_mag, blue_name, r
         for txt in leg.get_texts():
             txt.set_color(FG)
     else:
-        for ax in (a_mem, a_ann):
+        for ax in (a_gmem, a_strip, a_ann):
             ax.text(0.5, 0.5, "no cluster members\n(no PM/parallax clump)",
                     transform=ax.transAxes, ha="center", va="center",
                     color="#8b949e", fontsize=11)
-        a_mem.set_title("Gaia members (PM + parallax) — none", color="#e6edf3")
+        a_gmem.set_title("Gaia members (PM + parallax) — none", color="#e6edf3")
+        a_strip.set_title(f"Measured members ({observatory_name}) — none", color="#e6edf3")
         a_ann.set_title(f"{observatory_name} + Gaia members — none", color="#e6edf3")
 
     if all_color.size:
         cpad, mpad = 0.05 * (cmax - cmin + 1e-6), 0.05 * (mmax - mmin + 1e-6)
-        a_meas.set_xlim(cmin - cpad, cmax + cpad)
-        a_meas.set_ylim(mmax + mpad, mmin - mpad)  # inverted: brighter at top
+        a_iris.set_xlim(cmin - cpad, cmax + cpad)
+        a_iris.set_ylim(mmax + mpad, mmin - mpad)  # inverted: brighter at top
 
     for ax in axes.ravel():
         ax.set_facecolor(BG)
@@ -670,9 +681,9 @@ def _plot_cmd(color, mag, gaia_color, gaia_mag, mem_color, mem_mag, blue_name, r
         for spine in ax.spines.values():
             spine.set_color("#30363d")
         ax.grid(True, color="#21262d", linewidth=0.6)
-    for ax in (a_mem, a_ann):       # bottom row
+    for ax in (a_strip, a_ann):     # bottom row
         ax.set_xlabel(f"colour  {blue_name} − {red_name}  (Gaia BP/RP scale)", color=FG)
-    for ax in (a_meas, a_mem):      # left column
+    for ax in (a_iris, a_strip):    # left column
         ax.set_ylabel(f"magnitude  {red_name}  (Gaia RP scale)", color=FG)
 
     # Shared colourbar for the temperature false-colour (measured + members).
