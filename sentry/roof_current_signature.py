@@ -105,11 +105,22 @@ def extract_features(sig):
     if t.size < 3:
         return {"valid": False}
 
-    # Baseline = idle draw before the motor runs (first ~1s of the window)
-    baseline_mask = t < max(1.0, t[1])
-    baseline = float(np.median(p[baseline_mask])) if baseline_mask.any() else float(p[0])
+    # Baseline = idle standby draw. Use a low percentile of the whole capture
+    # rather than a fixed leading window: the motor runs for only a fraction of
+    # the window, so most samples are idle and a low percentile is robust to
+    # *when* the relay fires. A fixed leading window can instead be contaminated
+    # by motor-start inrush if the capture begins late, inflating the baseline
+    # and loosening the returned-to-baseline / running thresholds below.
+    baseline = float(np.percentile(p, 10))
 
-    running_mask = p > (baseline + RUNNING_MARGIN_W)
+    # "Running" = motor doing mechanical work. Scale the threshold to this run's
+    # peak so the brief low-power-factor startup inrush (high current but only
+    # tens of watts of real power) isn't counted as travel — otherwise
+    # move_duration jitters by ~1s depending on whether the inrush ledge landed
+    # in a sample. RUNNING_MARGIN_W stays the floor for tiny-peak/degenerate runs.
+    peak = float(p.max())
+    run_threshold = baseline + max(RUNNING_MARGIN_W, 0.25 * (peak - baseline))
+    running_mask = p > run_threshold
     if running_mask.any():
         run_t = t[running_mask]
         move_start = float(run_t.min())
@@ -131,7 +142,7 @@ def extract_features(sig):
     return {
         "valid": True,
         "baseline_w": round(baseline, 2),
-        "peak_w": round(float(p.max()), 2),
+        "peak_w": round(peak, 2),
         "peak_a": round(float(c.max()), 3),
         "running_w": round(running_power, 2),
         "running_a": round(running_current, 3),
