@@ -4,8 +4,6 @@ import logging
 import os.path
 from datetime import datetime
 
-import matplotlib.patches as mpatches
-import matplotlib.pyplot as plt
 from astropy.utils.iers import conf
 conf.auto_max_age = None
 from astropy.utils import iers
@@ -198,70 +196,90 @@ def create_instructions_table(force = False):
     logger.info("in create")
 
 
-    per_page = 20
-    idx = per_page
-
-    fig, ax = plt.subplots(figsize=(10, per_page))
-    ax.axis('off')
-
-    # Set the title
-    # ax.set_title("Image Requests", fontsize=20, pad=20)
-
-    # Weekday labels
-    headers = ['DSO', 'Requestor', 'State', 'Best Date', 'Tonight', 'Air Mass','ID']
-    for i, header in enumerate(headers):
-        ax.text(i + 1.5, per_page, header, ha='center', fontsize=12, weight='bold')
-
-    # Generate the  grid
-
-    for instruction in sorted_l[:per_page]:
-        # Get color and text for the days
-
-        if instruction["status"] == 'in process':
-            color = 'lightgreen'
-        if instruction["status"] == 'waiting':
-            color = 'lightblue'
-        if instruction["status"] == 'completed':
-            color = 'pink'
-        for col_idx in range(7):
-            text = ''
-
-            if col_idx == 0:
-                text = instruction["dso"]
-            elif col_idx == 1:
-                text = instruction["requestor"]
-                string = instruction["request_time"]
-                if string != "":
-                    datetime_object = datetime.strptime(string, '%Y-%m-%d')
-                    formatted_date = datetime_object.strftime("%m-%d\n%Y")
-                    text += "\n" + formatted_date
-
-            elif col_idx == 2:
-                text = instruction["status"]
-            elif col_idx == 3:
-                text = instruction["best"]
-            elif col_idx == 4:
-                text = instruction["above_horizon"]
-            elif col_idx == 5:
-                text = instruction["air_mass"]
-            elif col_idx == 6:
-                text = instruction["hash"]
-
-            rect = mpatches.Rectangle((col_idx + 1, idx - 1), 1, 1, edgecolor="black", facecolor=color)
-            ax.add_patch(rect)
-            # Add text
-            ax.text(col_idx + 1.5, idx - 0.5, text, ha='center', va='center', fontsize=10)
-
-        idx = idx - 1
-    # break
+    social_server.post_html_message(_instructions_table_html(sorted_l))
 
 
-    # Set limits and aspect
-    ax.set_xlim(0, 8)
-    ax.set_ylim(0, per_page)
-    # ax.set_aspect('equal')
-    fig.savefig('instructions.png')
-    social_server.post_social_message("", "instructions.png")
+# GitHub-dark palette, matching the "Active targets" table in super_user_commands.
+_TBL_BORDER, _TBL_ROW, _TBL_DIM, _TBL_TEXT, _TBL_ACCENT, _TBL_BRIGHT = (
+    "#30363d", "#21262d", "#8b949e", "#c9d1d9", "#3fb950", "#e6edf3")
+_TBL_BG, _TBL_TILE_BORDER = "#0d1117", "#30363d"
+
+# (text colour, pill background) per status — preserves the old
+# green/blue/pink colour coding in the dark theme.
+_STATUS_STYLE = {
+    "in process": ("#3fb950", "rgba(63,185,80,0.15)"),
+    "waiting":    ("#58a6ff", "rgba(88,166,255,0.15)"),
+    "completed":  ("#f778ba", "rgba(247,120,182,0.14)"),
+}
+
+
+def _instructions_table_html(sorted_l, per_page=20):
+    """Render the imaging queue as a styled HTML table for the web chat.
+
+    Matches the look of the other chat tables (dark card, dim header row,
+    tabular-nums, status pills) instead of the old matplotlib PNG.
+    """
+    from html import escape
+
+    th = (f'padding:4px 9px;border-bottom:1px solid {_TBL_BORDER};color:{_TBL_DIM};'
+          f'font-size:10.5px;font-weight:600;white-space:nowrap;')
+    td = (f'padding:5px 9px;border-bottom:1px solid {_TBL_ROW};color:{_TBL_TEXT};'
+          f'font-variant-numeric:tabular-nums;vertical-align:top;')
+
+    rows = sorted_l[:per_page]
+    headers = [('DSO', 'left'), ('Requestor', 'left'), ('State', 'left'),
+               ('Best Date', 'left'), ('Tonight', 'right'),
+               ('Air Mass', 'right'), ('ID', 'right')]
+
+    def _two_line(main, sub):
+        h = f'<span style="color:{_TBL_TEXT};">{escape(str(main))}</span>'
+        if sub:
+            h += (f'<br><span style="color:{_TBL_DIM};font-size:10px;">'
+                  f'{escape(str(sub))}</span>')
+        return h
+
+    out = [
+        f'<div style="font-size:13px;font-weight:600;color:{_TBL_ACCENT};'
+        f'margin-bottom:10px;">Imaging queue — showing {len(rows)} of {len(sorted_l)}</div>',
+        f'<div style="background:{_TBL_BG};border:1px solid {_TBL_TILE_BORDER};'
+        f'border-radius:8px;padding:10px 12px;display:inline-block;'
+        f'max-width:100%;overflow-x:auto;">',
+        '<table style="border-collapse:collapse;font-size:11px;"><thead><tr>',
+    ]
+    for label, align in headers:
+        out.append(f'<th style="{th}text-align:{align};">{escape(label)}</th>')
+    out.append('</tr></thead><tbody>')
+
+    for instr in rows:
+        status = instr.get("status", "")
+        s_fg, s_bg = _STATUS_STYLE.get(status, (_TBL_DIM, "rgba(139,148,158,0.12)"))
+        pill = (f'<span style="display:inline-block;padding:1px 8px;border-radius:9px;'
+                f'background:{s_bg};color:{s_fg};font-size:10px;font-weight:600;'
+                f'white-space:nowrap;">{escape(status)}</span>')
+
+        # best = "YYYY-MM-DD\nHH:MM:SS(.ffffff)" — show date, time dimmed (no microsec)
+        best = (instr.get("best") or "").split("\n")
+        best_date = best[0].strip()
+        best_time = best[1].strip().split(".")[0] if len(best) > 1 else ""
+
+        cells = [
+            f'<td style="{td}text-align:left;font-weight:600;color:{_TBL_BRIGHT};'
+            f'white-space:nowrap;">{escape(str(instr.get("dso", "")))}</td>',
+            f'<td style="{td}text-align:left;white-space:nowrap;">'
+            f'{_two_line(instr.get("requestor", ""), instr.get("request_time", ""))}</td>',
+            f'<td style="{td}text-align:left;">{pill}</td>',
+            f'<td style="{td}text-align:left;white-space:nowrap;">'
+            f'{_two_line(best_date, best_time)}</td>',
+            f'<td style="{td}text-align:right;white-space:nowrap;">'
+            f'{escape(str(instr.get("above_horizon", "")))}</td>',
+            f'<td style="{td}text-align:right;">{escape(str(instr.get("air_mass", "")))}</td>',
+            f'<td style="{td}text-align:right;color:{_TBL_DIM};">'
+            f'{escape(str(instr.get("hash", "")))}</td>',
+        ]
+        out.append('<tr>' + "".join(cells) + '</tr>')
+
+    out.append('</tbody></table></div>')
+    return "".join(out)
 
 
 def reset_all_priorities_db() -> int:

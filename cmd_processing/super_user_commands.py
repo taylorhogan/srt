@@ -95,7 +95,20 @@ def toggle_roof(dev_map: dict, capture_direction: Optional[str] = None) -> None:
         if sig is not None:
             res = rcs.compare(sig)
             if res.get("is_anomaly"):
-                _logger.warning("Roof current signature anomaly: %s", "; ".join(res["reasons"]))
+                reasons = "; ".join(res["reasons"])
+                _logger.warning("Roof current signature anomaly: %s", reasons)
+                # Surface to chat + phone so a stress/jam isn't buried in the log
+                # during unattended operation. Best-effort: a notification failure
+                # must not break the roof sequence.
+                alert = f"⚠️ Roof motor current anomaly ({capture_direction or 'unknown'}): {reasons}"
+                try:
+                    social_server.post_social_message(alert)
+                except Exception as e:  # noqa: BLE001
+                    _logger.error("Failed to post roof anomaly to chat: %s", e)
+                try:
+                    pushover.push_message(alert)
+                except Exception as e:  # noqa: BLE001
+                    _logger.error("Failed to push roof anomaly: %s", e)
 
 
 
@@ -125,7 +138,7 @@ def open_roof_with_option(check: bool) -> bool:
         if parked:
             if closed:
                 social_server.post_social_message("Vision Safety says roof is closed, opening roof")
-                toggle_roof(dev_map)
+                toggle_roof(dev_map, capture_direction="open")
                 time.sleep(30)
                 MAX_ROOF_CHECKS = 5
                 for attempt in range(MAX_ROOF_CHECKS):
@@ -148,7 +161,7 @@ def open_roof_with_option(check: bool) -> bool:
             social_server.post_social_message("Vision Safety says Scope is NOT parked, therefore will not open")
             return False
     else:
-        toggle_roof(dev_map)
+        toggle_roof(dev_map, capture_direction="open")
         return False
 
 
