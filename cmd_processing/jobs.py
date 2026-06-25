@@ -42,6 +42,13 @@ _TERMINAL = frozenset({DONE, ERROR, CANCELLED})
 SYSTEM_JOB_ID = "system"
 SYSTEM_STATUS = "SYSTEM"
 
+# Per-job log cap. The system feed is never deleted, so without a bound its log
+# grows forever and leaks memory (observed: the web server reached ~5 GB over
+# ~30 h and wedged its event loop). Keep the most recent entries; trim the
+# oldest in bulk past a slack margin to amortize the cost of trimming.
+_MAX_JOB_LOG = 2000
+_JOB_LOG_TRIM_SLACK = 256
+
 _jobs: dict = {}
 _order: list = []            # creation order of job ids (newest appended last)
 _lock = threading.RLock()
@@ -257,7 +264,11 @@ def append_log(job_id: Optional[str], entry: dict) -> None:
         job = _jobs.get(job_id) if job_id else None
         if job is None:
             job = _ensure_system_locked()
-        job["log"].append(entry)
+        log = job["log"]
+        log.append(entry)
+        # Bound the log so the immortal system feed can't grow without limit.
+        if len(log) > _MAX_JOB_LOG + _JOB_LOG_TRIM_SLACK:
+            del log[: len(log) - _MAX_JOB_LOG]
         status = job["status"]
         jid = job["id"]
     _broadcast({"kind": "log", "id": jid, "entry": entry, "status": status})

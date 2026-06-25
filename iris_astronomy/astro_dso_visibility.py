@@ -373,7 +373,7 @@ def show_plots(dso: FixedTarget) -> tuple[Optional[str], Optional[str], Optional
         plt.legend(loc='center left', bbox_to_anchor=(1.25, 0.5))
         sky_path = os.path.join(scratch_dir, "sky.png")
         plt.savefig(sky_path)
-        plt.clf()
+        plt.close()
     except:
 
         LOGGER.info('Problem')
@@ -385,7 +385,7 @@ def show_plots(dso: FixedTarget) -> tuple[Optional[str], Optional[str], Optional
         altitude_path = os.path.join(scratch_dir, "horizon.png")
         print ("b")
         plt.savefig(altitude_path)
-        plt.clf()
+        plt.close()
     except:
 
         LOGGER.info('Problem')
@@ -471,7 +471,7 @@ def map_az_to_horizon() -> tuple[list[float], list[float]]:
     sky_path = root / "scratch" / "h.png"
 
     plt.savefig(sky_path)
-    plt.clf()
+    plt.close()
     return az, al
 
 
@@ -878,7 +878,7 @@ def best_object_tonight(instructions_path: Path | str) -> tuple[str, Optional[da
     png_path = os.path.join(_project_root, CFG["location"]["image_grid"])
     os.makedirs(os.path.dirname(png_path), exist_ok=True)
     plt.savefig(png_path, bbox_inches="tight", dpi=180, facecolor=fig.get_facecolor())
-    plt.clf()
+    plt.close(fig)
     print(f"Grid saved to {png_path}")
 
     grid_html = build_grid_html(object_lines, hour_header, weather_syms)
