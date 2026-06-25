@@ -550,8 +550,15 @@ def main():
     # Don't reset imaging state if NINA is still capturing — a supervisor
     # relaunch (e.g. after a social-server crash) restarts us mid-run, and
     # clearing imaging.txt would let a manual command start a second NINA run.
-    if super_user_commands.is_nina_running():
-        LOGGER.warning("NINA running at scheduler startup — leaving imaging state intact")
+    # But a completion marker (DONE_FLATS) or idle NONE is safe to clear even
+    # when NINA is merely open: those are not an in-progress capture, and a
+    # stale DONE_FLATS surviving a restart strands the next nightly cycle.
+    imaging_state = super_user_commands.get_imaging_state()
+    _imaging_terminal = {super_user_commands.ImagingState.NONE,
+                         super_user_commands.ImagingState.DONE_FLATS}
+    if super_user_commands.is_nina_running() and imaging_state not in _imaging_terminal:
+        LOGGER.warning("NINA running mid-run (%s) at scheduler startup — leaving imaging state intact",
+                       imaging_state.value)
     else:
         super_user_commands.set_imaging_state(super_user_commands.ImagingState.NONE)
     super_user_commands.set_mode("manual")
