@@ -90,7 +90,9 @@ def rehash_db():
     remove_hash()
     next_hash = 0
     hash_set = {-1}
-    instructions = get_sorted_instructions()
+    # Persist on-disk status verbatim: the convergence-driven "done" flip is
+    # display-only and must not rewrite a user-set "waiting" to "completed".
+    instructions = get_sorted_instructions(apply_convergence=False)
 
     for instruction in instructions:
         instruction["hash"] = str(next_hash)
@@ -367,7 +369,17 @@ def resolve_target_by_name(dso_name):
     return astro_dso_visibility.is_a_dso_object(dso_name)
 
 
-def get_sorted_instructions():
+def get_sorted_instructions(apply_convergence=True):
+    """Return instructions sorted for display/selection.
+
+    When *apply_convergence* is True, a ``waiting`` target the convergence
+    model considers done is shown as ``completed`` (so it drops out of nightly
+    selection). This flip is advisory and must never be written back to disk —
+    only ``set_completed_instruction_db`` (the explicit ``dbc`` command) may
+    persist a completion. Callers that write the queue back (e.g.
+    ``rehash_db``) must pass ``apply_convergence=False`` so a user-set
+    ``waiting`` status is preserved on disk.
+    """
     from fits_processing.convergence import is_dso_done
 
     with open(_INSTRUCTIONS_PATH, 'r') as f:
@@ -376,7 +388,7 @@ def get_sorted_instructions():
     scored = []
     for instr in instructions:
         d = dict(instr)
-        if d.get("status") == "waiting":
+        if apply_convergence and d.get("status") == "waiting":
             try:
                 if is_dso_done(d["dso"]):
                     d["status"] = "completed"
