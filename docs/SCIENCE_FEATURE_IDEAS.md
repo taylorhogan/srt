@@ -12,12 +12,17 @@ Ordered roughly by bang-for-buck.
 
 ## Highest leverage (small code, big payoff)
 
-### 1. Gaia cluster-membership filtering — upgrades `hr`
+### 1. Gaia cluster-membership filtering — upgrades `hr`  ✅ IMPLEMENTED
 `photometry/cmd_diagram.py::_query_gaia` already pulls `ra/dec/G/BP/RP`. Add
 `pmra, pmdec, parallax` to the ADQL and cut field stars by their shared proper
 motion + distance → cluster members vs. foreground separated. Turns a smeared
 CMD into a clean cluster locus. Near one-line query change + a clustering cut;
 sets up isochrone fitting (#6).
+
+**Status:** done. `_select_members` (PM + parallax) drives the membership cut,
+and `hr` now renders a 4-panel CMD: measured (Iris) · Gaia members · Iris
+members with the field stripped · Iris members annotated on the Gaia sequence.
+Next pickup is **#2 (variable-star light curves)**.
 
 ### 2. Variable-star light curves + period finding — extends `transit`
 The transit search is already time-series differential photometry. Generalise
@@ -61,8 +66,29 @@ measure the atmospheric extinction coefficient and sky transparency
 automatically. Doubles as observatory-health telemetry and a season-long
 atmospheric dataset.
 
+## GPU acceleration notes
+
+The machine already has CUDA + torch (the n2n denoiser trains on it). The win
+comes only where the kernel is **per-pixel on big images** or **the same op
+over thousands of stars/frequencies at once** — not on small catalog math.
+
+- **#3 SN / image differencing — prime.** PSF-matching convolution
+  (Alard–Lupton / ZOGY) + subtraction + residual detection are FFT/convolution
+  and per-pixel ops on multi-MP frames, run nightly. Strongest standalone fit.
+- **#2 Lomb–Scargle — strong if field-wide.** One target is trivial on CPU; a
+  blind survey (every star × tens of thousands of frequencies × all epochs) is
+  an embarrassingly parallel 3-D grid → seconds on GPU instead of overnight.
+- **Shared stacker/registration — highest-leverage infra.** #3/#4/#5 all ride
+  on register + resample + combine across many frames. A cupy/torch backend for
+  the (to-be-unified) stacker speeds all of them plus existing stacking at once.
+- **#4 movers / #5 line-ratio maps — moderate.** Benefit mainly via the shared
+  stacker above; their own per-feature math is light.
+- **Not worth it:** #1 (membership), #6 (isochrone fit), #7 (extinction) —
+  tiny data; CPU is instant.
+
 ## Suggested order
 
-Quick wins first: **#1 (Gaia membership)** then **#2 (variable-star light
-curves)**. **#3 (SN discovery)** is the most exciting flagship if you want a
-bigger build.
+Quick wins first: ~~**#1 (Gaia membership)**~~ (done) then **#2 (variable-star
+light curves)**. **#3 (SN discovery)** is the most exciting flagship if you want
+a bigger build — and the best GPU candidate. For an infra win that compounds,
+GPU-accelerate the unified stacker (benefits #3/#4/#5).
