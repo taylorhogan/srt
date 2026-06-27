@@ -104,6 +104,21 @@ HELP: dict[str, dict] = {
         "usage": ["image!! <dso>"],
         "examples": ["image!! m 31"],
     },
+    "roof!!": {
+        "category": "super",
+        "summary": "Move or report the roof (!! = hardware moves). open/close are "
+                   "vision-safety-checked (scope must be parked); the relay only "
+                   "toggles, so direction follows current position. Append 'force' "
+                   "to skip the parked check (DANGEROUS).",
+        "usage": [
+            "roof!! status",
+            "roof!! open",
+            "roof!! close",
+            "roof!! toggle",
+            "roof!! open|close|toggle force",
+        ],
+        "examples": ["roof!! status", "roof!! open", "roof!! close", "roof!! toggle", "roof!! close force"],
+    },
     "stop!": {
         "category": "super",
         "summary": "Emergency stop: kill NINA, park the scope, close the roof, shut down.",

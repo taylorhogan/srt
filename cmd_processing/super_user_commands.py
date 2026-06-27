@@ -165,6 +165,136 @@ def open_roof_with_option(check: bool) -> bool:
         return False
 
 
+def close_roof_with_option(check: bool) -> bool:
+    """Close the observatory roof. If *check* is True, verify the scope is parked
+    via vision safety before toggling — the absolute rule is that the roof must
+    never move unless the scope is confirmed parked (collision risk). Returns
+    True only when the roof is confirmed closed afterward.
+    """
+    dev_map = asyncio.run(ku.make_discovery_map())
+    if check:
+        parked, closed, is_open, mod_date = get_status_with_lights()
+        if not parked:
+            social_server.post_social_message("Vision Safety says Scope is NOT parked, therefore will not close")
+            return False
+        if closed:
+            social_server.post_social_message("Vision Safety says roof is already closed")
+            return True
+        social_server.post_social_message("Vision Safety says scope is parked, closing roof")
+        announce_roof_movement("The roof will be closing in one minute")
+        toggle_roof(dev_map, capture_direction="close")
+        time.sleep(30)
+        MAX_ROOF_CHECKS = 5
+        for attempt in range(MAX_ROOF_CHECKS):
+            parked, closed, is_open, mod_date = get_status_with_lights()
+            if closed:
+                return True
+            if attempt < MAX_ROOF_CHECKS - 1:
+                msg = f"Roof close not confirmed (attempt {attempt + 1}/{MAX_ROOF_CHECKS}), waiting 5 min"
+                social_server.post_social_message(msg)
+                _logger.warning(msg)
+                time.sleep(5 * 60)
+        social_server.post_social_message(f"Roof could not be confirmed closed after {MAX_ROOF_CHECKS} attempts, stopping")
+        _logger.warning("Roof close check failed after %d attempts", MAX_ROOF_CHECKS)
+        return False
+    else:
+        toggle_roof(dev_map, capture_direction="close")
+        return False
+
+
+def roof_cmd(words: list[str], account: str) -> None:
+    """Move or report the observatory roof. Command: ``roof!! open|close|toggle|status [force]``
+
+    The ``!!`` flags that this command can move hardware (the roof, and indirectly
+    the scope's collision envelope), mirroring ``image!!``.
+
+    Subcommands:
+        ``roof!! status``  — report scope/roof position via vision safety (no movement).
+        ``roof!! open``    — safety-checked open: requires scope parked + roof closed,
+                             then opens and confirms via vision.
+        ``roof!! close``   — safety-checked close: requires scope parked, then closes
+                             and confirms via vision.
+        ``roof!! toggle``  — single relay toggle (the hardware just toggles; direction
+                             depends on current position). Parked-checked; when the
+                             current position is known the direction it will travel is
+                             announced.
+        append ``force`` to ``open``/``close``/``toggle`` to skip the scope-parked
+        vision check (DANGEROUS — collision risk; use only when you can physically
+        see the scope is parked).
+
+    SAFETY: every movement path verifies the scope is parked via vision safety
+    first and refuses to move unless confirmed, unless ``force`` is given. Movement
+    runs on a background thread so the chat stays responsive.
+    """
+    sub = words[2] if len(words) >= 3 else ""
+    force = len(words) >= 4 and words[3] == "force"
+
+    if sub == "status":
+        parked, closed, is_open, mod_date = get_status_with_lights()
+        roof_state = "closed" if closed else ("open" if is_open else "ambiguous")
+        social_server.post_social_message(
+            f"Roof: {roof_state}; scope: {'parked' if parked else 'NOT parked'} "
+            f"(vision @ {mod_date})"
+        )
+        return
+
+    if sub not in ("open", "close", "toggle"):
+        social_server.post_social_message("Usage: roof!! open|close|toggle|status [force]")
+        return
+
+    if force:
+        social_server.post_social_message(
+            f"⚠️ roof!! {sub} FORCE — skipping the scope-parked safety check"
+        )
+
+    def _run() -> None:
+        if sub == "open":
+            ok = open_roof_with_option(check=not force)
+            if force:
+                social_server.post_social_message("Roof open relay fired (forced, unverified)")
+            elif not ok:
+                social_server.post_social_message("Roof open did not complete")
+        elif sub == "close":
+            ok = close_roof_with_option(check=not force)
+            if force:
+                social_server.post_social_message("Roof close relay fired (forced, unverified)")
+            elif ok:
+                social_server.post_social_message("Roof confirmed closed")
+            else:
+                social_server.post_social_message("Roof close did not complete")
+        else:  # toggle
+            _toggle_roof_cmd(force)
+
+    jobs.spawn(_run)
+
+
+def _toggle_roof_cmd(force: bool) -> None:
+    """Body of ``roof toggle``: a single parked-checked relay toggle.
+
+    The roof relay only toggles, so the travel direction depends on the current
+    position. When that position is known (vision), the direction is inferred,
+    announced, and used to label the banked motor current signature.
+    """
+    dev_map = asyncio.run(ku.make_discovery_map())
+    direction = None
+    if not force:
+        parked, closed, is_open, _ = get_status_with_lights()
+        if not parked:
+            social_server.post_social_message("Vision Safety says Scope is NOT parked, refusing to toggle roof")
+            return
+        if closed:
+            direction = "open"
+        elif is_open:
+            direction = "close"
+        cur = "closed" if closed else ("open" if is_open else "ambiguous")
+        going = f"{direction}ing" if direction else "moving (direction unknown)"
+        social_server.post_social_message(f"Scope parked; roof currently {cur} — {going}")
+    announce_roof_movement("The roof will be moving in one minute")
+    toggle_roof(dev_map, capture_direction=direction)
+    parked, closed, is_open, _ = get_status_with_lights()
+    new_state = "closed" if closed else ("open" if is_open else "ambiguous")
+    social_server.post_social_message(f"Roof toggled — now {new_state}")
+
 
 def unsafe_cmd(words: list[str], account: str) -> None:
     """Emergency stop: kill NINA, park the scope, close the roof, and shut down.
@@ -1784,6 +1914,7 @@ def get_super_user_commands() -> dict[str, Callable]:
         "dbc": dbc_cmd,
         "dbb": dbb_cmd,
         "image!!": image_cmd,
+        "roof!!": roof_cmd,
         "stop!": unsafe_cmd,
         "safe!": safe_cmd,
         "announce": announce_cmd,
