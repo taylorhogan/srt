@@ -109,42 +109,11 @@ def visual_status():
     print(accuracy)
     # A state is only trusted when the template match is both close to the
     # expected pixel position AND confident enough. cv.matchTemplate always
-    # returns a best-match location, so position alone can be fooled by a
-    # low-confidence match that happens to land near the expected spot.
+    # returns a best-match location somewhere, so confidence alone only says the
+    # marker pattern appears in frame — it is *position* that determines state.
     min_conf = cfg["camera safety"]["match_confidence"]
     print("min match confidence", min_conf)
 
-    parked_error = math.dist(parked_center, cfg["camera safety"]["parked pos"])
-    print(parked_center)
-    print(cfg["camera safety"]["parked pos"])
-    print (parked_error)
-    print("parked confidence", max_val_parked)
-    parked = abs(parked_error) < accuracy and max_val_parked >= min_conf
-
-    closed_error = math.dist(closed_center, cfg["camera safety"]["closed pos"])
-    print(closed_center)
-    print(cfg["camera safety"]["closed pos"])
-    print(closed_error)
-    print("closed confidence", max_val_closed)
-    closed = abs(closed_error) < accuracy and max_val_closed >= min_conf
-
-    open_error = math.dist(open_center, cfg["camera safety"]["open pos"])
-    print(open_center)
-    print(cfg["camera safety"]["open pos"])
-    print(open_error)
-    print("open confidence", max_val_open)
-    open = abs(open_error) < accuracy and max_val_open >= min_conf
-    print ("parked, closed, open", str(parked), str(closed), str(open))
-
-    # Defense-in-depth against a false "safe" read. The template matches are only
-    # meaningful on a properly lit frame; if the inside light failed to come on
-    # (e.g. a camera/light race) the scene is dark and matchTemplate can still
-    # return a confident-looking but bogus hit — this once made vision report
-    # "closed" over a physically OPEN roof. Refuse to trust any state when the
-    # frame is under-lit, or when "closed" and "open" both matched (a physical
-    # contradiction). An untrusted read returns all-False (unknown), which makes
-    # every caller fail safe: open/close/park all require a confident parked +
-    # roof state and will refuse to move on unknown rather than act on bad data.
     gray = cv.cvtColor(image_rgb, cv.COLOR_BGR2GRAY)
     frame_luma = float(gray.mean())
     # Conservative default: a correctly exposed lit frame targets mean ~115, so a
@@ -152,18 +121,49 @@ def visual_status():
     # real lit-vs-dark snapshot pair is measured (the logged value calibrates it).
     min_luma = cfg["camera safety"].get("min_trust_luma", 25.0)
     too_dark = frame_luma < min_luma
-    contradictory = closed and open
-    trusted = not too_dark and not contradictory
+
+    # --- Scope parked? ---------------------------------------------------------
+    # Parked is the gating state: the parked marker must sit near its expected
+    # position with enough confidence, on a lit frame.
+    parked_error = math.dist(parked_center, cfg["camera safety"]["parked pos"])
+    print(parked_center)
+    print(cfg["camera safety"]["parked pos"])
+    print (parked_error)
+    print("parked confidence", max_val_parked)
+    parked = (not too_dark) and abs(parked_error) < accuracy and max_val_parked >= min_conf
+
+    # --- Roof open / closed ----------------------------------------------------
+    # The open/closed marker positions are only valid in the PARKED geometry: a
+    # slewed scope changes what the camera sees at those pixels, so the roof state
+    # cannot be read at all unless the scope is parked. When parked, position
+    # decides state (confidence is only a sanity floor against a spurious hit).
+    closed_error = math.dist(closed_center, cfg["camera safety"]["closed pos"])
+    open_error = math.dist(open_center, cfg["camera safety"]["open pos"])
+    print(closed_center, cfg["camera safety"]["closed pos"], closed_error, "closed conf", max_val_closed)
+    print(open_center, cfg["camera safety"]["open pos"], open_error, "open conf", max_val_open)
+    if parked:
+        closed = abs(closed_error) < accuracy and max_val_closed >= min_conf
+        open = abs(open_error) < accuracy and max_val_open >= min_conf
+        if closed and open:
+            # Both markers landed at their (well-separated) positions — physically
+            # impossible. The templates can't discriminate this frame, so report
+            # the roof state as unknown rather than guess.
+            _logger.warning(
+                "vision ROOF STATE AMBIGUOUS (closed_conf=%.2f open_conf=%.2f) — roof unknown",
+                max_val_closed, max_val_open,
+            )
+            closed = open = False
+    else:
+        # Not parked (or too dark): the roof state is undeterminable by design.
+        closed = open = False
+
+    trusted = bool(parked)
+    print ("parked, closed, open", str(parked), str(closed), str(open))
     print("frame luma", frame_luma, "min", min_luma, "trusted", trusted)
-    _logger.info("vision frame luma=%.1f (min %.1f) trusted=%s", frame_luma, min_luma, trusted)
-    if not trusted:
-        reason = "frame too dark" if too_dark else "closed and open both matched"
-        _logger.warning(
-            "vision read UNTRUSTED (%s): luma=%.1f closed_conf=%.2f open_conf=%.2f "
-            "— reporting unknown (all False)",
-            reason, frame_luma, max_val_closed, max_val_open,
-        )
-        parked = closed = open = False
+    _logger.info(
+        "vision parked=%s closed=%s open=%s luma=%.1f (min %.1f)",
+        parked, closed, open, frame_luma, min_luma,
+    )
 
     global last_match
     last_match = {

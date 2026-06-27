@@ -123,8 +123,32 @@ def announce_roof_movement(text: str, speaker_name: str = "Observatory", volume:
 def get_status_with_lights() -> tuple[bool, bool, bool, Any]:
     """Take a camera snapshot and return (parked, closed, open, mod_date) via vision safety."""
     parked, closed, open, mod_date = vision_safety.visual_status()
-
+    _post_vision_decision_image(parked, closed, open)
     return parked, closed, open, mod_date
+
+
+def _post_vision_decision_image(parked: bool, closed: bool, is_open: bool) -> None:
+    """Push the annotated snapshot vision just used to decide scope/roof state.
+
+    Lets a wrong read (e.g. the closed/open templates both matching) be eyeballed
+    and the templates/thresholds recalibrated from real images. Best-effort: a
+    notification failure must never disrupt a safety check or roof movement.
+    """
+    try:
+        cfg = config.data()
+        img = cfg["camera safety"]["scope_view"]
+        lm = vision_safety.last_match or {}
+        roof = "closed" if closed else ("open" if is_open else "unknown")
+        caption = (
+            f"Vision: roof={roof} scope={'parked' if parked else 'unparked'} | "
+            f"conf c={lm.get('closed', {}).get('conf', 0):.2f} "
+            f"o={lm.get('open', {}).get('conf', 0):.2f} "
+            f"p={lm.get('parked', {}).get('conf', 0):.2f} "
+            f"luma={lm.get('frame_luma', 0):.0f} trusted={lm.get('trusted')}"
+        )
+        pushover.push_message(caption, img)
+    except Exception:
+        _logger.exception("failed to push vision decision image")
 
 
 def open_roof_with_option(check: bool) -> bool:
@@ -262,6 +286,10 @@ def roof_cmd(words: list[str], account: str) -> None:
     def _run() -> None:
         try:
             if sub == "open":
+                # Announce here (not inside open_roof_with_option) so the imaging
+                # run, which announces separately before calling it, doesn't double
+                # up — and so a manual `roof!! open` still speaks like close/toggle.
+                announce_roof_movement("The roof will be opening in one minute")
                 ok = open_roof_with_option(check=not force)
                 if force:
                     social_server.post_social_message("Roof open relay fired (forced, unverified)")
