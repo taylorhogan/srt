@@ -4,6 +4,7 @@ import cv2 as cv
 import numpy as np
 import os, sys
 import asyncio
+import threading
 import time
 
 
@@ -60,7 +61,27 @@ def gamma_correction(img, gamma=1.0):
     return cv.LUT(img, table)
 
 
+# Process-wide camera mutex. There is a single USB camera (VideoCapture(0)) and
+# a single inside-light state that take_snapshot saves/restores. Two threads
+# running this at once (e.g. an in-flight roof-open confirm loop plus a manual
+# status/close) opened the camera concurrently — OpenCV throws "Unknown C++
+# exception" from vid.set(...) — and raced the light save/restore, leaving the
+# scene dark so vision misclassified the roof. Serialize every snapshot.
+_camera_lock = threading.Lock()
+
+
 def take_snapshot(test_path=None):
+    """Serialize all camera access, then delegate to :func:`_take_snapshot`.
+
+    The lock makes each snapshot atomic with respect to both the USB camera and
+    the inside-light save/restore, so concurrent callers queue instead of
+    corrupting each other (see ``_camera_lock``).
+    """
+    with _camera_lock:
+        return _take_snapshot(test_path)
+
+
+def _take_snapshot(test_path=None):
     _loger.info("Starting camera snapshot")
     cfg = config.data()
     print (utils.set_install_dir())

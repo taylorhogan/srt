@@ -2,6 +2,7 @@
 import os,sys
 import time
 import math
+import logging
 import cv2 as cv
 if __package__ is None or __package__ == "":
     project_root = os.path.abspath(os.path.join(os.path.dirname(__file__),  '..'))
@@ -13,6 +14,8 @@ from configs import config
 from utils import pushover
 
 cfg = config.data()
+
+_logger = logging.getLogger(__name__)
 
 # Per-template confidence/error from the most recent visual_status() call, so
 # callers (e.g. the web-chat `status` command) can report the raw match scores
@@ -133,10 +136,42 @@ def visual_status():
     open = abs(open_error) < accuracy and max_val_open >= min_conf
     print ("parked, closed, open", str(parked), str(closed), str(open))
 
+    # Defense-in-depth against a false "safe" read. The template matches are only
+    # meaningful on a properly lit frame; if the inside light failed to come on
+    # (e.g. a camera/light race) the scene is dark and matchTemplate can still
+    # return a confident-looking but bogus hit — this once made vision report
+    # "closed" over a physically OPEN roof. Refuse to trust any state when the
+    # frame is under-lit, or when "closed" and "open" both matched (a physical
+    # contradiction). An untrusted read returns all-False (unknown), which makes
+    # every caller fail safe: open/close/park all require a confident parked +
+    # roof state and will refuse to move on unknown rather than act on bad data.
+    gray = cv.cvtColor(image_rgb, cv.COLOR_BGR2GRAY)
+    frame_luma = float(gray.mean())
+    # Conservative default: a correctly exposed lit frame targets mean ~115, so a
+    # floor of 25 only trips on genuinely dark frames. Tunable via config once a
+    # real lit-vs-dark snapshot pair is measured (the logged value calibrates it).
+    min_luma = cfg["camera safety"].get("min_trust_luma", 25.0)
+    too_dark = frame_luma < min_luma
+    contradictory = closed and open
+    trusted = not too_dark and not contradictory
+    print("frame luma", frame_luma, "min", min_luma, "trusted", trusted)
+    _logger.info("vision frame luma=%.1f (min %.1f) trusted=%s", frame_luma, min_luma, trusted)
+    if not trusted:
+        reason = "frame too dark" if too_dark else "closed and open both matched"
+        _logger.warning(
+            "vision read UNTRUSTED (%s): luma=%.1f closed_conf=%.2f open_conf=%.2f "
+            "— reporting unknown (all False)",
+            reason, frame_luma, max_val_closed, max_val_open,
+        )
+        parked = closed = open = False
+
     global last_match
     last_match = {
         "min_conf": min_conf,
         "accuracy": accuracy,
+        "frame_luma": frame_luma,
+        "min_trust_luma": min_luma,
+        "trusted": trusted,
         "parked": {"conf": float(max_val_parked), "error": float(parked_error)},
         "closed": {"conf": float(max_val_closed), "error": float(closed_error)},
         "open":   {"conf": float(max_val_open),   "error": float(open_error)},

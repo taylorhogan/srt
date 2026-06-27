@@ -230,6 +230,8 @@ def roof_cmd(words: list[str], account: str) -> None:
     force = len(words) >= 4 and words[3] == "force"
 
     if sub == "status":
+        # Read-only: no movement guard. The process-wide camera lock in
+        # inside_camera_server serializes the snapshot against any in-flight job.
         parked, closed, is_open, mod_date = get_status_with_lights()
         roof_state = "closed" if closed else ("open" if is_open else "ambiguous")
         social_server.post_social_message(
@@ -242,30 +244,49 @@ def roof_cmd(words: list[str], account: str) -> None:
         social_server.post_social_message("Usage: roof!! open|close|toggle|status [force]")
         return
 
+    # Never let a roof movement overlap an imaging run or another roof command.
+    # The original incident was a `close` issued while an `open` was still in its
+    # confirm loop: both jobs raced the single USB camera and the close crashed.
+    if is_imaging() or is_nina_running():
+        social_server.post_social_message("Cannot move the roof: an imaging run is in progress")
+        return
+    if not _roof_lock.acquire(blocking=False):
+        social_server.post_social_message("Cannot move the roof: another roof command is already running")
+        return
+
     if force:
         social_server.post_social_message(
             f"⚠️ roof!! {sub} FORCE — skipping the scope-parked safety check"
         )
 
     def _run() -> None:
-        if sub == "open":
-            ok = open_roof_with_option(check=not force)
-            if force:
-                social_server.post_social_message("Roof open relay fired (forced, unverified)")
-            elif not ok:
-                social_server.post_social_message("Roof open did not complete")
-        elif sub == "close":
-            ok = close_roof_with_option(check=not force)
-            if force:
-                social_server.post_social_message("Roof close relay fired (forced, unverified)")
-            elif ok:
-                social_server.post_social_message("Roof confirmed closed")
-            else:
-                social_server.post_social_message("Roof close did not complete")
-        else:  # toggle
-            _toggle_roof_cmd(force)
+        try:
+            if sub == "open":
+                ok = open_roof_with_option(check=not force)
+                if force:
+                    social_server.post_social_message("Roof open relay fired (forced, unverified)")
+                elif not ok:
+                    social_server.post_social_message("Roof open did not complete")
+            elif sub == "close":
+                ok = close_roof_with_option(check=not force)
+                if force:
+                    social_server.post_social_message("Roof close relay fired (forced, unverified)")
+                elif ok:
+                    social_server.post_social_message("Roof confirmed closed")
+                else:
+                    social_server.post_social_message("Roof close did not complete")
+            else:  # toggle
+                _toggle_roof_cmd(force)
+        finally:
+            _roof_lock.release()
 
-    jobs.spawn(_run)
+    try:
+        jobs.spawn(_run)
+    except Exception:
+        # spawn failed before the worker took ownership of the lock — release it
+        # here so a roof command can never be permanently wedged.
+        _roof_lock.release()
+        raise
 
 
 def _toggle_roof_cmd(force: bool) -> None:
@@ -463,6 +484,12 @@ class ImagingState(Enum):
 # mount back on and relaunch NINA. Cleared by image_cmd/doflats_cmd at the
 # start of every fresh run so a stale abort can never kill a new run.
 _abort_event = threading.Event()
+
+# Serializes roof movement (open/close/toggle). Acquired non-blocking in the
+# dispatch thread so a second roof command is refused rather than queued, and
+# released by the worker thread when the movement finishes. A threading.Lock has
+# no owner thread, so cross-thread release is legal.
+_roof_lock = threading.Lock()
 
 
 def request_abort() -> None:
