@@ -58,6 +58,24 @@ ANOMALY_SIGMA = 3.0      # flag features beyond mean ± this many sigma of good 
 # --------------------------------------------------------------------------- #
 # Capture
 # --------------------------------------------------------------------------- #
+def _read_environment():
+    """Observatory temperature/humidity at capture time (best-effort).
+
+    Pulled from the Pegasus UPBv3 environment probe, which the rest of the system
+    already uses, so no extra hardware is involved. Returns None on any failure
+    (the probe itself returns None on a network/parse error, and this also
+    swallows import/unexpected errors) so a sensor hiccup can never break a roof
+    capture. Lets later analysis correlate breakaway power (peak_w) with
+    temperature — e.g. the thermal-binding / stiction hypothesis.
+    """
+    try:
+        from hardware_control import pegasus
+        return pegasus.get_temperature_humidity()
+    except Exception:
+        logger.exception("roof signature: environment read failed")
+        return None
+
+
 def capture_signature(direction=None, seconds=DEFAULT_SECONDS, hz=DEFAULT_HZ,
                       channel=None, stop_event=None):
     """Sample the current monitor for `seconds` at `hz`, return a signature dict.
@@ -81,9 +99,13 @@ def capture_signature(direction=None, seconds=DEFAULT_SECONDS, hz=DEFAULT_HZ,
             voltage.append(s.get("voltage"))
         time.sleep(max(0.0, period - (time.monotonic() - loop_start)))
 
+    # Read environment AFTER the timed loop so its HTTP latency (up to ~5s) never
+    # disturbs the 20 Hz sampling cadence. Temperature is effectively constant
+    # over the ~50s window, so post-move timing is fine.
     sig = {
         "direction": direction or "unknown",
         "timestamp": datetime.now().isoformat(timespec="seconds"),
+        "environment": _read_environment(),
         "channel": channel if channel is not None
                    else config.data()["hardware"].get("current_monitor_channel", 0),
         "hz": hz,
