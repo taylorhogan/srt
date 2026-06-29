@@ -226,6 +226,28 @@ def close_roof_with_option(check: bool) -> bool:
         return False
 
 
+def _roof_cmd_blocked_reason() -> str | None:
+    """Return why a ``roof!!`` command must be ignored, or None if it may run.
+
+    Shared precondition for every ``roof!!`` variant — status included: the roof
+    may only be touched when no imaging is in progress AND the telescope mount is
+    powered off. A powered mount may be tracking, putting the scope in the roof's
+    travel path. The mount-power check is the same Kasa ``isoff`` probe used by
+    ``open_if_mount_off_cmd``; if it can't be confirmed we fail safe (refuse).
+    """
+    if is_imaging() or is_nina_running():
+        return "an imaging run is in progress (imaging state is not none)"
+    try:
+        dev_map = asyncio.run(ku.make_discovery_map())
+        mount_off = asyncio.run(ku.kasa_check(dev_map, {"Telescope mount": "isoff"}))
+    except Exception as exc:
+        _logger.warning("roof!! gate: mount power check failed: %s", exc)
+        return f"could not confirm the telescope mount is powered off ({exc})"
+    if not mount_off:
+        return "the telescope mount is powered on"
+    return None
+
+
 def roof_cmd(words: list[str], account: str) -> None:
     """Move or report the observatory roof. Command: ``roof!! open|close|toggle|status [force]``
 
@@ -253,19 +275,29 @@ def roof_cmd(words: list[str], account: str) -> None:
     sub = words[2] if len(words) >= 3 else ""
     force = len(words) >= 4 and words[3] == "force"
 
+    if sub not in ("status", "open", "close", "toggle"):
+        social_server.post_social_message("Usage: roof!! open|close|toggle|status [force]")
+        return
+
+    # Gate EVERY roof!! variant (status included): only act when imaging state is
+    # none AND the telescope mount is powered off. Either condition failing means
+    # the roof must not be touched — even a read-only status snapshot is skipped —
+    # so report the reason and bail. ``force`` only waives the scope-parked vision
+    # check below; it does NOT waive this gate.
+    blocked = _roof_cmd_blocked_reason()
+    if blocked is not None:
+        social_server.post_social_message(f"Ignoring roof!! {sub}: {blocked}")
+        return
+
     if sub == "status":
-        # Read-only: no movement guard. The process-wide camera lock in
-        # inside_camera_server serializes the snapshot against any in-flight job.
+        # Read-only snapshot. The process-wide camera lock in
+        # inside_camera_server serializes it against any in-flight job.
         parked, closed, is_open, mod_date = get_status_with_lights()
         roof_state = "closed" if closed else ("open" if is_open else "ambiguous")
         social_server.post_social_message(
             f"Roof: {roof_state}; scope: {'parked' if parked else 'NOT parked'} "
             f"(vision @ {mod_date})"
         )
-        return
-
-    if sub not in ("open", "close", "toggle"):
-        social_server.post_social_message("Usage: roof!! open|close|toggle|status [force]")
         return
 
     # Never let a roof movement overlap an imaging run or another roof command.
