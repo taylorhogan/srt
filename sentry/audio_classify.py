@@ -1,6 +1,6 @@
 import argparse
-import queue
 import threading
+import time
 import sounddevice as sd
 import librosa
 import matplotlib.pyplot as plt
@@ -10,7 +10,6 @@ import glob
 from datetime import datetime
 from PIL import Image
 import numpy as np
-from skimage.metrics import structural_similarity as ssim
 from skimage import img_as_float
 from scipy.io.wavfile import write
 
@@ -19,44 +18,41 @@ if __package__ is None or __package__ == "":
     if project_root not in sys.path:
         sys.path.insert(0, project_root)
 
-from utils import pushover, utils
+from utils import utils
 
 # ----------------------------- CONFIGURATION -----------------------------
-# Audio I/O moved from pyaudio to sounddevice when the detector was migrated
-# from the RPi to the Windows observatory PC (2026-06-30). On this machine the
+# Audio I/O uses sounddevice (not pyaudio). On the Windows observatory PC the
 # normal Windows audio host APIs (MME/DirectSound/WASAPI) present **no** devices
 # to a disconnected/headless remote session — only kernel-streaming WDM-KS sees
 # the mics. pyaudio's bundled PortAudio fails WDM-KS capture with a -9999 host
 # error; sounddevice's PortAudio handles it. WDM-KS also requires int16 (float32
-# is what produced the -9999). WDM-KS bypasses the per-session audio engine, so
-# it keeps working when no one is logged in — exactly what unattended operation
-# needs. See memory: project_audio_detector_windows_migration.
+# is what produced the -9999) and only supports PortAudio's CALLBACK interface
+# ("Blocking API not supported yet"), so capture is callback-driven. WDM-KS
+# bypasses the per-session audio engine, so it keeps working when no one is
+# logged in — exactly what unattended operation needs. See memory:
+# project_audio_detector_windows_migration.
+#
+# This module is command-triggered: the roof move starts a recording that runs
+# for the move's duration (parallel to the current-signature capture), so there
+# is deliberately NO ambient-noise trigger / RMS threshold here.
 CHANNELS = 1
 RATE = 44100                    # Common sample rate
 CHUNK = 1024                    # Audio chunk size
-# RMS threshold – tune against a REAL roof move from the chosen mic's position.
-# Ambient on the eMeet C960 webcam mic measured ~0.003 RMS; 0.06 is ~19x above
-# that floor (no false triggers on ambient) but is UNVALIDATED against the motor.
-THRESHOLD = 0.06
-RECORD_SECONDS = 10             # Length of audio clip to capture when sound is detected
 DEVICE_NAME = "eMeet"           # Substring of the input device to use (eMeet C960 webcam mic)
 
-# Paths anchored to this script's directory so the detector works regardless of
-# the current working directory (the originals were cwd-relative).
+# Paths anchored to this script's directory so capture works regardless of the
+# current working directory.
 _HERE = os.path.dirname(os.path.abspath(__file__))
 LIBRARY_DIR = os.path.join(_HERE, "library_spectrograms")    # pre-saved reference spectrogram PNGs
-DETECTED_DIR = os.path.join(_HERE, "detected_spectrograms")  # detected spectrograms saved here for review
 # Roof-move spectrograms, organized by direction (parallels roof_signatures/):
 #   roof_audio/{status}/{open,close}/<timestamp>_<direction>.{png,wav}
 ROOF_AUDIO_ROOT = os.path.join(_HERE, "roof_audio")
-ROOF_CAPTURE_SECONDS = 48        # cover the ~45s travel window in toggle_roof, plus margin
 FIG_SIZE = (10, 6)              # Fixed figure size for consistent image dimensions
 DPI = 100                       # Fixed DPI → consistent pixel size (1000×600 here)
 CMAP = 'magma'                  # Consistent colormap (common for spectrograms)
 
-# Ensure directories exist
+# Ensure the reference library directory exists
 os.makedirs(LIBRARY_DIR, exist_ok=True)
-os.makedirs(DETECTED_DIR, exist_ok=True)
 # -------------------------------------------------------------------------
 
 _logger = utils.set_logger()
@@ -103,7 +99,12 @@ def generate_spectrogram(audio_np, save_path):
 
 
 def compare_to_library(new_img_path):
-    """Compare the new spectrogram image to all in the library using MSE-based similarity."""
+    """Compare a spectrogram image to the reference library using MSE similarity.
+
+    Returns (best_match, best_score, sorted_results). The library is currently
+    empty until the reference spectrograms are copied over; the future plan is to
+    classify each roof-move spectrogram against it.
+    """
     new_img = Image.open(new_img_path).convert('RGB')
     new_array = img_as_float(np.array(new_img))
 
@@ -138,12 +139,13 @@ def compare_to_library(new_img_path):
 # Background capture — for hooking into toggle_roof without blocking it
 # (parallels sentry/roof_current_signature.py's start/finish helpers)
 # --------------------------------------------------------------------------- #
-def start_background_capture(direction=None, seconds=ROOF_CAPTURE_SECONDS,
-                             device_name=DEVICE_NAME):
+def start_background_capture(direction=None, device_name=DEVICE_NAME):
     """Begin recording roof-move audio in a callback stream.
 
-    Returns a handle for finish_background_capture. Best-effort: never raises
-    into the caller (the roof safety path must not break). `direction` is
+    Recording runs until finish_background_capture stops it, so the clip spans
+    the whole move (the caller controls the duration — there is no noise
+    trigger). Returns a handle for finish_background_capture. Best-effort: never
+    raises into the caller (the roof safety path must not break). `direction` is
     metadata only — it labels where the spectrogram is filed.
     """
     handle = {"frames": [], "stream": None, "direction": direction,
@@ -207,125 +209,39 @@ def finish_background_capture(handle, status="unlabeled", save=True):
         return None
 
 
-def run(device_index, threshold):
-    """Main listen/detect/classify loop using sounddevice (int16, mono)."""
-    dev_name = sd.query_devices(device_index)["name"] if device_index is not None \
-        else "default input"
-    print(f"Listening on [{dev_name}] (threshold={threshold}, Ctrl+C to stop)...")
-
-    buffer = []
-    triggered = False
-    frames_since_trigger = 0
-    last = None
-
-    # int16 capture: WDM-KS rejects float32 on this hardware. We normalise each
-    # chunk to float [-1, 1] so the RMS scale and librosa input match the old
-    # paFloat32 behaviour exactly. WDM-KS also only supports PortAudio's CALLBACK
-    # interface ("Blocking API not supported yet"), so the callback feeds a queue
-    # that this loop drains — a blocking stream.read() raises -9999 here.
-    audio_q = queue.Queue()
-
-    def _callback(indata, frames, time_info, status):
-        if status:
-            _logger.warning("audio input status: %s", status)
-        audio_q.put(indata[:, 0].copy())
-
-    stream = sd.InputStream(samplerate=RATE, channels=CHANNELS, dtype="int16",
-                            blocksize=CHUNK, device=device_index, callback=_callback)
-    stream.start()
-    try:
-        while True:
-            try:
-                chunk_i16 = audio_q.get(timeout=1.0)
-            except queue.Empty:
-                continue
-            audio_chunk = chunk_i16.astype(np.float32) / 32768.0
-            rms = np.sqrt(np.mean(audio_chunk ** 2))
-
-            if rms > threshold:
-                print(f"Sound detected (RMS: {rms:.4f})")
-                if not triggered:
-                    print(f"Sound detected (RMS: {rms:.4f}) – starting capture...")
-                    triggered = True
-                    buffer = []
-                    frames_since_trigger = 0
-                buffer.append(audio_chunk)
-                frames_since_trigger = 0
-            else:
-                if triggered:
-                    frames_since_trigger += 1
-                    buffer.append(audio_chunk)  # Keep buffering even during short silences
-
-                    # Reset if silence lasts too long (~1 second)
-                    if frames_since_trigger > int(RATE / CHUNK):
-                        triggered = False
-                        buffer = []
-                        if last is not None:
-                            pushover.push_message("Silence detected")
-                        last = None
-
-            # If we have enough audio when triggered
-            if triggered and len(buffer) * CHUNK >= RATE * RECORD_SECONDS:
-                print("Capture complete – processing spectrogram...")
-                audio_np = np.concatenate(buffer)[:int(RATE * RECORD_SECONDS)]  # Trim to exact length
-
-                # Save detected spectrogram
-                timestamp = len(glob.glob(os.path.join(DETECTED_DIR, "*.png")))
-                new_path = os.path.join(DETECTED_DIR, f"detected_{timestamp}.png")
-                wav_path = os.path.join(DETECTED_DIR, f"detected_{timestamp}.wav")
-
-                generate_spectrogram(audio_np, new_path)
-                # Save WAV file (convert float32 [-1,1] to int16)
-                audio_int16 = np.int16(audio_np * 32767)
-                write(wav_path, RATE, audio_int16)
-
-                # Compare to library
-                best_match, best_score, all_results = compare_to_library(new_path)
-
-                print(f"\nClosest match: {best_match}")
-                print(f"Similarity score: {best_score:.4f} (1.0 = identical, >0.8 usually very similar)")
-                print("matches:")
-                best = None
-                for name, score in all_results:
-                    print(f"  - {name}: {score:.4f}")
-                    if best is None:
-                        best = f"  - {name}: {score:.4f}"
-                print("-" * 50)
-                message = f"Detected sound! Best match: {best}"
-                _logger.info(message)
-                print(last, best)
-                if last != best:
-                    pushover.push_message(message, new_path)
-                    last = best
-
-                # Reset for next detection
-                triggered = False
-                buffer = []
-
-    except KeyboardInterrupt:
-        print("\nStopping...")
-    finally:
-        stream.stop()
-        stream.close()
+def capture_test(direction, seconds, device_name):
+    """Record a fixed-length test clip and save its spectrogram (manual check)."""
+    print(f"Recording {seconds:.0f}s from a {device_name!r} mic "
+          f"(direction={direction or 'unknown'})...")
+    handle = start_background_capture(direction=direction, device_name=device_name)
+    time.sleep(seconds)
+    res = finish_background_capture(handle, status="unlabeled")
+    if res:
+        print(f"Saved spectrogram: {res['spectrogram']}")
+        print(f"Saved wav:         {res['wav']}")
+    else:
+        print("Capture failed (no audio captured).")
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Roof/observatory audio anomaly detector")
+    ap = argparse.ArgumentParser(description="Roof-move audio capture utility")
     ap.add_argument("--device", default=DEVICE_NAME,
                     help=f"input device name substring (default: {DEVICE_NAME!r})")
-    ap.add_argument("--threshold", type=float, default=THRESHOLD,
-                    help=f"RMS trigger threshold (default: {THRESHOLD})")
     ap.add_argument("--list-devices", action="store_true", help="list input devices and exit")
+    ap.add_argument("--capture", action="store_true",
+                    help="record a fixed-length test clip and save its spectrogram")
+    ap.add_argument("--direction", choices=["open", "close"], default=None,
+                    help="label for a --capture clip")
+    ap.add_argument("--seconds", type=float, default=5.0,
+                    help="length of a --capture clip (default: 5)")
     args = ap.parse_args()
 
     if args.list_devices:
         list_input_devices()
-        return
-
-    device_index = find_input_device(args.device)
-    if device_index is None:
-        print(f"WARNING: no input device matching {args.device!r}; using default input.")
-    run(device_index, args.threshold)
+    elif args.capture:
+        capture_test(args.direction, args.seconds, args.device)
+    else:
+        ap.print_help()
 
 
 if __name__ == "__main__":
