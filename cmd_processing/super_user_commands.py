@@ -27,6 +27,7 @@ from cmd_processing import jobs
 from utils import utils, pushover
 from sentry import vision_safety
 from sentry import roof_current_signature as rcs
+from sentry import audio_classify as roof_audio
 from end_points import end
 from iris_astronomy import astro_dso_visibility
 from nina_gen import nina_sequence_gen
@@ -80,15 +81,35 @@ def toggle_roof(dev_map: dict, capture_direction: Optional[str] = None) -> None:
     capture = None
     if config.data()["hardware"].get("current_monitor_url"):
         capture = rcs.start_background_capture(direction=capture_direction, seconds=48)
+    # Also bank the roof-move audio (spectrogram + WAV), filed by direction. The
+    # mic captures fast mechanical chatter (e.g. a bent wheel) that the 1 Hz
+    # current signature cannot resolve. Best-effort: the helper swallows its own
+    # errors and the stream is closed before the post-move vision check, so mic
+    # capture never overlaps a webcam snapshot.
+    audio_capture = roof_audio.start_background_capture(direction=capture_direction)
 
     if utl_shelly.fire_roof_relay() is None:
         _logger.error("Failed to trigger relay in toggle_roof")
         if capture is not None:
             rcs.finish_background_capture(capture, save=False)
+        roof_audio.finish_background_capture(audio_capture, save=False)
         raise RuntimeError("toggle_roof: roof relay trigger failed")
     time.sleep(45)
     inst = {"Roof motor": 'off'}
     asyncio.run(ku.kasa_do(dev_map, inst))
+
+    # Finish + surface the roof-move audio spectrogram. For now it is posted on
+    # every move as a development aid; later this can gate on a classifier result
+    # the way the current-signature anomaly does below.
+    audio_result = roof_audio.finish_background_capture(audio_capture, status="unlabeled")
+    if audio_result and audio_result.get("spectrogram"):
+        try:
+            social_server.post_social_message(
+                f"Roof {capture_direction or 'move'} audio spectrogram",
+                image=audio_result["spectrogram"],
+            )
+        except Exception as e:  # noqa: BLE001
+            _logger.error("Failed to post roof audio spectrogram: %s", e)
 
     if capture is not None:
         sig = rcs.finish_background_capture(capture, status="unlabeled")
