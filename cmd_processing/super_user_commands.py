@@ -346,16 +346,18 @@ def roof_cmd(words: list[str], account: str) -> None:
                 ok = open_roof_with_option(check=not force)
                 if force:
                     social_server.post_social_message("Roof open relay fired (forced, unverified)")
-                elif not ok:
-                    social_server.post_social_message("Roof open did not complete")
+                elif ok:
+                    social_server.post_social_message("✅ Roof successfully opened")
+                else:
+                    social_server.post_social_message("❌ Roof failed to open")
             elif sub == "close":
                 ok = close_roof_with_option(check=not force)
                 if force:
                     social_server.post_social_message("Roof close relay fired (forced, unverified)")
                 elif ok:
-                    social_server.post_social_message("Roof confirmed closed")
+                    social_server.post_social_message("✅ Roof successfully closed")
                 else:
-                    social_server.post_social_message("Roof close did not complete")
+                    social_server.post_social_message("❌ Roof failed to close")
             else:  # toggle
                 _toggle_roof_cmd(force)
         finally:
@@ -395,7 +397,16 @@ def _toggle_roof_cmd(force: bool) -> None:
     toggle_roof(dev_map, capture_direction=direction)
     parked, closed, is_open, _ = get_status_with_lights()
     new_state = "closed" if closed else ("open" if is_open else "ambiguous")
-    social_server.post_social_message(f"Roof toggled — now {new_state}")
+    # Simple success/failure line: did the roof reach the intended direction?
+    # When direction is unknown (forced toggle, or an ambiguous pre-state), we
+    # can't claim success against an intent, so just report the resulting state.
+    if direction == "open":
+        msg = "✅ Roof successfully opened" if is_open else f"❌ Roof failed to open — now {new_state}"
+    elif direction == "close":
+        msg = "✅ Roof successfully closed" if closed else f"❌ Roof failed to close — now {new_state}"
+    else:
+        msg = f"Roof toggled — now {new_state}"
+    social_server.post_social_message(msg)
 
 
 def unsafe_cmd(words: list[str], account: str) -> None:
