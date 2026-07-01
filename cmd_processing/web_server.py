@@ -210,6 +210,7 @@ async def api_post(
     message: str = Form(""),
     image: Optional[UploadFile] = File(None),
     image_path: Optional[str] = Form(None),
+    audio_path: Optional[str] = Form(None),
     html: Optional[str] = Form(None),
     job_id: Optional[str] = Form(None),
 ):
@@ -234,7 +235,7 @@ async def api_post(
         actual_image_path = image_path
 
     message_bus.post_message(message, actual_image_path, html=html or None,
-                             job_id=job_id or None)
+                             job_id=job_id or None, audio_path=audio_path or None)
     return {"ok": True, "filename": saved_filename}
 
 

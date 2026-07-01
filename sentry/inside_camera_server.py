@@ -1,3 +1,4 @@
+import contextlib
 import shutil
 
 import cv2 as cv
@@ -67,7 +68,26 @@ def gamma_correction(img, gamma=1.0):
 # status/close) opened the camera concurrently — OpenCV throws "Unknown C++
 # exception" from vid.set(...) — and raced the light save/restore, leaving the
 # scene dark so vision misclassified the roof. Serialize every snapshot.
-_camera_lock = threading.Lock()
+#
+# Reentrant so a caller can hold the lock across a snapshot AND its own read of
+# the shared scope_view.jpg (see camera_session) while take_snapshot re-acquires
+# it internally.
+_camera_lock = threading.RLock()
+
+
+@contextlib.contextmanager
+def camera_session():
+    """Hold the camera mutex across a snapshot and the caller's subsequent read
+    of scope_view.jpg.
+
+    take_snapshot()'s first act is to clobber scope_view.jpg with a placeholder,
+    so a concurrent snapshot can overwrite the file between another caller's
+    snapshot and its imread — yielding a None/placeholder frame or a
+    misclassified state. Wrapping snapshot+read in this session makes the pair
+    atomic; the RLock lets the nested take_snapshot re-acquire the same lock.
+    """
+    with _camera_lock:
+        yield
 
 
 def take_snapshot(test_path=None):

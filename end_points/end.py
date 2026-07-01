@@ -42,13 +42,17 @@ def determine_roof_state_visually(account):
         reply = "Scope is not parked"
 
     lm = vision_safety.last_match
-    if lm:
+    if lm and "min_conf" in lm:
         reply += (
             f"\n━━ Match confidence (≥ {lm['min_conf']:.2f}) ━━\n"
             f"Parked : {lm['parked']['conf']:.2f}\n"
             f"Closed : {lm['closed']['conf']:.2f}\n"
             f"Open   : {lm['open']['conf']:.2f}"
         )
+    elif lm and lm.get("error"):
+        # Snapshot was unreadable — visual_status() failed safe (all-False), so
+        # the "not parked" above means "couldn't see", not a confirmed state.
+        reply += f"\n⚠ Vision unavailable: {lm['error']}"
 
     reply += "\nPicture Date:" + mod_date + "\n"
     logger = cfg["logger"]["logging"]

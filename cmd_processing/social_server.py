@@ -243,6 +243,21 @@ def status_cmd(words: list[str], index: int, m: Mastodon, account: str) -> None:
         f"State     : {imaging}"
     )
 
+    # Attach a short live audio clip of the observatory to the status report.
+    try:
+        from sentry import audio_classify
+        _project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+        scratch_dir = os.path.join(_project_root, cfg["scratch"]["directory"])
+        wav_path = os.path.join(scratch_dir, "status_audio.wav")
+        recorded = audio_classify.record_wav(15, wav_path)
+        if recorded:
+            post_social_message("Observatory audio (15s)", audio=recorded)
+        else:
+            post_social_message("Audio capture unavailable")
+    except Exception:
+        logging.getLogger(__name__).exception("status audio capture failed")
+        post_social_message("Audio capture unavailable")
+
 
 
 
@@ -614,14 +629,15 @@ def post_html_message(html: str) -> None:
             logger.exception("Failed to post HTML message via web chat API")
 
 
-def post_social_message(message: str, image: Optional[str] = None, vis: Optional[str] = None) -> None:
+def post_social_message(message: str, image: Optional[str] = None, vis: Optional[str] = None,
+                        audio: Optional[str] = None) -> None:
     logger = logging.getLogger(__name__)
     cfg = config.data()
 
     # Route through in-process message bus if available (web server process),
     # otherwise fall back to HTTP POST (scheduler process, standalone scripts).
     if message_bus.is_initialized():
-        message_bus.post_message(message, image)
+        message_bus.post_message(message, image, audio_path=audio)
     else:
         try:
             from cmd_processing import jobs
@@ -629,6 +645,8 @@ def post_social_message(message: str, image: Optional[str] = None, vis: Optional
             data = {"message": message}
             if image:
                 data["image_path"] = image
+            if audio:
+                data["audio_path"] = audio
             # In a process-isolated worker the job is bound on this thread;
             # forward it so the post lands on that worker's card, not the
             # system feed.

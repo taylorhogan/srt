@@ -365,7 +365,7 @@
     const e = job.log[job.log.length - 1];
     if (e.text) return e.text;
     if (e.image_url) return '🖼 image attached';
-    if (e.html) return '▦ table';
+    if (e.html) return e.html.indexOf('<audio') !== -1 ? '🔊 audio clip' : '▦ table';
     return '';
   }
 

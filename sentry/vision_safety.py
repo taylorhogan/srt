@@ -85,13 +85,36 @@ def find_template(image, template_image_path):
 
 
 def visual_status():
+    global last_match
 
-    print ("take snapshot")
-    inside_camera_server.take_snapshot()
-
-    print("read snapshot")
+    # Snapshot and read must be atomic: take_snapshot() clobbers scope_view.jpg
+    # with a placeholder before capturing, so a concurrent visual_status (e.g.
+    # the `update` and `status` commands each running in their own thread) could
+    # otherwise overwrite the file between our snapshot and our imread — giving a
+    # None/placeholder frame or a misclassified state. Hold the camera session
+    # across both (the RLock lets take_snapshot re-acquire the lock).
     image_path = cfg["camera safety"]["scope_view"]
-    image_rgb = cv.imread(image_path, cv.IMREAD_COLOR)
+    with inside_camera_server.camera_session():
+        print ("take snapshot")
+        inside_camera_server.take_snapshot()
+
+        print("read snapshot")
+        image_rgb = cv.imread(image_path, cv.IMREAD_COLOR)
+
+    # A flaky USB webcam snapshot can yield no frame / a half-written file, so
+    # cv.imread returns None. Fail safe instead of crashing in cvtColor below:
+    # report an untrusted, all-False state (scope not confirmed parked, roof not
+    # confirmed open or closed) so no caller reads an unreadable frame as
+    # permission to move hardware.
+    if image_rgb is None:
+        _logger.warning("vision snapshot unreadable (%s) — reporting UNKNOWN/untrusted", image_path)
+        last_match = {"error": "snapshot unreadable", "trusted": False}
+        try:
+            mod_date = time.ctime(os.path.getmtime(image_path))
+        except OSError:
+            mod_date = time.ctime()
+        return False, False, False, mod_date
+
     mod_date = time.ctime(os.path.getmtime(image_path))
 
     print ("analysing image")
@@ -165,7 +188,6 @@ def visual_status():
         parked, closed, open, frame_luma, min_luma,
     )
 
-    global last_match
     last_match = {
         "min_conf": min_conf,
         "accuracy": accuracy,

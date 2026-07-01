@@ -209,6 +209,37 @@ def finish_background_capture(handle, status="unlabeled", save=True):
         return None
 
 
+def record_wav(seconds, out_path, device_name=DEVICE_NAME):
+    """Record `seconds` of mono audio and write it as a WAV to `out_path`.
+
+    A lighter-weight sibling of finish_background_capture: no spectrogram, no
+    library filing — just the raw clip, for attaching to a status report.
+    Returns `out_path` on success or None on failure. Never raises (a status
+    command must still succeed if the mic is unavailable).
+    """
+    handle = start_background_capture(device_name=device_name)
+    if handle.get("stream") is None:
+        return None
+    try:
+        time.sleep(seconds)
+        stream = handle["stream"]
+        stream.stop()
+        stream.close()
+        with handle["lock"]:
+            frames = list(handle["frames"])
+        if not frames:
+            _logger.warning("record_wav produced no frames")
+            return None
+        audio_np = np.concatenate(frames).astype(np.float32) / 32768.0
+        os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
+        write(out_path, RATE, np.int16(audio_np * 32767))  # float[-1,1] -> int16
+        _logger.info("Saved status audio clip: %s", out_path)
+        return out_path
+    except Exception as e:  # noqa: BLE001
+        _logger.warning("record_wav failed: %s", e)
+        return None
+
+
 def capture_test(direction, seconds, device_name):
     """Record a fixed-length test clip and save its spectrogram (manual check)."""
     print(f"Recording {seconds:.0f}s from a {device_name!r} mic "

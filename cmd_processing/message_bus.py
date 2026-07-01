@@ -58,21 +58,37 @@ def broadcast(envelope: dict) -> None:
                 pass
 
 
-def post_message(text: str, image_path: Optional[str] = None, html: Optional[str] = None,
-                 job_id: Optional[str] = None) -> dict:
-    image_url = None
+def _stage_media(src_path: str) -> Optional[str]:
+    """Copy a file into the served images dir under a unique name.
 
-    if image_path and _images_dir:
-        src = Path(image_path)
-        if src.is_file():
-            global _counter
-            with _lock:
-                _counter += 1
-                seq = _counter
-            unique_name = f"{int(time.time())}_{seq}_{src.name}"
-            dest = Path(_images_dir) / unique_name
-            shutil.copy2(str(src), str(dest))
-            image_url = f"/images/{unique_name}"
+    Returns the ``/images/<name>`` URL, or None if there's nowhere to serve
+    from or the source doesn't exist. Used for both image and audio attachments
+    (StaticFiles serves whatever mime type the extension implies).
+    """
+    if not (src_path and _images_dir):
+        return None
+    src = Path(src_path)
+    if not src.is_file():
+        return None
+    global _counter
+    with _lock:
+        _counter += 1
+        seq = _counter
+    unique_name = f"{int(time.time())}_{seq}_{src.name}"
+    dest = Path(_images_dir) / unique_name
+    shutil.copy2(str(src), str(dest))
+    return f"/images/{unique_name}"
+
+
+def post_message(text: str, image_path: Optional[str] = None, html: Optional[str] = None,
+                 job_id: Optional[str] = None, audio_path: Optional[str] = None) -> dict:
+    image_url = _stage_media(image_path) if image_path else None
+
+    # An audio clip is delivered as an inline <audio> player via the html field.
+    if audio_path and html is None:
+        audio_url = _stage_media(audio_path)
+        if audio_url:
+            html = f'<audio controls preload="none" src="{audio_url}"></audio>'
 
     entry = make_entry(text, image_url=image_url, html=html)
 
