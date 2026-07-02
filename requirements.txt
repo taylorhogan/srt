@@ -78,6 +78,10 @@ scikit-image
 scipy==1.14.1
 astroalign
 sep
+# ois  # optional: Alard-Lupton optimal image subtraction for the `transient`
+#       command. Left commented so a failed C build can't break the deploy;
+#       transient_search/difference.py falls back to a scipy Gaussian PSF match
+#       when ois is absent. Install manually for cleaner subtractions.
 six==1.17.0
 sniffio==1.3.1
 sounddevice==0.5.1

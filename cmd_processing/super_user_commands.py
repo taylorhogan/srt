@@ -2046,6 +2046,8 @@ def get_super_user_commands() -> dict[str, Callable]:
         "stats": image_stats_cmd,
         "snr": snr_cmd,
         "transit": transit_cmd,
+        "transient": transient_cmd,
+        "diff": transient_cmd,
         "hr": hr_cmd,
         "log": log_cmd,
         "update": update_cmd,
@@ -2940,6 +2942,162 @@ def _transit_run(words: list[str]) -> None:
     field_img = entry.get("field_image")
     if field_img and os.path.exists(field_img):
         social_server.post_social_message("Candidate location (circled):", field_img)
+
+
+def _describe_transient(dso: str, filt: str, entry: dict, top: dict,
+                        n_total: int) -> str:
+    """Two-sentence plain-language readout of the single best candidate: where it
+    is, how strong it is, and what its shape/brightness metrics imply."""
+    loc = (f"RA {top['ra_deg']:.4f} Dec {top['dec_deg']:+.4f}"
+           if top.get("ra_deg") is not None else f"pixel ({top['x']:.0f}, {top['y']:.0f})")
+    off = top.get("offset_from_nucleus_px")
+    off_str = f", {off:.0f}px from the nucleus" if off is not None else ""
+
+    # Catalogue identity: a named SIMBAD object or a nearby Gaia star both usually
+    # mean the source is *known* (variable star, galaxy nucleus) — not a new SN.
+    if top.get("simbad_name"):
+        otype = f", {top['simbad_otype']}" if top.get("simbad_otype") else ""
+        ident = f" — SIMBAD match: {top['simbad_name']}{otype}"
+    elif top.get("gaia_source_id"):
+        g = f", G={top['gaia_g_mag']:.1f}" if top.get("gaia_g_mag") is not None else ""
+        sep = top.get("gaia_sep_arcsec")
+        sep_str = f" {sep:.1f}\" away" if sep is not None else ""
+        ident = f" — Gaia DR3 {top['gaia_source_id']}{g}{sep_str} (likely that star, not new)"
+    elif top.get("ra_deg") is not None:
+        ident = " — no SIMBAD/Gaia catalogue match"
+    else:
+        ident = ""
+
+    # Clickable SIMBAD cone-search on the resolved position for a human to inspect.
+    link = ""
+    if top.get("ra_deg") is not None:
+        link = (f" SIMBAD: https://simbad.u-strasbg.fr/simbad/sim-coo?"
+                f"Coord={top['ra_deg']:.5f}%20{top['dec_deg']:+.5f}"
+                f"&Radius=10&Radius.unit=arcsec")
+
+    a, elong = top.get("a"), top.get("elongation")
+    point_like = a is not None and elong is not None and a <= 1.3 and elong <= 1.4
+    if elong is not None and elong <= 1.2 and a is not None and a <= 1.1:
+        shape = "compact and round"
+    elif point_like:
+        shape = "compact"
+    else:
+        shape = "extended / irregular"
+
+    tflux, sflux = top.get("template_flux"), top.get("science_flux")
+    if tflux is not None and sflux is not None and tflux > 0 and sflux > 0:
+        bright = f", ~{sflux / tflux:.0f}× brighter than the template"
+    elif sflux is not None and (tflux is None or tflux <= 0):
+        bright = ", newly appeared (no measurable template flux)"
+    else:
+        bright = ""
+
+    known = bool(top.get("simbad_name")) or bool(top.get("gaia_source_id"))
+    if known:
+        verdict = ("it coincides with a catalogued object, so it is most likely that "
+                   "known source rather than a supernova")
+    elif point_like:
+        verdict = "its profile is consistent with a genuine new point source, worth a review"
+    else:
+        verdict = ("its profile is extended, so it is more likely a subtraction residual "
+                   "than a real source")
+
+    shape_bits = []
+    if a is not None:
+        shape_bits.append(f"semi-major {a:.1f}px")
+    if elong is not None:
+        shape_bits.append(f"elongation {elong:.2f}")
+    shape_metrics = f" ({', '.join(shape_bits)})" if shape_bits else ""
+
+    others = f" (best of {n_total} candidates)" if n_total and n_total > 1 else ""
+    return (
+        f"Transient [{dso}/{filt}]: {entry['n_template_frames']} template + "
+        f"{entry['n_science_frames']} science frames over {entry['baseline_days']:.1f}d. "
+        f"Best candidate: {loc}, SNR {top['snr']:.1f}{off_str}{others}{ident}. "
+        f"It looks {shape}{shape_metrics}{bright} — {verdict}.{link}"
+    )
+
+
+def transient_cmd(words: list[str], account: str) -> None:
+    """Difference the newest night against prior nights to find new sources.
+
+    Usage: transient <dso> <filter>   (alias: diff)
+
+    Process-isolated (jobs.spawn_process) so the heavy differencing runs on its
+    own core, in true parallel with a concurrent command.
+    """
+    jobs.spawn_process(_transient_run, args=(words,))
+
+
+def _transient_run(words: list[str]) -> None:
+    """Worker for transient_cmd / diff_cmd."""
+    if len(words) < 4:
+        social_server.post_social_message("Usage: transient <dso> <filter>")
+        return
+
+    # Differencing is per-filter, so the filter is required (unlike transit).
+    filter_name = words[-1].strip()
+    dso_arg = " ".join(words[2:-1]).strip()
+    if not dso_arg or not filter_name:
+        social_server.post_social_message("Usage: transient <dso> <filter>")
+        return
+
+    cfg = config.data()
+    image_dir = Path(cfg["nina"]["image_dir"])
+    _project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    scratch_dir = Path(os.path.join(_project_root, cfg["scratch"]["directory"]))
+    out_path = scratch_dir / f"transient_{dso_arg.replace(' ', '_')}_{filter_name}.jpg"
+
+    def _progress(msg: str) -> None:
+        social_server.post_social_message(f"Transient [{dso_arg}/{filter_name}]: {msg}")
+
+    # Capture the job id now (binding is active here) so the cancel check works
+    # regardless of which thread run_transient_search polls it from.
+    _job_id = jobs.get_current_job()
+
+    def _is_cancelled() -> bool:
+        return jobs.is_cancelled(_job_id)
+
+    social_server.post_social_message(
+        f"Transient search for {dso_arg} [{filter_name}]: starting…"
+    )
+
+    from transient_search import difference as _tr
+    try:
+        entry = _tr.run_transient_search(
+            dso_name=dso_arg,
+            filter_name=filter_name,
+            image_dir=image_dir,
+            output_plot_path=out_path,
+            progress_cb=_progress,
+            cancel_cb=_is_cancelled,
+            top_n=1,  # present only the single best candidate
+        )
+    except _tr.TransientCancelled:
+        social_server.post_social_message(f"Transient [{dso_arg}/{filter_name}]: cancelled.")
+        return
+    except Exception as exc:
+        _logger.exception("_transient_run: failed")
+        social_server.post_social_message(f"Transient [{dso_arg}/{filter_name}]: failed — {exc}")
+        return
+
+    cands = entry.get("candidates", [])
+    survivors = [c for c in cands if not c.get("gaia_rejected")]
+    n_total = entry.get("n_candidates", len(cands))
+    if survivors:
+        summary = _describe_transient(dso_arg, filter_name, entry, survivors[0], n_total)
+    else:
+        rej = len(cands) - len(survivors)
+        extra = f" ({rej} matched known Gaia stars)" if rej else ""
+        summary = (
+            f"Transient [{dso_arg}/{filter_name}]: complete, no new sources above "
+            f"threshold.{extra}"
+        )
+
+    if out_path.exists():
+        social_server.post_social_message(summary, str(out_path))
+    else:
+        social_server.post_social_message(summary)
 
 
 def image_stats_cmd(words: list[str], account: str) -> None:

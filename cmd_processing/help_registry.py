@@ -187,6 +187,13 @@ HELP: dict[str, dict] = {
         "usage": ["transit <dso> <filter>"],
         "examples": ["transit m31 L", "transit ngc7331 Ha"],
     },
+    "transient": {
+        "category": "super",
+        "summary": "Difference the newest night against prior nights to find new "
+                   "sources (supernova candidates). Best on a galaxy. Alias: diff.",
+        "usage": ["transient <dso> <filter>", "diff <dso> <filter>"],
+        "examples": ["transient m101 r", "diff ngc5907 L"],
+    },
     "hr": {
         "category": "super",
         "summary": "Build a Gaia-calibrated colour–magnitude (H–R) diagram from two "
