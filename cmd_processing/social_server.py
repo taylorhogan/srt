@@ -243,15 +243,19 @@ def status_cmd(words: list[str], index: int, m: Mastodon, account: str) -> None:
         f"State     : {imaging}"
     )
 
-    # Attach a short live audio clip of the observatory to the status report.
+    # Attach a short live audio clip of the observatory to the status report,
+    # plus a mel spectrogram of the same clip.
     try:
         from sentry import audio_classify
         _project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
         scratch_dir = os.path.join(_project_root, cfg["scratch"]["directory"])
         wav_path = os.path.join(scratch_dir, "status_audio.wav")
-        recorded = audio_classify.record_wav(15, wav_path)
+        spec_path = os.path.join(scratch_dir, "status_spectrogram.png")
+        recorded = audio_classify.record_wav(15, wav_path, spectrogram_path=spec_path)
         if recorded:
             post_social_message("Observatory audio (15s)", audio=recorded)
+            if os.path.exists(spec_path):
+                post_social_message("Audio spectrogram", spec_path)
         else:
             post_social_message("Audio capture unavailable")
     except Exception:

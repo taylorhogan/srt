@@ -98,15 +98,36 @@ def toggle_roof(dev_map: dict, capture_direction: Optional[str] = None) -> None:
     inst = {"Roof motor": 'off'}
     asyncio.run(ku.kasa_do(dev_map, inst))
 
-    # Finish + surface the roof-move audio spectrogram. For now it is posted on
-    # every move as a development aid; later this can gate on a classifier result
-    # the way the current-signature anomaly does below.
+    # Finish + surface the roof-move audio spectrogram, with a verdict from the
+    # known-good library. Announce-only for now: the capture stays in unlabeled/
+    # regardless of verdict; the user files it in the morning with
+    # `audio <open|close> <good|bad>`. Once the library is trusted this can
+    # switch to auto-filing. classify() never raises (returns "unknown").
     audio_result = roof_audio.finish_background_capture(audio_capture, status="unlabeled")
     if audio_result and audio_result.get("spectrogram"):
+        cls = roof_audio.classify(audio_result["spectrogram"],
+                                  audio_result.get("direction"))
+        caption = f"Roof {capture_direction or 'move'} audio"
+        if cls["verdict"] == "good":
+            caption += (f": sounds normal (score {cls['best_score']:.3f} ≥ "
+                        f"{cls['threshold']:.3f}, best match {cls['best_match']})")
+        elif cls["verdict"] == "bad":
+            caption = (f"⚠️ {caption}: does NOT match known-good "
+                       f"(score {cls['best_score']:.3f} < {cls['threshold']:.3f})")
+            try:
+                pushover.push_message(caption)
+            except Exception as e:  # noqa: BLE001
+                _logger.error("Failed to push roof audio anomaly: %s", e)
+        else:
+            caption += f" — {cls['note'] or 'not classified'}"
         try:
+            # Attach the WAV alongside the spectrogram: the webchat renders an
+            # inline player plus download links for both files, so a move's raw
+            # audio can be pulled for offline analysis.
             social_server.post_social_message(
-                f"Roof {capture_direction or 'move'} audio spectrogram",
+                caption,
                 image=audio_result["spectrogram"],
+                audio=audio_result.get("wav"),
             )
         except Exception as e:  # noqa: BLE001
             _logger.error("Failed to post roof audio spectrogram: %s", e)
@@ -2025,6 +2046,67 @@ def _dab_run(words: list[str]) -> None:
         )
 
 
+_AUDIO_USAGE = ("Usage: `audio` (list unlabeled + library counts) or "
+                "`audio <open|close> <good|bad> [name]` (file the latest — or "
+                "named — unlabeled capture of that direction)")
+
+
+def audio_cmd(words: list[str], account: str) -> None:
+    """List or label roof-move audio captures (and the matching current signature).
+
+    Labeling moves the capture's spectrogram + WAV from roof_audio/unlabeled/ to
+    the good/bad library that classify() judges future moves against, and files
+    the motor-current signature from the same move (same direction, within ±10
+    minutes) under the same verdict — one verdict per roof move.
+
+    Command syntax:
+        audio                       — list unlabeled captures + library counts
+        audio <open|close> <good|bad> [name] — label latest (or named) capture
+    """
+    args = words[2:]
+
+    if not args:
+        entries = roof_audio.list_unlabeled()
+        lines = [f"{len(entries)} unlabeled roof audio capture(s):"]
+        lines += [f"  {e['base']}" for e in entries[:20]]
+        if len(entries) > 20:
+            lines.append(f"  …and {len(entries) - 20} more")
+        counts = roof_audio.library_counts()
+        lines.append("Library:")
+        lines += [f"  {status}/{d}: {n}"
+                  for status, dirs in counts.items() for d, n in dirs.items()] or ["  (empty)"]
+        lines.append("Label with `audio <open|close> <good|bad>`.")
+        social_server.post_social_message("\n".join(lines))
+        return
+
+    if len(args) < 2 or args[0] not in ("open", "close") or args[1] not in ("good", "bad"):
+        social_server.post_social_message(_AUDIO_USAGE)
+        return
+    direction, verdict = args[0], args[1]
+    name = args[2] if len(args) > 2 else None
+
+    res = roof_audio.label(direction, verdict, name=name)
+    if res is None:
+        social_server.post_social_message(
+            f"No unlabeled {direction} audio capture"
+            + (f" matching '{name}'" if name else "") + " found.")
+        return
+    lines = [f"Filed {res['base']} as {verdict}:"]
+    lines += [f"  {os.path.basename(p)}" for p in res["moved"]]
+
+    # File the motor-current signature from the same move under the same verdict.
+    try:
+        sig_path = rcs.label_latest(direction, verdict, near_timestamp=res["base"])
+    except Exception as e:  # noqa: BLE001 — audio labeling succeeded; report and move on
+        sig_path = None
+        _logger.error("Failed to label current signature: %s", e)
+    if sig_path:
+        lines.append(f"  {os.path.basename(sig_path)} (current signature)")
+    else:
+        lines.append("  (no matching current signature within ±10 min)")
+    social_server.post_social_message("\n".join(lines))
+
+
 def get_super_user_commands() -> dict[str, Callable]:
     """Return the command-name → handler mapping for all super-user commands."""
     return {
@@ -2056,6 +2138,7 @@ def get_super_user_commands() -> dict[str, Callable]:
         "stack": stack_cmd,
         "bad": bad_cmd,
         "dab": dab_cmd,
+        "audio": audio_cmd,
     }
 
 
@@ -2208,6 +2291,9 @@ def doit_cmd(words: list[str], account: str) -> None:
             _f.write(datetime.now().isoformat())
     except Exception:
         pass
+    # Persist this run's job id so the end-of-night scripts NINA launches
+    # (end.py, smessage.py — separate processes) post onto this job's card.
+    jobs.persist_imaging_job()
     cfg = config.data()
 
     # Path used for camera snapshots shown in Pushover notifications.

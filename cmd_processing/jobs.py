@@ -21,6 +21,7 @@ Threading model:
 import atexit
 import logging
 import multiprocessing
+import os
 import threading
 import time
 from typing import Any, Callable, Optional
@@ -175,6 +176,53 @@ def get_current_job() -> Optional[str]:
 
 def clear_current_job() -> None:
     _local.job_id = None
+
+
+# ── Cross-process job handoff ─────────────────────────────────────
+# The end-of-night scripts NINA launches (end.bat/smessage.bat → end.py/
+# smessage.py) run in their own processes, so posts they make have no job
+# binding and fall through to the system feed — where the roof-close
+# spectrogram etc. is effectively invisible. doit_cmd persists its job id to a
+# file at run start; those scripts adopt it so their posts land on the imaging
+# job's card, same as the roof-open posts made in-process.
+_IMAGING_JOB_FILE = os.path.join(
+    os.path.abspath(os.path.join(os.path.dirname(__file__), "..")), "imaging_job.txt"
+)
+_IMAGING_JOB_MAX_AGE_SEC = 24 * 3600
+
+
+def persist_imaging_job() -> None:
+    """Write the calling thread's job id to ``imaging_job.txt`` (best-effort)."""
+    job_id = get_current_job()
+    if not job_id:
+        return
+    try:
+        with open(_IMAGING_JOB_FILE, "w") as f:
+            f.write(job_id)
+    except OSError:
+        _logger.exception("Failed to persist imaging job id")
+
+
+def adopt_imaging_job() -> None:
+    """Bind this thread to the persisted imaging job id, if any.
+
+    No-op when the thread already has a job (an in-process caller like the
+    emergency stop must keep its own card) or when the file is older than a
+    day (a manual end-sequence run should not resurrect last week's card).
+    The id is only forwarded with posts; the server falls back to the system
+    feed if the job no longer exists, so a stale id degrades gracefully.
+    """
+    if get_current_job():
+        return
+    try:
+        if time.time() - os.path.getmtime(_IMAGING_JOB_FILE) > _IMAGING_JOB_MAX_AGE_SEC:
+            return
+        with open(_IMAGING_JOB_FILE) as f:
+            job_id = f.read().strip()
+    except OSError:
+        return
+    if job_id:
+        set_current_job(job_id)
 
 
 # ── Event broadcast ───────────────────────────────────────────────

@@ -76,7 +76,7 @@ Before writing any code that calls `toggle_roof()`, `pwi4.mount_park()`, `pwi4.m
 
 - **`hardware_control/`** — TP-Link Kasa smart plug control (`kasa_utils.py` wraps `kasa_local/`), Shelly HTTP relay control, PWI4 mount control (`pwi4_client.py` + `pwi4_utils.py`). Device discovery via Kasa UDP.
 
-- **`sentry/`** — Safety systems: `vision_safety.py` uses OpenCV template matching on an indoor camera snapshot to detect scope parked/roof open/closed. `audio_classify.py` records audio, generates mel spectrograms, compares via MSE to library spectrograms in `sentry/library_spectrograms/`.
+- **`sentry/`** — Safety systems: `vision_safety.py` uses OpenCV template matching on an indoor camera snapshot to detect scope parked/roof open/closed. `audio_classify.py` records roof-move audio, generates mel spectrograms, and classifies each move via MSE against the known-good library in `sentry/roof_audio/good/{open,close}/` (built by labeling captures with the webchat `audio <open|close> <good|bad>` command).
 
 - **`nina_gen/nina_sequence_gen.py`** — Generates N.I.N.A imaging sequences by recursively patching a JSON template with target name and RA/Dec coordinates.
 
@@ -111,4 +111,4 @@ if __package__ is None or __package__ == "":
 - `my_calendar.json` — per-day imaging history (state + DSO)
 - `iris.log` — application log
 - `safety.txt` — written by end sequence to record observatory state
-- `sentry/library_spectrograms/` — reference audio spectrograms for anomaly detection
+- `sentry/roof_audio/{unlabeled,good,bad}/{open,close}/` — roof-move audio spectrograms/WAVs; `good/` is the anomaly-detection reference library

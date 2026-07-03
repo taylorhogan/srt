@@ -6,9 +6,13 @@ if __package__ is None or __package__ == "":
     if project_root not in sys.path:
         sys.path.insert(0, project_root)
 
-from cmd_processing import social_server
+from cmd_processing import jobs, social_server
 
 if __name__ == "__main__":
+
+    # NINA's end-of-night messages ("all done parking scope", "goodnight")
+    # belong on the imaging job's card, not the system feed.
+    jobs.adopt_imaging_job()
 
     print (len(sys.argv))
     if len(sys.argv) < 2:

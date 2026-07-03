@@ -19,7 +19,7 @@ from configs import config
 
 from fits_processing import fitsfwhm, sky_brightness as sb
 from hardware_control import pwi4_utils, kasa_utils as ku, utl_shelly
-from cmd_processing import super_user_commands, social_server
+from cmd_processing import jobs, super_user_commands, social_server
 from sentry import vision_safety
 from utils import pushover, utils
 
@@ -226,6 +226,12 @@ def do_main():
     cfg = config.data()
 
     logger.info('Begin End Sequence')
+
+    # Tag this run's posts (roof-close spectrogram, imaging summary, …) with
+    # the imaging job that started the night, so they land on that job's card
+    # in the webchat instead of the buried system feed. No-op when called
+    # in-process from a thread that already has a job (e.g. emergency stop).
+    jobs.adopt_imaging_job()
 
     try:
         with open("safety.txt", "w") as file:

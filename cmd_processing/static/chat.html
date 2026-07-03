@@ -404,7 +404,7 @@
       job.log.push(ev.entry);
       if (ev.status !== undefined) job.status = ev.status;
       // §7 unread: never steal focus — just count, unless its sheet is open.
-      if (openDetailId !== ev.id && job.kind !== 'system') job.unread = (job.unread || 0) + 1;
+      if (openDetailId !== ev.id) job.unread = (job.unread || 0) + 1;
     } else if (ev.kind === 'removed') {
       jobs.delete(ev.id);
       if (openDetailId === ev.id) closeDetail();
@@ -622,10 +622,13 @@
       line.className = 'log-line' + (e.text && e.text.startsWith('✕') ? ' err' : '');
       const t = document.createElement('span'); t.className = 'log-time'; t.textContent = fmtTime(e.timestamp);
       line.appendChild(t);
+      // An entry can carry both a text caption and an html payload (e.g. the
+      // roof-move spectrogram: caption + audio player) — render both.
+      if (e.text) {
+        const w = document.createElement('span'); w.className = 'log-text'; w.innerHTML = linkify(e.text); line.appendChild(w);
+      }
       if (e.html) {
         const w = document.createElement('span'); w.className = 'log-text'; w.innerHTML = e.html; line.appendChild(w);
-      } else if (e.text) {
-        const w = document.createElement('span'); w.className = 'log-text'; w.innerHTML = linkify(e.text); line.appendChild(w);
       }
       if (e.image_url) {
         const img = document.createElement('img'); img.src = e.image_url; img.alt = 'result';

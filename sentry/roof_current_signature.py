@@ -25,6 +25,7 @@ import argparse
 import json
 import logging
 import os
+import shutil
 import sys
 import threading
 import time
@@ -195,6 +196,43 @@ def save_signature(sig, status="unlabeled"):
         json.dump(sig, f, indent=2)
     logger.info("Saved roof signature: %s", path)
     return path
+
+
+def label_latest(direction, verdict, near_timestamp=None):
+    """Move the most recent unlabeled signature for `direction` into good/bad.
+
+    `near_timestamp` (an ISO timestamp with ':' replaced by '-', as used in both
+    the audio and signature filenames) restricts the move to a signature captured
+    within ±10 minutes of it — the caller labels one roof move's audio and
+    current signature together, and this stops an old stray capture being filed
+    under the wrong verdict. Returns the new path, or None if nothing matched.
+    """
+    if verdict not in ("good", "bad"):
+        raise ValueError(f"verdict must be 'good' or 'bad', not {verdict!r}")
+    src_dir = _dir_for("unlabeled", direction)
+    if not os.path.isdir(src_dir):
+        return None
+    candidates = sorted((f for f in os.listdir(src_dir) if f.endswith(".json")),
+                        reverse=True)
+    if near_timestamp:
+        try:
+            anchor = datetime.strptime(near_timestamp[:19], "%Y-%m-%dT%H-%M-%S")
+            candidates = [
+                f for f in candidates
+                if abs((datetime.strptime(f[:19], "%Y-%m-%dT%H-%M-%S")
+                        - anchor).total_seconds()) <= 600
+            ]
+        except ValueError:
+            logger.warning("label_latest: unparsable timestamp %r", near_timestamp)
+            return None
+    if not candidates:
+        return None
+    dest_dir = _dir_for(verdict, direction)
+    os.makedirs(dest_dir, exist_ok=True)
+    dest = os.path.join(dest_dir, candidates[0])
+    shutil.move(os.path.join(src_dir, candidates[0]), dest)
+    logger.info("Labeled roof signature %s as %s", candidates[0], verdict)
+    return dest
 
 
 def load_library(direction=None, status="good"):

@@ -31,6 +31,8 @@ my_instruction_back.json
 my_cal.back.json
 scheduler_state.json
 todo.txt
+imaging_start.txt
+imaging_job.txt
 
 # Generated images / captures
 saved_dso/

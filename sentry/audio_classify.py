@@ -1,4 +1,5 @@
 import argparse
+import shutil
 import threading
 import time
 import sounddevice as sd
@@ -43,16 +44,22 @@ DEVICE_NAME = "eMeet"           # Substring of the input device to use (eMeet C9
 # Paths anchored to this script's directory so capture works regardless of the
 # current working directory.
 _HERE = os.path.dirname(os.path.abspath(__file__))
-LIBRARY_DIR = os.path.join(_HERE, "library_spectrograms")    # pre-saved reference spectrogram PNGs
-# Roof-move spectrograms, organized by direction (parallels roof_signatures/):
-#   roof_audio/{status}/{open,close}/<timestamp>_<direction>.{png,wav}
+# Roof-move spectrograms, organized by status + direction (parallels roof_signatures/):
+#   roof_audio/{unlabeled,good,bad}/{open,close}/<timestamp>_<direction>.{png,wav}
+# good/ is the reference library that classify() judges new moves against; it is
+# built by manually labeling captures (webchat `audio <open|close> <good|bad>`).
 ROOF_AUDIO_ROOT = os.path.join(_HERE, "roof_audio")
 FIG_SIZE = (10, 6)              # Fixed figure size for consistent image dimensions
 DPI = 100                       # Fixed DPI → consistent pixel size (1000×600 here)
 CMAP = 'magma'                  # Consistent colormap (common for spectrograms)
 
-# Ensure the reference library directory exists
-os.makedirs(LIBRARY_DIR, exist_ok=True)
+# classify(): a new move counts as "good" if its best similarity to a known-good
+# spectrogram reaches GOOD_MARGIN × the good library's own worst pairwise
+# similarity — i.e. it must look at least about as normal as good moves look to
+# each other. Self-tuning, so no absolute threshold to hand-tune as the library
+# grows. MIN_GOOD_REFS mirrors roof_current_signature.compare()'s ≥2 rule.
+GOOD_MARGIN = 0.9
+MIN_GOOD_REFS = 2
 # -------------------------------------------------------------------------
 
 _logger = utils.set_logger()
@@ -98,41 +105,129 @@ def generate_spectrogram(audio_np, save_path):
     plt.close()
 
 
-def compare_to_library(new_img_path):
-    """Compare a spectrogram image to the reference library using MSE similarity.
+def _img_array(path, size=None):
+    """Load a spectrogram PNG as a float RGB array, resized to `size` if given.
 
-    Returns (best_match, best_score, sorted_results). The library is currently
-    empty until the reference spectrograms are copied over; the future plan is to
-    classify each roof-move spectrogram against it.
+    All spectrograms are rendered at the same figure size/DPI so sizes should
+    already match; the resize is a guard against library entries from before a
+    rendering change.
     """
-    new_img = Image.open(new_img_path).convert('RGB')
-    new_array = img_as_float(np.array(new_img))
+    img = Image.open(path).convert('RGB')
+    if size is not None and img.size != size:
+        img = img.resize(size, Image.LANCZOS)
+    return img_as_float(np.array(img))
 
-    best_score = -1
-    best_match = None
-    results = []
 
-    for lib_path in glob.glob(os.path.join(LIBRARY_DIR, "*.png")):
-        lib_img = Image.open(lib_path).convert('RGB')
-        lib_array = img_as_float(np.array(lib_img))
+def _similarity(a, b):
+    """MSE-based similarity between two same-shaped image arrays, in (0, 1]."""
+    mse = np.mean((a - b) ** 2)
+    return float(1 / (1 + mse * 100))
 
-        # Ensure same size (should be identical if generated with same params)
-        if new_array.shape != lib_array.shape:
-            lib_img = lib_img.resize(new_img.size, Image.LANCZOS)
-            lib_array = img_as_float(np.array(lib_img))
 
-        # Calculate MSE and convert to similarity score
-        mse = np.mean((new_array - lib_array) ** 2)
-        score = 1 / (1 + mse * 100)
+def classify(png_path, direction):
+    """Judge a roof-move spectrogram against the known-good library for `direction`.
 
-        results.append((os.path.basename(lib_path), score))
-        if score > best_score:
-            best_score = score
-            best_match = os.path.basename(lib_path)
+    Returns {"verdict": "good"|"bad"|"unknown", "best_match", "best_score",
+    "threshold", "n_refs", "note"}. The threshold is self-tuning: the good
+    library's worst pairwise similarity × GOOD_MARGIN (see constants above).
+    Never raises — this runs in the roof safety path, so any failure comes back
+    as an "unknown" verdict instead.
+    """
+    result = {"verdict": "unknown", "best_match": None, "best_score": None,
+              "threshold": None, "n_refs": 0, "note": ""}
+    try:
+        lib_dir = os.path.join(ROOF_AUDIO_ROOT, "good", direction or "unknown")
+        ref_paths = sorted(glob.glob(os.path.join(lib_dir, "*.png")))
+        result["n_refs"] = len(ref_paths)
+        if len(ref_paths) < MIN_GOOD_REFS:
+            result["note"] = (f"only {len(ref_paths)} known-good {direction or 'unknown'} "
+                              f"spectrogram(s) — need >= {MIN_GOOD_REFS} to judge")
+            return result
 
-    # Sort results for full ranking
-    results.sort(key=lambda x: x[1], reverse=True)
-    return best_match, best_score, results
+        new_img = Image.open(png_path).convert('RGB')
+        size = new_img.size
+        new_arr = img_as_float(np.array(new_img))
+        refs = [(os.path.basename(p), _img_array(p, size)) for p in ref_paths]
+
+        for name, arr in refs:
+            score = _similarity(new_arr, arr)
+            if result["best_score"] is None or score > result["best_score"]:
+                result["best_score"] = score
+                result["best_match"] = name
+
+        pairwise = [_similarity(refs[i][1], refs[j][1])
+                    for i in range(len(refs)) for j in range(i + 1, len(refs))]
+        result["threshold"] = min(pairwise) * GOOD_MARGIN
+        result["verdict"] = "good" if result["best_score"] >= result["threshold"] else "bad"
+    except Exception as e:  # noqa: BLE001 — classifier must not crash the roof flow
+        _logger.warning("Audio classify failed for %s: %s", png_path, e)
+        result["note"] = f"classification failed: {e}"
+    return result
+
+
+# --------------------------------------------------------------------------- #
+# Labeling — file unlabeled captures into the good/bad library
+# --------------------------------------------------------------------------- #
+def list_unlabeled(direction=None):
+    """Return unlabeled captures as [{"base", "direction", "png", "wav"}], newest first.
+
+    Basenames start with an ISO timestamp, so lexicographic order is time order.
+    """
+    entries = []
+    base_dir = os.path.join(ROOF_AUDIO_ROOT, "unlabeled")
+    dirs = [direction] if direction else \
+        (sorted(os.listdir(base_dir)) if os.path.isdir(base_dir) else [])
+    for d in dirs:
+        for png in glob.glob(os.path.join(base_dir, d, "*.png")):
+            base = os.path.splitext(os.path.basename(png))[0]
+            wav = os.path.splitext(png)[0] + ".wav"
+            entries.append({"base": base, "direction": d, "png": png,
+                            "wav": wav if os.path.exists(wav) else None})
+    entries.sort(key=lambda e: e["base"], reverse=True)
+    return entries
+
+
+def label(direction, verdict, name=None):
+    """Move an unlabeled capture (PNG + WAV) into the good/bad library.
+
+    Targets the most recent unlabeled capture for `direction`, or the one whose
+    basename contains `name`. Returns {"base", "direction", "moved": [paths]}
+    or None if there is nothing to label / no match.
+    """
+    if verdict not in ("good", "bad"):
+        raise ValueError(f"verdict must be 'good' or 'bad', not {verdict!r}")
+    candidates = list_unlabeled(direction)
+    if name:
+        candidates = [c for c in candidates if name in c["base"]]
+    if not candidates:
+        return None
+    target = candidates[0]
+    dest_dir = os.path.join(ROOF_AUDIO_ROOT, verdict, direction)
+    os.makedirs(dest_dir, exist_ok=True)
+    moved = []
+    for path in (target["png"], target["wav"]):
+        if path:
+            dest = os.path.join(dest_dir, os.path.basename(path))
+            shutil.move(path, dest)
+            moved.append(dest)
+    _logger.info("Labeled roof audio %s as %s: %s", target["base"], verdict, moved)
+    return {"base": target["base"], "direction": direction, "moved": moved}
+
+
+def library_counts():
+    """Return {status: {direction: n_spectrograms}} for the roof audio library."""
+    counts = {}
+    if not os.path.isdir(ROOF_AUDIO_ROOT):
+        return counts
+    for status in sorted(os.listdir(ROOF_AUDIO_ROOT)):
+        spath = os.path.join(ROOF_AUDIO_ROOT, status)
+        if not os.path.isdir(spath):
+            continue
+        for d in sorted(os.listdir(spath)):
+            n = len(glob.glob(os.path.join(spath, d, "*.png")))
+            if n:
+                counts.setdefault(status, {})[d] = n
+    return counts
 
 
 # --------------------------------------------------------------------------- #
@@ -209,13 +304,15 @@ def finish_background_capture(handle, status="unlabeled", save=True):
         return None
 
 
-def record_wav(seconds, out_path, device_name=DEVICE_NAME):
+def record_wav(seconds, out_path, device_name=DEVICE_NAME, spectrogram_path=None):
     """Record `seconds` of mono audio and write it as a WAV to `out_path`.
 
-    A lighter-weight sibling of finish_background_capture: no spectrogram, no
-    library filing — just the raw clip, for attaching to a status report.
-    Returns `out_path` on success or None on failure. Never raises (a status
-    command must still succeed if the mic is unavailable).
+    A lighter-weight sibling of finish_background_capture: no library filing —
+    just the raw clip, for attaching to a status report. If `spectrogram_path`
+    is given, a mel spectrogram PNG of the same clip is written there too (same
+    style as the roof-move spectrograms). Returns `out_path` on success or None
+    on failure. Never raises (a status command must still succeed if the mic is
+    unavailable); a failed spectrogram does not fail the recording.
     """
     handle = start_background_capture(device_name=device_name)
     if handle.get("stream") is None:
@@ -234,6 +331,12 @@ def record_wav(seconds, out_path, device_name=DEVICE_NAME):
         os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
         write(out_path, RATE, np.int16(audio_np * 32767))  # float[-1,1] -> int16
         _logger.info("Saved status audio clip: %s", out_path)
+        if spectrogram_path:
+            try:
+                os.makedirs(os.path.dirname(os.path.abspath(spectrogram_path)), exist_ok=True)
+                generate_spectrogram(audio_np, spectrogram_path)
+            except Exception as e:  # noqa: BLE001 — spectrogram is best-effort
+                _logger.warning("status spectrogram failed: %s", e)
         return out_path
     except Exception as e:  # noqa: BLE001
         _logger.warning("record_wav failed: %s", e)
@@ -262,15 +365,54 @@ def main():
     ap.add_argument("--capture", action="store_true",
                     help="record a fixed-length test clip and save its spectrogram")
     ap.add_argument("--direction", choices=["open", "close"], default=None,
-                    help="label for a --capture clip")
+                    help="direction for --capture / --classify / --label")
     ap.add_argument("--seconds", type=float, default=5.0,
                     help="length of a --capture clip (default: 5)")
+    ap.add_argument("--classify", metavar="PNG",
+                    help="classify a spectrogram PNG against the known-good library "
+                         "(requires --direction)")
+    ap.add_argument("--label", choices=["good", "bad"],
+                    help="file the latest unlabeled capture for --direction as good/bad")
+    ap.add_argument("--name", default=None,
+                    help="with --label: target the capture whose name contains this")
+    ap.add_argument("--list-unlabeled", action="store_true",
+                    help="list unlabeled captures and library counts")
     args = ap.parse_args()
 
     if args.list_devices:
         list_input_devices()
     elif args.capture:
         capture_test(args.direction, args.seconds, args.device)
+    elif args.classify:
+        if not args.direction:
+            ap.error("--classify requires --direction")
+        res = classify(args.classify, args.direction)
+        print(f"verdict:    {res['verdict']}")
+        print(f"best match: {res['best_match']}  (score {res['best_score']})")
+        print(f"threshold:  {res['threshold']}  ({res['n_refs']} good refs)")
+        if res["note"]:
+            print(f"note:       {res['note']}")
+    elif args.label:
+        if not args.direction:
+            ap.error("--label requires --direction")
+        res = label(args.direction, args.label, name=args.name)
+        if res:
+            print(f"Labeled {res['base']} as {args.label}:")
+            for p in res["moved"]:
+                print(f"  {p}")
+        else:
+            print(f"No unlabeled {args.direction} capture"
+                  + (f" matching {args.name!r}" if args.name else "") + " found.")
+    elif args.list_unlabeled:
+        entries = list_unlabeled()
+        print(f"{len(entries)} unlabeled capture(s):")
+        for e in entries:
+            wav = "+wav" if e["wav"] else "no wav"
+            print(f"  {e['base']}  [{e['direction']}, {wav}]")
+        print("Library counts:")
+        for status, dirs in library_counts().items():
+            for d, n in dirs.items():
+                print(f"  {status}/{d}: {n}")
     else:
         ap.print_help()
 

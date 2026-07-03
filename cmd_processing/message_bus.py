@@ -84,11 +84,17 @@ def post_message(text: str, image_path: Optional[str] = None, html: Optional[str
                  job_id: Optional[str] = None, audio_path: Optional[str] = None) -> dict:
     image_url = _stage_media(image_path) if image_path else None
 
-    # An audio clip is delivered as an inline <audio> player via the html field.
+    # An audio clip is delivered as an inline <audio> player via the html field,
+    # followed by explicit download links for the clip (and the attached image,
+    # if any) so the raw files can be saved for offline analysis.
     if audio_path and html is None:
         audio_url = _stage_media(audio_path)
         if audio_url:
-            html = f'<audio controls preload="none" src="{audio_url}"></audio>'
+            links = f' <a href="{audio_url}" download>⬇ wav</a>'
+            if image_url:
+                links += f' <a href="{image_url}" download>⬇ png</a>'
+            html = (f'<audio controls preload="none" src="{audio_url}"></audio>'
+                    f'{links}')
 
     entry = make_entry(text, image_url=image_url, html=html)
 
