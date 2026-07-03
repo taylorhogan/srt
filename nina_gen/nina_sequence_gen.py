@@ -37,7 +37,11 @@ def _classify_object_type(dso_name: str) -> str:
         result = custom.query_object(dso_name)
         if result is None or len(result) == 0:
             return "unknown"
-        otype = str(result["OTYPE"][0])
+        # astroquery renamed the column OTYPE -> otype (v0.4.8); accept either,
+        # otherwise every target silently classifies "unknown" and nebulae get
+        # a broadband LRGB plan instead of narrowband.
+        otype_col = next(c for c in result.colnames if c.lower() == "otype")
+        otype = str(result[otype_col][0])
         if otype in _GALAXY_OTYPES:
             return "galaxy"
         if otype in _NEBULA_OTYPES:
