@@ -107,7 +107,7 @@ if __package__ is None or __package__ == "":
 
 ### Data Files (gitignored)
 
-- `my_instructions.json` — DSO imaging queue
+- `local/my_instructions.json` — DSO imaging queue (path from `cfg["location"]["instructions"]`; the copy at the repo root is stale)
 - `my_calendar.json` — per-day imaging history (state + DSO)
 - `iris.log` — application log
 - `safety.txt` — written by end sequence to record observatory state
