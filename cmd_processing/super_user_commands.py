@@ -62,11 +62,96 @@ def turn_inside_light_off(dev_map: dict) -> None:
     time.sleep(2)
 
 
+ROOF_TRAVEL_WAIT_S = 45   # window waited after firing the roof relay
+ROOF_STALL_AFTER_S = 30   # motor still drawing power after this ⇒ gear not engaged
+ROOF_STALL_MIN_W = 20.0   # act_power above this = motor running (idle ~2.7 W, moving ~300 W)
+
+
+class RoofStallError(RuntimeError):
+    """Roof motor still drawing power ROOF_STALL_AFTER_S after the relay fired."""
+
+
+def _roof_stall_abort(dev_map: dict, direction: Optional[str],
+                      capture, audio_capture, watts: float, elapsed: float) -> None:
+    """Emergency path for a roof-motor stall: cut power, alert, bank evidence, abort.
+
+    The drive gear can fail to engage the thread — the motor then spins without
+    moving the roof until the end-of-window power-off. Order matters here: the
+    Kasa power cut is the safety action and comes before any notification.
+    Always raises RoofStallError.
+    """
+    power_cut = True
+    try:
+        asyncio.run(ku.kasa_do(dev_map, {"Roof motor": 'off'}))
+    except Exception:  # noqa: BLE001
+        power_cut = False
+        _logger.exception("roof stall: FAILED to cut roof motor power")
+    msg = (f"🚨 EMERGENCY: roof motor still drawing {watts:.0f} W {elapsed:.0f}s after the "
+           f"{direction or 'move'} trigger — drive gear may not have engaged. "
+           + ("Motor power cut." if power_cut
+              else "POWER CUT FAILED — motor may still be running!")
+           + " Roof state UNKNOWN — inspect before any further roof or scope moves.")
+    _logger.error(msg)
+    try:
+        pushover.push_message(msg, priority=2)
+    except Exception:  # noqa: BLE001
+        _logger.exception("roof stall: pushover emergency failed")
+    try:
+        social_server.post_social_message(msg)
+    except Exception:  # noqa: BLE001
+        _logger.exception("roof stall: social post failed")
+    # Bank the evidence: the current trace and audio of the stalled move are
+    # exactly what post-mortem needs. Both helpers swallow their own errors.
+    if capture is not None:
+        rcs.finish_background_capture(capture, status="unlabeled")
+    roof_audio.finish_background_capture(audio_capture, status="unlabeled")
+    raise RoofStallError(msg)
+
+
+def _wait_for_roof_travel(dev_map: dict, capture_direction: Optional[str],
+                          capture, audio_capture) -> None:
+    """Wait out the roof travel window, aborting on a motor stall.
+
+    A normal move runs the motor for only ~11 s (banked signatures: ~300 W
+    running vs ~2.7 W idle), so sustained draw past ROOF_STALL_AFTER_S means
+    the roof is not travelling. Two consecutive over-threshold readings are
+    required so a single bad sample can't cut power spuriously; failed monitor
+    reads never trigger — without data this degrades to the plain timed wait.
+    """
+    if not config.data()["hardware"].get("current_monitor_url"):
+        time.sleep(ROOF_TRAVEL_WAIT_S)
+        return
+    start = time.monotonic()
+    time.sleep(ROOF_STALL_AFTER_S)
+    consecutive = 0
+    while True:
+        elapsed = time.monotonic() - start
+        if elapsed >= ROOF_TRAVEL_WAIT_S:
+            return
+        status = utl_shelly.read_current_monitor()
+        power = status.get("act_power") if status is not None else None
+        if power is None:
+            _logger.warning("roof stall watchdog: current read failed at t=%.0fs", elapsed)
+            consecutive = 0
+        elif power > ROOF_STALL_MIN_W:
+            consecutive += 1
+            _logger.warning("roof stall watchdog: %.0f W at t=%.0fs (%d/2)",
+                            power, elapsed, consecutive)
+            if consecutive >= 2:
+                _roof_stall_abort(dev_map, capture_direction, capture,
+                                  audio_capture, power, elapsed)
+        else:
+            consecutive = 0
+        time.sleep(1)
+
+
 def toggle_roof(dev_map: dict, capture_direction: Optional[str] = None) -> None:
     """Power the roof motor, trigger the Shelly relay to move the roof, then power off.
 
     The roof direction (open/close) depends on its current position — the relay
-    simply toggles. Waits 45 seconds for the roof to complete its travel.
+    simply toggles. Waits 45 seconds for the roof to complete its travel, with a
+    stall watchdog: if the motor is still drawing power after ROOF_STALL_AFTER_S
+    (gear not engaged), power is cut and RoofStallError aborts the caller.
 
     `capture_direction` ("open"/"close") only labels the banked current
     signature; it does not change which way the roof moves.
@@ -94,7 +179,7 @@ def toggle_roof(dev_map: dict, capture_direction: Optional[str] = None) -> None:
             rcs.finish_background_capture(capture, save=False)
         roof_audio.finish_background_capture(audio_capture, save=False)
         raise RuntimeError("toggle_roof: roof relay trigger failed")
-    time.sleep(45)
+    _wait_for_roof_travel(dev_map, capture_direction, capture, audio_capture)
     inst = {"Roof motor": 'off'}
     asyncio.run(ku.kasa_do(dev_map, inst))
 

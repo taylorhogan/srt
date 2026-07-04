@@ -17,8 +17,11 @@ token = cfg['pushover']['token']
 user = cfg['pushover']['user']
 
 api_limiter = rate_limit.RateLimiter(max_calls=6, period=60.0)
-def push_message(message, image=None):
-    if not api_limiter():
+def push_message(message, image=None, priority=0):
+    # priority=2 is a Pushover emergency: it repeats on the phone until
+    # acknowledged, and bypasses the rate limiter — an emergency (e.g. roof
+    # motor stall) must never be dropped because routine alerts used the budget.
+    if priority < 2 and not api_limiter():
         print("Rate limit exceeded - ignoring this call")
         return None
 
@@ -26,16 +29,25 @@ def push_message(message, image=None):
         push_message_with_picture(message, image)
         return
 
+    params = {
+        "token": token,
+        "user": user,
+        "message": message,
+        "verify": False,
+    }
+    if priority:
+        params["priority"] = priority
+        if priority == 2:
+            # Pushover requires retry/expire for emergency priority:
+            # re-alert every 60s for up to an hour until acknowledged.
+            params["retry"] = 60
+            params["expire"] = 3600
+
     try:
         conn = http.client.HTTPSConnection("api.pushover.net:443")
         conn.request("POST", "/1/messages.json",
-
-                     urllib.parse.urlencode({
-                         "token": token,
-                         "user": user,
-                         "message": message,
-                         "verify": False,
-                     }), {"Content-type": "application/x-www-form-urlencoded", "verify": False})
+                     urllib.parse.urlencode(params),
+                     {"Content-type": "application/x-www-form-urlencoded", "verify": False})
         output = conn.getresponse().read().decode('utf-8')
 
     except Exception as e:
