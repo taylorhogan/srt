@@ -15,6 +15,7 @@ from typing import Optional
 
 _ALIASES: dict[str, str] = {
     "?": "help",
+    "diff": "transient",
 }
 
 
@@ -278,6 +279,14 @@ HELP: dict[str, dict] = {
         "summary": "Mark an imaging queue entry as completed by ID.",
         "usage": ["dbc <id>"],
         "examples": ["dbc 17"],
+    },
+    "audio": {
+        "category": "super",
+        "summary": "List unlabeled roof-move audio captures, or label the latest "
+                   "(or named) one good/bad — also files the matching motor-current "
+                   "signature from the same move under the same verdict.",
+        "usage": ["audio", "audio <open|close> <good|bad>", "audio <open|close> <good|bad> <name>"],
+        "examples": ["audio", "audio open good", "audio close bad 2026-07-03T18-21-04_close"],
     },
 }
 
