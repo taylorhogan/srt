@@ -266,16 +266,39 @@ def _post_vision_decision_image(parked: bool, closed: bool, is_open: bool) -> No
         img = cfg["camera safety"]["scope_view"]
         lm = vision_safety.last_match or {}
         roof = "closed" if closed else ("open" if is_open else "unknown")
+        # Name which gate each non-ok template failed (position vs confidence),
+        # so a bad read is diagnosable from the notification alone.
+        fails = " ".join(
+            f"{name}:{lm.get(name, {}).get('verdict')}"
+            for name in ("parked", "closed", "open")
+            if lm.get(name, {}).get("verdict") not in (None, "ok")
+        )
         caption = (
             f"Vision: roof={roof} scope={'parked' if parked else 'unparked'} | "
             f"conf c={lm.get('closed', {}).get('conf', 0):.2f} "
             f"o={lm.get('open', {}).get('conf', 0):.2f} "
             f"p={lm.get('parked', {}).get('conf', 0):.2f} "
             f"luma={lm.get('frame_luma', 0):.0f} trusted={lm.get('trusted')}"
+            + (f" | {fails}" if fails else "")
         )
         pushover.push_message(caption, img)
     except Exception:
         _logger.exception("failed to push vision decision image")
+
+
+def _vision_fail_reason(state: str) -> str:
+    """Why the last vision snapshot didn't confirm *state* ('parked'/'closed'/'open'):
+    which gate failed — template found in the wrong place ('position') or match
+    confidence under the threshold ('confidence') — with the measured values.
+    Empty string when the state passed or no verdict is available."""
+    info = (vision_safety.last_match or {}).get(state) or {}
+    verdict = info.get("verdict")
+    if not verdict or verdict == "ok":
+        return ""
+    return (
+        f" — {state} template: {verdict}"
+        f" (conf {info.get('conf', 0):.2f}, off by {info.get('error', 0):.0f}px)"
+    )
 
 
 def open_roof_with_option(check: bool) -> bool:
@@ -297,7 +320,10 @@ def open_roof_with_option(check: bool) -> bool:
                     if is_open and parked:
                         return True
                     if attempt < MAX_ROOF_CHECKS - 1:
-                        msg = f"Roof open not confirmed (attempt {attempt + 1}/{MAX_ROOF_CHECKS}), waiting 5 min"
+                        msg = (
+                            f"Roof open not confirmed (attempt {attempt + 1}/{MAX_ROOF_CHECKS})"
+                            f"{_vision_fail_reason('open')}, waiting 5 min"
+                        )
                         social_server.post_social_message(msg)
                         _logger.warning(msg)
                         time.sleep(5 * 60)
@@ -306,10 +332,14 @@ def open_roof_with_option(check: bool) -> bool:
                 return False
 
             else:
-                social_server.post_social_message("Vision Safety says roof is NOT closed, therefore will not open")
+                social_server.post_social_message(
+                    f"Vision Safety says roof is NOT closed, therefore will not open{_vision_fail_reason('closed')}"
+                )
                 return False
         else:
-            social_server.post_social_message("Vision Safety says Scope is NOT parked, therefore will not open")
+            social_server.post_social_message(
+                f"Vision Safety says Scope is NOT parked, therefore will not open{_vision_fail_reason('parked')}"
+            )
             return False
     else:
         toggle_roof(dev_map, capture_direction="open")
@@ -326,7 +356,9 @@ def close_roof_with_option(check: bool) -> bool:
     if check:
         parked, closed, is_open, mod_date = get_status_with_lights()
         if not parked:
-            social_server.post_social_message("Vision Safety says Scope is NOT parked, therefore will not close")
+            social_server.post_social_message(
+                f"Vision Safety says Scope is NOT parked, therefore will not close{_vision_fail_reason('parked')}"
+            )
             return False
         if closed:
             social_server.post_social_message("Vision Safety says roof is already closed")
@@ -341,7 +373,10 @@ def close_roof_with_option(check: bool) -> bool:
             if closed:
                 return True
             if attempt < MAX_ROOF_CHECKS - 1:
-                msg = f"Roof close not confirmed (attempt {attempt + 1}/{MAX_ROOF_CHECKS}), waiting 5 min"
+                msg = (
+                    f"Roof close not confirmed (attempt {attempt + 1}/{MAX_ROOF_CHECKS})"
+                    f"{_vision_fail_reason('closed')}, waiting 5 min"
+                )
                 social_server.post_social_message(msg)
                 _logger.warning(msg)
                 time.sleep(5 * 60)

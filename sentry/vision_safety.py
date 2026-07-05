@@ -145,6 +145,15 @@ def visual_status():
     min_luma = cfg["camera safety"].get("min_trust_luma", 25.0)
     too_dark = frame_luma < min_luma
 
+    def _verdict(error: float, conf: float) -> str:
+        """Which gate(s) a template failed: 'ok', 'position', 'confidence', or both."""
+        fails = []
+        if abs(error) >= accuracy:
+            fails.append("position")
+        if conf < min_conf:
+            fails.append("confidence")
+        return "+".join(fails) if fails else "ok"
+
     # --- Scope parked? ---------------------------------------------------------
     # Parked is the gating state: the parked marker must sit near its expected
     # position with enough confidence, on a lit frame.
@@ -154,6 +163,7 @@ def visual_status():
     print (parked_error)
     print("parked confidence", max_val_parked)
     parked = (not too_dark) and abs(parked_error) < accuracy and max_val_parked >= min_conf
+    parked_verdict = "dark frame" if too_dark else _verdict(parked_error, max_val_parked)
 
     # --- Roof open / closed ----------------------------------------------------
     # The open/closed marker positions are only valid in the PARKED geometry: a
@@ -167,6 +177,8 @@ def visual_status():
     if parked:
         closed = abs(closed_error) < accuracy and max_val_closed >= min_conf
         open = abs(open_error) < accuracy and max_val_open >= min_conf
+        closed_verdict = _verdict(closed_error, max_val_closed)
+        open_verdict = _verdict(open_error, max_val_open)
         if closed and open:
             # Both markers landed at their (well-separated) positions — physically
             # impossible. The templates can't discriminate this frame, so report
@@ -176,9 +188,11 @@ def visual_status():
                 max_val_closed, max_val_open,
             )
             closed = open = False
+            closed_verdict = open_verdict = "ambiguous (both matched)"
     else:
         # Not parked (or too dark): the roof state is undeterminable by design.
         closed = open = False
+        closed_verdict = open_verdict = "unreadable (scope not parked)"
 
     trusted = bool(parked)
     print ("parked, closed, open", str(parked), str(closed), str(open))
@@ -194,9 +208,9 @@ def visual_status():
         "frame_luma": frame_luma,
         "min_trust_luma": min_luma,
         "trusted": trusted,
-        "parked": {"conf": float(max_val_parked), "error": float(parked_error)},
-        "closed": {"conf": float(max_val_closed), "error": float(closed_error)},
-        "open":   {"conf": float(max_val_open),   "error": float(open_error)},
+        "parked": {"conf": float(max_val_parked), "error": float(parked_error), "verdict": parked_verdict},
+        "closed": {"conf": float(max_val_closed), "error": float(closed_error), "verdict": closed_verdict},
+        "open":   {"conf": float(max_val_open),   "error": float(open_error),   "verdict": open_verdict},
     }
 
     mod_date = time.ctime(os.path.getmtime(cfg["camera safety"]["scope_view"]))
