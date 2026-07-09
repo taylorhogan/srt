@@ -183,16 +183,13 @@ def tonight_cmd(words: list[str], index: int, m: Mastodon, account: str) -> bool
     if best_name:
         obj = instructions.resolve_target_by_name(best_name)
         if obj is not None:
-            horizon, image, sky, weather_ok = astro_dso_visibility.show_plots(obj)
+            horizon, image, sky, weather_ok, weather_msg = astro_dso_visibility.show_plots(obj)
 
             if horizon is not None:
                 post_social_message(f"{best_name} — altitude & conditions", horizon)
             if sky is not None:
                 post_social_message(f"{best_name} — sky chart", sky)
-            if weather_ok:
-                post_social_message("Weather ok tonight")
-            else:
-                post_social_message("Weather not ok tonight")
+            post_social_message(weather_msg)
             post_dso_preview(best_name)
             return weather_ok
         else:

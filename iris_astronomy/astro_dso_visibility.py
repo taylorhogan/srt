@@ -189,7 +189,12 @@ def find_alt_az_horizon_times(
     return altitude, azimuth, horizon, start_time, finish_time, elapsed_time, max_altitude
 
 
-def plot_my_dso_and_horizon(dso: FixedTarget, my_observatory: Observer, observe_time: Time) -> bool:
+def format_local_time(dt: datetime.datetime) -> str:
+    """Format a local datetime like '10:04pm'."""
+    return dt.strftime("%I:%M%p").lstrip("0").lower()
+
+
+def plot_my_dso_and_horizon(dso: FixedTarget, my_observatory: Observer, observe_time: Time) -> tuple[bool, str]:
     altitude, azimuth, horizon, start_time, finish_time, elapsed_time, max_altitude = find_alt_az_horizon_times(dso, my_observatory,
                                                                                                   observe_time)
 
@@ -239,6 +244,10 @@ def plot_my_dso_and_horizon(dso: FixedTarget, my_observatory: Observer, observe_
     clipped_wsp = []
     clipped_hum = []
     weather_ok = True
+    issues: set[str] = set()
+    # Judge weather only during the imaging window (dark + above horizon).
+    # If the object never rises tonight, fall back to the whole plotted span.
+    window_finish = finish_time if finish_time is not None else local_datetime[-1]
     for i in range(len(local_datetime)):
         hour = local_datetime[i].hour
         found_hour = False
@@ -250,14 +259,28 @@ def plot_my_dso_and_horizon(dso: FixedTarget, my_observatory: Observer, observe_
                 clipped_pp.append(pp[j]/100*90)
                 clipped_wsp.append(wsp[j]/40*90)
                 clipped_hum.append(hum[j]/100*90)
-                if not is_weather_ok(cloud_covers[j], pp[j], wsp[j]):
-                    weather_ok = False
-
-
-
+                in_window = (start_time is None
+                             or start_time <= local_datetime[i] <= window_finish)
+                if in_window:
+                    hour_issues = weather_issues(cloud_covers[j], pp[j], wsp[j])
+                    if hour_issues:
+                        weather_ok = False
+                        issues.update(hour_issues)
 
             if found_hour:
                 break
+
+    if start_time is not None:
+        window_txt = f"between {format_local_time(start_time)} and {format_local_time(window_finish)}"
+        if weather_ok:
+            weather_msg = f"Weather is good for imaging {dso.name} {window_txt}"
+        else:
+            weather_msg = f"Weather is not good for imaging {dso.name}: {' and '.join(sorted(issues))} {window_txt}"
+    else:
+        if weather_ok:
+            weather_msg = "Weather ok tonight"
+        else:
+            weather_msg = f"Weather not ok tonight: {' and '.join(sorted(issues))}"
 
         if not found_hour:
             clipped_cloud.append(float('nan'))
@@ -313,10 +336,10 @@ def plot_my_dso_and_horizon(dso: FixedTarget, my_observatory: Observer, observe_
 
     # Output.
 
-    return weather_ok
+    return weather_ok, weather_msg
 
 
-def show_plots(dso: FixedTarget) -> tuple[Optional[str], Optional[str], Optional[str], bool]:
+def show_plots(dso: FixedTarget) -> tuple[Optional[str], Optional[str], Optional[str], bool, str]:
 
 
     longitude = CFG["location"]["longitude"]
@@ -354,6 +377,7 @@ def show_plots(dso: FixedTarget) -> tuple[Optional[str], Optional[str], Optional
     #     logger.info('Problem')
     #     logger.exception("Exception")
     weather_ok = False
+    weather_msg = "Weather check failed"
     try:
 
         astroplan.plots.plot_sky(dso, my_observatory, observe_time)
@@ -381,7 +405,7 @@ def show_plots(dso: FixedTarget) -> tuple[Optional[str], Optional[str], Optional
 
     try:
         print("a")
-        weather_ok = plot_my_dso_and_horizon(dso, my_observatory, observe_time)
+        weather_ok, weather_msg = plot_my_dso_and_horizon(dso, my_observatory, observe_time)
         altitude_path = os.path.join(scratch_dir, "horizon.png")
         print ("b")
         plt.savefig(altitude_path)
@@ -392,7 +416,7 @@ def show_plots(dso: FixedTarget) -> tuple[Optional[str], Optional[str], Optional
         LOGGER.exception("Exception")
 
 
-    return altitude_path, image_path, sky_path, weather_ok
+    return altitude_path, image_path, sky_path, weather_ok, weather_msg
 
 
 def get_above_horizon_time(dso: FixedTarget, time: Time) -> tuple[Optional[datetime.timedelta], float]:
@@ -435,15 +459,18 @@ def air_mass(altitude: float) -> float:
     else:
         return 1.0 / math.sin(math.radians(altitude))
 
-def is_weather_ok(cloud_cover: float, precipitation_probability: float, wind_speed: float) -> bool:
-    ok = True
+def weather_issues(cloud_cover: float, precipitation_probability: float, wind_speed: float) -> list[str]:
+    """Return human-readable weather problems for one forecast hour, empty if OK."""
+    issues = []
     if cloud_cover > 80:
-        print("bad cloud cover", cloud_cover)
-        ok = False
+        issues.append("heavy cloud cover")
     if precipitation_probability > 20:
-        print("bad prob of precip", precipitation_probability)
-        ok = False
-    return ok
+        issues.append("a chance of rain")
+    return issues
+
+
+def is_weather_ok(cloud_cover: float, precipitation_probability: float, wind_speed: float) -> bool:
+    return not weather_issues(cloud_cover, precipitation_probability, wind_speed)
 
 
 def map_az_to_horizon() -> tuple[list[float], list[float]]:
@@ -895,7 +922,7 @@ def test_me() -> None:
     #hours = t.seconds/3600
     #print (hours)
     #print (d, t)
-    p1, p2, p3, weather_ok = show_plots(obj)
+    p1, p2, p3, weather_ok, weather_msg = show_plots(obj)
     #print ("weather ok", weather_ok)
 
 
