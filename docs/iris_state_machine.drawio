@@ -162,7 +162,7 @@
     </mxCell>
 
     <!-- Open roof -->
-    <mxCell id="d_open_roof" value="Announce + open roof&#xa;open_roof_with_option()" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=11;" vertex="1" parent="1">
+    <mxCell id="d_open_roof" value="Announce + open roof&#xa;open_roof()" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=11;" vertex="1" parent="1">
       <mxGeometry x="480" y="830" width="200" height="60" as="geometry" />
     </mxCell>
 

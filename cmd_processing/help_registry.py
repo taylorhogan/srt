@@ -107,10 +107,12 @@ HELP: dict[str, dict] = {
     },
     "roof!!": {
         "category": "super",
-        "summary": "Move or report the roof (!! = hardware moves). open/close are "
-                   "vision-safety-checked (scope must be parked); the relay only "
-                   "toggles, so direction follows current position. Append 'force' "
-                   "to skip the parked check (DANGEROUS).",
+        "summary": "Move or report the roof (!! = hardware moves). Movement now "
+                   "requires safe! first, plus no imaging run and mount power off; "
+                   "open/close are also vision-safety-checked (scope must be parked). "
+                   "The relay only toggles, so direction follows current position. "
+                   "Append 'force' to skip only the vision check (DANGEROUS). "
+                   "status is read-only and needs no safe!.",
         "usage": [
             "roof!! status",
             "roof!! open",

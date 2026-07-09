@@ -301,71 +301,186 @@ def _vision_fail_reason(state: str) -> str:
     )
 
 
-def open_roof_with_option(check: bool) -> bool:
-    """Open the observatory roof. If *check* is True, verify the scope is parked
-    and the roof is closed via vision safety before toggling. Returns True only
-    when the roof is confirmed open and the scope is still parked.
-    """
-    dev_map = asyncio.run(ku.make_discovery_map())
-    if check:
-        parked, closed, open, mod_date = get_status_with_lights()
-        if parked:
-            if closed:
-                social_server.post_social_message("Vision Safety says roof is closed, opening roof")
-                toggle_roof(dev_map, capture_direction="open")
-                time.sleep(30)
-                MAX_ROOF_CHECKS = 5
-                for attempt in range(MAX_ROOF_CHECKS):
-                    parked, closed, is_open, mod_date = get_status_with_lights()
-                    if is_open and parked:
-                        return True
-                    if attempt < MAX_ROOF_CHECKS - 1:
-                        msg = (
-                            f"Roof open not confirmed (attempt {attempt + 1}/{MAX_ROOF_CHECKS})"
-                            f"{_vision_fail_reason('open')}, waiting 5 min"
-                        )
-                        social_server.post_social_message(msg)
-                        _logger.warning(msg)
-                        time.sleep(5 * 60)
-                social_server.post_social_message(f"Roof could not be confirmed open after {MAX_ROOF_CHECKS} attempts, stopping")
-                _logger.warning("Roof open check failed after %d attempts", MAX_ROOF_CHECKS)
-                return False
+def _mount_power_blocked_reason(dev_map: dict | None = None) -> str | None:
+    """Return why the telescope mount's power state forbids touching the roof,
+    or None when the mount is confirmed off.
 
-            else:
+    A powered mount may be tracking, putting the scope in the roof's travel
+    path. Probes the Kasa ``{"Telescope mount": "isoff"}`` state, running its
+    own discovery when *dev_map* is None; if the state can't be confirmed we
+    fail safe (refuse).
+    """
+    try:
+        if dev_map is None:
+            dev_map = asyncio.run(ku.make_discovery_map())
+        mount_off = asyncio.run(ku.kasa_check(dev_map, {"Telescope mount": "isoff"}))
+    except Exception as exc:
+        _logger.warning("roof gate: mount power check failed: %s", exc)
+        return f"could not confirm the telescope mount is powered off ({exc})"
+    if not mount_off:
+        return "the telescope mount is powered on"
+    return None
+
+
+def _roof_move_blocked_reason(imaging_run: bool = False, dev_map: dict | None = None) -> str | None:
+    """Return why the roof must not MOVE right now, or None if movement may proceed.
+
+    Combined gate for every movement path (``roof!! open/close/toggle`` and the
+    imaging run), checked in order:
+
+    1. no imaging run in progress — waived when *imaging_run* is True, i.e. the
+       caller IS the imaging run and already claimed the imaging state at entry;
+    2. the observatory is marked safe (``safe!``);
+    3. the telescope mount is powered off (:func:`_mount_power_blocked_reason`).
+    """
+    if not imaging_run and (is_imaging() or is_nina_running()):
+        return "an imaging run is in progress (imaging state is not none)"
+    if not is_safe():
+        return "observatory is not marked safe — issue safe! first"
+    return _mount_power_blocked_reason(dev_map)
+
+
+def _roof_status_blocked_reason() -> str | None:
+    """Return why ``roof!! status`` must be ignored, or None if it may run.
+
+    Status is read-only, so unlike movement it does NOT require ``safe!`` —
+    you want to see the roof/scope state *before* deciding to arm the
+    observatory. It is still skipped while imaging is in progress and while
+    the mount is powered on (fail-safe if power can't be confirmed).
+    """
+    if is_imaging() or is_nina_running():
+        return "an imaging run is in progress (imaging state is not none)"
+    return _mount_power_blocked_reason()
+
+
+def open_roof(force: bool = False, imaging_run: bool = False) -> bool:
+    """Open the observatory roof with full gating — the single open path for
+    both ``roof!! open`` and the imaging run.
+
+    ABSOLUTE RULE: the roof must never move unless the scope is confirmed
+    parked — a tracking/slewing scope can intersect the roof's travel path.
+
+    Gate order (any failure posts a refusal to the web chat and returns False):
+    1. Kasa device discovery (needed to drive the roof motor).
+    2. :func:`_roof_move_blocked_reason` — no imaging run (waived only by
+       *imaging_run*, passed by the imaging run itself which claimed the
+       imaging state at entry), observatory marked safe via ``safe!``, and
+       mount powered off.
+    3. ``_roof_lock``, non-blocking — refuses if another roof command is
+       running; held through the confirm loop so movements can never overlap.
+    4. Vision precondition: scope parked AND roof closed. *force* waives ONLY
+       this step, never gates 1–3.
+
+    Then announces via Sonos (always — forced moves included; anyone inside
+    should hear it), fires the relay, and — unless forced — confirms via
+    vision. Returns True when the roof is confirmed open with the scope still
+    parked, or when a forced relay fire went out (gates passed, movement
+    unverified); False on any refusal or failed confirmation.
+    """
+    try:
+        dev_map = asyncio.run(ku.make_discovery_map())
+    except Exception as exc:
+        _logger.warning("open_roof: Kasa discovery failed: %s", exc)
+        social_server.post_social_message(f"Roof will not open: Kasa device discovery failed ({exc})")
+        return False
+    blocked = _roof_move_blocked_reason(imaging_run=imaging_run, dev_map=dev_map)
+    if blocked is not None:
+        _logger.warning("open_roof refused: %s", blocked)
+        social_server.post_social_message(f"Roof will not open: {blocked}")
+        return False
+    if not _roof_lock.acquire(blocking=False):
+        social_server.post_social_message("Roof will not open: another roof command is already running")
+        return False
+    try:
+        if not force:
+            parked, closed, is_open, mod_date = get_status_with_lights()
+            if not parked:
+                social_server.post_social_message(
+                    f"Vision Safety says Scope is NOT parked, therefore will not open{_vision_fail_reason('parked')}"
+                )
+                return False
+            if not closed:
                 social_server.post_social_message(
                     f"Vision Safety says roof is NOT closed, therefore will not open{_vision_fail_reason('closed')}"
                 )
                 return False
-        else:
-            social_server.post_social_message(
-                f"Vision Safety says Scope is NOT parked, therefore will not open{_vision_fail_reason('parked')}"
-            )
-            return False
-    else:
+            social_server.post_social_message("Vision Safety says roof is closed, opening roof")
+        announce_roof_movement("The roof will be opening in one minute")
         toggle_roof(dev_map, capture_direction="open")
-        return False
-
-
-def close_roof_with_option(check: bool) -> bool:
-    """Close the observatory roof. If *check* is True, verify the scope is parked
-    via vision safety before toggling — the absolute rule is that the roof must
-    never move unless the scope is confirmed parked (collision risk). Returns
-    True only when the roof is confirmed closed afterward.
-    """
-    dev_map = asyncio.run(ku.make_discovery_map())
-    if check:
-        parked, closed, is_open, mod_date = get_status_with_lights()
-        if not parked:
-            social_server.post_social_message(
-                f"Vision Safety says Scope is NOT parked, therefore will not close{_vision_fail_reason('parked')}"
-            )
-            return False
-        if closed:
-            social_server.post_social_message("Vision Safety says roof is already closed")
+        if force:
+            social_server.post_social_message("Roof open relay fired (forced, unverified)")
             return True
-        social_server.post_social_message("Vision Safety says scope is parked, closing roof")
+        time.sleep(30)
+        MAX_ROOF_CHECKS = 5
+        for attempt in range(MAX_ROOF_CHECKS):
+            parked, closed, is_open, mod_date = get_status_with_lights()
+            if is_open and parked:
+                return True
+            if attempt < MAX_ROOF_CHECKS - 1:
+                msg = (
+                    f"Roof open not confirmed (attempt {attempt + 1}/{MAX_ROOF_CHECKS})"
+                    f"{_vision_fail_reason('open')}, waiting 5 min"
+                )
+                social_server.post_social_message(msg)
+                _logger.warning(msg)
+                time.sleep(5 * 60)
+        social_server.post_social_message(f"Roof could not be confirmed open after {MAX_ROOF_CHECKS} attempts, stopping")
+        _logger.warning("Roof open check failed after %d attempts", MAX_ROOF_CHECKS)
+        return False
+    finally:
+        _roof_lock.release()
+
+
+def close_roof(force: bool = False, imaging_run: bool = False) -> bool:
+    """Close the observatory roof with full gating — the single close path for
+    ``roof!! close`` (the end-of-night close in ``end.py`` is separate).
+
+    ABSOLUTE RULE: the roof must never move unless the scope is confirmed
+    parked — a tracking/slewing scope can intersect the roof's travel path.
+
+    Same gate order as :func:`open_roof` (discovery → imaging/safe!/mount gate
+    → ``_roof_lock`` → vision), with the same *force* / *imaging_run* semantics:
+    *force* waives only the vision check, *imaging_run* waives only the
+    imaging-in-progress gate. Vision precondition here is scope parked; an
+    already-closed roof posts a note and returns True without moving anything.
+
+    Announces via Sonos (always — forced moves included), fires the relay, and
+    — unless forced — confirms via vision. Returns True when the roof is
+    confirmed closed (or was already closed), or when a forced relay fire went
+    out (gates passed, movement unverified); False on any refusal or failed
+    confirmation. Refusals are posted to the web chat.
+    """
+    try:
+        dev_map = asyncio.run(ku.make_discovery_map())
+    except Exception as exc:
+        _logger.warning("close_roof: Kasa discovery failed: %s", exc)
+        social_server.post_social_message(f"Roof will not close: Kasa device discovery failed ({exc})")
+        return False
+    blocked = _roof_move_blocked_reason(imaging_run=imaging_run, dev_map=dev_map)
+    if blocked is not None:
+        _logger.warning("close_roof refused: %s", blocked)
+        social_server.post_social_message(f"Roof will not close: {blocked}")
+        return False
+    if not _roof_lock.acquire(blocking=False):
+        social_server.post_social_message("Roof will not close: another roof command is already running")
+        return False
+    try:
+        if not force:
+            parked, closed, is_open, mod_date = get_status_with_lights()
+            if not parked:
+                social_server.post_social_message(
+                    f"Vision Safety says Scope is NOT parked, therefore will not close{_vision_fail_reason('parked')}"
+                )
+                return False
+            if closed:
+                social_server.post_social_message("Vision Safety says roof is already closed")
+                return True
+            social_server.post_social_message("Vision Safety says scope is parked, closing roof")
         announce_roof_movement("The roof will be closing in one minute")
         toggle_roof(dev_map, capture_direction="close")
+        if force:
+            social_server.post_social_message("Roof close relay fired (forced, unverified)")
+            return True
         time.sleep(30)
         MAX_ROOF_CHECKS = 5
         for attempt in range(MAX_ROOF_CHECKS):
@@ -383,31 +498,8 @@ def close_roof_with_option(check: bool) -> bool:
         social_server.post_social_message(f"Roof could not be confirmed closed after {MAX_ROOF_CHECKS} attempts, stopping")
         _logger.warning("Roof close check failed after %d attempts", MAX_ROOF_CHECKS)
         return False
-    else:
-        toggle_roof(dev_map, capture_direction="close")
-        return False
-
-
-def _roof_cmd_blocked_reason() -> str | None:
-    """Return why a ``roof!!`` command must be ignored, or None if it may run.
-
-    Shared precondition for every ``roof!!`` variant — status included: the roof
-    may only be touched when no imaging is in progress AND the telescope mount is
-    powered off. A powered mount may be tracking, putting the scope in the roof's
-    travel path. The mount-power check is the same Kasa ``isoff`` probe used by
-    ``open_if_mount_off_cmd``; if it can't be confirmed we fail safe (refuse).
-    """
-    if is_imaging() or is_nina_running():
-        return "an imaging run is in progress (imaging state is not none)"
-    try:
-        dev_map = asyncio.run(ku.make_discovery_map())
-        mount_off = asyncio.run(ku.kasa_check(dev_map, {"Telescope mount": "isoff"}))
-    except Exception as exc:
-        _logger.warning("roof!! gate: mount power check failed: %s", exc)
-        return f"could not confirm the telescope mount is powered off ({exc})"
-    if not mount_off:
-        return "the telescope mount is powered on"
-    return None
+    finally:
+        _roof_lock.release()
 
 
 def roof_cmd(words: list[str], account: str) -> None:
@@ -417,22 +509,26 @@ def roof_cmd(words: list[str], account: str) -> None:
     the scope's collision envelope), mirroring ``image!!``.
 
     Subcommands:
-        ``roof!! status``  — report scope/roof position via vision safety (no movement).
-        ``roof!! open``    — safety-checked open: requires scope parked + roof closed,
-                             then opens and confirms via vision.
-        ``roof!! close``   — safety-checked close: requires scope parked, then closes
-                             and confirms via vision.
-        ``roof!! toggle``  — single relay toggle (the hardware just toggles; direction
-                             depends on current position). Parked-checked; when the
-                             current position is known the direction it will travel is
-                             announced.
-        append ``force`` to ``open``/``close``/``toggle`` to skip the scope-parked
-        vision check (DANGEROUS — collision risk; use only when you can physically
-        see the scope is parked).
+        ``roof!! status``  — report scope/roof position via vision safety (no
+                             movement; requires no imaging + mount off, but NOT
+                             ``safe!`` — it's read-only).
+        ``roof!! open``    — fully gated open via :func:`open_roof`.
+        ``roof!! close``   — fully gated close via :func:`close_roof`.
+        ``roof!! toggle``  — single relay toggle (the hardware just toggles;
+                             direction depends on current position). Same
+                             movement gate; parked-checked; when the current
+                             position is known the travel direction is announced.
+        append ``force`` to ``open``/``close``/``toggle`` to skip the vision
+        (scope-parked) check (DANGEROUS — collision risk; use only when you can
+        physically see the scope is parked). ``force`` never skips the
+        imaging/safe!/mount-power gates.
 
-    SAFETY: every movement path verifies the scope is parked via vision safety
-    first and refuses to move unless confirmed, unless ``force`` is given. Movement
-    runs on a background thread so the chat stays responsive.
+    SAFETY: every movement variant requires the observatory to be marked safe
+    (``safe!``), no imaging run in progress, and the mount powered off, then
+    verifies the scope is parked via vision (unless ``force``). Movement runs
+    on a background thread so the chat stays responsive; for open/close the
+    gating lives in open_roof/close_roof, so refusal messages arrive from that
+    thread (after device discovery) rather than synchronously.
     """
     sub = words[2] if len(words) >= 3 else ""
     force = len(words) >= 4 and words[3] == "force"
@@ -441,17 +537,11 @@ def roof_cmd(words: list[str], account: str) -> None:
         social_server.post_social_message("Usage: roof!! open|close|toggle|status [force]")
         return
 
-    # Gate EVERY roof!! variant (status included): only act when imaging state is
-    # none AND the telescope mount is powered off. Either condition failing means
-    # the roof must not be touched — even a read-only status snapshot is skipped —
-    # so report the reason and bail. ``force`` only waives the scope-parked vision
-    # check below; it does NOT waive this gate.
-    blocked = _roof_cmd_blocked_reason()
-    if blocked is not None:
-        social_server.post_social_message(f"Ignoring roof!! {sub}: {blocked}")
-        return
-
     if sub == "status":
+        blocked = _roof_status_blocked_reason()
+        if blocked is not None:
+            social_server.post_social_message(f"Ignoring roof!! status: {blocked}")
+            return
         # Read-only snapshot. The process-wide camera lock in
         # inside_camera_server serializes it against any in-flight job.
         parked, closed, is_open, mod_date = get_status_with_lights()
@@ -462,63 +552,70 @@ def roof_cmd(words: list[str], account: str) -> None:
         )
         return
 
-    # Never let a roof movement overlap an imaging run or another roof command.
-    # The original incident was a `close` issued while an `open` was still in its
-    # confirm loop: both jobs raced the single USB camera and the close crashed.
-    if is_imaging() or is_nina_running():
-        social_server.post_social_message("Cannot move the roof: an imaging run is in progress")
-        return
-    if not _roof_lock.acquire(blocking=False):
-        social_server.post_social_message("Cannot move the roof: another roof command is already running")
-        return
-
     if force:
         social_server.post_social_message(
             f"⚠️ roof!! {sub} FORCE — skipping the scope-parked safety check"
         )
 
-    def _run() -> None:
-        try:
-            if sub == "open":
-                # Announce here (not inside open_roof_with_option) so the imaging
-                # run, which announces separately before calling it, doesn't double
-                # up — and so a manual `roof!! open` still speaks like close/toggle.
-                announce_roof_movement("The roof will be opening in one minute")
-                ok = open_roof_with_option(check=not force)
-                if force:
-                    social_server.post_social_message("Roof open relay fired (forced, unverified)")
-                elif ok:
-                    social_server.post_social_message("✅ Roof successfully opened")
-                else:
-                    social_server.post_social_message("❌ Roof failed to open")
-            elif sub == "close":
-                ok = close_roof_with_option(check=not force)
-                if force:
-                    social_server.post_social_message("Roof close relay fired (forced, unverified)")
-                elif ok:
-                    social_server.post_social_message("✅ Roof successfully closed")
-                else:
-                    social_server.post_social_message("❌ Roof failed to close")
-            else:  # toggle
-                _toggle_roof_cmd(force)
-        finally:
-            _roof_lock.release()
+    if sub == "toggle":
+        # toggle keeps its gate + lock here in the dispatch thread —
+        # _toggle_roof_cmd itself does neither. Never let a roof movement
+        # overlap an imaging run or another roof command: the original
+        # incident was a `close` issued while an `open` was still in its
+        # confirm loop; both jobs raced the single USB camera and the close
+        # crashed.
+        blocked = _roof_move_blocked_reason()
+        if blocked is not None:
+            social_server.post_social_message(f"Ignoring roof!! toggle: {blocked}")
+            return
+        if not _roof_lock.acquire(blocking=False):
+            social_server.post_social_message("Cannot move the roof: another roof command is already running")
+            return
 
-    try:
-        jobs.spawn(_run)
-    except Exception:
-        # spawn failed before the worker took ownership of the lock — release it
-        # here so a roof command can never be permanently wedged.
-        _roof_lock.release()
-        raise
+        def _run_toggle() -> None:
+            try:
+                _toggle_roof_cmd(force)
+            finally:
+                _roof_lock.release()
+
+        try:
+            jobs.spawn(_run_toggle)
+        except Exception:
+            # spawn failed before the worker took ownership of the lock — release
+            # it here so a roof command can never be permanently wedged.
+            _roof_lock.release()
+            raise
+        return
+
+    # open/close: gating, locking, and refusal messages all live inside
+    # open_roof/close_roof — the worker just reports the outcome.
+    def _run() -> None:
+        if sub == "open":
+            ok = open_roof(force=force)
+            if not ok:
+                social_server.post_social_message("❌ Roof failed to open")
+            elif not force:
+                # forced success already posted "relay fired (forced, unverified)"
+                social_server.post_social_message("✅ Roof successfully opened")
+        else:  # close
+            ok = close_roof(force=force)
+            if not ok:
+                social_server.post_social_message("❌ Roof failed to close")
+            elif not force:
+                social_server.post_social_message("✅ Roof successfully closed")
+
+    jobs.spawn(_run)
 
 
 def _toggle_roof_cmd(force: bool) -> None:
     """Body of ``roof toggle``: a single parked-checked relay toggle.
 
-    The roof relay only toggles, so the travel direction depends on the current
-    position. When that position is known (vision), the direction is inferred,
-    announced, and used to label the banked motor current signature.
+    The caller (roof_cmd) enforces the movement gate (imaging/safe!/mount
+    power) and holds ``_roof_lock`` for the duration — this function does
+    neither itself. The roof relay only toggles, so the travel direction
+    depends on the current position. When that position is known (vision), the
+    direction is inferred, announced, and used to label the banked motor
+    current signature.
     """
     dev_map = asyncio.run(ku.make_discovery_map())
     direction = None
@@ -718,10 +815,13 @@ class ImagingState(Enum):
 # start of every fresh run so a stale abort can never kill a new run.
 _abort_event = threading.Event()
 
-# Serializes roof movement (open/close/toggle). Acquired non-blocking in the
-# dispatch thread so a second roof command is refused rather than queued, and
-# released by the worker thread when the movement finishes. A threading.Lock has
-# no owner thread, so cross-thread release is legal.
+# Serializes roof movement (open/close/toggle). Always acquired non-blocking so
+# a second roof command is refused rather than queued. For open/close it is
+# taken inside open_roof/close_roof (before the vision check, so state can't
+# change between check and toggle — this also serializes roof!! against the
+# imaging run's open). For toggle, roof_cmd acquires it in the dispatch thread
+# and the worker releases it; a threading.Lock has no owner thread, so
+# cross-thread release is legal.
 _roof_lock = threading.Lock()
 
 
@@ -780,38 +880,6 @@ def get_mode() -> str:
     except FileNotFoundError:
         pass
     return "manual"
-
-def open_if_mount_off_cmd(words: list[str], account: str) -> None:
-    """Open the roof only if the telescope mount power is off.
-
-    Safety measure: refuses to toggle the roof if the mount is powered on,
-    since a powered mount may be tracking and the scope could be in the
-    path of the roof.
-    """
-    dev_map = asyncio.run(ku.make_discovery_map())
-    inst = {"Telescope mount": 'isoff'}
-
-    check_ok = asyncio.run(ku.kasa_check(dev_map, inst))
-    if check_ok:
-        social_server.post_social_message("Mount is Off")
-
-        inst = {"Roof motor": 'on', "Iris inside light": 'off'}
-        asyncio.run(ku.kasa_do(dev_map, inst))
-        if utl_shelly.fire_roof_relay() is None:
-            _logger.error("Failed to trigger relay in open_if_mount_off_cmd")
-            return
-        time.sleep(30)
-        inst = {"Roof motor": 'off', "Telescope mount": 'on'}
-        asyncio.run(ku.kasa_do(dev_map, inst))
-
-
-
-
-    else:
-        social_server.post_social_message("Mount is not Off")
-
-    return
-
 
 _SCRIPTS_DIR = os.path.join(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')), "scripts")
 
@@ -2391,6 +2459,11 @@ def doit_cmd(words: list[str], account: str) -> None:
     Safety checks ("safe!" / "unsafe!") are read from safety.txt and must be
     explicitly set by a super-user before and during the run. Any failed check
     aborts immediately without closing the roof (that is handled by end.py).
+
+    The roof open goes through the unified open_roof(imaging_run=True), which
+    additionally enforces mount power off (expected at run start — the mount
+    is powered on later by the NINA prelude via start.bat) and the roof lock
+    (so a concurrent roof!! command can never overlap this open).
     """
 
     # The run has already been claimed (state set to ACTIVE) synchronously by
@@ -2431,19 +2504,10 @@ def doit_cmd(words: list[str], account: str) -> None:
     utils.set_install_dir()
 
     # ------------------------------------------------------------------ #
-    # Pre-flight: confirm the roof is physically closed before proceeding. #
-    # Opening a roof that is already open would break the motor sequence.  #
-    # ------------------------------------------------------------------ #
-    parked, closed, open, mod_date = get_status_with_lights()
-    if not closed:
-        pushover.push_message("roof is not closed, stopping", inside_view)
-        return
-
-    # ------------------------------------------------------------------ #
     # Safety gate 1: check before the initial wait.                        #
     # The user must have previously issued "safe!" via the web chat.       #
     # ------------------------------------------------------------------ #
-    pushover.push_message("Roof is closed, starting run in 1 min", inside_view)
+    pushover.push_message("Starting run in 1 min", inside_view)
     if not is_safe():
         pushover.push_message("not safe 1, stopping")
         return
@@ -2458,10 +2522,12 @@ def doit_cmd(words: list[str], account: str) -> None:
         pushover.push_message("not safe 2, stopping")
         return
 
-    # Announce via Sonos + blinking lights so anyone in the observatory   #
-    # knows the roof is about to move, then physically open it.           #
-    announce_roof_movement("The roof will be opening in one minute")
-    ok = open_roof_with_option(True)
+    # Fully gated open: open_roof re-checks safe!, requires the mount off
+    # (expected at run start — power comes on later in the NINA prelude),
+    # takes the roof lock, verifies parked+closed via vision, announces via
+    # Sonos, then opens and confirms. imaging_run=True waives only its
+    # imaging-in-progress gate, since image_cmd already claimed the run.
+    ok = open_roof(imaging_run=True)
     print("ok=", str(ok))
     if not ok:
         # Vision safety confirmed the roof did not open successfully.
