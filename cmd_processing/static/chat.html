@@ -713,7 +713,20 @@
   backdrop.addEventListener('click', (e) => { if (e.target === backdrop) closeDetail(); });
 
   function cancelJob(id) {
-    fetch(`/api/jobs/${id}/cancel`, { method: 'POST' }).catch(() => {});
+    // The server decides whether this cancel needs confirmation (imaging runs:
+    // cancelling means an emergency stop). On requires_confirm, ask, then
+    // re-POST with confirm=1.
+    fetch(`/api/jobs/${id}/cancel`, { method: 'POST' })
+      .then((r) => r.json())
+      .then((res) => {
+        if (res && res.requires_confirm) {
+          const msg = res.message || 'Cancelling this job triggers an emergency stop. Proceed?';
+          if (window.confirm(msg)) {
+            fetch(`/api/jobs/${id}/cancel?confirm=1`, { method: 'POST' }).catch(() => {});
+          }
+        }
+      })
+      .catch(() => {});
   }
 
   function removeJob(id) {

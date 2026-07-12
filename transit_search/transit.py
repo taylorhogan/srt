@@ -1049,9 +1049,12 @@ def _notify_push(
     bump = sig.get("dip_bump")
     extra = []
     if fap is not None:
-        extra.append(f"FAP {fap}")
+        extra.append(f"false-alarm prob {fap:.3f}")
     if bump is not None:
-        extra.append(f"dip/bump {bump}")
+        # A huge ratio just means the mirrored (upward) search scored ~0 and
+        # the 1e-6 floor divided into the millions — say what it means instead.
+        extra.append("fully one-sided dip" if bump > 1000
+                     else f"dip/bump {bump:.1f}x")
     extra_str = (" | " + ", ".join(extra)) if extra else ""
     msg = (f"Possible transit in {dso_name} [{filter_name}]{loc}: "
            f"field_z={field_z:.1f}{extra_str}. Candidate only — needs a 2nd "

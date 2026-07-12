@@ -266,11 +266,18 @@ def _post_vision_decision_image(parked: bool, closed: bool, is_open: bool) -> No
         img = cfg["camera safety"]["scope_view"]
         lm = vision_safety.last_match or {}
         roof = "closed" if closed else ("open" if is_open else "unknown")
-        # Name which gate each non-ok template failed (position vs confidence),
-        # so a bad read is diagnosable from the notification alone.
+        # Name which gate a template failed (position vs confidence) — but only
+        # for templates whose failure explains a negative/ambiguous verdict.
+        # A closed roof makes the "open" template fail by design (and vice
+        # versa); listing that reads like a problem when the read is clean.
+        suspects = []
+        if not parked:
+            suspects.append("parked")
+        if not closed and not is_open:
+            suspects.extend(["closed", "open"])
         fails = " ".join(
             f"{name}:{lm.get(name, {}).get('verdict')}"
-            for name in ("parked", "closed", "open")
+            for name in suspects
             if lm.get(name, {}).get("verdict") not in (None, "ok")
         )
         caption = (
@@ -353,6 +360,48 @@ def _roof_status_blocked_reason() -> str | None:
     return _mount_power_blocked_reason()
 
 
+# Posted when a cancel lands after the relay has fired: the roof cannot be
+# stopped mid-travel, so cancelling then only abandons the confirmation wait.
+_ROOF_CANCEL_AFTER_FIRE_MSG = (
+    "Cancel received after the roof relay fired — the move itself already "
+    "completed; use roof!! status to verify the roof position"
+)
+
+
+def _roof_cancel_point(msg: str, imaging_run: bool = False) -> None:
+    """Honour a pending job cancel at a point where the roof is NOT moving.
+
+    Only for roof!!-initiated moves: the imaging run is excluded because it has
+    its own abort machinery (safe!/unsafe!, is_aborting) and must not unwind via
+    Cancelled while the imaging state is claimed. Posts *msg* so the user knows
+    whether the roof moved, then raises jobs.Cancelled (the job worker turns
+    that into the terminal CANCELLED state).
+    """
+    if imaging_run:
+        return
+    if jobs.is_cancelled(jobs.get_current_job()):
+        social_server.post_social_message(msg)
+        raise jobs.Cancelled()
+
+
+def _roof_confirm_wait(seconds: float, imaging_run: bool) -> None:
+    """Post-move confirm-loop sleep that wakes ~1×/s to honour a roof!! cancel.
+
+    Never used while the roof is travelling — toggle_roof owns that window
+    (stall watchdog + motor power-off must always run to completion).
+    """
+    if imaging_run:
+        time.sleep(seconds)
+        return
+    deadline = time.monotonic() + seconds
+    while True:
+        _roof_cancel_point(_ROOF_CANCEL_AFTER_FIRE_MSG)
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return
+        time.sleep(min(1.0, remaining))
+
+
 def open_roof(force: bool = False, imaging_run: bool = False) -> bool:
     """Open the observatory roof with full gating — the single open path for
     both ``roof!! open`` and the imaging run.
@@ -392,6 +441,7 @@ def open_roof(force: bool = False, imaging_run: bool = False) -> bool:
         social_server.post_social_message("Roof will not open: another roof command is already running")
         return False
     try:
+        _roof_cancel_point("Roof open cancelled — the roof was not moved", imaging_run)
         if not force:
             parked, closed, is_open, mod_date = get_status_with_lights()
             if not parked:
@@ -405,14 +455,18 @@ def open_roof(force: bool = False, imaging_run: bool = False) -> bool:
                 )
                 return False
             social_server.post_social_message("Vision Safety says roof is closed, opening roof")
+        # Last safe abort point: past here the relay fires and the move cannot
+        # be stopped (toggle_roof owns the travel window uninterrupted).
+        _roof_cancel_point("Roof open cancelled — the roof was not moved", imaging_run)
         announce_roof_movement("The roof will be opening in one minute")
         toggle_roof(dev_map, capture_direction="open")
         if force:
             social_server.post_social_message("Roof open relay fired (forced, unverified)")
             return True
-        time.sleep(30)
+        _roof_confirm_wait(30, imaging_run)
         MAX_ROOF_CHECKS = 5
         for attempt in range(MAX_ROOF_CHECKS):
+            _roof_cancel_point(_ROOF_CANCEL_AFTER_FIRE_MSG, imaging_run)
             parked, closed, is_open, mod_date = get_status_with_lights()
             if is_open and parked:
                 return True
@@ -423,7 +477,7 @@ def open_roof(force: bool = False, imaging_run: bool = False) -> bool:
                 )
                 social_server.post_social_message(msg)
                 _logger.warning(msg)
-                time.sleep(5 * 60)
+                _roof_confirm_wait(5 * 60, imaging_run)
         social_server.post_social_message(f"Roof could not be confirmed open after {MAX_ROOF_CHECKS} attempts, stopping")
         _logger.warning("Roof open check failed after %d attempts", MAX_ROOF_CHECKS)
         return False
@@ -465,6 +519,7 @@ def close_roof(force: bool = False, imaging_run: bool = False) -> bool:
         social_server.post_social_message("Roof will not close: another roof command is already running")
         return False
     try:
+        _roof_cancel_point("Roof close cancelled — the roof was not moved", imaging_run)
         if not force:
             parked, closed, is_open, mod_date = get_status_with_lights()
             if not parked:
@@ -476,14 +531,18 @@ def close_roof(force: bool = False, imaging_run: bool = False) -> bool:
                 social_server.post_social_message("Vision Safety says roof is already closed")
                 return True
             social_server.post_social_message("Vision Safety says scope is parked, closing roof")
+        # Last safe abort point: past here the relay fires and the move cannot
+        # be stopped (toggle_roof owns the travel window uninterrupted).
+        _roof_cancel_point("Roof close cancelled — the roof was not moved", imaging_run)
         announce_roof_movement("The roof will be closing in one minute")
         toggle_roof(dev_map, capture_direction="close")
         if force:
             social_server.post_social_message("Roof close relay fired (forced, unverified)")
             return True
-        time.sleep(30)
+        _roof_confirm_wait(30, imaging_run)
         MAX_ROOF_CHECKS = 5
         for attempt in range(MAX_ROOF_CHECKS):
+            _roof_cancel_point(_ROOF_CANCEL_AFTER_FIRE_MSG, imaging_run)
             parked, closed, is_open, mod_date = get_status_with_lights()
             if closed:
                 return True
@@ -494,7 +553,7 @@ def close_roof(force: bool = False, imaging_run: bool = False) -> bool:
                 )
                 social_server.post_social_message(msg)
                 _logger.warning(msg)
-                time.sleep(5 * 60)
+                _roof_confirm_wait(5 * 60, imaging_run)
         social_server.post_social_message(f"Roof could not be confirmed closed after {MAX_ROOF_CHECKS} attempts, stopping")
         _logger.warning("Roof close check failed after %d attempts", MAX_ROOF_CHECKS)
         return False
@@ -631,6 +690,9 @@ def _toggle_roof_cmd(force: bool) -> None:
         cur = "closed" if closed else ("open" if is_open else "ambiguous")
         going = f"{direction}ing" if direction else "moving (direction unknown)"
         social_server.post_social_message(f"Scope parked; roof currently {cur} — {going}")
+    # Last safe abort point: past here the relay fires and the move cannot be
+    # stopped (toggle_roof owns the travel window uninterrupted).
+    _roof_cancel_point("Roof toggle cancelled — the roof was not moved")
     announce_roof_movement("The roof will be moving in one minute")
     toggle_roof(dev_map, capture_direction=direction)
     parked, closed, is_open, _ = get_status_with_lights()
@@ -738,8 +800,21 @@ def _emergency_stop_sequence() -> None:
         if mount_parked:
             # Parked + roof open → end.do_main() closes the roof + full shutdown
             # (it re-confirms parked via vision before toggling the roof).
+            # Mount power must stay ON until do_main's own parked check — its
+            # get_is_parked needs mount telemetry; do_main then cuts mount power
+            # before it moves the roof.
             social_server.post_social_message("Scope parked — closing roof and shutting down")
             end.do_main()
+            # Backstop: if do_main failed before its power-off step (its blanket
+            # except only logs), the mount would stay powered all night. Parked
+            # is confirmed here, so force the Kasa switch off.
+            try:
+                if dev_map is None:
+                    dev_map = asyncio.run(ku.make_discovery_map())
+                asyncio.run(ku.kasa_do(dev_map, {"Telescope mount": 'off'}))
+                _logger.info("emergency: mount power confirmed off")
+            except Exception:
+                _logger.exception("emergency: mount power-off backstop failed")
             # LAST: blinds the vision camera (powered through the Pegasus box).
             _power_off_pegasus_train()
         else:
@@ -1646,6 +1721,11 @@ def _stack_run(words: list[str]) -> None:
     _dark_paths = stacker._collect_fits(Path(cal["dark_dir"])) if cal.get("dark_dir") else []
     _flat_dir = Path(cal["flat_dir"]) if cal.get("flat_dir") else None
     _flat_dirs = {k: Path(v) for k, v in cal.get("flat_dirs", {}).items()} or None
+    # flat_root (the key shipped in the config template): a single root whose
+    # per-filter subdirs (Ha/, OIII/, …) hold the flats. Explicit
+    # flat_dir/flat_dirs keys win if both are configured.
+    if cal.get("flat_root") and not (_flat_dir or _flat_dirs):
+        _flat_dir, _flat_dirs = stacker.flat_dirs_from_root(Path(cal["flat_root"]))
 
     # words[0] is the bot mention, words[1] is "stack"; remainder is dso (+ optional filter)
     extra = words[2:] if len(words) > 2 else []
@@ -3084,6 +3164,80 @@ def _hr_run(words: list[str]) -> None:
     )
 
 
+# dip/bump ratios beyond this mean the mirrored (upward) search found nothing:
+# transit.py floors the bump score at 1e-6, so "no upward signal" divides into
+# the millions. Report that as fully one-sided rather than an absurd number.
+_DIP_BUMP_ONE_SIDED_CAP = 1000.0
+
+
+def _transit_confidence_text(sig: dict) -> str:
+    """Plain-language readout of the three transit significance tests.
+
+    One line per test: the number, then what it means for this candidate. The
+    tests are computed in transit_search.transit._transit_significance; the
+    verdict thresholds here are display-only guidance, not gates.
+    """
+    lines = []
+
+    # Permutation false-alarm probability: fraction of random time-shuffles of
+    # this star's own curve that score as well as the real detection.
+    nperm = sig.get("n_permutations") or 0
+    fap = sig.get("perm_fap")
+    if fap is not None:
+        floor = 1.0 / (nperm + 1) if nperm else 0.0
+        if nperm and fap <= floor:
+            lines.append(
+                f"• noise test: none of {nperm} random shuffles of this curve "
+                f"scored as high (FAP <{floor:.3f}) — strong"
+            )
+        else:
+            verdict = ("strong" if fap <= 0.01 else
+                       "borderline" if fap <= 0.05 else
+                       "weak, consistent with random noise")
+            pct = f"{fap * 100:.1f}" if fap < 0.095 else f"{fap * 100:.0f}"
+            lines.append(
+                f"• noise test: {pct}% of random shuffles of this "
+                f"curve score as high (FAP {fap:.3f}) — {verdict}"
+            )
+    elif not nperm:
+        lines.append("• noise test: not run")
+    else:
+        lines.append("• noise test: skipped — fewer than 30 usable epochs")
+
+    # Field outlier: this star's dip score vs every other searched star in the
+    # frame. Field stars share the night's systematics (clouds, focus drift),
+    # so a real transit should stand out from them.
+    fz = sig.get("field_z")
+    if fz is not None:
+        verdict = ("far outside the field, not a shared systematic" if fz >= 5
+                   else "a moderate outlier" if fz >= 3
+                   else "within the field's normal spread — could be a "
+                        "systematic the whole field shows")
+        lines.append(f"• vs other field stars: z={fz:.1f} — {verdict}")
+    elif sig.get("field_fap") is not None:
+        lines.append("• vs other field stars: n/a — the comparison stars' "
+                     "scores are nearly all identical (zero spread)")
+    else:
+        lines.append("• vs other field stars: n/a — fewer than 5 comparison stars")
+
+    # One-sidedness: a transit only dips; symmetric noise bumps up as often
+    # as down, so the dip score should dwarf the best upward score.
+    db = sig.get("dip_bump")
+    if db is None:
+        lines.append("• one-sidedness: n/a")
+    elif db > _DIP_BUMP_ONE_SIDED_CAP:
+        lines.append("• one-sidedness: no upward counterpart at all — fully "
+                     "one-sided, as a transit should be")
+    else:
+        verdict = ("one-sided, as a transit should be" if db >= 3 else
+                   "only weakly one-sided — could be symmetric noise")
+        lines.append(f"• one-sidedness: dip outscores the best upward bump "
+                     f"{db:.1f}× — {verdict}")
+
+    return ("Confidence (a 2nd transit at the same period is still needed "
+            "to confirm):\n" + "\n".join(lines))
+
+
 def transit_cmd(words: list[str], account: str) -> None:
     """Search saved subs for transit-like dips. Runs in a separate process.
 
@@ -3166,34 +3320,8 @@ def _transit_run(words: list[str]) -> None:
         dur_h = top.get("transit_duration_d", 0.0) * 24.0
         period = top.get("bls_period_d")
         period_str = f" P={period:.3f}d" if period else ""
-        # Confidence from the significance tests (small FAP + large field-z +
-        # large dip/bump ⇒ likely a real, one-sided transit, not noise/systematic).
         sig = top.get("significance") or {}
-        conf = ""
-        if sig:
-            # A metric can be None for distinct reasons; say which, rather than a
-            # bare "n/a". perm_fap is only None when the permutation test was
-            # skipped for too few finite epochs (it needs ≥30); a falsy
-            # n_permutations means the whole dict is an uncomputed placeholder.
-            nperm = sig.get("n_permutations") or 0
-            fap = sig.get("perm_fap")
-            if fap is not None:
-                fap_str = (f"<{1.0/(nperm+1):.3f}" if nperm and fap <= 1.0 / (nperm + 1)
-                           else f"{fap:.3f}")
-            elif not nperm:
-                fap_str = "n/a (not computed)"
-            else:
-                fap_str = "n/a (<30 epochs)"
-            # field_z None with field_fap present ⇒ MAD==0 (degenerate/flat
-            # field); both None ⇒ too few comparison stars (<5).
-            fz = sig.get("field_z")
-            if fz is not None:
-                fz_str = f"{fz:.1f}"
-            else:
-                fz_str = "n/a (flat field)" if sig.get("field_fap") is not None else "n/a (<5 stars)"
-            db = sig.get("dip_bump")
-            db_str = f"{db:.1f}×" if db is not None else "n/a"
-            conf = f" | confidence: FAP {fap_str}, field-z {fz_str}, dip/bump {db_str}"
+        conf = f"\n{_transit_confidence_text(sig)}" if sig else ""
         summary = (
             f"Transit [{dso_arg}/{filter_label}]: {entry['n_stars']} stars, "
             f"{entry['frame_count']} frames over {entry['baseline_days']:.1f}d. "

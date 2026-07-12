@@ -265,6 +265,13 @@ def create(command_text: str, status: str = QUEUED) -> str:
     return job_id
 
 
+def get_job(job_id: str) -> Optional[dict]:
+    """Return a copy of a job dict, or None if the id is unknown."""
+    with _lock:
+        job = _jobs.get(job_id)
+        return dict(job) if job else None
+
+
 def transition(job_id: str, status: str) -> None:
     with _lock:
         job = _jobs.get(job_id)
@@ -354,11 +361,17 @@ def request_cancel(job_id: str) -> bool:
         job = _jobs.get(job_id)
         if job is None or job["status"] in _TERMINAL or job_id == SYSTEM_JOB_ID:
             return False
+        already_requested = job_id in _cancelled
         _cancelled.add(job_id)
         resources = list(_resources.get(job_id, ()))
     # Tear down outside the lock — shutdown() can block briefly.
     for resource in resources:
         _terminate_resource(resource)
+    # Acknowledge on the card immediately; the worker may not reach its next
+    # cancel checkpoint for a while (or ever, if it predates checkpoints).
+    if not already_requested:
+        append_log(job_id, message_bus.make_entry(
+            "■ Cancel requested — stopping at the next safe point."))
     return True
 
 

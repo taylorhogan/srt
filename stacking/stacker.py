@@ -188,15 +188,37 @@ def _get_arcsec_per_pixel() -> float:
 
 
 def _count_sources(frame: np.ndarray) -> int:
-    """Count detected stars in a frame using sep (astroalign dependency)."""
+    """Count detected stars in a frame using sep (astroalign dependency).
+
+    Counts on the despiked frame: with uncalibrated lights, hot pixels dwarf
+    the real star count (observed: 74,805 "sources" on an sh2-92 Ha sub whose
+    true star count was ~600) and would steer the reference pick.
+    """
     try:
         import sep
-        data = frame.astype(float)
+        data = _despike(frame.astype(float))
         bkg = sep.Background(data)
         sources = sep.extract(data - bkg.back(), thresh=3.0, err=bkg.rms())
         return len(sources)
     except Exception:
         return 0
+
+
+def _despike(frame: np.ndarray) -> np.ndarray:
+    """3×3 median filter: annihilates single-pixel spikes, barely touches stars.
+
+    Used on the DETECTION side of registration only (find_transform control
+    points, reference source counts) — transforms are always applied to the
+    original data. Without darks (calibration dirs are unset in config), hot
+    pixels stay in the lights and outshine the stars on narrowband channels;
+    astroalign then matches frames on the hot-pixel pattern, which is fixed to
+    the sensor, and returns identity transforms with perfect residuals while
+    the real sky drifts. Observed on sh2-92 Ha (2026-07-11): 31/31 frames
+    "aligned" at identity, sky drifted 63 px over the night, every star smeared
+    away — the stack's sharpest objects were the hot pixels themselves.
+    """
+    from scipy.ndimage import median_filter
+    return median_filter(frame, size=3)
 
 
 def _reference_index_by_fwhm(fwhm_scores: list[float]) -> Optional[int]:
@@ -306,6 +328,10 @@ def _register_frames(
     if ref_idx is None:
         ref_idx = _best_reference_idx(frames)
     reference = frames[ref_idx]
+    # Transforms are found on despiked copies (hot pixels are fixed to the
+    # sensor and would vote for the identity transform — see _despike) but
+    # applied to the original frames so no real signal is filtered.
+    reference_det = _despike(reference)
     registered = [reference]
     surviving_indices = [ref_idx]
     failed = 0
@@ -315,7 +341,8 @@ def _register_frames(
             continue
         try:
             transform, (src_pts, dst_pts) = _astroalign.find_transform(
-                frame, reference, max_control_points=_REG_MAX_CONTROL_POINTS
+                _despike(frame), reference_det,
+                max_control_points=_REG_MAX_CONTROL_POINTS,
             )
         except Exception as exc:
             failed += 1
@@ -837,6 +864,25 @@ def _filter_output_path(output_path: Path, filter_name: str) -> Path:
     return output_path.with_name(f"{output_path.stem}_{safe}{output_path.suffix}")
 
 
+def flat_dirs_from_root(root: Optional[Path]) -> tuple[Optional[Path], Optional[dict[str, Path]]]:
+    """Map a single flats root directory onto (flat_dir, flat_dirs).
+
+    Layout convention: ``root/<FILTER>/*.fits`` where each subdirectory is
+    named exactly like the FITS ``FILTER`` header value (e.g. ``Ha``, ``OIII``,
+    ``R``). With subdirectories present, a filter without its own subdirectory
+    gets NO flats (the fallback dir is collected recursively, so offering the
+    root would blend every filter's flats into one master). A root with no
+    subdirectories is treated as one shared flat directory for all filters.
+    This backs the ``calibration.flat_root`` config key.
+    """
+    if root is None or not root.is_dir():
+        return None, None
+    subdirs = {d.name: d for d in root.iterdir() if d.is_dir()}
+    if subdirs:
+        return None, subdirs
+    return root, None
+
+
 def _resolve_flat_paths(
     filter_name: str,
     flat_dir: Optional[Path],
@@ -1013,6 +1059,9 @@ def _prepare_for_convergence(
         progress_cb(f"registering {len(accepted)} frames (streaming)…")
 
     reference = _load_fits_2d(accepted[actual_ref_idx])
+    # Same despike-for-detection as _register_frames: hot pixels must not
+    # provide the control points (they'd vote for the identity transform).
+    reference_det = _despike(reference)
     scale = 1 if downscale_to is None else max(1, min(reference.shape) // downscale_to)
 
     result_frames: list[np.ndarray] = [reference[::scale, ::scale]]
@@ -1026,7 +1075,8 @@ def _prepare_for_convergence(
         try:
             frame = _load_fits_2d(p)
             transform, (src_pts, dst_pts) = _astroalign.find_transform(
-                frame, reference, max_control_points=_REG_MAX_CONTROL_POINTS
+                _despike(frame), reference_det,
+                max_control_points=_REG_MAX_CONTROL_POINTS,
             )
         except Exception as exc:
             failed += 1
@@ -1060,6 +1110,7 @@ def _prepare_for_convergence(
         result_accepted.append(p)
 
     reference = None  # free reference
+    reference_det = None
     n_dropped = len(accepted) - len(result_frames)
     _logger.info(
         "Convergence prep: %d/%d frames registered, %d failed, %d dropped QA",

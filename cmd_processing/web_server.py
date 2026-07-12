@@ -262,13 +262,47 @@ async def api_jobs():
     return {"jobs": jobs.snapshot()}
 
 
+# Cancelling an imaging run is not cooperative — nothing in doit_cmd checks the
+# cancel flag, and stopping the night means real hardware action. The client
+# must re-POST with ?confirm=1 after showing this to the user; confirming runs
+# the full stop! emergency sequence.
+_IMAGING_CANCEL_CONFIRM_MSG = (
+    "EMERGENCY STOP the imaging run? This kills NINA, parks the scope, and "
+    "closes the roof only if the scope confirms parked. The night ends here."
+)
+
+
+def _is_imaging_job(job: Optional[dict]) -> bool:
+    words = ((job or {}).get("command") or "").split()
+    return bool(words) and words[0].lower() == "image!!"
+
+
 @app.post("/api/jobs/{job_id}/cancel")
-async def api_cancel_job(job_id: str):
+async def api_cancel_job(job_id: str, confirm: bool = False):
     """Request cooperative cancellation of a running job.
 
     Sets a cancel flag the worker observes at its next checkpoint; the terminal
     CANCELLED event is emitted by the worker, not optimistically here.
+
+    An imaging job (``image!!``) is the exception: no worker checkpoint exists,
+    so cancelling it means an emergency stop. Without ``confirm`` the request
+    is refused with ``requires_confirm`` so the client can ask the user; with
+    ``confirm`` the cancel flag is set (labels the card CANCELLED when the run
+    unwinds) and a real ``stop!`` command is dispatched, which owns the safe
+    shutdown (park-gated roof close) on its own job card.
     """
+    job = jobs.get_job(job_id)
+    if _is_imaging_job(job) and job["status"] == jobs.RUNNING:
+        if not confirm:
+            return JSONResponse(content={
+                "ok": False,
+                "requires_confirm": True,
+                "message": _IMAGING_CANCEL_CONFIRM_MSG,
+            })
+        ok = jobs.request_cancel(job_id)
+        threading.Thread(target=_dispatch_command, args=("stop!",),
+                         daemon=True).start()
+        return JSONResponse(content={"ok": ok, "emergency_stop": True})
     ok = jobs.request_cancel(job_id)
     return JSONResponse(content={"ok": ok})
 
