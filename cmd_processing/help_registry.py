@@ -282,6 +282,14 @@ HELP: dict[str, dict] = {
         "usage": ["dbc <id>"],
         "examples": ["dbc 17"],
     },
+    "live": {
+        "category": "super",
+        "summary": "Post a live, no-light view of the sky from the scope-top webcam "
+                   "(same camera as vision safety), exposure-optimized for a dark "
+                   "sky. Lights stay off; safe to run while imaging.",
+        "usage": ["live"],
+        "examples": ["live"],
+    },
     "audio": {
         "category": "super",
         "summary": "List unlabeled roof-move audio captures, or label the latest "

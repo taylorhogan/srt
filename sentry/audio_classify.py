@@ -46,8 +46,10 @@ DEVICE_NAME = "eMeet"           # Substring of the input device to use (eMeet C9
 _HERE = os.path.dirname(os.path.abspath(__file__))
 # Roof-move spectrograms, organized by status + direction (parallels roof_signatures/):
 #   roof_audio/{unlabeled,good,bad}/{open,close}/<timestamp>_<direction>.{png,wav}
-# good/ is the reference library that classify() judges new moves against; it is
-# built by manually labeling captures (webchat `audio <open|close> <good|bad>`).
+# good/ is the reference library that classify() judges new moves against. It is
+# self-extending: a move classify() judges "good" is auto-filed here by the roof
+# flow (capped at MAX_GOOD_REFS, rolling). Captures that come back "bad"/"unknown"
+# stay in unlabeled/ for a human to file with `audio <open|close> <good|bad>`.
 ROOF_AUDIO_ROOT = os.path.join(_HERE, "roof_audio")
 FIG_SIZE = (10, 6)              # Fixed figure size for consistent image dimensions
 DPI = 100                       # Fixed DPI → consistent pixel size (1000×600 here)
@@ -60,6 +62,12 @@ CMAP = 'magma'                  # Consistent colormap (common for spectrograms)
 # grows. MIN_GOOD_REFS mirrors roof_current_signature.compare()'s ≥2 rule.
 GOOD_MARGIN = 0.9
 MIN_GOOD_REFS = 2
+# Cap the auto-filed good library. classify() does an O(n^2) pairwise image-MSE
+# over the whole good library on every roof move, so an unbounded library would
+# slowly make each move more expensive. Once we hold this many good references
+# per direction the library is "mature"; the newest capture retires the oldest
+# (rolling window), keeping cost bounded and the envelope current.
+MAX_GOOD_REFS = 40
 # -------------------------------------------------------------------------
 
 _logger = utils.set_logger()
@@ -212,6 +220,61 @@ def label(direction, verdict, name=None):
             moved.append(dest)
     _logger.info("Labeled roof audio %s as %s: %s", target["base"], verdict, moved)
     return {"base": target["base"], "direction": direction, "moved": moved}
+
+
+def _prune_good_library(direction):
+    """Keep only the newest MAX_GOOD_REFS good captures for `direction`.
+
+    Filenames are timestamp-prefixed, so lexicographic order is chronological;
+    anything past the cap (oldest first) has its PNG + WAV removed. Best-effort —
+    a failed delete is logged, not raised. Returns the retired basenames.
+    """
+    good_dir = os.path.join(ROOF_AUDIO_ROOT, "good", direction or "unknown")
+    pngs = sorted(glob.glob(os.path.join(good_dir, "*.png")))
+    retired = []
+    surplus = pngs[:-MAX_GOOD_REFS] if len(pngs) > MAX_GOOD_REFS else []
+    for png in surplus:
+        for path in (png, os.path.splitext(png)[0] + ".wav"):
+            try:
+                if os.path.exists(path):
+                    os.remove(path)
+            except OSError as e:
+                _logger.warning("Could not retire old good ref %s: %s", path, e)
+        retired.append(os.path.basename(png))
+    if retired:
+        _logger.info("Retired %d oldest good %s ref(s): %s",
+                     len(retired), direction, retired)
+    return retired
+
+
+def promote_to_good(result):
+    """Auto-file a just-captured roof-move audio clip into the good library.
+
+    `result` is the dict returned by finish_background_capture (spectrogram + wav
+    + direction), which lives in roof_audio/unlabeled/<direction>/. Moves the
+    PNG + WAV into roof_audio/good/<direction>/ and prunes to MAX_GOOD_REFS.
+    Returns {"moved": [new_paths], "retired": [basenames]} or None. Never raises
+    — this runs in the roof safety path, so a filing failure must not break it.
+    """
+    try:
+        direction = result.get("direction") or "unknown"
+        dest_dir = os.path.join(ROOF_AUDIO_ROOT, "good", direction)
+        os.makedirs(dest_dir, exist_ok=True)
+        moved = []
+        for path in (result.get("spectrogram"), result.get("wav")):
+            if path and os.path.exists(path):
+                dest = os.path.join(dest_dir, os.path.basename(path))
+                shutil.move(path, dest)
+                moved.append(dest)
+        if not moved:
+            return None
+        _logger.info("Auto-filed roof %s audio as good: %s",
+                     direction, [os.path.basename(m) for m in moved])
+        retired = _prune_good_library(direction)
+        return {"moved": moved, "retired": retired}
+    except Exception as e:  # noqa: BLE001 — must not crash the roof flow
+        _logger.warning("Auto-file to good failed: %s", e)
+        return None
 
 
 def library_counts():

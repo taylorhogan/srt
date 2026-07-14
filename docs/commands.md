@@ -37,7 +37,8 @@ Restricted to super users. These control observatory hardware and the imaging pi
 | `safe!` | Mark conditions as safe for imaging (writes USER SAFE to safety.txt) | `safe!` |
 | `stop!` | Emergency stop: kill NINA, park the scope, close the roof, shut down | `stop!` |
 | `roof!!` | Move or report the roof (`!!` = hardware moves). `open`/`close` are vision-safety-checked (scope must be parked); the relay only toggles, so direction follows current position. Append `force` to skip the parked check (DANGEROUS) | `roof!! status`, `roof!! open`, `roof!! close force` |
-| `audio` | List unlabeled roof-move audio captures, or label the latest (or named) one good/bad — also files the matching motor-current signature from the same move under the same verdict | `audio`, `audio open good`, `audio close bad` |
+| `audio` | List unlabeled roof-move audio captures, or label the latest (or named) one good/bad — also files the matching motor-current signature from the same move under the same verdict. Moves that classify cleanly are now auto-filed to the good library; this is mainly for reviewing the bad/unknown leftovers | `audio`, `audio open good`, `audio close bad` |
+| `live` | Post a live, no-light view of the sky from the scope-top webcam (same camera as vision safety), exposure-optimized for a dark sky. Lights stay off; safe to run while imaging | `live` |
 | `announce <speaker> <text>` | Say text on a Sonos speaker | `announce Observatory roof closing in one minute` |
 
 ### Imaging

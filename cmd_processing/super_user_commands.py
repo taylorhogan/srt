@@ -184,10 +184,10 @@ def toggle_roof(dev_map: dict, capture_direction: Optional[str] = None) -> None:
     asyncio.run(ku.kasa_do(dev_map, inst))
 
     # Finish + surface the roof-move audio spectrogram, with a verdict from the
-    # known-good library. Announce-only for now: the capture stays in unlabeled/
-    # regardless of verdict; the user files it in the morning with
-    # `audio <open|close> <good|bad>`. Once the library is trusted this can
-    # switch to auto-filing. classify() never raises (returns "unknown").
+    # known-good library. A move that classify()'s judges "good" is auto-filed
+    # into the good library (the library is now mature enough to self-extend);
+    # "bad"/"unknown" stay in unlabeled/ for a human to review with
+    # `audio <open|close> <good|bad>`. classify() never raises (returns "unknown").
     audio_result = roof_audio.finish_background_capture(audio_capture, status="unlabeled")
     if audio_result and audio_result.get("spectrogram"):
         cls = roof_audio.classify(audio_result["spectrogram"],
@@ -196,6 +196,17 @@ def toggle_roof(dev_map: dict, capture_direction: Optional[str] = None) -> None:
         if cls["verdict"] == "good":
             caption += (f": sounds normal (score {cls['best_score']:.3f} ≥ "
                         f"{cls['threshold']:.3f}, best match {cls['best_match']})")
+            # Auto-file to the good library. This MOVES the PNG + WAV out of
+            # unlabeled/, so repoint audio_result at the new paths before the
+            # chat post below reads them.
+            promo = roof_audio.promote_to_good(audio_result)
+            if promo and promo.get("moved"):
+                caption += " — filed to known-good library"
+                for m in promo["moved"]:
+                    if m.lower().endswith(".png"):
+                        audio_result["spectrogram"] = m
+                    elif m.lower().endswith(".wav"):
+                        audio_result["wav"] = m
         elif cls["verdict"] == "bad":
             caption = (f"⚠️ {caption}: does NOT match known-good "
                        f"(score {cls['best_score']:.3f} < {cls['threshold']:.3f})")
@@ -236,6 +247,17 @@ def toggle_roof(dev_map: dict, capture_direction: Optional[str] = None) -> None:
                     pushover.push_message(alert)
                 except Exception as e:  # noqa: BLE001
                     _logger.error("Failed to push roof anomaly: %s", e)
+            else:
+                # Within the good envelope → auto-file this move's current
+                # signature into the good library so it keeps maturing
+                # alongside the audio. compare() is O(n) so this library isn't
+                # cost-capped. Best-effort; a filing failure must not break the
+                # roof sequence.
+                try:
+                    near = sig.get("timestamp", "").replace(":", "-") or None
+                    rcs.label_latest(capture_direction, "good", near_timestamp=near)
+                except Exception as e:  # noqa: BLE001
+                    _logger.error("Failed to auto-file good current signature: %s", e)
 
 
 
@@ -1222,6 +1244,42 @@ def update_cmd(words: list[str], account: str) -> None:
         os._exit(social_server.RESTART_EXIT_CODE)
 
     jobs.spawn(_do_update)
+
+
+def live_cmd(words: list[str], account: str) -> None:
+    """Post a live, no-light view of the sky from the scope-top webcam.
+
+    Uses the same USB camera as the park/roof vision-safety check, but leaves the
+    inside light OFF and optimizes exposure for a dark sky (dark_sky_score picks
+    the longest exposure that isn't blown out). Safe to run while imaging: it only
+    reads the camera — serialized against the safety snapshot by the camera lock —
+    and never moves hardware or touches the lights. Runs in a background job
+    because the exposure sweep takes ~15-20 s. example: live
+    """
+    def _run() -> None:
+        from sentry import inside_camera_server  # local import: avoids import cycle
+        cfg = config.data()
+        out_path = cfg["camera safety"]["sky_view"]
+        social_server.post_social_message(
+            "Capturing sky view — optimizing exposure, lights stay off…")
+        try:
+            ok = inside_camera_server.take_snapshot(
+                light=False,
+                out_path=out_path,
+                scorer=inside_camera_server.dark_sky_score,
+            )
+        except Exception as e:  # noqa: BLE001
+            _logger.exception("live sky capture failed")
+            social_server.post_social_message(f"Sky view capture failed: {e}")
+            return
+        if not ok or not os.path.exists(out_path):
+            social_server.post_social_message(
+                "Sky view capture failed (no frame from the camera).")
+            return
+        social_server.post_social_message(
+            "Live sky view from the scope camera:", image=out_path)
+
+    jobs.spawn(_run)
 
 
 def optics_cmd(words: list[str], account: str) -> None:
@@ -2322,10 +2380,13 @@ _AUDIO_USAGE = ("Usage: `audio` (list unlabeled + library counts) or "
 def audio_cmd(words: list[str], account: str) -> None:
     """List or label roof-move audio captures (and the matching current signature).
 
-    Labeling moves the capture's spectrogram + WAV from roof_audio/unlabeled/ to
-    the good/bad library that classify() judges future moves against, and files
-    the motor-current signature from the same move (same direction, within ±10
-    minutes) under the same verdict — one verdict per roof move.
+    Moves that classify cleanly are auto-filed to good/ by the roof flow, so this
+    command is now mainly for the leftovers — captures that came back "bad" or
+    "unknown" and were parked in unlabeled/ for a human call. Labeling moves the
+    capture's spectrogram + WAV from roof_audio/unlabeled/ to the good/bad library
+    that classify() judges future moves against, and files the motor-current
+    signature from the same move (same direction, within ±10 minutes) under the
+    same verdict — one verdict per roof move.
 
     Command syntax:
         audio                       — list unlabeled captures + library counts
@@ -2401,6 +2462,7 @@ def get_super_user_commands() -> dict[str, Callable]:
         "hr": hr_cmd,
         "log": log_cmd,
         "update": update_cmd,
+        "live": live_cmd,
         "optics": optics_cmd,
         "drift": drift_cmd,
         "stack": stack_cmd,
@@ -2728,6 +2790,26 @@ def doit_cmd(words: list[str], account: str) -> None:
             _logger.exception("End-of-night SNR failed")
 
 
+def _newest_fits_mtime(image_dir: Path) -> float:
+    """Return the newest *.fits modification time under image_dir, or 0.0 if none.
+
+    Used as a liveness signal for the flats run: while NINA keeps writing frames
+    this climbs; if it stops advancing the sequence has stalled.
+    """
+    newest = 0.0
+    try:
+        for f in image_dir.rglob("*.fits"):
+            try:
+                mt = f.stat().st_mtime
+            except OSError:
+                continue
+            if mt > newest:
+                newest = mt
+    except OSError:
+        _logger.exception("Failed to scan %s for newest flat frame", image_dir)
+    return newest
+
+
 def do_flats() -> None:
     """Run a flats sequence via NINA.
 
@@ -2776,15 +2858,33 @@ def do_flats() -> None:
     subprocess.Popen([bat_path], shell=True)
     _logger.info("nina_flats.bat launched")
 
-    _logger.info("Waiting for flats to complete (state = DONE_FLATS, timeout 30 min)")
-    deadline = time.time() + 1800  # 30 minutes
+    # Stall out on inactivity, not wall-clock: a long-but-healthy flats run
+    # (many filters/exposures) can exceed 30 min while still writing frames.
+    # Terminate only if no new FITS frame has landed under image_dir for 10 min.
+    idle_limit = 600  # seconds without a new frame ⇒ flats are stuck
+    image_dir = Path(config.data()["nina"]["image_dir"])
+    last_mtime = _newest_fits_mtime(image_dir)
+    last_activity = time.time()
+    _logger.info("Waiting for flats to complete (state = DONE_FLATS, idle timeout 10 min)")
     while get_imaging_state() != ImagingState.DONE_FLATS:
-        if time.time() > deadline:
-            _logger.warning("Flats timed out after 30 minutes — terminating NINA")
-            social_server.post_social_message("WARNING: Flats timed out after 30 min, terminating NINA")
-            _kill_nina()
-            break
         time.sleep(30)
+        mtime = _newest_fits_mtime(image_dir)
+        if mtime > last_mtime:
+            last_mtime = mtime
+            last_activity = time.time()
+        elif time.time() - last_activity > idle_limit:
+            _logger.warning("Flats stalled — no new frame in 10 min, terminating NINA + PWI4")
+            social_server.post_social_message(
+                "WARNING: Flats stalled (no new frame in 10 min), terminating NINA + PWI4"
+            )
+            # Killing flats early skips the sequence's own final step, which
+            # shuts down PWI4 — so PWI4 would be left orphaned (as happened
+            # last night). Kill both here to mirror a normal flats finish.
+            subprocess.run(
+                [os.path.join(_SCRIPTS_DIR, "kill_nina_pwi4.bat")],
+                shell=True,
+            )
+            break
 
     _logger.info("Flats complete")
     asyncio.run(ku.kasa_do(dev_map, {"Telescope mount": 'off'}))

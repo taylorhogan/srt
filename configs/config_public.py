@@ -7,7 +7,7 @@ class PublicConfig():
 
         },
         "version": {
-            "date": "2026.7.9.1"
+            "date": "2026.7.14.1"
         },
 
         "logger": {
@@ -56,6 +56,10 @@ class PublicConfig():
             "scope_view": "./base_images/scope_view.jpg",
             "processed_view": "./base_images/processed.jpg",
             "no_image": "./base_images/no_image.jpg",
+            # Output of the `live` command: a no-light, exposure-optimized view of
+            # the sky from the scope-top webcam. Kept separate from scope_view so a
+            # dark long-exposure sky frame never overwrites the lit safety snapshot.
+            "sky_view": "./base_images/sky_view.jpg",
             "valid_data": False,
             "received_count": 0
 

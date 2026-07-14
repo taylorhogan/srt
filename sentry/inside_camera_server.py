@@ -54,6 +54,31 @@ def best_exposure_score(img):
     return score
 
 
+def dark_sky_score(img):
+    """Exposure score for a NO-LIGHT view of the night sky (the `live` command).
+
+    Unlike best_exposure_score, which targets a well-lit indoor scene (mean ~0.45),
+    the sky is intrinsically dark: the goal is to gather as much light and detail
+    as possible (sky glow, clouds, the moon, bright stars) without blowing out
+    highlights. So we reward brightness + contrast and penalize only heavy
+    over-exposure — this naturally picks the longest exposure that isn't clipped
+    (and backs off when e.g. the moon is up).
+    """
+    if len(img.shape) == 3:
+        lab = cv.cvtColor(img, cv.COLOR_BGR2LAB)
+        L = lab[:, :, 0].astype(np.float32)
+    else:
+        L = img.astype(np.float32)
+
+    L_norm = L / 255.0
+    over = np.sum(L > 240) / L.size   # blown highlights (moon / stray light)
+    mean_lum = np.mean(L_norm)
+    std_lum = np.std(L_norm)
+
+    # Brightness + contrast reward; steep penalty once >2% of the frame clips.
+    return (mean_lum + std_lum) - 5.0 * max(0.0, over - 0.02)
+
+
 def gamma_correction(img, gamma=1.0):
     # Build a lookup table (fastest method)
     inv_gamma = 1.0 / gamma
@@ -90,31 +115,40 @@ def camera_session():
         yield
 
 
-def take_snapshot(test_path=None):
+def take_snapshot(test_path=None, light=True, out_path=None, scorer=None):
     """Serialize all camera access, then delegate to :func:`_take_snapshot`.
 
     The lock makes each snapshot atomic with respect to both the USB camera and
     the inside-light save/restore, so concurrent callers queue instead of
     corrupting each other (see ``_camera_lock``).
+
+    light:    when False, the inside light is left untouched (never turned on) —
+              used by the `live` sky view so imaging isn't lit up.
+    out_path: write the chosen frame here instead of the shared scope_view.jpg
+              (so a dark sky frame never clobbers the lit safety snapshot).
+    scorer:   exposure-scoring function for the sweep (defaults to the lit-scene
+              best_exposure_score; the sky view passes dark_sky_score).
     """
     with _camera_lock:
-        return _take_snapshot(test_path)
+        return _take_snapshot(test_path, light=light, out_path=out_path, scorer=scorer)
 
 
-def _take_snapshot(test_path=None):
-    _loger.info("Starting camera snapshot")
+def _take_snapshot(test_path=None, light=True, out_path=None, scorer=None):
+    _loger.info("Starting camera snapshot (light=%s)", light)
     cfg = config.data()
     print (utils.set_install_dir())
+    if scorer is None:
+        scorer = best_exposure_score
+
+    to_path = out_path or cfg["camera safety"]["scope_view"]
 
     if test_path is not None:
-        to_path = cfg["camera safety"]["scope_view"]
         shutil.copyfile(test_path, to_path)
         return True
 
     print("taking picture")
 
     no_image = cfg["camera safety"]["no_image"]
-    to_path = cfg["camera safety"]["scope_view"]
     shutil.copyfile(no_image, to_path)
 
     # Open camera with DirectShow backend (best for exposure on Windows)
@@ -133,16 +167,18 @@ def _take_snapshot(test_path=None):
     # Sometimes helps to also explicitly disable auto exposure (0.25 or 0.75 works on MSMF)
     # cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 0.25)
 
-    dev_map = asyncio.run(ku.make_discovery_map())
-    incoming_inside_light_status = super_user_commands.is_inside_light_on(dev_map)
+    # Light control is skipped entirely for a no-light capture (the `live` sky
+    # view): we neither read nor change the inside light, so imaging stays dark.
+    dev_map = None
+    incoming_inside_light_status = None
+    if light:
+        dev_map = asyncio.run(ku.make_discovery_map())
+        incoming_inside_light_status = super_user_commands.is_inside_light_on(dev_map)
 
     for attempt in range (1):
-        if attempt == 0:
+        if light:
             super_user_commands.turn_inside_light_on (dev_map)
             time.sleep(5)
-
-        else:
-            super_user_commands.turn_inside_light_off(dev_map)
 
 
         # Open and immediately release to flush any state left by another app (e.g. Windows Camera)
@@ -184,17 +220,19 @@ def _take_snapshot(test_path=None):
             if not ret:
                 _loger.warning("Camera read failed at exposure %s", exposure_value)
                 continue
-            score = best_exposure_score(frame)
+            score = scorer(frame)
             _loger.info("Exposure: %s (actual: %s) Score: %.4f", exposure_value, actual, score)
             pictures.append(frame)
             scores.append(score)
 
         vid.release()
 
-    if not incoming_inside_light_status:
-        super_user_commands.turn_inside_light_off(dev_map)
-    else:
-        super_user_commands.turn_inside_light_on(dev_map)
+    # Restore the inside light to its prior state (only if we changed it).
+    if light:
+        if not incoming_inside_light_status:
+            super_user_commands.turn_inside_light_off(dev_map)
+        else:
+            super_user_commands.turn_inside_light_on(dev_map)
 
     if not scores:
         _loger.error("No valid frames captured at any exposure")
