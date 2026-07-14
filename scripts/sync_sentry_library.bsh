@@ -1,0 +1,30 @@
+#!/bin/bash
+#
+# sync_sentry_library.bsh
+# Backs up the roof anomaly-detection libraries (audio spectrograms/WAVs and
+# motor-current signatures) from the observatory Windows box to the Mac.
+#
+# These live in the repo tree but are gitignored (auto-generated, and now
+# auto-filed by the roof flow), so they are not otherwise backed up. --ignore-
+# existing means once a file is copied it is never re-transferred or deleted:
+# the backup keeps refs even after the good-audio rolling cap retires them, so
+# it grows into a full historical archive (a superset of the live library).
+#
+# No arguments — source and destination are hardcoded.
+#
+# Source:      iriso@100.95.7.19:.../srt/sentry/{roof_audio,roof_signatures}
+# Destination: /Users/taylorhogan/Desktop/iris_sentry
+#
+# Cron (run at 6am daily) — add via `crontab -e`:
+#   0 6 * * * /Users/taylorhogan/Documents/srt/scripts/sync_sentry_library.bsh
+
+SRT_ROOT="/cygdrive/c/Users/iriso/Documents/development/srt/sentry"
+DESTINATION="/Users/taylorhogan/Desktop/iris_sentry"
+
+mkdir -p "$DESTINATION"
+
+rsync -avz --ignore-existing \
+    --rsync-path="C:/Users/iriso/Documents/cwrsync_6.4.7_x64_free/bin/rsync" \
+    "iriso@100.95.7.19:$SRT_ROOT/roof_audio" \
+    "iriso@100.95.7.19:$SRT_ROOT/roof_signatures" \
+    "$DESTINATION/"
