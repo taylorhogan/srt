@@ -204,9 +204,38 @@ def _take_snapshot(test_path=None, light=True, out_path=None, scorer=None):
         ae_val = vid.get(cv.CAP_PROP_AUTO_EXPOSURE)
         _loger.info("Auto-exposure value after set: %s", ae_val)
 
+        # Exposure/gain plan differs by scene:
+        #  - Lit indoor scene (safety snapshot): default gain, sweep -1..-11
+        #    (CAP_DSHOW exposure is log2 seconds; -1 ~= 0.5s is already the longest
+        #    of that set). This is a well-lit target, so gain is left alone.
+        #  - No-light sky view (`live`): the frame is intrinsically dark and
+        #    exposure alone bottoms out black (max ~0.5-1s on this webcam), so we
+        #    crank sensor gain to the max and probe the LONGEST exposures (0..-6).
+        #    dark_sky_score backs off if the boosted gain blows out highlights
+        #    (moon / stray light), so max() still lands on a usable frame.
+        if light:
+            exposure_values = list(range(-1, -12, -1))
+        else:
+            # This webcam (DSHOW) caps exposure at -1 (~0.5s), so exposure alone
+            # can't brighten a dark sky — the real levers are GAIN and BRIGHTNESS.
+            # Probed ranges on this camera: gain 0..100 (default 0), brightness
+            # -64..64 (default -64, i.e. pinned to its floor, which crushes the
+            # night sky to black). Push both toward the top so faint sky glow /
+            # clouds register, then sweep the longest exposures (-1..-6). Give the
+            # driver a beat to apply gain/brightness before reading them back —
+            # setting and immediately get()-ing returns the stale value.
+            exposure_values = list(range(-1, -7, -1))
+            vid.set(cv.CAP_PROP_GAIN, 100)       # max analog/digital gain
+            vid.set(cv.CAP_PROP_BRIGHTNESS, 0)   # lift off the -64 floor to neutral
+            time.sleep(0.5)
+            for _ in range(5):
+                vid.read()
+            _loger.info("Dark-sky gain->%s brightness->%s",
+                        vid.get(cv.CAP_PROP_GAIN), vid.get(cv.CAP_PROP_BRIGHTNESS))
+
         pictures = []
         scores = []
-        for exposure_value in range(-1, -12, -1):
+        for exposure_value in exposure_values:
             vid.set(cv.CAP_PROP_EXPOSURE, exposure_value)
             actual = vid.get(cv.CAP_PROP_EXPOSURE)
             if actual != exposure_value:
