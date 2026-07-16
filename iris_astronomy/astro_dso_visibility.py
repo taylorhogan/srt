@@ -253,6 +253,7 @@ def plot_my_dso_and_horizon(dso: FixedTarget, my_observatory: Observer, observe_
     clipped_pp = []
     clipped_wsp = []
     clipped_hum = []
+    clipped_smoke = []   # US AQI scaled onto the 0-90 axis (AQI/150*90)
     weather_ok = True
     issues: set[str] = set()
     # Judge weather only during the imaging window (dark + above horizon).
@@ -269,6 +270,8 @@ def plot_my_dso_and_horizon(dso: FixedTarget, my_observatory: Observer, observe_
                 clipped_pp.append(pp[j]/100*90)
                 clipped_wsp.append(wsp[j]/40*90)
                 clipped_hum.append(hum[j]/100*90)
+                smoke_aqi = aqi_by_hour.get(hour)
+                clipped_smoke.append(smoke_aqi/150*90 if smoke_aqi is not None else float('nan'))
                 in_window = (start_time is None
                              or start_time <= local_datetime[i] <= window_finish)
                 if in_window:
@@ -301,6 +304,7 @@ def plot_my_dso_and_horizon(dso: FixedTarget, my_observatory: Observer, observe_
             clipped_pp.append(float('nan'))
             clipped_wsp.append(float('nan'))
             clipped_hum.append(float('nan'))
+            clipped_smoke.append(float('nan'))
 
     # Always report the smoke level for the imaging window, even when it's clear.
     if peak_aqi is not None:
@@ -313,6 +317,10 @@ def plot_my_dso_and_horizon(dso: FixedTarget, my_observatory: Observer, observe_
     ax.plot(local_datetime, clipped_pp, color='pink', label='Prob. Precip.',linewidth=2)
     ax.plot(local_datetime, clipped_wsp, color='black', label='Wind Speed % of 25 mph',linewidth=2)
     ax.plot(local_datetime, clipped_hum, color='green', label='Humidity %',linewidth=2)
+    ax.plot(local_datetime, clipped_smoke, color='saddlebrown', linestyle='--',
+            label='Smoke (US AQI, /150)', linewidth=2)
+    ax.axhline(_SMOKE_AQI_SEVERE / 150 * 90, color='saddlebrown', linestyle=':',
+               linewidth=1, alpha=0.4, label=f'Smoke gate (AQI {_SMOKE_AQI_SEVERE})')
 
     ax.set_xlim([local_datetime[0], local_datetime[-1]])
     date_formatter = dates.DateFormatter('%H', tz=local_tz)
