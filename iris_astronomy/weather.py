@@ -88,8 +88,68 @@ def get_weather_by_hour(lat: float, lon: float, hours: int) -> tuple[list, list,
     return local_cloud_times, local_cloud_covers, local_precipitation_probability, local_wind_speed, local_humidity
 
 
+def get_air_quality_by_hour(lat: float, lon: float, hours: int) -> tuple[list, list, list, list]:
+    """Hourly air-quality forecast from Open-Meteo (no key needed).
+
+    Mirrors get_weather_by_hour exactly — same past-hour filtering and hour-of-day
+    alignment — so the returned hours line up with the weather hours for a given
+    forecast. Returns (hours, aod, pm2_5, us_aqi) as parallel lists, where
+    ``aod`` is the column aerosol optical depth (the light-extinction measure that
+    matters for starlight; smoke drives it up). Returns empty lists on any error,
+    which callers treat as "smoke unknown".
+    """
+    air_quality_url = "https://air-quality-api.open-meteo.com/v1/air-quality"
+    forecast_days = max(1, (hours + 23) // 24)
+    params = {
+        "latitude": lat,
+        "longitude": lon,
+        "hourly": ["aerosol_optical_depth", "pm2_5", "us_aqi"],
+        "forecast_days": forecast_days,
+        "timezone": "auto"
+    }
+
+    local_times: list = []
+    local_aod: list = []
+    local_pm25: list = []
+    local_aqi: list = []
+
+    try:
+        # Non-critical data — fail fast rather than stall the nightly weather check.
+        response = requests.get(air_quality_url, params=params, timeout=10)
+        response.raise_for_status()
+        data = response.json()
+
+        times = data["hourly"]["time"]
+        aod = data["hourly"]["aerosol_optical_depth"]
+        pm25 = data["hourly"]["pm2_5"]
+        aqi = data["hourly"]["us_aqi"]
+
+        local_tz = pytz.timezone('America/New_York')
+        now = datetime.now(local_tz)
+
+        for i in range(len(times)):
+            forecast_time = datetime.fromisoformat(times[i])
+            forecast_time_local = forecast_time.astimezone(local_tz)
+            if forecast_time_local < now:
+                continue
+
+            hour = forecast_time_local.hour
+            local_times.append(hour)
+            local_aod.append(aod[i])
+            local_pm25.append(pm25[i])
+            local_aqi.append(aqi[i])
+
+    except requests.RequestException as e:
+        print(f"Error fetching air quality: {e}")
+
+    return local_times, local_aod, local_pm25, local_aqi
+
+
 if __name__ == '__main__':
     longitude = cfg["location"]["longitude"]
     latitude = cfg["location"]["latitude"]
     get_weather_by_hour(latitude, longitude, 24)
     print(get_sunrise_sunset())
+    aq_hours, aod, pm25, aqi = get_air_quality_by_hour(latitude, longitude, 24)
+    for i in range(len(aq_hours)):
+        print(f"{aq_hours[i]:>2}h: AOD {aod[i]}  PM2.5 {pm25[i]}  US AQI {aqi[i]}")
