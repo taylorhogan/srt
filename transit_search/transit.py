@@ -861,6 +861,40 @@ def _identify_candidates(
             break
 
 
+def _flag_crowding(
+    items: list[dict],
+    positions: np.ndarray,
+    aperture_r: float,
+) -> None:
+    """Tag each item with its nearest-neighbour distance and a blend flag.
+
+    A reported variable/candidate whose photometry aperture overlaps another
+    detected star (centres within 2·aperture_r) has contaminated flux: when the
+    *neighbour* varies, that variability leaks into this light curve, so a dense
+    core manufactures variables at positions matching no single catalogued star
+    (the false ★ NEW seen on m92). This does not repair the photometry — it
+    marks which reports can't be trusted so the reporter can quarantine blended
+    ``NEW`` claims rather than announce them. Sets ``nn_px`` (distance to the
+    nearest *other* detected star) and ``blended`` (bool) on each item.
+
+    Works in any field, not just cluster cores — close visual doubles blend the
+    same way. ``positions`` is the full master detection list (N, 2).
+    """
+    if not items or positions is None or len(positions) == 0:
+        return
+    blend_r = 2.0 * aperture_r
+    px = positions[:, 0]
+    py = positions[:, 1]
+    for it in items:
+        d = np.hypot(px - it["x"], py - it["y"])
+        # The item's own detection is in `positions` at ~0 distance; ignore it
+        # (and anything within 1 px, which is the same source re-centroided).
+        d = d[d > 1.0]
+        nn = float(d.min()) if d.size else float("inf")
+        it["nn_px"] = round(nn, 1) if np.isfinite(nn) else None
+        it["blended"] = bool(nn < blend_r)
+
+
 def _match_vsx(
     wcs,
     reference_path: Path,
@@ -964,7 +998,8 @@ def _variability_search(
     Validated on m92 (3 nights): recovered 8+ catalogued RR Lyrae with periods
     to 0.3–5 %. Two artifact classes from that run are handled here:
     periods inside ``alias_band`` (the ~1 d observing cadence) are dropped, and
-    detections closer than 1.5 aperture radii are deduped to the strongest
+    detections closer than 2 aperture radii (overlapping apertures) are deduped
+    to the strongest
     (DAOStarFinder double-detects bright stars a few px apart).
 
     Returns up to ``top_n`` dicts ranked by LS power, each carrying an internal
@@ -1023,8 +1058,12 @@ def _variability_search(
         key=lambda r: r["ls_power"], reverse=True,
     )
 
-    # Dedupe close detections of the same star, strongest first.
-    dedupe_r = 1.5 * aperture_r
+    # Dedupe close detections of the same star, strongest first. Two apertures
+    # overlap once their centres are within 2 r, so that is the blend radius: a
+    # crowded core splits one star into several detections just over the old
+    # 1.5 r cut (observed on m92: V1665 Her picked up twice, 17 px apart at
+    # aperture_r 11). Keep the strongest of each blended group.
+    dedupe_r = 2.0 * aperture_r
     picked: list[dict] = []
     for r in ranked:
         if all(np.hypot(r["x"] - p["x"], r["y"] - p["y"]) >= dedupe_r
@@ -1798,6 +1837,9 @@ def run_transit_search(
         _match_vsx(wcs, accepted[0], variables + top,
                    match_radius_arcsec=vsx_match_radius_arcsec,
                    progress_cb=progress_cb)
+    # Flag blended reports (aperture overlaps a neighbour) so the reporter can
+    # quarantine crowded ★ NEW claims. Independent of the WCS/Gaia solve.
+    _flag_crowding(variables + top, positions, aperture_r)
 
     # --- Significance of the top candidate --------------------------------- #
     field_image_path = None

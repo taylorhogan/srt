@@ -73,9 +73,25 @@ def _vsx_label(v: dict) -> str:
 
 
 def _fmt_variable(v: dict) -> str:
+    crowd = "  ⚠blended" if v.get("blended") else ""
     return (f"P={v['ls_period_d']:.3f} d  power {v['ls_power']:.2f}  "
             f"amp {v['amp_pp']*100:.0f}%  ({v['x']:.0f},{v['y']:.0f})  "
-            f"→ {_vsx_label(v)}")
+            f"→ {_vsx_label(v)}{crowd}")
+
+
+def _bucket(v: dict) -> str:
+    """Which report group a variable belongs to.
+
+    A ★ NEW that is *blended* (aperture overlaps a neighbour) is quarantined:
+    in a crowded field the "new" detection is most likely a neighbour's flux
+    leaking in, not a real uncatalogued variable, so it goes to 'crowded' for
+    vetting rather than being announced as a discovery.
+    """
+    if "vsx_name" not in v:
+        return "unchecked"
+    if v["vsx_name"] is not None:
+        return "known"
+    return "crowded" if v.get("blended") else "new"
 
 
 def search_and_post(dso: str, filter_name: str) -> int:
@@ -115,25 +131,28 @@ def search_and_post(dso: str, filter_name: str) -> int:
 
     variables = entry.get("variables", [])
     if variables:
-        known = [v for v in variables if v.get("vsx_name")]
-        new = [v for v in variables if "vsx_name" in v and v["vsx_name"] is None]
-        unchecked = [v for v in variables if "vsx_name" not in v]
-        lines.append(
-            f"Variables (Lomb–Scargle, {len(variables)}): "
-            f"{len(known)} known, {len(new)} new"
-            + (f", {len(unchecked)} unchecked" if unchecked else ""))
-        if known:
+        groups = {"known": [], "new": [], "crowded": [], "unchecked": []}
+        for v in variables:
+            groups[_bucket(v)].append(v)
+        tally = f"{len(groups['known'])} known, {len(groups['new'])} new"
+        if groups["crowded"]:
+            tally += f", {len(groups['crowded'])} crowded"
+        if groups["unchecked"]:
+            tally += f", {len(groups['unchecked'])} unchecked"
+        lines.append(f"Variables (Lomb–Scargle, {len(variables)}): {tally}")
+        if groups["known"]:
             lines.append("Known (VSX):")
-            for v in known:
-                lines.append("  " + _fmt_variable(v))
-        if new:
-            lines.append("★ Candidate NEW variables (not in VSX):")
-            for v in new:
-                lines.append("  " + _fmt_variable(v))
-        if unchecked:
+            lines += ["  " + _fmt_variable(v) for v in groups["known"]]
+        if groups["new"]:
+            lines.append("★ Candidate NEW variables (not in VSX, uncrowded):")
+            lines += ["  " + _fmt_variable(v) for v in groups["new"]]
+        if groups["crowded"]:
+            lines.append("Crowded — needs vetting (not in VSX but aperture "
+                         "blended, likely a neighbour):")
+            lines += ["  " + _fmt_variable(v) for v in groups["crowded"]]
+        if groups["unchecked"]:
             lines.append("Unchecked (VSX query unavailable):")
-            for v in unchecked:
-                lines.append("  " + _fmt_variable(v))
+            lines += ["  " + _fmt_variable(v) for v in groups["unchecked"]]
     else:
         lines.append("No significant variables found.")
 
