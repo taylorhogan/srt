@@ -57,12 +57,25 @@ def _fmt_candidate(c: dict) -> str:
             f"{period_txt}  ({c['x']:.0f},{c['y']:.0f})  {ident}")
 
 
+def _vsx_label(v: dict) -> str:
+    """Known VSX variable → 'V1673 Her (RRAB, P=0.673 d)'; new → '★ NEW'.
+
+    Absence of the vsx_name key (VSX query failed) is 'unknown', not new.
+    """
+    if "vsx_name" not in v:
+        return "VSX: unchecked"
+    if v["vsx_name"] is None:
+        return "★ NEW (not in VSX)"
+    typ = v.get("vsx_type") or "?"
+    per = v.get("vsx_period")
+    per_txt = f", P={per:.3f} d" if per else ""
+    return f"{v['vsx_name']} ({typ}{per_txt})"
+
+
 def _fmt_variable(v: dict) -> str:
-    gaia = v.get("gaia_source_id")
-    ident = f"Gaia {gaia}" if gaia else "no Gaia match"
     return (f"P={v['ls_period_d']:.3f} d  power {v['ls_power']:.2f}  "
-            f"FAP {v['ls_fap']:.0e}  amp {v['amp_pp']*100:.0f}%  "
-            f"({v['x']:.0f},{v['y']:.0f})  {ident}")
+            f"amp {v['amp_pp']*100:.0f}%  ({v['x']:.0f},{v['y']:.0f})  "
+            f"→ {_vsx_label(v)}")
 
 
 def search_and_post(dso: str, filter_name: str) -> int:
@@ -99,11 +112,28 @@ def search_and_post(dso: str, filter_name: str) -> int:
     if candidates:
         lines.append("Top transit candidate:")
         lines.append("  " + _fmt_candidate(candidates[0]))
+
     variables = entry.get("variables", [])
     if variables:
-        lines.append(f"Top variables (Lomb–Scargle, {len(variables)}):")
-        for v in variables[:5]:
-            lines.append("  " + _fmt_variable(v))
+        known = [v for v in variables if v.get("vsx_name")]
+        new = [v for v in variables if "vsx_name" in v and v["vsx_name"] is None]
+        unchecked = [v for v in variables if "vsx_name" not in v]
+        lines.append(
+            f"Variables (Lomb–Scargle, {len(variables)}): "
+            f"{len(known)} known, {len(new)} new"
+            + (f", {len(unchecked)} unchecked" if unchecked else ""))
+        if known:
+            lines.append("Known (VSX):")
+            for v in known:
+                lines.append("  " + _fmt_variable(v))
+        if new:
+            lines.append("★ Candidate NEW variables (not in VSX):")
+            for v in new:
+                lines.append("  " + _fmt_variable(v))
+        if unchecked:
+            lines.append("Unchecked (VSX query unavailable):")
+            for v in unchecked:
+                lines.append("  " + _fmt_variable(v))
     else:
         lines.append("No significant variables found.")
 

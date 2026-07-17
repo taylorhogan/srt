@@ -7,7 +7,7 @@ class PublicConfig():
 
         },
         "version": {
-            "date": "2026.7.17.8"
+            "date": "2026.7.17.9"
         },
 
         "logger": {
@@ -162,6 +162,11 @@ class PublicConfig():
             # The longest period searched is baseline/2.
             "variables_top_n": 10,
             "ls_min_period_d": 0.05,
+            # Match radius (arcsec) for labelling variables/candidates against
+            # the AAVSO Variable Star Index (VSX). Within this of a catalogued
+            # variable → known (name/type/period reported); otherwise flagged
+            # as not-in-VSX (a candidate new variable). 5" ~ 19 px at 0.26"/px.
+            "vsx_match_radius_arcsec": 5.0,
             # Robust field-outlier z-score above which the top candidate is
             # considered a strong single-night detection. When the top
             # candidate's field_z meets/exceeds this, a push notification is

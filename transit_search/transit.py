@@ -861,6 +861,86 @@ def _identify_candidates(
             break
 
 
+def _match_vsx(
+    wcs,
+    reference_path: Path,
+    items: list[dict],
+    match_radius_arcsec: float = 5.0,
+    progress_cb: Optional[Callable[[str], None]] = None,
+) -> None:
+    """Label each item (variable or candidate) as a known VSX variable or new.
+
+    Queries the AAVSO Variable Star Index (VSX) once for the whole field, maps
+    every catalogued variable into the reference pixel grid via ``wcs``, and
+    matches each item to the nearest VSX entry within ``match_radius_arcsec``.
+    Matched items get ``vsx_name`` / ``vsx_type`` / ``vsx_period`` (catalogue
+    period, days, or None); unmatched items get ``vsx_name = None`` — i.e. not
+    in VSX, a candidate *new* variable. Fully fail-safe: any network/WCS
+    failure leaves items unlabelled (no ``vsx_name`` key), which the reporter
+    treats as "unknown", never as "new".
+    """
+    if wcs is None or not items:
+        return
+    try:
+        import astropy.units as u
+        from astropy.coordinates import SkyCoord
+        from astroquery.vizier import Vizier
+
+        hdr = fits.getheader(reference_path)
+        try:
+            center = SkyCoord(hdr["OBJCTRA"], hdr["OBJCTDEC"],
+                              unit=(u.hourangle, u.deg))
+        except Exception:
+            center = SkyCoord(float(hdr["RA"]), float(hdr["DEC"]), unit="deg")
+        try:
+            scale = 206.265 * float(hdr["XPIXSZ"]) / float(hdr["FOCALLEN"])
+        except Exception:
+            scale = float(_config.data()["nina"]["arc_sec_per_pixel"])
+        w = int(hdr.get("NAXIS1", 0)) or 9576
+        h = int(hdr.get("NAXIS2", 0)) or 6388
+        radius_deg = np.hypot(w, h) / 2 * scale / 3600
+        match_px = match_radius_arcsec / scale
+
+        if progress_cb:
+            progress_cb(f"vsx: querying field ({len(items)} items to label)…")
+        viz = Vizier(columns=["Name", "RAJ2000", "DEJ2000", "Type", "Period"],
+                     row_limit=5000)
+        tables = viz.query_region(center, radius=radius_deg * u.deg,
+                                  catalog="B/vsx/vsx")
+        if not tables or len(tables[0]) == 0:
+            # Field genuinely has no catalogued variables — every item is new.
+            for it in items:
+                it["vsx_name"] = None
+            if progress_cb:
+                progress_cb("vsx: no catalogued variables in field")
+            return
+        vsx = tables[0]
+        vx, vy = wcs.world_to_pixel(SkyCoord(
+            np.asarray(vsx["RAJ2000"]), np.asarray(vsx["DEJ2000"]), unit="deg"))
+
+        n_known = 0
+        for it in items:
+            d2 = (vx - it["x"]) ** 2 + (vy - it["y"]) ** 2
+            j = int(np.argmin(d2))
+            if d2[j] <= match_px ** 2:
+                row = vsx[j]
+                per = row["Period"]
+                it["vsx_name"] = str(row["Name"])
+                it["vsx_type"] = str(row["Type"])
+                it["vsx_period"] = (None if np.ma.is_masked(per)
+                                    else round(float(per), 5))
+                n_known += 1
+            else:
+                it["vsx_name"] = None
+        if progress_cb:
+            progress_cb(f"vsx: {n_known}/{len(items)} known, "
+                        f"{len(items) - n_known} not in VSX")
+    except Exception:
+        _logger.exception("VSX match failed — items left unlabelled")
+        if progress_cb:
+            progress_cb("vsx: query failed, variables left unlabelled")
+
+
 def _variability_search(
     times_mjd: np.ndarray,
     rel_flux: np.ndarray,
@@ -1400,6 +1480,7 @@ def run_transit_search(
     variables_top_n = int(cfg.get("variables_top_n", 10))
     ls_min_period_d = float(cfg.get("ls_min_period_d", 0.05))
     gaia_match_radius_arcsec = float(cfg.get("gaia_match_radius_arcsec", 3.0))
+    vsx_match_radius_arcsec = float(cfg.get("vsx_match_radius_arcsec", 5.0))
     st_min_dur_h = float(cfg.get("single_transit_min_dur_h", 0.3))
     st_max_dur_h = float(cfg.get("single_transit_max_dur_h", 4.0))
     st_n_widths = int(cfg.get("single_transit_n_widths", 16))
@@ -1713,6 +1794,10 @@ def run_transit_search(
             match_radius_arcsec=gaia_match_radius_arcsec,
             progress_cb=progress_cb,
         )
+        # Label knowns vs new against the AAVSO Variable Star Index.
+        _match_vsx(wcs, accepted[0], variables + top,
+                   match_radius_arcsec=vsx_match_radius_arcsec,
+                   progress_cb=progress_cb)
 
     # --- Significance of the top candidate --------------------------------- #
     field_image_path = None
