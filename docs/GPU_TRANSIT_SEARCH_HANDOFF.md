@@ -192,6 +192,39 @@ non-dip-shaped ranking path) and **row 6** (catalogue cross-match).
 - **Single-band, differential:** photometry is relative within one filter — fine
   for variability; no absolute calibration needed for detection.
 
+### Phase 0 — validation results (2026-07-17, DGX Spark)
+
+**PASS.** Run on m92, all 56 R frames across 3 nights (baseline 3.16 d):
+12,743 stars detected, ~3,800 well-sampled light curves; a scratchpad
+Lomb–Scargle pass (`ls_analysis.py`) + Gaia/VSX cross-match recovered **20
+catalogued variables**, including 8+ RR Lyrae with periods to 0.3–5 %:
+V1673 Her (RRab, 0.6732 d cat vs 0.671 d ours), V1669 Her (RRc, 0.3773 vs
+0.380), CSS J171714.6+425305 (RRc, 0.2666 vs 0.268), V1670/V1668/V1667/
+V1662/V1655 Her (the last an exact +1 c/d alias). Misses were physical:
+SX Phe (too small/fast), eclipsing binaries out of window, faint Gaia-only
+variables. m13 single-night (20 R frames) ran clean end-to-end but found
+nothing — expected (RR-poor cluster, dip-only scorers, 1.7 h BLS ceiling).
+
+Working notes:
+- **Plate solve without ASTAP:** astroalign accepts bare point sets — match
+  Gaia DR3 (Vizier cone, G<16) tangent-projected at 0.26 "/px against the
+  brightest ~120 non-core detections. Field is **mirrored, rotated 67.4°**;
+  refined affine residual 0.3 px. See `scratchpad/crossmatch.py`.
+- **New gap — saturation veto for candidates.** The m92 top BLS candidate
+  (score 39.6, field_z 23.6 → two Pushover alerts) is a **saturation
+  artifact**: G=9.8 foreground star (Gaia DR3 1360406946570559232, plx
+  3.2 mas) pegged at 64–65.5k ADU all of 06-16; the 16 % "transit" is
+  clipped photons tracking seeing. The comparison ensemble excludes the
+  brightest 5 % but candidates are never vetoed — add a per-star peak-pixel
+  check (reject/flag above ~55k in any frame) before scoring/alerting.
+- Multi-night beats single-night more than expected: with 3 nights the LS
+  periods genuinely resolve (0.3 % on the best), despite day gaps causing
+  ±1 c/d aliases. Core blending makes ~10 apertures echo the same bright
+  RRab (P≈0.75 d cluster of "detections" around the core) — PSF photometry
+  or a blend-dedup pass is the fix if the core matters.
+- Registered-frame star positions differ from raw-frame pixels by up to
+  ~60 px across nights — always work in reference-frame coordinates.
+
 ### Phase 1 — GPU-scale & deploy
 
 Once Phase 0 is correct: port the two hot loops to the GPU — **batch photometry**
