@@ -642,7 +642,7 @@ def _plate_solve_wcs(
 
     if not astap_exe or not os.path.exists(astap_exe):
         if progress_cb:
-            progress_cb("identify: ASTAP not found, skipping star IDs")
+            progress_cb("identify: ASTAP not found")
         return None
 
     try:
@@ -675,21 +675,144 @@ def _plate_solve_wcs(
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
+def _gaia_solve_wcs(
+    reference_path: Path,
+    positions: np.ndarray,
+    star_flux: np.ndarray,
+    progress_cb: Optional[Callable[[str], None]] = None,
+):
+    """Astrometric solve WITHOUT a plate solver: match detected stars to Gaia.
+
+    astroalign's triangle matcher accepts bare (N, 2) point sets, so a WCS can
+    be built from the master star list alone: cone-query Gaia DR3 around the
+    header's pointing hint, tangent-project it at the header plate scale, find
+    the similarity transform between the two point sets, then least-squares a
+    real astropy WCS from the matched pairs (fit_wcs_from_points, so flips and
+    rotation land in the CD matrix — validated on m92: mirrored, rotated 67°,
+    0.3 px residual). Needs the network (Vizier); returns None on any failure.
+
+    astroalign fits similarity transforms, which cannot represent a reflection
+    — both parities are tried and the lower-residual one wins.
+
+    ``positions`` are the reference-grid (x, y) of every detected star and
+    ``star_flux`` their median raw flux (used to pick bright, spread-out
+    anchor stars: a greedy min-separation pass keeps a crowded cluster core —
+    whose blended centroids astroalign can't match — from dominating).
+    """
+    try:
+        import astroalign
+        import astropy.units as u
+        from astropy.coordinates import SkyCoord
+        from astropy.wcs.utils import fit_wcs_from_points
+        from astroquery.vizier import Vizier
+        from scipy.spatial import cKDTree
+
+        hdr = fits.getheader(reference_path)
+        try:
+            center = SkyCoord(hdr["OBJCTRA"], hdr["OBJCTDEC"],
+                              unit=(u.hourangle, u.deg))
+        except Exception:
+            center = SkyCoord(float(hdr["RA"]), float(hdr["DEC"]), unit="deg")
+        try:
+            # 206.265 arcsec per radian-micron/mm: scale from the optical train
+            scale = 206.265 * float(hdr["XPIXSZ"]) / float(hdr["FOCALLEN"])
+        except Exception:
+            scale = float(_config.data()["nina"]["arc_sec_per_pixel"])
+        w = int(hdr.get("NAXIS1", positions[:, 0].max()))
+        h = int(hdr.get("NAXIS2", positions[:, 1].max()))
+        radius_deg = np.hypot(w, h) / 2 * scale / 3600
+
+        if progress_cb:
+            progress_cb("identify: Gaia field solve (astroalign point match)…")
+        viz = Vizier(columns=["RA_ICRS", "DE_ICRS", "Gmag"],
+                     column_filters={"Gmag": "<16"}, row_limit=20000)
+        tables = viz.query_region(center, radius=radius_deg * u.deg,
+                                  catalog="I/355/gaiadr3")
+        if not tables or len(tables[0]) < 20:
+            return None
+        gaia = tables[0]
+        gaia.sort("Gmag")
+        gaia_sky = SkyCoord(np.asarray(gaia["RA_ICRS"]),
+                            np.asarray(gaia["DE_ICRS"]), unit="deg")
+        off = gaia_sky.transform_to(center.skyoffset_frame())
+        # east-left / north-up "ideal" pixels, centred on the pointing
+        gaia_xy = np.column_stack([-off.lon.deg * 3600 / scale,
+                                   off.lat.deg * 3600 / scale])
+        inside = ((np.abs(gaia_xy[:, 0]) < w / 2 * 1.02)
+                  & (np.abs(gaia_xy[:, 1]) < h / 2 * 1.02))
+
+        # anchor stars: brightest first, greedy 50 px min separation
+        order = np.argsort(-np.nan_to_num(star_flux))
+        anchors: list[np.ndarray] = []
+        for i in order:
+            p = positions[i]
+            if all(np.hypot(*(p - q)) >= 50 for q in anchors):
+                anchors.append(p)
+            if len(anchors) >= 150:
+                break
+        det_xy = np.array(anchors)
+
+        best = None
+        for parity in (1.0, -1.0):
+            flipped = gaia_xy[inside][:150] * np.array([parity, 1.0])
+            try:
+                tf, (src, dst) = astroalign.find_transform(
+                    flipped, det_xy, max_control_points=60)
+            except Exception:
+                continue
+            resid = float(np.median(np.linalg.norm(tf(src) - dst, axis=1)))
+            if best is None or resid < best[2]:
+                best = (parity, tf, resid)
+        if best is None:
+            return None
+        parity, tf, resid = best
+
+        # refine on every in-footprint Gaia star, then fit a real WCS
+        proj = tf(gaia_xy[inside] * np.array([parity, 1.0]))
+        dist, idx = cKDTree(positions).query(proj, k=1)
+        good = dist < 4.0
+        if good.sum() < 20:
+            return None
+        matched_px = positions[idx[good]]
+        wcs = fit_wcs_from_points(
+            (matched_px[:, 0], matched_px[:, 1]), gaia_sky[inside][good])
+        fit_x, fit_y = wcs.world_to_pixel(gaia_sky[inside][good])
+        fit_resid = float(np.median(np.hypot(fit_x - matched_px[:, 0],
+                                             fit_y - matched_px[:, 1])))
+        if fit_resid > 2.0:
+            _logger.warning("Gaia field solve residual %.2f px — rejecting", fit_resid)
+            return None
+        if progress_cb:
+            progress_cb(
+                f"identify: Gaia field solve OK — {int(good.sum())} stars, "
+                f"median residual {fit_resid:.2f} px")
+        return wcs
+    except Exception:
+        _logger.exception("Gaia field solve failed")
+        return None
+
+
 def _identify_candidates(
     reference_path: Path,
     candidates: list[dict],
     astap_exe: str,
     match_radius_arcsec: float = 3.0,
     progress_cb: Optional[Callable[[str], None]] = None,
+    positions: Optional[np.ndarray] = None,
+    star_flux: Optional[np.ndarray] = None,
 ) -> None:
     """Add RA/Dec and the nearest Gaia source to each candidate, in place.
 
     Plate-solves the reference frame (whose pixel grid the candidate x,y live in),
     converts each (x, y) to sky coordinates, and cone-searches Gaia DR3 for the
-    nearest source. Fully fail-safe: any solver/network/query failure leaves the
-    candidates unchanged apart from any RA/Dec already filled in.
+    nearest source. When ASTAP is unavailable or fails, falls back to the
+    Gaia point-match solve (needs ``positions``/``star_flux``). Fully
+    fail-safe: any solver/network/query failure leaves the candidates
+    unchanged apart from any RA/Dec already filled in.
     """
     wcs = _plate_solve_wcs(reference_path, astap_exe, progress_cb)
+    if wcs is None and positions is not None and star_flux is not None:
+        wcs = _gaia_solve_wcs(reference_path, positions, star_flux, progress_cb)
     if wcs is None:
         return
 
@@ -1392,6 +1515,8 @@ def run_transit_search(
             accepted[0], top, astap_exe,
             match_radius_arcsec=gaia_match_radius_arcsec,
             progress_cb=progress_cb,
+            positions=positions,
+            star_flux=np.nanmedian(flux_matrix, axis=0),
         )
 
     # --- Significance of the top candidate --------------------------------- #

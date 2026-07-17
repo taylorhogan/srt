@@ -112,9 +112,13 @@ find out where it falls short. Confirmed gaps as of 2026-07-17:
   Not a bug — just means BLS is the transit half only.
 - **`min_baseline_days_for_bls: 1.0` is dead config** — defined in
   `config_public.py`, never read by `transit.py`. Either wire it or delete it.
-- **ASTAP is not installed on the Spark**, so `identify_candidates` / the Gaia
-  cross-match can't run here. Needed for any catalogue comparison. Install the
-  ARM Linux build and set `hardware.astap_exe`.
+- **~~ASTAP is not installed on the Spark~~ CLOSED 2026-07-17:**
+  `_gaia_solve_wcs` in `transit.py` now plate-solves without ASTAP by
+  astroalign-matching the detected star list against a Gaia DR3 cone query
+  (Vizier), fitting a real astropy WCS from the matched pairs.
+  `_identify_candidates` falls back to it automatically when ASTAP is missing
+  or fails. Needs network; validated on m92 (0.15 px match residual,
+  candidate→Gaia separation 0.08″).
 - **NOT a bug** (checked, don't "fix" it): `outlier_high_sigma: 5.0` blanks
   upward excursions, but its threshold is built from each star's *own* MAD, so
   it scales with that star's variability and won't erase a coherent RR Lyrae
@@ -162,7 +166,7 @@ lives in `transit_search/transit.py`:
 | 3 | Photometry, all stars × all frames | `_photometry_one_frame` (aperture + annulus, NaN-masked); times via `_obs_time_mjd` | — |
 | 4 | Differential detrending | `_differential_normalize` (lowest-RMS comparison ensemble) + common-mode correction | no SysRem |
 | 5 | Search each light curve | `_run_bls`, `_single_transit_score`, `_max_dip_sigma` | **no Lomb–Scargle, no RMS-vs-mag variability stat** |
-| 6 | Rank & report | `_plot_top_candidates`, `_plate_solve_wcs` (ASTAP) + Gaia match, `save_transits` → `local/transits.json`; permutation FAP | needs VSX/Clement cross-match; ASTAP absent on Spark |
+| 6 | Rank & report | `_plot_top_candidates`, `_plate_solve_wcs` (ASTAP) with `_gaia_solve_wcs` fallback + Gaia match, `save_transits` → `local/transits.json`; permutation FAP | needs VSX/Clement cross-match; saturation veto |
 
 So Phase 0's real work is **row 5** (add LS + variability stats and a
 non-dip-shaped ranking path) and **row 6** (catalogue cross-match).
