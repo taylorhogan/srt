@@ -245,8 +245,16 @@ Tailnet (HTTP/MQTT to the Windows social server), or write result files + plots.
 - Webchat posting is DONE: `utils/webchat_client.py` posts text+images to the
   chat's existing `/api/post` over the Tailnet (`web_chat.remote_url`);
   `scripts/spark_transit_search.py <dso> [filter]` is the Spark entry point —
-  runs the search, posts summary + both plots, posts failures too. Chain it
-  after the morning rsync to complete the deploy.
+  runs the search, posts summary + both plots, posts failures too.
+- The morning chain is DEPLOYED: the Spark's 06:00 crontab entry now runs
+  `scripts/spark_morning_search.bsh` (sync → `spark_transit_search.py --auto`).
+  Auto mode finds LIGHT frames newer than the last-run marker (first run:
+  24 h), groups by (dso, filter) from the FITS headers — **never mixes
+  filters in one series; colour-dependent flux ratios read as fake
+  variability** — and searches every group with ≥ `min_frames` total. The
+  marker is touched only after a fully clean morning, so a crashed run
+  reruns tomorrow. Log: `local/spark_transit/morning.log`. Test with
+  `--auto --dry-run [--since-days N]`.
 - Measured m92 profile (56 frames, ~3k kept stars, 20 cores): registration
   ~21 min (single-threaded astroalign, ~35 s/frame) ≫ photometry ~2 min ≫
   BLS 11 s ≈ LS 12 s ≫ Gaia candidate lookup ~10 s each (serial cone

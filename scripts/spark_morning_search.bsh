@@ -1,0 +1,27 @@
+#!/bin/bash
+#
+# spark_morning_search.bsh
+# Morning job on the Spark: pull last night's frames from the observatory,
+# then blind-search whatever arrived (per dso+filter) and post results to
+# the web chat.
+#
+# Cron (replaces the bare sync_nina_targets entry) — add via `crontab -e`:
+#   0 6 * * * /home/taylor/Documents/srt/scripts/spark_morning_search.bsh
+#
+# The search runs even if rsync fails (partial sync / observatory offline):
+# yesterday's already-synced frames may still be unsearched, and the search
+# itself posts its failures to the chat.
+
+SRT=/home/taylor/Documents/srt
+LOG_DIR=$SRT/local/spark_transit
+mkdir -p "$LOG_DIR"
+
+{
+    echo "=== $(date -Is) morning sync+search ==="
+    "$SRT/scripts/sync_nina_targets_to_spark.bsh"
+    echo "--- sync done (rc=$?), starting search ---"
+    cd "$SRT" || exit 1
+    source .venv/bin/activate
+    python scripts/spark_transit_search.py --auto
+    echo "--- search done (rc=$?) ---"
+} >> "$LOG_DIR/morning.log" 2>&1

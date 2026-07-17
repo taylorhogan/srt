@@ -3,15 +3,26 @@ to the web chat.
 
 Usage:
     python scripts/spark_transit_search.py <dso> [filter]
+    python scripts/spark_transit_search.py --auto [--dry-run] [--since-days N]
 
     <dso>     target name as it appears under the frame root (e.g. m92)
     [filter]  filter letter (R, B, L, ...); default * = all LIGHT frames
 
+    --auto        morning-job mode: find LIGHT frames that arrived since the
+                  last auto run (marker file; first run = last 24 h), group
+                  them by (dso, filter), and search each group that has
+                  enough total frames. Never mixes filters in one search —
+                  a star's flux relative to the comparison ensemble is
+                  colour-dependent, so a mixed series reads as variability.
+    --dry-run     with --auto: print the plan, run nothing, leave the marker.
+    --since-days N  with --auto: look back N days instead of the marker.
+
 Designed as the offline analysis node's entry point (see
 docs/GPU_TRANSIT_SEARCH_HANDOFF.md): frames arrive via the morning rsync from
-the observatory, this runs the all-star search, and the summary + plots are
-posted into the one web chat over the Tailnet (utils/webchat_client). Urgent
-single-night detections still go via Pushover from inside the search itself.
+the observatory (scripts/spark_morning_search.bsh chains this after the
+sync), this runs the all-star search, and the summary + plots are posted into
+the one web chat over the Tailnet (utils/webchat_client). Urgent single-night
+detections still go via Pushover from inside the search itself.
 
 The __main__ guard is load-bearing: run_transit_search uses a spawn-mode
 ProcessPoolExecutor, and spawn workers re-import __main__ — unguarded
@@ -50,13 +61,8 @@ def _fmt_variable(v: dict) -> str:
             f"({v['x']:.0f},{v['y']:.0f})  {ident}")
 
 
-def main() -> int:
-    if len(sys.argv) < 2:
-        print(__doc__)
-        return 2
-    dso = sys.argv[1]
-    filter_name = sys.argv[2] if len(sys.argv) > 2 else "*"
-
+def search_and_post(dso: str, filter_name: str) -> int:
+    """Run one (dso, filter) search and post summary + plots to the web chat."""
     from transit_search import transit
     from utils.webchat_client import post_to_webchat
 
@@ -66,7 +72,7 @@ def main() -> int:
     t0 = time.time()
 
     def progress(msg: str) -> None:
-        print(f"[{time.time() - t0:7.1f}s] {msg}", flush=True)
+        print(f"[{time.time() - t0:7.1f}s] {dso} [{filter_name}] {msg}", flush=True)
 
     try:
         entry = transit.run_transit_search(
@@ -105,6 +111,107 @@ def main() -> int:
                         f"(raw + phase-folded)", image_path=Path(vplot))
     print("posted to web chat")
     return 0
+
+
+def _light_frames(root: Path):
+    """Every LIGHT frame under the tree: <object>/<scope>/<date>/LIGHT/*.fits."""
+    for f in root.rglob("*.fits"):
+        if f.parent.name.upper() == "LIGHT":
+            yield f
+
+
+def _frame_filter(path: Path) -> str:
+    """FILTER from the FITS header (header-only read), '' when absent."""
+    try:
+        from astropy.io import fits
+        return str(fits.getheader(path).get("FILTER", "") or "")
+    except Exception:
+        return ""
+
+
+def auto_mode(dry_run: bool, since_days: float | None) -> int:
+    """Morning-job mode: search every (dso, filter) with newly arrived frames.
+
+    "New" = frame mtime after the marker file's mtime (rsync -a preserves
+    source mtimes, so this is the observation night, not the copy time).
+    The marker is touched only after every search finishes, so a crashed
+    morning reruns tomorrow instead of losing the night.
+    """
+    from configs import config
+
+    marker = OUT_DIR / "last_auto_run"
+    if since_days is not None:
+        cutoff = time.time() - since_days * 86400
+    elif marker.exists():
+        cutoff = marker.stat().st_mtime
+    else:
+        cutoff = time.time() - 86400
+
+    new_by_group: dict[tuple[str, str], int] = {}
+    for f in _light_frames(FRAME_ROOT):
+        if f.stat().st_mtime <= cutoff:
+            continue
+        dso = f.relative_to(FRAME_ROOT).parts[0]
+        filt = _frame_filter(f)
+        if filt:
+            new_by_group[(dso, filt)] = new_by_group.get((dso, filt), 0) + 1
+
+    if not new_by_group:
+        print("auto: no new LIGHT frames — nothing to do")
+        return 0
+
+    min_frames = int(config.data().get("transit", {}).get("min_frames", 20))
+    plan: list[tuple[str, str, int, int]] = []
+    for (dso, filt), n_new in sorted(new_by_group.items()):
+        total = sum(
+            1 for f in _light_frames(FRAME_ROOT / dso)
+            if _frame_filter(f).lower() == filt.lower()
+        )
+        plan.append((dso, filt, n_new, total))
+
+    print(f"auto: new frames since {time.strftime('%Y-%m-%d %H:%M', time.localtime(cutoff))}:")
+    runnable = []
+    for dso, filt, n_new, total in plan:
+        status = "run" if total >= min_frames else f"skip (total {total} < {min_frames})"
+        print(f"  {dso} [{filt}]: {n_new} new / {total} total → {status}")
+        if total >= min_frames:
+            runnable.append((dso, filt))
+
+    if dry_run:
+        print("auto: dry run — no searches started, marker untouched")
+        return 0
+
+    failures = 0
+    for dso, filt in runnable:
+        try:
+            search_and_post(dso, filt)
+        except Exception:
+            import traceback
+            traceback.print_exc()
+            failures += 1
+
+    if failures == 0:
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.touch()
+    return 1 if failures else 0
+
+
+def main() -> int:
+    args = [a for a in sys.argv[1:] if not a.startswith("--")]
+    flags = [a for a in sys.argv[1:] if a.startswith("--")]
+
+    if "--auto" in flags:
+        since_days = None
+        if "--since-days" in flags:
+            i = sys.argv.index("--since-days")
+            since_days = float(sys.argv[i + 1])
+            args = [a for a in args if a != sys.argv[i + 1]]
+        return auto_mode(dry_run="--dry-run" in flags, since_days=since_days)
+
+    if not args:
+        print(__doc__)
+        return 2
+    return search_and_post(args[0], args[1] if len(args) > 1 else "*")
 
 
 if __name__ == "__main__":
