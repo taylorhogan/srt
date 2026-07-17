@@ -30,6 +30,7 @@ top-level code would launch a full search per worker.
 """
 
 import os
+import socket
 import sys
 import time
 from pathlib import Path
@@ -42,6 +43,9 @@ if __package__ is None or __package__ == "":
 # Default frame root on the Spark: destination of sync_nina_targets_to_spark.bsh
 FRAME_ROOT = Path(os.environ.get("SRT_FRAME_ROOT", "/home/taylor/Desktop/Targets"))
 OUT_DIR = Path(os.environ.get("SRT_TRANSIT_OUT", "local/spark_transit"))
+
+# Announced in every chat post so it's obvious which machine is speaking.
+HOST = socket.gethostname()
 
 
 def _fmt_candidate(c: dict) -> str:
@@ -81,12 +85,12 @@ def search_and_post(dso: str, filter_name: str) -> int:
             progress_cb=progress,
         )
     except Exception as exc:
-        post_to_webchat(f"🔭 Spark search failed for {dso} [{filter_name}]: {exc}")
+        post_to_webchat(f"🔭 [{HOST}] search failed for {dso} [{filter_name}]: {exc}")
         raise
 
     mins = (time.time() - t0) / 60
     lines = [
-        f"🔭 Spark transit/variable search — {dso} [{filter_name}]",
+        f"🔭 [{HOST}] transit/variable search — {dso} [{filter_name}]",
         f"{entry['frame_count']} frames over {entry['baseline_days']:.2f} d, "
         f"{entry['n_stars_searched']}/{entry['n_stars']} stars searched "
         f"({mins:.0f} min)",
@@ -147,6 +151,8 @@ def auto_mode(dry_run: bool, since_days: float | None) -> int:
     else:
         cutoff = time.time() - 86400
 
+    from utils.webchat_client import post_to_webchat
+
     new_by_group: dict[tuple[str, str], int] = {}
     for f in _light_frames(FRAME_ROOT):
         if f.stat().st_mtime <= cutoff:
@@ -156,8 +162,14 @@ def auto_mode(dry_run: bool, since_days: float | None) -> int:
         if filt:
             new_by_group[(dso, filt)] = new_by_group.get((dso, filt), 0) + 1
 
+    since_txt = time.strftime("%Y-%m-%d %H:%M", time.localtime(cutoff))
+
     if not new_by_group:
-        print("auto: no new LIGHT frames — nothing to do")
+        msg = (f"🔭 [{HOST}] morning search: no new LIGHT frames since "
+               f"{since_txt} — nothing to do")
+        print(msg)
+        if not dry_run:
+            post_to_webchat(msg)
         return 0
 
     min_frames = int(config.data().get("transit", {}).get("min_frames", 20))
@@ -169,17 +181,21 @@ def auto_mode(dry_run: bool, since_days: float | None) -> int:
         )
         plan.append((dso, filt, n_new, total))
 
-    print(f"auto: new frames since {time.strftime('%Y-%m-%d %H:%M', time.localtime(cutoff))}:")
+    report = [f"🔭 [{HOST}] morning search — new frames since {since_txt}:"]
     runnable = []
     for dso, filt, n_new, total in plan:
-        status = "run" if total >= min_frames else f"skip (total {total} < {min_frames})"
-        print(f"  {dso} [{filt}]: {n_new} new / {total} total → {status}")
         if total >= min_frames:
+            status = "searching"
             runnable.append((dso, filt))
+        else:
+            status = f"skip (only {total} total, need {min_frames})"
+        report.append(f"  {dso} [{filt}]: {n_new} new / {total} total → {status}")
+    print("\n".join(report))
 
     if dry_run:
         print("auto: dry run — no searches started, marker untouched")
         return 0
+    post_to_webchat("\n".join(report))
 
     failures = 0
     for dso, filt in runnable:
