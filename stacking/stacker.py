@@ -71,6 +71,20 @@ except Exception:
     _REGISTER_AVAILABLE = False
     _logger.warning("astroalign not available — frame registration disabled")
 
+# sep's default pixel stack (300k pixels above threshold) is sized for sparse
+# fields and overflows on dense ones: a globular like m13/m92 puts millions of
+# pixels over the threshold on a 61 MP frame, sep raises "internal pixel buffer
+# full", astroalign re-raises it as the misleading "Input type for source not
+# supported", and every frame fails to register. _count_sources swallows the
+# same error and returns 0, silently breaking the reference pick too. Raise the
+# limits once at import; the cost is a larger transient buffer inside sep.
+try:
+    import sep as _sep
+    _sep.set_extract_pixstack(5_000_000)
+    _sep.set_sub_object_limit(4096)
+except Exception:
+    _logger.warning("sep not available — extraction limits left at defaults")
+
 
 # ---------------------------------------------------------------------------
 # Stacking method
