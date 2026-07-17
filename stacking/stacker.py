@@ -207,12 +207,21 @@ def _count_sources(frame: np.ndarray) -> int:
     Counts on the despiked frame: with uncalibrated lights, hot pixels dwarf
     the real star count (observed: 74,805 "sources" on an sh2-92 Ha sub whose
     true star count was ~600) and would steer the reference pick.
+
+    Detection is deliberately coarse (thresh 8σ, deblending off): this is only
+    a *relative* frame-quality proxy for the reference pick, not a science
+    catalogue. On a dense field (globular, rich Milky Way) the default 3σ +
+    deblend spends ~60 s/frame carving 35 k blended sources out of the cluster
+    and nebulosity — pure waste for a comparison, and dominated by noise so the
+    ranking is worse anyway. 8σ + no deblend gives the same *ordering* of frame
+    quality in ~1.5 s/frame (40× faster on m92).
     """
     try:
         import sep
-        data = _despike(frame.astype(float))
+        data = np.ascontiguousarray(_despike(frame.astype(float)))
         bkg = sep.Background(data)
-        sources = sep.extract(data - bkg.back(), thresh=3.0, err=bkg.rms())
+        sources = sep.extract(data - bkg.back(), thresh=8.0, err=bkg.rms(),
+                              deblend_cont=1.0)
         return len(sources)
     except Exception:
         return 0
@@ -220,6 +229,9 @@ def _count_sources(frame: np.ndarray) -> int:
 
 def _despike(frame: np.ndarray) -> np.ndarray:
     """3×3 median filter: annihilates single-pixel spikes, barely touches stars.
+
+    Runs on the GPU when torch+CUDA is present (stacking/gpu_accel.py,
+    ~4 s → ~0.1 s on 61 MP frames); scipy otherwise.
 
     Used on the DETECTION side of registration only (find_transform control
     points, reference source counts) — transforms are always applied to the
@@ -231,6 +243,13 @@ def _despike(frame: np.ndarray) -> np.ndarray:
     "aligned" at identity, sky drifted 63 px over the night, every star smeared
     away — the stack's sharpest objects were the hot pixels themselves.
     """
+    try:
+        from stacking import gpu_accel
+        out = gpu_accel.median3(frame)
+        if out is not None:
+            return out
+    except Exception:
+        pass
     from scipy.ndimage import median_filter
     return median_filter(frame, size=3)
 
@@ -384,7 +403,17 @@ def _register_frames(
             continue
 
         try:
-            aligned, footprint = _astroalign.apply_transform(transform, frame, reference)
+            aligned = footprint = None
+            try:
+                from stacking import gpu_accel
+                res = gpu_accel.apply_affine(
+                    np.asarray(transform.params), frame, reference.shape)
+                if res is not None:
+                    aligned, footprint = res
+            except Exception:
+                _logger.exception("GPU warp failed — using CPU apply_transform")
+            if aligned is None:
+                aligned, footprint = _astroalign.apply_transform(transform, frame, reference)
         except Exception as exc:
             failed += 1
             _logger.warning("apply_transform failed for frame %d: %s", i, exc)
