@@ -58,14 +58,15 @@ def _fmt_candidate(c: dict) -> str:
 
 
 def _vsx_label(v: dict) -> str:
-    """Known VSX variable → 'V1673 Her (RRAB, P=0.673 d)'; new → '★ NEW'.
-
-    Absence of the vsx_name key (VSX query failed) is 'unknown', not new.
+    """Per-line VSX label. Reserves '★ NEW' for a trustworthy detection:
+    not in VSX *and* not blended. A blended not-in-VSX detection reads
+    'not in VSX (blended)' — a neighbour's flux, not a claimed discovery.
+    Absence of the vsx_name key (VSX query failed) is 'unchecked', not new.
     """
     if "vsx_name" not in v:
         return "VSX: unchecked"
     if v["vsx_name"] is None:
-        return "★ NEW (not in VSX)"
+        return "not in VSX (blended)" if v.get("blended") else "★ NEW (not in VSX)"
     typ = v.get("vsx_type") or "?"
     per = v.get("vsx_period")
     per_txt = f", P={per:.3f} d" if per else ""
@@ -73,7 +74,9 @@ def _vsx_label(v: dict) -> str:
 
 
 def _fmt_variable(v: dict) -> str:
-    crowd = "  ⚠blended" if v.get("blended") else ""
+    # The label already conveys "blended" for the not-in-VSX case; only add the
+    # ⚠ marker to a *known* blended star, where the name alone wouldn't show it.
+    crowd = "  ⚠blended" if v.get("blended") and v.get("vsx_name") else ""
     return (f"P={v['ls_period_d']:.3f} d  power {v['ls_power']:.2f}  "
             f"amp {v['amp_pp']*100:.0f}%  ({v['x']:.0f},{v['y']:.0f})  "
             f"→ {_vsx_label(v)}{crowd}")
