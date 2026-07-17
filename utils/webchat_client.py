@@ -50,16 +50,20 @@ def post_to_webchat(
     analysis job whose results are being announced; failures are logged.
     """
     url = f"{_base_url()}/api/post"
+    # job_id must be explicit: the chat UI renders job cards (the system feed
+    # is the pinned "Observatory" card), and un-tagged posts fall into the
+    # legacy /api/history feed on older server builds — stored but invisible.
+    data = {"message": message, "job_id": "system"}
     try:
         if image_path is not None:
             with open(image_path, "rb") as f:
                 resp = requests.post(
-                    url, data={"message": message},
+                    url, data=data,
                     files={"image": (Path(image_path).name, f, "image/png")},
                     timeout=timeout,
                 )
         else:
-            resp = requests.post(url, data={"message": message}, timeout=timeout)
+            resp = requests.post(url, data=data, timeout=timeout)
         resp.raise_for_status()
         return True
     except Exception:
