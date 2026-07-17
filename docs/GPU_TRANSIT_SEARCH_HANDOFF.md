@@ -102,11 +102,15 @@ Don't build a second pipeline — run `transit_search.transit.run_transit_search
 dso_name, filter_name, image_dir, output_plot_path, progress_cb, cancel_cb)` and
 find out where it falls short. Confirmed gaps as of 2026-07-17:
 
-- **No Lomb–Scargle anywhere in the repo.** The variability half of the "wide
-  net" is genuinely missing. Every scorer (`_max_dip_sigma`,
-  `_single_transit_score`, `_run_bls`) hunts **dips** — an RR Lyrae that ramps
-  *upward* will not rank, no matter how good the photometry is. This is the
-  main thing Phase 0 has to add.
+- **~~No Lomb–Scargle anywhere in the repo~~ CLOSED 2026-07-17:**
+  `_variability_search` in `transit.py` now runs LS (periods
+  `ls_min_period_d`..baseline/2) + brightness-matched excess scatter over the
+  same kept stars, with cadence-alias band exclusion (0.90–1.10 d) and
+  aperture-scale dedupe. Results in `entry["variables"]` with Gaia IDs and a
+  phase-folded plot (`<stem>_variables.png`). Validated on m92: 10/10 top
+  variables are Gaia-identified RR Lyrae-range stars, LS cost 12 s for ~3k
+  stars. The saturation veto (below) also landed (`saturation_adu`, default
+  55k; the m92 rerun rejected 22 stars and the false alert vanished).
 - **BLS can't reach RR Lyrae on a single night.** `min_bls_cycles: 2` caps the
   searched period at baseline/2 ≈ 1.7 h for a 3.4 h night; RR Lyrae are 7–17 h.
   Not a bug — just means BLS is the transit half only.
@@ -236,6 +240,19 @@ Once Phase 0 is correct: port the two hot loops to the GPU — **batch photometr
 light curves) — with CuPy/torch; 128 GB holds every light curve at once. Wrap as
 the morning job chained after the copy. Post results to the webchat over the
 Tailnet (HTTP/MQTT to the Windows social server), or write result files + plots.
+
+**Update 2026-07-17 — deploy plumbing exists; profile shifts the GPU story.**
+- Webchat posting is DONE: `utils/webchat_client.py` posts text+images to the
+  chat's existing `/api/post` over the Tailnet (`web_chat.remote_url`);
+  `scripts/spark_transit_search.py <dso> [filter]` is the Spark entry point —
+  runs the search, posts summary + both plots, posts failures too. Chain it
+  after the morning rsync to complete the deploy.
+- Measured m92 profile (56 frames, ~3k kept stars, 20 cores): registration
+  ~21 min (single-threaded astroalign, ~35 s/frame) ≫ photometry ~2 min ≫
+  BLS 11 s ≈ LS 12 s ≫ Gaia candidate lookup ~10 s each (serial cone
+  searches). The "hot loops" are already cheap at current scale — **the GPU
+  case is registration** (or batching many nights/targets at once), not
+  LS/BLS. Re-profile before porting anything.
 
 ## First step on the Spark
 

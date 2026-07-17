@@ -792,27 +792,38 @@ def _gaia_solve_wcs(
         return None
 
 
-def _identify_candidates(
+def _solve_field_wcs(
     reference_path: Path,
-    candidates: list[dict],
     astap_exe: str,
+    positions: np.ndarray,
+    star_flux: np.ndarray,
+    progress_cb: Optional[Callable[[str], None]] = None,
+):
+    """WCS for the reference pixel grid: ASTAP first, Gaia point-match fallback.
+
+    Solved once per search and shared by every list that needs sky coordinates
+    (transit candidates, variables). Returns None when neither path works.
+    """
+    wcs = _plate_solve_wcs(reference_path, astap_exe, progress_cb)
+    if wcs is None:
+        wcs = _gaia_solve_wcs(reference_path, positions, star_flux, progress_cb)
+    return wcs
+
+
+def _identify_candidates(
+    wcs,
+    candidates: list[dict],
     match_radius_arcsec: float = 3.0,
     progress_cb: Optional[Callable[[str], None]] = None,
-    positions: Optional[np.ndarray] = None,
-    star_flux: Optional[np.ndarray] = None,
 ) -> None:
     """Add RA/Dec and the nearest Gaia source to each candidate, in place.
 
-    Plate-solves the reference frame (whose pixel grid the candidate x,y live in),
-    converts each (x, y) to sky coordinates, and cone-searches Gaia DR3 for the
-    nearest source. When ASTAP is unavailable or fails, falls back to the
-    Gaia point-match solve (needs ``positions``/``star_flux``). Fully
-    fail-safe: any solver/network/query failure leaves the candidates
-    unchanged apart from any RA/Dec already filled in.
+    ``wcs`` maps the reference pixel grid (where candidate x,y live) to sky —
+    from ``_solve_field_wcs``. Converts each (x, y) to sky coordinates and
+    cone-searches Gaia DR3 for the nearest source. Fully fail-safe: any
+    network/query failure leaves the candidates unchanged apart from any
+    RA/Dec already filled in.
     """
-    wcs = _plate_solve_wcs(reference_path, astap_exe, progress_cb)
-    if wcs is None and positions is not None and star_flux is not None:
-        wcs = _gaia_solve_wcs(reference_path, positions, star_flux, progress_cb)
     if wcs is None:
         return
 
@@ -848,6 +859,148 @@ def _identify_candidates(
             if progress_cb:
                 progress_cb("identify: Gaia query failed, leaving remaining IDs blank")
             break
+
+
+def _variability_search(
+    times_mjd: np.ndarray,
+    rel_flux: np.ndarray,
+    positions: np.ndarray,
+    star_flux: np.ndarray,
+    kept_indices: np.ndarray,
+    aperture_r: float,
+    top_n: int = 10,
+    min_period_d: float = 0.05,
+    alias_band: tuple[float, float] = (0.90, 1.10),
+    progress_cb: Optional[Callable[[str], None]] = None,
+) -> list[dict]:
+    """Lomb–Scargle variable-star search over the kept stars.
+
+    The transit half of the pipeline only hunts dips — an RR Lyrae that ramps
+    upward never ranks. This is the other half of the wide net: a per-star LS
+    periodogram (periods ``min_period_d`` .. baseline/2) plus an excess-scatter
+    statistic (robust RMS over a brightness-binned noise floor, so intrinsically
+    noisy faint stars don't drown real variables).
+
+    Validated on m92 (3 nights): recovered 8+ catalogued RR Lyrae with periods
+    to 0.3–5 %. Two artifact classes from that run are handled here:
+    periods inside ``alias_band`` (the ~1 d observing cadence) are dropped, and
+    detections closer than 1.5 aperture radii are deduped to the strongest
+    (DAOStarFinder double-detects bright stars a few px apart).
+
+    Returns up to ``top_n`` dicts ranked by LS power, each carrying an internal
+    ``_star_idx`` for plotting.
+    """
+    from astropy.timeseries import LombScargle
+
+    baseline = float(times_mjd.max() - times_mjd.min())
+    max_period_d = baseline / 2.0
+    if max_period_d <= min_period_d or len(kept_indices) == 0:
+        return []
+
+    freq = np.linspace(1.0 / max_period_d, 1.0 / min_period_d, 20000)
+    results: list[dict] = []
+    tick = max(1, len(kept_indices) // 5)
+    for n_done, idx in enumerate(kept_indices, start=1):
+        y = rel_flux[:, idx]
+        ok = np.isfinite(y)
+        ts, ys = times_mjd[ok], y[ok]
+        med = float(np.median(ys))
+        mad = float(np.median(np.abs(ys - med)))
+        ls = LombScargle(ts, ys)
+        power = ls.power(freq)
+        i_best = int(np.argmax(power))
+        best_power = float(power[i_best])
+        results.append({
+            "_star_idx": int(idx),
+            "x": float(positions[idx, 0]),
+            "y": float(positions[idx, 1]),
+            "n_valid": int(ok.sum()),
+            "_flux": float(star_flux[idx]),
+            "robust_rms": 1.4826 * mad,
+            "amp_pp": float(np.percentile(ys, 95) - np.percentile(ys, 5)),
+            "ls_power": best_power,
+            "ls_period_d": float(1.0 / freq[i_best]),
+            "ls_fap": float(ls.false_alarm_probability(best_power)),
+        })
+        if progress_cb and n_done % tick == 0:
+            progress_cb(f"variables: LS {n_done}/{len(kept_indices)} stars…")
+
+    # Excess scatter over the brightness-matched noise floor.
+    rms = np.array([r["robust_rms"] for r in results])
+    logb = np.log10(np.clip([r["_flux"] for r in results], 1.0, None))
+    floor = np.ones_like(rms)
+    bins = np.quantile(logb, np.linspace(0, 1, 15))
+    for lo, hi in zip(bins[:-1], bins[1:]):
+        m = (logb >= lo) & (logb <= hi)
+        if m.sum() >= 5:
+            floor[m] = np.median(rms[m])
+    for r, f in zip(results, floor):
+        r["scatter_excess"] = float(r["robust_rms"] / f) if f > 0 else 0.0
+
+    lo_alias, hi_alias = alias_band
+    ranked = sorted(
+        (r for r in results if not lo_alias < r["ls_period_d"] < hi_alias),
+        key=lambda r: r["ls_power"], reverse=True,
+    )
+
+    # Dedupe close detections of the same star, strongest first.
+    dedupe_r = 1.5 * aperture_r
+    picked: list[dict] = []
+    for r in ranked:
+        if all(np.hypot(r["x"] - p["x"], r["y"] - p["y"]) >= dedupe_r
+               for p in picked):
+            picked.append(r)
+        if len(picked) >= top_n:
+            break
+
+    for r in picked:
+        del r["_flux"]
+        for key in ("robust_rms", "amp_pp", "ls_power", "scatter_excess"):
+            r[key] = round(r[key], 4)
+        r["ls_period_d"] = round(r["ls_period_d"], 5)
+        r["ls_fap"] = float(f"{r['ls_fap']:.3g}")
+        r["x"] = round(r["x"], 2)
+        r["y"] = round(r["y"], 2)
+    return picked
+
+
+def _plot_variables(
+    times_mjd: np.ndarray,
+    rel_flux: np.ndarray,
+    variables: list[dict],
+    output_path: Path,
+    title: str,
+) -> None:
+    """Raw + phase-folded light curves for the top variables, dark theme."""
+    n = len(variables)
+    fig = Figure(figsize=(12, 2.4 * n), dpi=100)
+    FigureCanvasAgg(fig)
+    fig.patch.set_facecolor(_DARK_BG)
+    t0 = float(times_mjd.min())
+    for i, v in enumerate(variables):
+        y = rel_flux[:, v["_star_idx"]]
+        ok = np.isfinite(y)
+        ts, ys = times_mjd[ok], y[ok]
+        ax1 = fig.add_subplot(n, 2, 2 * i + 1)
+        ax2 = fig.add_subplot(n, 2, 2 * i + 2)
+        for ax in (ax1, ax2):
+            ax.set_facecolor(_DARK_AXES)
+            ax.tick_params(colors="white", labelsize=7)
+            for spine in ax.spines.values():
+                spine.set_edgecolor("#444466")
+        ax1.plot(ts - t0, ys, ".", ms=4, color="#7fd4ff")
+        ax1.set_title(
+            f"({v['x']:.0f},{v['y']:.0f})  P={v['ls_period_d']:.3f} d  "
+            f"power={v['ls_power']:.2f}  FAP={v['ls_fap']:.1e}",
+            fontsize=8, color="white")
+        ax1.set_ylabel("rel flux", color="white", fontsize=7)
+        phase = ((ts - t0) / v["ls_period_d"]) % 1.0
+        ax2.plot(phase, ys, ".", ms=4, color="#7fd4ff")
+        ax2.plot(phase + 1, ys, ".", ms=4, color="#4a7a99")
+        ax2.set_title("phase-folded", fontsize=8, color="white")
+    fig.suptitle(title, color="white", fontsize=10)
+    fig.tight_layout(rect=(0, 0, 1, 0.98))
+    fig.savefig(output_path, facecolor=_DARK_BG)
 
 
 def _register_only(
@@ -1243,6 +1396,9 @@ def run_transit_search(
     min_bls_power = float(cfg.get("min_bls_power", 0.01))
     max_in_transit_factor = float(cfg.get("max_in_transit_factor", 2.5))
     identify_candidates = bool(cfg.get("identify_candidates", True))
+    saturation_adu = float(cfg.get("saturation_adu", 55000.0))
+    variables_top_n = int(cfg.get("variables_top_n", 10))
+    ls_min_period_d = float(cfg.get("ls_min_period_d", 0.05))
     gaia_match_radius_arcsec = float(cfg.get("gaia_match_radius_arcsec", 3.0))
     st_min_dur_h = float(cfg.get("single_transit_min_dur_h", 0.3))
     st_max_dur_h = float(cfg.get("single_transit_max_dur_h", 4.0))
@@ -1398,12 +1554,31 @@ def run_transit_search(
         (xs >= edge_margin) & (xs < frame_w - edge_margin)
         & (ys >= edge_margin) & (ys < frame_h - edge_margin)
     )
-    keep_mask = on_chip & (valid_counts >= min_valid)
+    # Saturation veto: a star clipped at the full well produces fake dips —
+    # the clipped aperture flux tracks seeing/transparency night to night, and
+    # brightest-star artifacts preferentially top the score table (an m92 run
+    # scored a G=9.8 star pegged at 64k ADU as a field_z=23 "transit" and
+    # pushed an alert). Peak = max pixel in a 7×7 window around each centroid
+    # across all frames; frames are registered, so one window per star works.
+    unsaturated = np.ones(n_stars, dtype=bool)
+    if saturation_adu > 0:
+        ix = np.clip(np.round(xs).astype(int), 3, frame_w - 4)
+        iy = np.clip(np.round(ys).astype(int), 3, frame_h - 4)
+        sat_peak = np.full(n_stars, -np.inf, dtype=np.float64)
+        for frame in frames:
+            for dy in range(-3, 4):
+                for dx in range(-3, 4):
+                    np.fmax(sat_peak, frame[iy + dy, ix + dx], out=sat_peak)
+        unsaturated = sat_peak < saturation_adu
+    keep_mask = on_chip & (valid_counts >= min_valid) & unsaturated
     kept_indices = np.flatnonzero(keep_mask)
     n_kept = int(kept_indices.size)
+    n_saturated = int(n_stars - unsaturated.sum())
     _notify(
         f"filtering: {n_kept}/{n_stars} stars pass "
-        f"(≥{min_valid} valid pts, ≥{edge_margin:.0f}px from edge)"
+        f"(≥{min_valid} valid pts, ≥{edge_margin:.0f}px from edge"
+        + (f", {n_saturated} saturated ≥{saturation_adu:.0f} ADU rejected"
+           if n_saturated else "") + ")"
     )
     if n_kept == 0:
         raise ValueError(
@@ -1509,14 +1684,34 @@ def run_transit_search(
     top = per_star[:top_n]
 
     _ck()
-    # Tag the top candidates with sky coordinates + nearest Gaia source.
+    # The other half of the wide net: periodic variables (RR Lyrae etc.),
+    # which the dip-hunting scorers above are structurally blind to.
+    variables: list[dict] = []
+    if variables_top_n > 0:
+        _notify(f"variables: Lomb–Scargle over {n_kept} stars…")
+        variables = _variability_search(
+            times_mjd, rel_flux, positions,
+            np.nanmedian(flux_matrix, axis=0), kept_indices, aperture_r,
+            top_n=variables_top_n, min_period_d=ls_min_period_d,
+            progress_cb=progress_cb,
+        )
+        _notify(f"variables: {len(variables)} candidate variable(s)")
+
+    _ck()
+    # Tag candidates and variables with sky coordinates + nearest Gaia source.
     if identify_candidates:
+        wcs = _solve_field_wcs(
+            accepted[0], astap_exe, positions,
+            np.nanmedian(flux_matrix, axis=0), progress_cb)
         _identify_candidates(
-            accepted[0], top, astap_exe,
+            wcs, top,
             match_radius_arcsec=gaia_match_radius_arcsec,
             progress_cb=progress_cb,
-            positions=positions,
-            star_flux=np.nanmedian(flux_matrix, axis=0),
+        )
+        _identify_candidates(
+            wcs, variables,
+            match_radius_arcsec=gaia_match_radius_arcsec,
+            progress_cb=progress_cb,
         )
 
     # --- Significance of the top candidate --------------------------------- #
@@ -1580,6 +1775,18 @@ def run_transit_search(
         title=f"{dso_name} [{filter_name}]",
     )
 
+    variables_plot_path = None
+    if variables:
+        variables_plot_path = output_plot_path.with_name(
+            output_plot_path.stem + "_variables" + output_plot_path.suffix)
+        try:
+            _plot_variables(
+                times_mjd, rel_flux, variables, variables_plot_path,
+                title=f"{dso_name} [{filter_name}] — top variables (LS)")
+        except Exception:
+            _logger.exception("variables plot failed")
+            variables_plot_path = None
+
     entry = {
         "updated": date.today().isoformat(),
         "frame_count": n_frames,
@@ -1592,9 +1799,15 @@ def run_transit_search(
             {k: v for k, v in c.items() if not k.startswith("_")}
             for c in top
         ],
+        "variables": [
+            {k: v for k, v in v.items() if not k.startswith("_")}
+            for v in variables
+        ],
     }
     if field_image_path is not None and field_image_path.exists():
         entry["field_image"] = str(field_image_path)
+    if variables_plot_path is not None and variables_plot_path.exists():
+        entry["variables_plot"] = str(variables_plot_path)
     save_transits(dso_dir.name, filter_name, entry)
     _notify("done.")
     return entry

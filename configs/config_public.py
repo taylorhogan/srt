@@ -7,7 +7,7 @@ class PublicConfig():
 
         },
         "version": {
-            "date": "2026.7.17.3"
+            "date": "2026.7.17.4"
         },
 
         "logger": {
@@ -83,6 +83,9 @@ class PublicConfig():
             "mastodon_mirror": False,
             "max_history": 500,
             "upload_dir": "saved_dso",
+            # Where remote machines (the Spark) reach this chat's /api/post
+            # over the Tailnet. Same-machine callers fall back to localhost.
+            "remote_url": "http://100.95.7.19:8095",
         },
 
         "sync": {
@@ -147,6 +150,18 @@ class PublicConfig():
             # searches at once multiplies this; lower it if you routinely run 2+
             # concurrently and want to avoid CPU oversubscription.
             "max_workers": 0,
+            # Reject stars whose peak pixel reaches this many ADU in any frame
+            # (7x7 window around the centroid). A star clipped at the full well
+            # produces fake dips that preferentially top the score table —
+            # validated on m92 where a G=9.8 star scored field_z=23 and pushed
+            # a false alert. 0 disables the veto.
+            "saturation_adu": 55000,
+            # Variable-star search (Lomb-Scargle) over the same kept stars:
+            # how many top variables to report, and the shortest period
+            # searched (0.05 d ~ 1.2 h, below any RR Lyrae, catches SX Phe).
+            # The longest period searched is baseline/2.
+            "variables_top_n": 10,
+            "ls_min_period_d": 0.05,
             # Robust field-outlier z-score above which the top candidate is
             # considered a strong single-night detection. When the top
             # candidate's field_z meets/exceeds this, a push notification is
