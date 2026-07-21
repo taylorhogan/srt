@@ -1254,19 +1254,39 @@ def live_cmd(words: list[str], account: str) -> None:
     the longest exposure that isn't blown out). Safe to run while imaging: it only
     reads the camera — serialized against the safety snapshot by the camera lock —
     and never moves hardware or touches the lights. Runs in a background job
-    because the exposure sweep takes ~15-20 s. example: live
+    because the exposure sweep takes ~15-20 s.
+
+    An optional frame count averages that many frames at the chosen exposure to
+    pull faint sky detail out of the noise; omit it for a single frame.
+    examples:  live   |   live 8
     """
+    # Optional trailing integer = frames to average-stack (default 1 = one frame).
+    stack_frames = 1
+    if len(words) > 2:
+        try:
+            stack_frames = int(words[2])
+        except ValueError:
+            social_server.post_social_message(
+                "Usage: live [frames] — frames must be a positive integer (e.g. live 8)")
+            return
+        if stack_frames < 1:
+            social_server.post_social_message("Usage: live [frames] — frames must be >= 1")
+            return
+        stack_frames = min(stack_frames, 25)  # cap so a typo can't tie up the camera
+
     def _run() -> None:
         from sentry import inside_camera_server  # local import: avoids import cycle
         cfg = config.data()
         out_path = cfg["camera safety"]["sky_view"]
+        note = f", stacking {stack_frames} frames" if stack_frames > 1 else ""
         social_server.post_social_message(
-            "Capturing sky view — optimizing exposure, lights stay off…")
+            f"Capturing sky view — optimizing exposure, lights stay off{note}…")
         try:
             ok = inside_camera_server.take_snapshot(
                 light=False,
                 out_path=out_path,
                 scorer=inside_camera_server.dark_sky_score,
+                stack_frames=stack_frames,
             )
         except Exception as e:  # noqa: BLE001
             _logger.exception("live sky capture failed")
@@ -1276,8 +1296,9 @@ def live_cmd(words: list[str], account: str) -> None:
             social_server.post_social_message(
                 "Sky view capture failed (no frame from the camera).")
             return
-        social_server.post_social_message(
-            "Live sky view from the scope camera:", image=out_path)
+        label = (f"Live sky view — {stack_frames} frames stacked:" if stack_frames > 1
+                 else "Live sky view from the scope camera:")
+        social_server.post_social_message(label, image=out_path)
 
     jobs.spawn(_run)
 

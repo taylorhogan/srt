@@ -115,25 +115,28 @@ def camera_session():
         yield
 
 
-def take_snapshot(test_path=None, light=True, out_path=None, scorer=None):
+def take_snapshot(test_path=None, light=True, out_path=None, scorer=None, stack_frames=1):
     """Serialize all camera access, then delegate to :func:`_take_snapshot`.
 
     The lock makes each snapshot atomic with respect to both the USB camera and
     the inside-light save/restore, so concurrent callers queue instead of
     corrupting each other (see ``_camera_lock``).
 
-    light:    when False, the inside light is left untouched (never turned on) —
-              used by the `live` sky view so imaging isn't lit up.
-    out_path: write the chosen frame here instead of the shared scope_view.jpg
-              (so a dark sky frame never clobbers the lit safety snapshot).
-    scorer:   exposure-scoring function for the sweep (defaults to the lit-scene
-              best_exposure_score; the sky view passes dark_sky_score).
+    light:        when False, the inside light is left untouched (never turned on)
+                  — used by the `live` sky view so imaging isn't lit up.
+    out_path:     write the chosen frame here instead of the shared scope_view.jpg
+                  (so a dark sky frame never clobbers the lit safety snapshot).
+    scorer:       exposure-scoring function for the sweep (defaults to the
+                  lit-scene best_exposure_score; the sky view passes dark_sky_score).
+    stack_frames: average this many frames at the chosen exposure (default 1) to
+                  beat read/shot noise down on a dark sky view.
     """
     with _camera_lock:
-        return _take_snapshot(test_path, light=light, out_path=out_path, scorer=scorer)
+        return _take_snapshot(test_path, light=light, out_path=out_path,
+                              scorer=scorer, stack_frames=stack_frames)
 
 
-def _take_snapshot(test_path=None, light=True, out_path=None, scorer=None):
+def _take_snapshot(test_path=None, light=True, out_path=None, scorer=None, stack_frames=1):
     _loger.info("Starting camera snapshot (light=%s)", light)
     cfg = config.data()
     print (utils.set_install_dir())
@@ -271,6 +274,35 @@ def _take_snapshot(test_path=None, light=True, out_path=None, scorer=None):
     best_index = scores.index(best_score)
     best_picture = pictures[best_index]
     _loger.info("Selected exposure index %s with score %.4f", best_index, best_score)
+
+    # Optional multi-frame averaging at the chosen exposure (the `live <frames>`
+    # argument): reopen the camera, settle at best_exposure, and mean-combine
+    # stack_frames frames so read/shot noise drops ~sqrt(N) and faint sky detail
+    # (skyglow, clouds, dim stars) lifts out. The exposure sweep already released
+    # the camera, so we take a fresh session mirroring the dark-sky setup.
+    if stack_frames > 1:
+        best_exposure = exposure_values[best_index]
+        acc = best_picture.astype(np.float32)
+        got = 1
+        vid2 = cv.VideoCapture(0, cv.CAP_DSHOW)
+        if vid2.isOpened():
+            vid2.set(cv.CAP_PROP_AUTO_EXPOSURE, 1)
+            time.sleep(0.5)
+            if not light:
+                vid2.set(cv.CAP_PROP_GAIN, 100)
+                vid2.set(cv.CAP_PROP_BRIGHTNESS, 0)
+            vid2.set(cv.CAP_PROP_EXPOSURE, best_exposure)
+            time.sleep(0.5)
+            for _ in range(10):
+                vid2.read()  # discard settle frames at the chosen exposure
+            for _ in range(stack_frames - 1):
+                ret, frame = vid2.read()
+                if ret:
+                    acc += frame.astype(np.float32)
+                    got += 1
+            vid2.release()
+        best_picture = (acc / got).round().astype(best_picture.dtype)
+        _loger.info("Stacked %d/%d frames at exposure %s", got, stack_frames, best_exposure)
 
 
 

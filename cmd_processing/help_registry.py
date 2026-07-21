@@ -286,9 +286,10 @@ HELP: dict[str, dict] = {
         "category": "super",
         "summary": "Post a live, no-light view of the sky from the scope-top webcam "
                    "(same camera as vision safety), exposure-optimized for a dark "
-                   "sky. Lights stay off; safe to run while imaging.",
-        "usage": ["live"],
-        "examples": ["live"],
+                   "sky. Lights stay off; safe to run while imaging. An optional "
+                   "frame count averages that many frames to cut noise (default 1).",
+        "usage": ["live [frames]"],
+        "examples": ["live", "live 8"],
     },
     "audio": {
         "category": "super",
