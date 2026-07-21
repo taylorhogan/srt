@@ -285,15 +285,14 @@ def _take_snapshot(test_path=None, light=True, out_path=None, scorer=None, stack
         if light:
             exposure_values = list(range(-1, -12, -1))
         else:
-            # This webcam (DSHOW) caps exposure at -1 (~0.5s), so exposure alone
-            # can't brighten a dark sky — the real levers are GAIN and BRIGHTNESS.
-            # Probed ranges on this camera: gain 0..100 (default 0), brightness
-            # -64..64 (default -64, i.e. pinned to its floor, which crushes the
-            # night sky to black). Push both toward the top so faint sky glow /
-            # clouds register, then sweep the longest exposures (-1..-6). Give the
-            # driver a beat to apply gain/brightness before reading them back —
-            # setting and immediately get()-ing returns the stale value.
-            exposure_values = list(range(-1, -7, -1))
+            # This webcam (DSHOW) is BROKEN at exposure -1: at max gain it emits a
+            # corrupt/warped frame on ~every other read (measured: 10/10 frames
+            # corrupt at -1, 0/10 at -2..-6, CPU idle — it's the setting, not load
+            # or settling). -1 isn't even brighter (its corruption drags the mean
+            # DOWN). So start the sweep at -2, the longest *stable* exposure, and
+            # recover a dark sky with GAIN + frame stacking rather than a longer
+            # sub. Brightness is also lifted off its -64 floor.
+            exposure_values = list(range(-2, -7, -1))
             vid.set(cv.CAP_PROP_GAIN, 100)       # max analog/digital gain
             vid.set(cv.CAP_PROP_BRIGHTNESS, 0)   # lift off the -64 floor to neutral
             time.sleep(0.5)
