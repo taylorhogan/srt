@@ -988,6 +988,32 @@ def _fib_counts(max_n: int) -> list[int]:
     return counts
 
 
+def _downsample_mean(frame: np.ndarray, scale: int) -> np.ndarray:
+    """Block-average ``frame`` by an integer ``scale`` (NaN-aware).
+
+    Replaces stride decimation (``frame[::scale, ::scale]``). Nearest-neighbour
+    striding aliases the sensor's fixed-pattern texture (hot pixels, amp glow,
+    column structure) into visible moiré in the downscaled golden/convergence
+    preview; block-averaging anti-aliases and beats the noise down instead. Edge
+    pixels that don't fill a whole block are cropped; all-NaN blocks (the
+    registration footprint border) stay NaN.
+    """
+    if scale <= 1:
+        return frame
+    h, w = frame.shape
+    h2, w2 = h - h % scale, w - w % scale
+    sub = np.ascontiguousarray(frame[:h2, :w2], dtype=np.float32)
+    blocks = sub.reshape(h2 // scale, scale, w2 // scale, scale)
+    finite = np.isfinite(blocks)
+    summed = np.where(finite, blocks, 0.0).sum(axis=(1, 3))
+    count = finite.sum(axis=(1, 3))
+    return np.divide(
+        summed, count,
+        out=np.full(summed.shape, np.nan, dtype=np.float32),
+        where=count > 0,
+    )
+
+
 def _prepare_for_convergence(
     paths: list[Path],
     max_fwhm_multiplier: float = 1.25,
@@ -1076,11 +1102,11 @@ def _prepare_for_convergence(
             progress_cb(f"loading {len(accepted)} frames (no registration)…")
         frame0 = _load_fits_2d(accepted[0])
         scale = 1 if downscale_to is None else max(1, min(frame0.shape) // downscale_to)
-        frames_out = [frame0[::scale, ::scale]]
+        frames_out = [_downsample_mean(frame0, scale)]
         frame0 = None
         for p in accepted[1:]:
             f = _load_fits_2d(p)
-            frames_out.append(f[::scale, ::scale])
+            frames_out.append(_downsample_mean(f, scale))
             f = None
         return frames_out, accepted, fwhm_values
 
@@ -1107,7 +1133,7 @@ def _prepare_for_convergence(
     reference_det = _despike(reference)
     scale = 1 if downscale_to is None else max(1, min(reference.shape) // downscale_to)
 
-    result_frames: list[np.ndarray] = [reference[::scale, ::scale]]
+    result_frames: list[np.ndarray] = [_downsample_mean(reference, scale)]
     result_accepted: list[Path] = [accepted[actual_ref_idx]]
     failed, poor_qa = 0, 0
 
@@ -1149,7 +1175,7 @@ def _prepare_for_convergence(
         frame = None  # free full-res copy
         aligned = aligned.astype(np.float32)
         aligned[footprint.astype(bool)] = np.nan
-        result_frames.append(aligned[::scale, ::scale])
+        result_frames.append(_downsample_mean(aligned, scale))
         result_accepted.append(p)
 
     reference = None  # free reference
