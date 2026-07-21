@@ -514,6 +514,25 @@ def _child_main(job_id: Optional[str], target: Callable[..., Any],
     except Exception:
         pass
     set_current_job(job_id)
+    # Process-isolated jobs (snr/stack: astroalign over dozens of 62MP frames
+    # across thread pools) otherwise run at NORMAL priority and can saturate the
+    # machine, starving the real-time USB camera capture — which corrupts not
+    # only `live` frames but the roof/park vision-safety snapshots that share
+    # that camera. Drop this child below normal so it always yields to real-time
+    # work; the diagnostic just takes a little longer when the box is busy.
+    try:
+        if hasattr(os, "nice"):                       # POSIX (the Spark)
+            os.nice(10)
+        else:                                         # Windows
+            import ctypes
+            _BELOW_NORMAL_PRIORITY_CLASS = 0x00004000
+            _k32 = ctypes.windll.kernel32
+            _k32.GetCurrentProcess.restype = ctypes.c_void_p
+            _k32.SetPriorityClass.argtypes = [ctypes.c_void_p, ctypes.c_uint]
+            if not _k32.SetPriorityClass(_k32.GetCurrentProcess(), _BELOW_NORMAL_PRIORITY_CLASS):
+                _logger.debug("SetPriorityClass failed (err %s)", ctypes.get_last_error())
+    except Exception:
+        _logger.debug("could not lower job process priority", exc_info=True)
     try:
         target(*args, **kwargs)
         _sys.exit(0)

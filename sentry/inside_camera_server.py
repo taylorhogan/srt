@@ -115,6 +115,72 @@ def camera_session():
         yield
 
 
+def _capture_burst(exposure, n, light):
+    """Reopen the USB camera at a fixed exposure and grab up to ``n`` frames.
+
+    Mirrors the dark-sky setup (max gain, lifted brightness) when ``light`` is
+    False, matching the sweep. Used for the final robust capture / multi-frame
+    stack. Returns a list of frames (possibly shorter than ``n``).
+    """
+    frames = []
+    vid = cv.VideoCapture(0, cv.CAP_DSHOW)
+    if not vid.isOpened():
+        _loger.warning("burst capture: camera failed to open")
+        return frames
+    vid.set(cv.CAP_PROP_AUTO_EXPOSURE, 1)
+    time.sleep(0.5)
+    if not light:
+        vid.set(cv.CAP_PROP_GAIN, 100)
+        vid.set(cv.CAP_PROP_BRIGHTNESS, 0)
+    vid.set(cv.CAP_PROP_EXPOSURE, exposure)
+    time.sleep(0.5)
+    for _ in range(10):
+        vid.read()  # discard settle frames at the chosen exposure
+    for _ in range(n):
+        ret, frame = vid.read()
+        if ret:
+            frames.append(frame)
+    vid.release()
+    return frames
+
+
+def _combine_stable(frames, stack_frames=1):
+    """Reject torn/smeared outlier frames, then combine.
+
+    A frame corrupted by camera starvation (e.g. a concurrent snr/stack job
+    hogging the CPU) differs grossly from the per-pixel median of the burst.
+    Reject frames whose RMS deviation from that median is a MAD outlier, then:
+    a single-frame request returns the cleanest surviving *real* frame; a stack
+    averages the survivors (noise ~ 1/sqrt(N)). Returns None for an empty list.
+    """
+    if not frames:
+        return None
+    if len(frames) == 1:
+        return frames[0]
+    arr = np.stack([f.astype(np.float32) for f in frames], axis=0)
+    med = np.median(arr, axis=0)
+    devs = np.sqrt(np.mean((arr - med) ** 2, axis=(1, 2, 3)))
+    d_med = float(np.median(devs))
+    mad = float(np.median(np.abs(devs - d_med)))
+    # +1 keeps an all-clean burst intact (devs ~ noise, mad ~ 0); torn frames
+    # (RMS dev tens of ADU) sit far above and get dropped.
+    thresh = d_med + 3.0 * 1.4826 * mad + 1.0
+    keep = devs <= thresh
+    if not keep.any():
+        keep[int(np.argmin(devs))] = True
+    dropped = int((~keep).sum())
+    if dropped:
+        _loger.info("Rejected %d/%d torn frame(s) (RMS devs %s, thresh %.1f)",
+                    dropped, len(frames), np.round(devs, 1).tolist(), thresh)
+    kept = arr[keep]
+    if stack_frames > 1:
+        out = kept.mean(axis=0)
+    else:
+        surv_idx = np.where(keep)[0]              # cleanest surviving real frame
+        out = arr[surv_idx[int(np.argmin(devs[keep]))]]
+    return out.round().astype(frames[0].dtype)
+
+
 def take_snapshot(test_path=None, light=True, out_path=None, scorer=None, stack_frames=1):
     """Serialize all camera access, then delegate to :func:`_take_snapshot`.
 
@@ -259,69 +325,46 @@ def _take_snapshot(test_path=None, light=True, out_path=None, scorer=None, stack
 
         vid.release()
 
-    # Restore the inside light to its prior state (only if we changed it).
-    if light:
-        if not incoming_inside_light_status:
-            super_user_commands.turn_inside_light_off(dev_map)
-        else:
-            super_user_commands.turn_inside_light_on(dev_map)
+    def _restore_light():
+        # Restore the inside light to its prior state (only if we changed it).
+        if light:
+            if not incoming_inside_light_status:
+                super_user_commands.turn_inside_light_off(dev_map)
+            else:
+                super_user_commands.turn_inside_light_on(dev_map)
 
     if not scores:
         _loger.error("No valid frames captured at any exposure")
+        _restore_light()
         return False
 
     best_score = max(scores)
     best_index = scores.index(best_score)
-    best_picture = pictures[best_index]
-    _loger.info("Selected exposure index %s with score %.4f", best_index, best_score)
+    best_exposure = exposure_values[best_index]
+    _loger.info("Selected exposure index %s (exp %s) with score %.4f",
+                best_index, best_exposure, best_score)
 
-    # Optional multi-frame averaging at the chosen exposure (the `live <frames>`
-    # argument): reopen the camera, settle at best_exposure, and mean-combine
-    # stack_frames frames so read/shot noise drops ~sqrt(N) and faint sky detail
-    # (skyglow, clouds, dim stars) lifts out. The exposure sweep already released
-    # the camera, so we take a fresh session mirroring the dark-sky setup.
+    # Robust final capture (see _combine_stable): a concurrent CPU-heavy job
+    # (snr/stack) can starve the USB capture and hand back torn/smeared frames.
+    # Grab a short burst at the chosen exposure and reject the torn ones, so
+    # neither a `live` stack nor a roof/park safety snapshot is ever built on a
+    # corrupt frame. The light stays on through the burst (needed for the lit
+    # safety scene) and is restored afterwards; n >= 3 gives the outlier
+    # rejection power even for a plain single-frame snapshot. stack_frames > 1
+    # averages the survivors so faint sky detail lifts out of the noise.
+    burst = _capture_burst(best_exposure, max(3, stack_frames), light)
+    burst.append(pictures[best_index])  # the sweep already captured one good sample
+    best_picture = _combine_stable(burst, stack_frames)
+
+    _restore_light()
+
+    if best_picture is None:
+        _loger.error("No usable frames after rejecting torn captures")
+        return False
     if stack_frames > 1:
-        best_exposure = exposure_values[best_index]
-        acc = best_picture.astype(np.float32)
-        got = 1
-        vid2 = cv.VideoCapture(0, cv.CAP_DSHOW)
-        if vid2.isOpened():
-            vid2.set(cv.CAP_PROP_AUTO_EXPOSURE, 1)
-            time.sleep(0.5)
-            if not light:
-                vid2.set(cv.CAP_PROP_GAIN, 100)
-                vid2.set(cv.CAP_PROP_BRIGHTNESS, 0)
-            vid2.set(cv.CAP_PROP_EXPOSURE, best_exposure)
-            time.sleep(0.5)
-            for _ in range(10):
-                vid2.read()  # discard settle frames at the chosen exposure
-            for _ in range(stack_frames - 1):
-                ret, frame = vid2.read()
-                if ret:
-                    acc += frame.astype(np.float32)
-                    got += 1
-            vid2.release()
-        best_picture = (acc / got).round().astype(best_picture.dtype)
-        _loger.info("Stacked %d/%d frames at exposure %s", got, stack_frames, best_exposure)
+        _loger.info("Stacked %d frames at exposure %s", stack_frames, best_exposure)
 
-
-
-    picture = []
-    scores = []
-    # for gamma_val in np.arange(0.1, 4.5, 0.1):
-    #     print(f"gamma: {gamma_val}")
-    #     result = gamma_correction(best_picture, gamma=gamma_val)
-    #     scores.append(best_exposure_score(result))
-    #     picture.append(result)
-    #
-    # best_score = max(scores)
-    # best_index = scores.index(best_score)
-    # best_picture = picture[best_index]
     cv.imwrite(to_path, best_picture)
-    #cv.imshow('Image Window Title', best_picture)
-    #cv.waitKey(0)
-    #cv.destroyAllWindows()
-
     print(f"best score:  {best_score} of: {scores}")
     return True
 
