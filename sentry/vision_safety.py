@@ -84,7 +84,7 @@ def find_template(image, template_image_path):
 
 
 
-def visual_status():
+def _visual_status_once():
     global last_match
 
     # Snapshot and read must be atomic: take_snapshot() clobbers scope_view.jpg
@@ -216,6 +216,42 @@ def visual_status():
     mod_date = time.ctime(os.path.getmtime(cfg["camera safety"]["scope_view"]))
     return parked,  closed, open, mod_date
 
+
+def visual_status(retries: int = 2, delay: float = 2.0):
+    """Report (parked, closed, open, mod_date) from the inside camera, retrying
+    to ride out a garbage webcam frame.
+
+    This is the single vision entry point for every mount/roof safety decision
+    (roof open/close, end-of-night shutdown, pre-flats check, ``status``). A
+    single torn/starved/unreadable snapshot reports ``parked=False`` with
+    ``last_match["trusted"] == False`` even when the scope is really parked —
+    which once wrongly blocked the end-of-night roof close (the mount was
+    confirmed parked by PWI4, but one corrupt frame said otherwise, so the roof
+    was left open all night). A fresh snapshot almost always comes back clean,
+    so re-take it up to *retries* extra times whenever the read is untrusted,
+    and return the first trusted result.
+
+    ``trusted`` is exactly "scope confirmed parked", so this only re-tries when
+    the frame gives us no usable state. A genuinely-unparked scope stays
+    untrusted through every retry and the (still-safe) not-parked result is
+    returned unchanged — callers fail safe exactly as before, just after having
+    given a garbage frame a few more chances to resolve. Retrying never
+    fabricates a "parked": each attempt is an independent snapshot subject to
+    the same position/confidence/luma gates, so the roof-move preconditions are
+    unchanged per frame — we simply stop acting on the first corrupt one.
+    """
+    parked, closed, open, mod_date = _visual_status_once()
+    for attempt in range(1, retries + 1):
+        if last_match and last_match.get("trusted"):
+            break
+        reason = (last_match or {}).get("error") or "scope not confirmed parked"
+        _logger.warning(
+            "vision read untrusted (%s) — retrying snapshot %d/%d",
+            reason, attempt, retries,
+        )
+        time.sleep(delay)
+        parked, closed, open, mod_date = _visual_status_once()
+    return parked, closed, open, mod_date
 
 
 if __name__ == '__main__':

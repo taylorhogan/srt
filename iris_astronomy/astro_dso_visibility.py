@@ -248,12 +248,20 @@ def plot_my_dso_and_horizon(dso: FixedTarget, my_observatory: Observer, observe_
             pm25_by_hour[aq_hours[k]] = aq_pm25[k]
     peak_aqi = None      # worst (highest AQI) hour over the imaging window
     peak_pm25 = None
+    # Jet-stream wind (250 hPa) as a seeing proxy — first occurrence of each hour wins.
+    jet_hours, jet_wind = weather.get_jetstream_by_hour(latitude, longitude, 48)
+    jet_by_hour: dict = {}
+    for k in range(len(jet_hours)):
+        if jet_hours[k] not in jet_by_hour:
+            jet_by_hour[jet_hours[k]] = jet_wind[k]
+    peak_jet = None      # worst (highest) jet-stream wind over the imaging window
     time_format = "%Y-%m-%d %H:%M"
     clipped_cloud = []
     clipped_pp = []
     clipped_wsp = []
     clipped_hum = []
     clipped_smoke = []   # US AQI scaled onto the 0-90 axis (AQI/150*90)
+    clipped_jet = []     # jet-stream km/h scaled onto the 0-90 axis (kmh/150*90)
     weather_ok = True
     issues: set[str] = set()
     # Judge weather only during the imaging window (dark + above horizon).
@@ -272,6 +280,8 @@ def plot_my_dso_and_horizon(dso: FixedTarget, my_observatory: Observer, observe_
                 clipped_hum.append(hum[j]/100*90)
                 smoke_aqi = aqi_by_hour.get(hour)
                 clipped_smoke.append(smoke_aqi/150*90 if smoke_aqi is not None else float('nan'))
+                jet_kmh = jet_by_hour.get(hour)
+                clipped_jet.append(jet_kmh/150*90 if jet_kmh is not None else float('nan'))
                 in_window = (start_time is None
                              or start_time <= local_datetime[i] <= window_finish)
                 if in_window:
@@ -283,6 +293,9 @@ def plot_my_dso_and_horizon(dso: FixedTarget, my_observatory: Observer, observe_
                     if hour_aqi is not None and (peak_aqi is None or hour_aqi > peak_aqi):
                         peak_aqi = hour_aqi
                         peak_pm25 = pm25_by_hour.get(hour)
+                    hour_jet = jet_by_hour.get(hour)
+                    if hour_jet is not None and (peak_jet is None or hour_jet > peak_jet):
+                        peak_jet = hour_jet
 
             if found_hour:
                 break
@@ -305,6 +318,7 @@ def plot_my_dso_and_horizon(dso: FixedTarget, my_observatory: Observer, observe_
             clipped_wsp.append(float('nan'))
             clipped_hum.append(float('nan'))
             clipped_smoke.append(float('nan'))
+            clipped_jet.append(float('nan'))
 
     # Always report the smoke level for the imaging window, even when it's clear.
     if peak_aqi is not None:
@@ -312,6 +326,13 @@ def plot_my_dso_and_horizon(dso: FixedTarget, my_observatory: Observer, observe_
                         f"(US AQI {peak_aqi:.0f}, PM2.5 {peak_pm25:.0f} µg/m³)")
     else:
         weather_msg += "\nSmoke: unknown"
+
+    # Report the jet-stream seeing proxy for the imaging window (worst hour).
+    if peak_jet is not None:
+        weather_msg += (f"\nSeeing (jet stream): {weather.seeing_from_jetstream(peak_jet)} "
+                        f"({peak_jet:.0f} km/h at {weather.JET_LEVEL_HPA} hPa)")
+    else:
+        weather_msg += "\nSeeing (jet stream): unknown"
 
     ax.plot(local_datetime, clipped_cloud, color='red', label = 'Cloud Cover',linewidth=2)
     ax.plot(local_datetime, clipped_pp, color='pink', label='Prob. Precip.',linewidth=2)
@@ -321,6 +342,10 @@ def plot_my_dso_and_horizon(dso: FixedTarget, my_observatory: Observer, observe_
             label='Smoke (US AQI, /150)', linewidth=2)
     ax.axhline(_SMOKE_AQI_SEVERE / 150 * 90, color='saddlebrown', linestyle=':',
                linewidth=1, alpha=0.4, label=f'Smoke gate (AQI {_SMOKE_AQI_SEVERE})')
+    ax.plot(local_datetime, clipped_jet, color='darkorange', linestyle='-.',
+            label='Jet Stream (250 hPa km/h, /150)', linewidth=2)
+    ax.axhline(55 / 150 * 90, color='darkorange', linestyle=':',
+               linewidth=1, alpha=0.4, label='Seeing gate (55 km/h)')
 
     ax.set_xlim([local_datetime[0], local_datetime[-1]])
     date_formatter = dates.DateFormatter('%H', tz=local_tz)

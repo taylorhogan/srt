@@ -59,7 +59,16 @@ class PublicConfig():
             # Output of the `live` command: a no-light, exposure-optimized view of
             # the sky from the scope-top webcam. Kept separate from scope_view so a
             # dark long-exposure sky frame never overwrites the lit safety snapshot.
+            # `live` takes TWO passes: a low-gain, long-exposure pass that records
+            # stars (sky_view_stars) and a high-gain pass that favours diffuse
+            # skyglow/clouds (sky_view). At max gain the longest sub blows out, so
+            # the exposure scorer falls to a ~15 ms frame with no stars — hence the
+            # separate low-gain star pass. Gains are tunable here; validate against
+            # a real night sky (watch the per-exposure clip% now logged in the sweep).
             "sky_view": "./base_images/sky_view.jpg",
+            "sky_view_stars": "./base_images/sky_view_stars.jpg",
+            "sky_stars_gain": 30,
+            "sky_skyglow_gain": 100,
             "valid_data": False,
             "received_count": 0
 

@@ -262,6 +262,10 @@ def do_main():
                 cfg = config.data()
 
                 inside_view = cfg["camera safety"]["scope_view"]
+                # visual_status() retries internally on a garbage (torn/starved/
+                # unreadable) frame: the mount is already confirmed parked by PWI4
+                # above, so a single vision frame reading "not parked" is a corrupt
+                # snapshot, not a real state. One such frame once left the roof open.
                 parked, closed, is_open, mod_date = vision_safety.visual_status()
                 pushover.push_message("Investigating if scope is parked", inside_view)
                 if parked:

@@ -810,6 +810,7 @@
       if (m.label === 'Safety') cls = m.value === 'Safe' ? ' safe' : ' unsafe';
       else if (m.label === 'State' && ACTIVE_STATES.has(m.value)) cls = ' active';
       else if (m.label === 'Moon') cls = m.value.endsWith('+') ? ' waxing' : ' waning';
+      else if (m.label === 'Seeing') cls = m.value.includes('good') ? ' safe' : (/poor|bad/.test(m.value) ? ' unsafe' : '');
       return `<span class="t-item"><span class="t-lbl">${m.label}</span><span class="t-val${cls}">${m.value}</span></span>`;
     }).join('<span class="t-sep">·</span>');
     return items + '<span class="t-sep">·</span>' + items + '<span class="t-sep">·</span>';

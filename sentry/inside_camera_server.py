@@ -115,12 +115,13 @@ def camera_session():
         yield
 
 
-def _capture_burst(exposure, n, light):
+def _capture_burst(exposure, n, light, gain=None):
     """Reopen the USB camera at a fixed exposure and grab up to ``n`` frames.
 
-    Mirrors the dark-sky setup (max gain, lifted brightness) when ``light`` is
-    False, matching the sweep. Used for the final robust capture / multi-frame
-    stack. Returns a list of frames (possibly shorter than ``n``).
+    Mirrors the dark-sky setup (lifted brightness + the requested gain, default
+    max) when ``light`` is False, matching the sweep. Used for the final robust
+    capture / multi-frame stack. Returns a list of frames (possibly shorter than
+    ``n``).
     """
     frames = []
     vid = cv.VideoCapture(0, cv.CAP_DSHOW)
@@ -130,7 +131,7 @@ def _capture_burst(exposure, n, light):
     vid.set(cv.CAP_PROP_AUTO_EXPOSURE, 1)
     time.sleep(0.5)
     if not light:
-        vid.set(cv.CAP_PROP_GAIN, 100)
+        vid.set(cv.CAP_PROP_GAIN, 100 if gain is None else gain)
         vid.set(cv.CAP_PROP_BRIGHTNESS, 0)
     vid.set(cv.CAP_PROP_EXPOSURE, exposure)
     time.sleep(0.5)
@@ -181,7 +182,7 @@ def _combine_stable(frames, stack_frames=1):
     return out.round().astype(frames[0].dtype)
 
 
-def take_snapshot(test_path=None, light=True, out_path=None, scorer=None, stack_frames=1):
+def take_snapshot(test_path=None, light=True, out_path=None, scorer=None, stack_frames=1, gain=None):
     """Serialize all camera access, then delegate to :func:`_take_snapshot`.
 
     The lock makes each snapshot atomic with respect to both the USB camera and
@@ -196,13 +197,16 @@ def take_snapshot(test_path=None, light=True, out_path=None, scorer=None, stack_
                   lit-scene best_exposure_score; the sky view passes dark_sky_score).
     stack_frames: average this many frames at the chosen exposure (default 1) to
                   beat read/shot noise down on a dark sky view.
+    gain:         no-light sensor gain (default max, 100). `live` uses a low value
+                  for its star pass so the longest sub isn't blown out; ignored
+                  for a lit snapshot.
     """
     with _camera_lock:
         return _take_snapshot(test_path, light=light, out_path=out_path,
-                              scorer=scorer, stack_frames=stack_frames)
+                              scorer=scorer, stack_frames=stack_frames, gain=gain)
 
 
-def _take_snapshot(test_path=None, light=True, out_path=None, scorer=None, stack_frames=1):
+def _take_snapshot(test_path=None, light=True, out_path=None, scorer=None, stack_frames=1, gain=None):
     _loger.info("Starting camera snapshot (light=%s)", light)
     cfg = config.data()
     print (utils.set_install_dir())
@@ -293,7 +297,7 @@ def _take_snapshot(test_path=None, light=True, out_path=None, scorer=None, stack
             # recover a dark sky with GAIN + frame stacking rather than a longer
             # sub. Brightness is also lifted off its -64 floor.
             exposure_values = list(range(-2, -7, -1))
-            vid.set(cv.CAP_PROP_GAIN, 100)       # max analog/digital gain
+            vid.set(cv.CAP_PROP_GAIN, 100 if gain is None else gain)  # analog/digital gain
             vid.set(cv.CAP_PROP_BRIGHTNESS, 0)   # lift off the -64 floor to neutral
             time.sleep(0.5)
             for _ in range(5):
@@ -318,7 +322,16 @@ def _take_snapshot(test_path=None, light=True, out_path=None, scorer=None, stack
                 _loger.warning("Camera read failed at exposure %s", exposure_value)
                 continue
             score = scorer(frame)
-            _loger.info("Exposure: %s (actual: %s) Score: %.4f", exposure_value, actual, score)
+            if light:
+                _loger.info("Exposure: %s (actual: %s) Score: %.4f", exposure_value, actual, score)
+            else:
+                # Log clip% for the dark-sky sweep: the longest sub blowing out is
+                # what pushes the scorer to a too-short, starless exposure, so this
+                # is the number to tune each pass's gain against on a real night.
+                _g = frame if frame.ndim == 2 else cv.cvtColor(frame, cv.COLOR_BGR2GRAY)
+                clip = float((_g > 240).mean()) * 100
+                _loger.info("Exposure: %s (actual: %s) Score: %.4f clip %.1f%%",
+                            exposure_value, actual, score, clip)
             pictures.append(frame)
             scores.append(score)
 
@@ -351,7 +364,7 @@ def _take_snapshot(test_path=None, light=True, out_path=None, scorer=None, stack
     # safety scene) and is restored afterwards; n >= 3 gives the outlier
     # rejection power even for a plain single-frame snapshot. stack_frames > 1
     # averages the survivors so faint sky detail lifts out of the noise.
-    burst = _capture_burst(best_exposure, max(3, stack_frames), light)
+    burst = _capture_burst(best_exposure, max(3, stack_frames), light, gain=gain)
     burst.append(pictures[best_index])  # the sweep already captured one good sample
     best_picture = _combine_stable(burst, stack_frames)
 

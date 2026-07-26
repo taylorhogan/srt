@@ -288,10 +288,11 @@ HELP: dict[str, dict] = {
     },
     "live": {
         "category": "super",
-        "summary": "Post a live, no-light view of the sky from the scope-top webcam "
-                   "(same camera as vision safety), exposure-optimized for a dark "
-                   "sky. Lights stay off; safe to run while imaging. An optional "
-                   "frame count averages that many frames to cut noise (default 1).",
+        "summary": "Post TWO no-light sky views from the scope-top webcam (same "
+                   "camera as vision safety): a low-gain long-exposure pass for "
+                   "STARS and a high-gain pass for SKYGLOW / clouds. Lights stay "
+                   "off; safe to run while imaging. An optional frame count "
+                   "averages that many frames per pass to cut noise (default 1).",
         "usage": ["live [frames]"],
         "examples": ["live", "live 8"],
     },

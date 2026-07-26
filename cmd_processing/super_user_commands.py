@@ -270,7 +270,13 @@ def announce_roof_movement(text: str, speaker_name: str = "Observatory", volume:
 
 
 def get_status_with_lights() -> tuple[bool, bool, bool, Any]:
-    """Take a camera snapshot and return (parked, closed, open, mod_date) via vision safety."""
+    """Take a camera snapshot and return (parked, closed, open, mod_date) via vision safety.
+
+    visual_status() retries internally on a garbage (torn/starved/unreadable)
+    webcam frame, so a single corrupt snapshot doesn't block a roof move on its
+    own — it reads as untrusted ("not parked") and gets a couple more chances to
+    resolve before we act on it.
+    """
     parked, closed, open, mod_date = vision_safety.visual_status()
     _post_vision_decision_image(parked, closed, open)
     return parked, closed, open, mod_date
@@ -1249,12 +1255,14 @@ def update_cmd(words: list[str], account: str) -> None:
 def live_cmd(words: list[str], account: str) -> None:
     """Post a live, no-light view of the sky from the scope-top webcam.
 
-    Uses the same USB camera as the park/roof vision-safety check, but leaves the
-    inside light OFF and optimizes exposure for a dark sky (dark_sky_score picks
-    the longest exposure that isn't blown out). Safe to run while imaging: it only
-    reads the camera — serialized against the safety snapshot by the camera lock —
-    and never moves hardware or touches the lights. Runs in a background job
-    because the exposure sweep takes ~15-20 s.
+    Takes TWO dark-sky passes and posts both, because one exposure can't serve
+    both goals: a low-gain, long-exposure pass records STARS (at max gain the
+    longest sub blows out and the scorer falls to a ~15 ms starless frame), and a
+    high-gain pass favours diffuse SKYGLOW / clouds. Both use the same USB camera
+    as the park/roof vision-safety check but leave the inside light OFF. Safe to
+    run while imaging: read-only, serialized against the safety snapshot by the
+    camera lock, never moves hardware or touches the lights. Runs in a background
+    job (two sweeps ~ 30-40 s).
 
     An optional frame count averages that many frames at the chosen exposure to
     pull faint sky detail out of the noise; omit it for a single frame.
@@ -1277,28 +1285,40 @@ def live_cmd(words: list[str], account: str) -> None:
     def _run() -> None:
         from sentry import inside_camera_server  # local import: avoids import cycle
         cfg = config.data()
-        out_path = cfg["camera safety"]["sky_view"]
-        note = f", stacking {stack_frames} frames" if stack_frames > 1 else ""
+        cams = cfg["camera safety"]
+        note = f", stacking {stack_frames} frames each" if stack_frames > 1 else ""
+        stacked = f" — {stack_frames} frames stacked" if stack_frames > 1 else ""
+        # (tag, output path, no-light gain, caption) — low gain for stars, high for skyglow.
+        passes = [
+            ("stars", cams["sky_view_stars"], cams.get("sky_stars_gain", 30),
+             "Live sky — stars (low gain, long exposure)"),
+            ("skyglow", cams["sky_view"], cams.get("sky_skyglow_gain", 100),
+             "Live sky — skyglow / clouds (high gain)"),
+        ]
         social_server.post_social_message(
-            f"Capturing sky view — optimizing exposure, lights stay off{note}…")
-        try:
-            ok = inside_camera_server.take_snapshot(
-                light=False,
-                out_path=out_path,
-                scorer=inside_camera_server.dark_sky_score,
-                stack_frames=stack_frames,
-            )
-        except Exception as e:  # noqa: BLE001
-            _logger.exception("live sky capture failed")
-            social_server.post_social_message(f"Sky view capture failed: {e}")
-            return
-        if not ok or not os.path.exists(out_path):
-            social_server.post_social_message(
-                "Sky view capture failed (no frame from the camera).")
-            return
-        label = (f"Live sky view — {stack_frames} frames stacked:" if stack_frames > 1
-                 else "Live sky view from the scope camera:")
-        social_server.post_social_message(label, image=out_path)
+            f"Capturing sky view — two passes (stars + skyglow), lights stay off{note}…")
+        posted = 0
+        for tag, out_path, gain, caption in passes:
+            try:
+                ok = inside_camera_server.take_snapshot(
+                    light=False,
+                    out_path=out_path,
+                    scorer=inside_camera_server.dark_sky_score,
+                    stack_frames=stack_frames,
+                    gain=gain,
+                )
+            except Exception as e:  # noqa: BLE001
+                _logger.exception("live %s capture failed", tag)
+                social_server.post_social_message(f"Sky view [{tag}] capture failed: {e}")
+                continue
+            if not ok or not os.path.exists(out_path):
+                social_server.post_social_message(
+                    f"Sky view [{tag}] capture failed (no frame from the camera).")
+                continue
+            social_server.post_social_message(caption + stacked, image=out_path)
+            posted += 1
+        if posted == 0:
+            social_server.post_social_message("Sky view capture failed for both passes.")
 
     jobs.spawn(_run)
 
@@ -3042,13 +3062,26 @@ def _snr_run_locked(words: list[str]) -> None:
 
     from datetime import date as _date
 
+    # Each filter's convergence is fully independent — different frames, its own
+    # uniquely-named output JPGs, no shared cache writes — so run them in
+    # parallel. The dominant cost (per-frame astroalign registration) is
+    # single-core per filter, so on this multi-core box N filters finish in
+    # roughly 1/N the wall-clock of the old sequential loop. Cap the pool so peak
+    # RAM (~one downscaled frame cube per active filter) stays bounded and the
+    # brief inner 4-thread bursts (FWHM measure / Fibonacci sampling) aren't
+    # badly oversubscribed.
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
     saved: dict[str, dict] = {}
-    for fn, paths in by_filter.items():
+    _saved_lock = threading.Lock()
+
+    def _run_filter(fn: str, paths: list) -> None:
         jobs.raise_if_cancelled(_job_id)
         out = Path(scratch_dir) / f"convergence_{fn}.jpg"
         gold = Path(scratch_dir) / f"golden_{fn}.jpg"
         def _progress(msg: str, _fn: str = fn) -> None:
             social_server.post_social_message(f"Convergence [{_fn}]: {msg}")
+        _t0 = time.perf_counter()
         try:
             _, _, slope_pct, final_rmse_pct = stacker.convergence_curve(
                 paths,
@@ -3062,13 +3095,15 @@ def _snr_run_locked(words: list[str]) -> None:
             raise
         except Exception as exc:
             social_server.post_social_message(f"Convergence [{fn}]: failed — {exc}")
-            continue
-        saved[fn] = {
-            "tail_slope_pct": round(slope_pct, 6),
-            "final_rmse_pct": round(final_rmse_pct, 4),
-            "frame_count": len(paths),
-            "updated": _date.today().isoformat(),
-        }
+            return
+        _logger.info("Convergence [%s]: %d frames in %.1fs", fn, len(paths), time.perf_counter() - _t0)
+        with _saved_lock:
+            saved[fn] = {
+                "tail_slope_pct": round(slope_pct, 6),
+                "final_rmse_pct": round(final_rmse_pct, 4),
+                "frame_count": len(paths),
+                "updated": _date.today().isoformat(),
+            }
         social_server.post_social_message(
             f"Stack convergence vs golden — {fn}  ({len(paths)} frames)  slope {slope_pct:+.4f}%/frame  RMSE {final_rmse_pct:.2f}%",
             str(out),
@@ -3077,6 +3112,19 @@ def _snr_run_locked(words: list[str]) -> None:
             f"Golden stack — {fn}  ({len(paths)} frames)",
             str(gold),
         )
+
+    max_workers = min(len(by_filter), 4)
+    _t_all = time.perf_counter()
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        futs = [pool.submit(_run_filter, fn, paths) for fn, paths in by_filter.items()]
+        for fut in as_completed(futs):
+            # Propagate a cancellation from any worker; still-running workers see
+            # the same cancel flag at their next checkpoint and wind down too.
+            fut.result()
+    _logger.info(
+        "Convergence: %d filter(s) done in %.1fs wall-clock (%d workers)",
+        len(by_filter), time.perf_counter() - _t_all, max_workers,
+    )
 
     if saved and dso_dir is not None:
         try:

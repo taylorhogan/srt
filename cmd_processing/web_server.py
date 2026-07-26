@@ -105,6 +105,86 @@ def _read_outside_temp_f() -> Optional[float]:
     return _outside_temp_f
 
 
+# Outside air-quality cache (Open-Meteo Air Quality, US AQI), refreshed ~10 min.
+_outside_aqi: Optional[float] = None
+_outside_aqi_fetched: float = 0.0
+_OUTSIDE_AQI_TTL = 600.0
+
+
+def _read_outside_aqi() -> Optional[int]:
+    """Current US AQI via Open-Meteo Air Quality (no key). Cached ~10 min.
+
+    Blocking (uses requests) — call via asyncio.to_thread. Returns the last
+    cached value on failure, or None if never fetched.
+    """
+    global _outside_aqi, _outside_aqi_fetched
+    import time as _time
+    if _outside_aqi is not None and (_time.time() - _outside_aqi_fetched) < _OUTSIDE_AQI_TTL:
+        return _outside_aqi
+    try:
+        import requests
+        from configs import config
+        loc = config.data()["location"]
+        r = requests.get(
+            "https://air-quality-api.open-meteo.com/v1/air-quality",
+            params={"latitude": loc["latitude"], "longitude": loc["longitude"],
+                    "current": "us_aqi", "timezone": "auto"},
+            timeout=10,
+        )
+        r.raise_for_status()
+        _outside_aqi = int(round(float(r.json()["current"]["us_aqi"])))
+        _outside_aqi_fetched = _time.time()
+    except Exception:
+        _logger.exception("outside AQI fetch failed")
+    return _outside_aqi
+
+
+# Jet-stream (250 hPa) wind cache as a seeing proxy, refreshed ~15 min.
+_jetstream_kmh: Optional[float] = None
+_jetstream_fetched: float = 0.0
+_JETSTREAM_TTL = 900.0
+
+
+def _read_jetstream_kmh() -> Optional[float]:
+    """Current jet-stream wind (km/h at 250 hPa) via Open-Meteo. Cached ~15 min.
+
+    Upper-air wind is the dominant driver of astronomical seeing (FWHM); this is
+    the same 250 hPa proxy the nightly weather plot uses. Pressure-level fields
+    are hourly-only on Open-Meteo, so we fetch today's hourly series and pick the
+    current hour. Blocking (requests) — call via asyncio.to_thread. Returns the
+    last cached value on failure, or None if never fetched.
+    """
+    global _jetstream_kmh, _jetstream_fetched
+    import time as _time
+    if _jetstream_kmh is not None and (_time.time() - _jetstream_fetched) < _JETSTREAM_TTL:
+        return _jetstream_kmh
+    try:
+        import requests
+        import pytz
+        from datetime import datetime
+        from configs import config
+        from iris_astronomy.weather import JET_LEVEL_HPA
+        loc = config.data()["location"]
+        field = f"wind_speed_{JET_LEVEL_HPA}hPa"
+        r = requests.get(
+            "https://api.open-meteo.com/v1/forecast",
+            params={"latitude": loc["latitude"], "longitude": loc["longitude"],
+                    "hourly": field, "forecast_days": 1, "timezone": "auto"},
+            timeout=10,
+        )
+        r.raise_for_status()
+        hourly = r.json()["hourly"]
+        times, winds = hourly["time"], hourly[field]
+        # Open-Meteo returns local (site) times with timezone=auto; match the wall-clock hour.
+        now_hour = datetime.now(pytz.timezone("America/New_York")).strftime("%Y-%m-%dT%H:00")
+        idx = times.index(now_hour) if now_hour in times else 0
+        _jetstream_kmh = round(float(winds[idx]))
+        _jetstream_fetched = _time.time()
+    except Exception:
+        _logger.exception("jet-stream wind fetch failed")
+    return _jetstream_kmh
+
+
 def init(images_dir: str) -> None:
     global _images_dir
     _images_dir = images_dir
@@ -363,6 +443,24 @@ async def api_ticker():
             outside_f = await asyncio.to_thread(_read_outside_temp_f)
             if outside_f is not None:
                 metrics.append({"label": "Outside Temp", "value": f"{outside_f}°F"})
+        except Exception:
+            pass
+
+        # Outside air quality (US AQI) via Open-Meteo (no key needed)
+        try:
+            aqi = await asyncio.to_thread(_read_outside_aqi)
+            if aqi is not None:
+                metrics.append({"label": "AQI", "value": f"{aqi}"})
+        except Exception:
+            pass
+
+        # Jet-stream seeing proxy (250 hPa wind) via Open-Meteo (no key needed)
+        try:
+            from iris_astronomy.weather import seeing_from_jetstream
+            jet = await asyncio.to_thread(_read_jetstream_kmh)
+            if jet is not None:
+                metrics.append({"label": "Seeing",
+                                "value": f"{jet:.0f} km/h · {seeing_from_jetstream(jet)}"})
         except Exception:
             pass
 
