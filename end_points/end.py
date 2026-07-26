@@ -167,9 +167,12 @@ def _post_imaging_summary(imaging_start: datetime) -> None:
                     "filter":          filter_name,
                     "fwhm_arcsec":     fwhm_arcsec,
                     "eccentricity":    ecc,
-                    "sky_adu_per_s":   round(sky["sky_adu_per_s"], 2) if sky else None,
+                    # 5 dp, not 2: pedestal-corrected sky runs ~0.00-0.05 ADU/s.
+                    "sky_adu_per_s":   round(sky["sky_adu_per_s"], 5)
+                                       if sky and sky.get("sky_adu_per_s") is not None else None,
                     "sky_mag_arcsec2": round(sky["sky_mag_arcsec2"], 2)
                                        if sky and sky.get("sky_mag_arcsec2") is not None else None,
+                    "pedestal_source": sky.get("pedestal_source") if sky else None,
                 }
             except Exception as exc:
                 logger.warning("Could not analyse %s: %s", fits_path.name, exc)

@@ -3621,6 +3621,21 @@ def _transient_run(words: list[str]) -> None:
         social_server.post_social_message(summary)
 
 
+def _save_frame_stats_cache(cache_path: Path, cached_by_path: dict[str, dict]) -> None:
+    """Write the frame_stats cache atomically, leaving the old file intact on error."""
+    import json as _json
+    tmp = cache_path.with_suffix(".tmp")
+    try:
+        with open(tmp, "w") as f:
+            _json.dump(list(cached_by_path.values()), f, default=str, indent=2)
+        tmp.replace(cache_path)
+    except Exception:
+        try:
+            tmp.unlink(missing_ok=True)
+        except Exception:
+            pass
+
+
 def image_stats_cmd(words: list[str], account: str) -> None:
     """Post per-frame FWHM/eccentricity graph in a background thread (non-blocking)."""
     jobs.spawn(_image_stats_run, args=(words, account))
@@ -3630,18 +3645,28 @@ def _image_stats_run(words: list[str], account: str) -> None:
     """Worker for image_stats_cmd.
 
     Usage:
-        stats            — latest session for the DSO currently being imaged
-        stats <dso>      — latest session for the named DSO
-        stats <dso> all  — full multi-night history for the named DSO
+        stats                — latest session for the DSO currently being imaged
+        stats <dso>          — latest session for the named DSO
+        stats <dso> all      — full multi-night history for the named DSO
+        stats <dso> resky    — recompute only the sky brightness on cached frames
+        stats <dso> rebuild  — discard the cache and re-analyse every frame
 
     By default only the most recent observing session is plotted (see
     imaging_artifacts.gather_dso_frames) so a single big night can't dominate
-    the frame-count x-axis. A trailing "all" opts into the full history.
+    the frame-count x-axis. A trailing "all" opts into the full history; the
+    option tokens combine in any order (e.g. `stats sh2-92 all resky`).
 
     For each FITS file in scope the path is looked up in <dso_dir>/frame_stats.json.
     Cached entries are used as-is; only files missing from the cache are opened and
     analysed.  Newly analysed frames are written back to the cache so subsequent
     runs skip them too.
+
+    Because entries are reused verbatim, a cache written before a change to the
+    analysis code keeps the old numbers forever. "rebuild" is the blunt fix and
+    re-runs star detection on everything, which is slow. "resky" is the cheap one:
+    it re-reads just the four corner blocks to refresh the sky fields, which is
+    what goes stale when the bias/dark pedestal calibration changes
+    (see fits_processing/sky_pedestal.py).
     """
     import json as _json
     import warnings as _warnings
@@ -3655,13 +3680,24 @@ def _image_stats_run(words: list[str], account: str) -> None:
     image_dir = Path(cfg["nina"]["image_dir"])
     arcsec_per_pixel = cfg["nina"]["arc_sec_per_pixel"]
 
-    # A trailing "all" token requests the full multi-night history; the default
-    # is the most recent observing session only (so one big night can't dominate).
+    # Trailing option tokens, in any order:
+    #   all      — full multi-night history (default: latest session only, so one
+    #              big night can't dominate the frame-count x-axis)
+    #   rebuild  — ignore the cache and re-analyse every frame from scratch
+    #   resky    — keep cached FWHM/ecc/star counts, recompute only the sky fields
+    # Anything left over is the DSO name.
     extra = list(words[2:])
     latest_session_only = True
-    if extra and extra[-1].lower() == "all":
-        latest_session_only = False
-        extra = extra[:-1]
+    rebuild = False
+    resky = False
+    while extra and extra[-1].lower() in ("all", "rebuild", "resky"):
+        tok = extra.pop().lower()
+        if tok == "all":
+            latest_session_only = False
+        elif tok == "rebuild":
+            rebuild = True
+        else:
+            resky = True
     dso_arg = " ".join(extra).strip() or None
 
     social_server.post_social_message("Stats: scanning for FITS files…")
@@ -3726,7 +3762,7 @@ def _image_stats_run(words: list[str], account: str) -> None:
     # ── Load existing cache (keyed by normalised path string) ──────────────
     cache_path: Optional[Path] = (dso_dir / "frame_stats.json") if dso_dir else None
     cached_by_path: dict[str, dict] = {}
-    if cache_path and cache_path.exists():
+    if cache_path and cache_path.exists() and not rebuild:
         try:
             with open(cache_path) as f:
                 existing = _json.load(f)
@@ -3736,6 +3772,70 @@ def _image_stats_run(words: list[str], account: str) -> None:
                         cached_by_path[str(Path(entry["path"]))] = entry
         except Exception:
             pass
+    elif rebuild:
+        social_server.post_social_message(
+            "Rebuild: ignoring the cache, re-analysing every frame from scratch…"
+        )
+
+    # ── resky: refresh only the sky fields on cached entries ────────────────
+    # Cheap compared to a full rebuild — reads the four corner blocks instead of
+    # running star detection over the whole frame. Use this after changing the
+    # pedestal calibration, which is what makes cached sky values stale.
+    if resky and cached_by_path:
+        from fits_processing import sky_pedestal as _sp
+        from astropy.io import fits as _fits_r
+
+        wanted = {str(f) for f in fits_files}
+        targets = [e for p, e in cached_by_path.items() if p in wanted]
+        social_server.post_social_message(
+            f"Resky: recomputing sky brightness for {len(targets)} cached frames…"
+        )
+
+        def _refresh_sky(entry: dict) -> tuple[dict, bool]:
+            try:
+                lvl = _sp.corner_level(Path(entry["path"]))
+                if lvl is None:
+                    return entry, False
+                h = _fits_r.getheader(entry["path"])
+                exp = float(h.get("EXPTIME", h.get("EXPOSURE", 1.0)))
+                ped = _sp.lookup(h.get("GAIN"), h.get("OFFSET"), h.get("CCD-TEMP"), exp)
+                if ped is None:
+                    entry["sky_adu_per_s"] = None
+                    entry["pedestal_source"] = "uncalibrated"
+                    return entry, False
+                entry["sky_adu_per_s"] = round(
+                    max(lvl - ped["pedestal_adu"], 0.0) / max(exp, 1e-6), 5
+                )
+                entry["pedestal_source"] = (
+                    "extrapolated" if ped["extrapolated"] else "measured"
+                )
+                return entry, True
+            except Exception:
+                return entry, False
+
+        n_ok = 0
+        n_extrap = 0
+        with ThreadPoolExecutor(max_workers=min(8, max(1, len(targets)))) as pool:
+            jobs.register_resource(_job_id, pool)
+            try:
+                for entry, ok in pool.map(_refresh_sky, targets):
+                    jobs.raise_if_cancelled(_job_id)
+                    cached_by_path[str(Path(entry["path"]))] = entry
+                    n_ok += bool(ok)
+                    n_extrap += entry.get("pedestal_source") == "extrapolated"
+            finally:
+                jobs.unregister_resource(_job_id, pool)
+
+        if cache_path:
+            _save_frame_stats_cache(cache_path, cached_by_path)
+        msg = f"Resky: {n_ok}/{len(targets)} frames updated"
+        if n_extrap:
+            msg += (f" — {n_extrap} used an extrapolated pedestal "
+                    "(no BIAS/DARK at that sensor temperature)")
+        if n_ok < len(targets):
+            msg += (f"; {len(targets) - n_ok} had no pedestal calibration — run "
+                    "`python fits_processing/sky_pedestal.py --build`")
+        social_server.post_social_message(msg)
 
     # ── Analyse only files not already in the cache ─────────────────────────
     def _analyse_fits(fits_path: Path) -> dict:
@@ -3773,9 +3873,12 @@ def _image_stats_run(words: list[str], account: str) -> None:
                 "fwhm_arcsec":     fwhm_arcsec,
                 "eccentricity":    ecc,
                 "star_count":      int(star_count),
-                "sky_adu_per_s":   round(sky["sky_adu_per_s"], 2)       if sky else None,
+                # 5 dp, not 2: pedestal-corrected sky runs ~0.00-0.05 ADU/s.
+                "sky_adu_per_s":   round(sky["sky_adu_per_s"], 5)
+                                   if sky and sky.get("sky_adu_per_s") is not None else None,
                 "sky_mag_arcsec2": round(sky["sky_mag_arcsec2"], 2)
                                    if sky and sky.get("sky_mag_arcsec2") is not None else None,
+                "pedestal_source": sky.get("pedestal_source") if sky else None,
             }
         except Exception as exc:
             _logger.warning("stats: could not analyse %s: %s", fits_path.name, exc)
@@ -3806,16 +3909,7 @@ def _image_stats_run(words: list[str], account: str) -> None:
         for entry in new_entries:
             cached_by_path[str(Path(entry["path"]))] = entry
         if cache_path:
-            tmp = cache_path.with_suffix(".tmp")
-            try:
-                with open(tmp, "w") as f:
-                    _json.dump(list(cached_by_path.values()), f, default=str, indent=2)
-                tmp.replace(cache_path)
-            except Exception:
-                try:
-                    tmp.unlink(missing_ok=True)
-                except Exception:
-                    pass
+            _save_frame_stats_cache(cache_path, cached_by_path)
     else:
         social_server.post_social_message(f"All {cached_count} frames served from cache")
 

@@ -285,7 +285,7 @@ def save_fwhm(
             if sky_data.get("sky_mag_arcsec2") is not None:
                 parts.append(f'sky {sky_data["sky_mag_arcsec2"]:.2f} mag/arcsec²')
             elif sky_data.get("sky_adu_per_s") is not None:
-                parts.append(f'sky {sky_data["sky_adu_per_s"]:.1f} ADU/s')
+                parts.append(f'sky {sky_data["sky_adu_per_s"]:.4f} ADU/s')
         title = "  |  ".join(parts)
     else:
         title = (

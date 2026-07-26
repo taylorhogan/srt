@@ -220,9 +220,13 @@ def _analyse(fits_path: Path, arcsec_per_pixel: float) -> Optional[dict]:
             "fwhm_arcsec":     fwhm_arcsec,
             "eccentricity":    ecc,
             "star_count":      star_count,
-            "sky_adu_per_s":   round(sky["sky_adu_per_s"], 2)       if sky else None,
+            # 5 dp, not 2: pedestal-corrected sky runs ~0.00-0.05 ADU/s, so 2 dp
+            # would quantise the whole range into a couple of steps.
+            "sky_adu_per_s":   round(sky["sky_adu_per_s"], 5)
+                               if sky and sky.get("sky_adu_per_s") is not None else None,
             "sky_mag_arcsec2": round(sky["sky_mag_arcsec2"], 2)
                                if sky and sky.get("sky_mag_arcsec2") is not None else None,
+            "pedestal_source": sky.get("pedestal_source") if sky else None,
         }
 
     except Exception as exc:

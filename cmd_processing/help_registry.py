@@ -174,9 +174,13 @@ HELP: dict[str, dict] = {
     "stats": {
         "category": "super",
         "summary": "Post per-frame FWHM, eccentricity, sky-brightness, and star-count "
-                   "graph for the latest session (add 'all' for full history).",
-        "usage": ["stats", "stats <dso>", "stats <dso> all"],
-        "examples": ["stats", "stats m31", "stats m31 all"],
+                   "graph for the latest session (add 'all' for full history, "
+                   "'resky' to refresh cached sky values, 'rebuild' to re-analyse "
+                   "every frame).",
+        "usage": ["stats", "stats <dso>", "stats <dso> all",
+                  "stats <dso> resky", "stats <dso> rebuild"],
+        "examples": ["stats", "stats m31", "stats m31 all",
+                     "stats m31 all resky", "stats m31 rebuild"],
     },
     "snr": {
         "category": "super",
