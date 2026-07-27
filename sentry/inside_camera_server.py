@@ -278,24 +278,36 @@ def _take_snapshot(test_path=None, light=True, out_path=None, scorer=None, stack
         _loger.info("Auto-exposure value after set: %s", ae_val)
 
         # Exposure/gain plan differs by scene:
-        #  - Lit indoor scene (safety snapshot): default gain, sweep -1..-11
-        #    (CAP_DSHOW exposure is log2 seconds; -1 ~= 0.5s is already the longest
-        #    of that set). This is a well-lit target, so gain is left alone.
+        #  - Lit indoor scene (safety snapshot): default gain, sweep -2..-11
+        #    (CAP_DSHOW exposure is log2 seconds; -2 is the longest *stable* one —
+        #    see the -1 note below, which applies to the lit sweep too). This is a
+        #    well-lit target, so gain is left alone.
         #  - No-light sky view (`live`): the frame is intrinsically dark and
         #    exposure alone bottoms out black (max ~0.5-1s on this webcam), so we
         #    crank sensor gain to the max and probe the LONGEST exposures (0..-6).
         #    dark_sky_score backs off if the boosted gain blows out highlights
         #    (moon / stray light), so max() still lands on a usable frame.
+        #
+        # This webcam (DSHOW) is BROKEN at exposure -1: it emits a corrupt/warped
+        # frame on ~every other read (measured: 10/10 frames corrupt at -1, 0/10
+        # at -2..-6, CPU idle — it's the setting, not load or settling). -1 isn't
+        # even brighter (its corruption drags the mean DOWN). So every sweep
+        # starts at -2, the longest *stable* exposure.
+        #
+        # It has to be excluded rather than merely survived: the warping puts
+        # structure everywhere, which inflates std_lum, so best_exposure_score can
+        # RANK the corrupt frame first (log: -1 scored -0.17 vs -0.25 for the good
+        # -7). The burst is then taken at -1 as well, and _combine_stable can't
+        # save it — the corruption is consistent across the burst, so it sits at
+        # the median instead of standing out as an outlier. The result is a
+        # plausible-looking snapshot the templates can't read: every failed vision
+        # read in iris.log (parked=False, luma ~110, open conf 0.58 off by ~504px)
+        # landed on -1, while -7..-10 read parked=True 32/32 times.
         if light:
-            exposure_values = list(range(-1, -12, -1))
+            exposure_values = list(range(-2, -12, -1))
         else:
-            # This webcam (DSHOW) is BROKEN at exposure -1: at max gain it emits a
-            # corrupt/warped frame on ~every other read (measured: 10/10 frames
-            # corrupt at -1, 0/10 at -2..-6, CPU idle — it's the setting, not load
-            # or settling). -1 isn't even brighter (its corruption drags the mean
-            # DOWN). So start the sweep at -2, the longest *stable* exposure, and
-            # recover a dark sky with GAIN + frame stacking rather than a longer
-            # sub. Brightness is also lifted off its -64 floor.
+            # No-light sky: recover a dark sky with GAIN + frame stacking rather
+            # than a longer sub. Brightness is also lifted off its -64 floor.
             exposure_values = list(range(-2, -7, -1))
             vid.set(cv.CAP_PROP_GAIN, 100 if gain is None else gain)  # analog/digital gain
             vid.set(cv.CAP_PROP_BRIGHTNESS, 0)   # lift off the -64 floor to neutral
