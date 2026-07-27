@@ -239,14 +239,14 @@ def plot_my_dso_and_horizon(dso: FixedTarget, my_observatory: Observer, observe_
     #plot the cloud cover
     cloud_times,cloud_covers,pp,wsp,hum = weather.get_weather_by_hour(latitude, longitude, 48)
     # Air quality (smoke) — first occurrence of each hour wins (today over tomorrow).
-    aq_hours, aq_aod, aq_pm25, aq_aqi = weather.get_air_quality_by_hour(latitude, longitude, 48)
-    aqi_by_hour: dict = {}
+    aq_hours, aq_aod, aq_pm25, aq_pm25_aqi = weather.get_air_quality_by_hour(latitude, longitude, 48)
+    pm25_aqi_by_hour: dict = {}
     pm25_by_hour: dict = {}
     for k in range(len(aq_hours)):
-        if aq_hours[k] not in aqi_by_hour:
-            aqi_by_hour[aq_hours[k]] = aq_aqi[k]
+        if aq_hours[k] not in pm25_aqi_by_hour:
+            pm25_aqi_by_hour[aq_hours[k]] = aq_pm25_aqi[k]
             pm25_by_hour[aq_hours[k]] = aq_pm25[k]
-    peak_aqi = None      # worst (highest AQI) hour over the imaging window
+    peak_pm25_aqi = None   # worst (highest PM2.5 AQI) hour over the imaging window
     peak_pm25 = None
     # Jet-stream wind (250 hPa) as a seeing proxy — first occurrence of each hour wins.
     jet_hours, jet_wind = weather.get_jetstream_by_hour(latitude, longitude, 48)
@@ -260,7 +260,7 @@ def plot_my_dso_and_horizon(dso: FixedTarget, my_observatory: Observer, observe_
     clipped_pp = []
     clipped_wsp = []
     clipped_hum = []
-    clipped_smoke = []   # US AQI scaled onto the 0-90 axis (AQI/150*90)
+    clipped_smoke = []   # PM2.5 AQI scaled onto the 0-90 axis (AQI/150*90)
     clipped_jet = []     # jet-stream km/h scaled onto the 0-90 axis (kmh/150*90)
     weather_ok = True
     issues: set[str] = set()
@@ -278,20 +278,22 @@ def plot_my_dso_and_horizon(dso: FixedTarget, my_observatory: Observer, observe_
                 clipped_pp.append(pp[j]/100*90)
                 clipped_wsp.append(wsp[j]/40*90)
                 clipped_hum.append(hum[j]/100*90)
-                smoke_aqi = aqi_by_hour.get(hour)
+                smoke_aqi = pm25_aqi_by_hour.get(hour)
                 clipped_smoke.append(smoke_aqi/150*90 if smoke_aqi is not None else float('nan'))
                 jet_kmh = jet_by_hour.get(hour)
                 clipped_jet.append(jet_kmh/150*90 if jet_kmh is not None else float('nan'))
                 in_window = (start_time is None
                              or start_time <= local_datetime[i] <= window_finish)
                 if in_window:
-                    hour_aqi = aqi_by_hour.get(hour)
-                    hour_issues = weather_issues(cloud_covers[j], pp[j], wsp[j], aqi=hour_aqi)
+                    hour_pm25_aqi = pm25_aqi_by_hour.get(hour)
+                    hour_issues = weather_issues(cloud_covers[j], pp[j], wsp[j],
+                                                 pm25_aqi=hour_pm25_aqi)
                     if hour_issues:
                         weather_ok = False
                         issues.update(hour_issues)
-                    if hour_aqi is not None and (peak_aqi is None or hour_aqi > peak_aqi):
-                        peak_aqi = hour_aqi
+                    if hour_pm25_aqi is not None and (peak_pm25_aqi is None
+                                                      or hour_pm25_aqi > peak_pm25_aqi):
+                        peak_pm25_aqi = hour_pm25_aqi
                         peak_pm25 = pm25_by_hour.get(hour)
                     hour_jet = jet_by_hour.get(hour)
                     if hour_jet is not None and (peak_jet is None or hour_jet > peak_jet):
@@ -321,9 +323,9 @@ def plot_my_dso_and_horizon(dso: FixedTarget, my_observatory: Observer, observe_
             clipped_jet.append(float('nan'))
 
     # Always report the smoke level for the imaging window, even when it's clear.
-    if peak_aqi is not None:
-        weather_msg += (f"\nSmoke: {smoke_descriptor(peak_aqi)} "
-                        f"(US AQI {peak_aqi:.0f}, PM2.5 {peak_pm25:.0f} µg/m³)")
+    if peak_pm25_aqi is not None:
+        weather_msg += (f"\nSmoke: {smoke_descriptor(peak_pm25_aqi)} "
+                        f"(PM2.5 AQI {peak_pm25_aqi:.0f}, PM2.5 {peak_pm25:.0f} µg/m³)")
     else:
         weather_msg += "\nSmoke: unknown"
 
@@ -339,9 +341,9 @@ def plot_my_dso_and_horizon(dso: FixedTarget, my_observatory: Observer, observe_
     ax.plot(local_datetime, clipped_wsp, color='black', label='Wind Speed % of 25 mph',linewidth=2)
     ax.plot(local_datetime, clipped_hum, color='green', label='Humidity %',linewidth=2)
     ax.plot(local_datetime, clipped_smoke, color='saddlebrown', linestyle='--',
-            label='Smoke (US AQI, /150)', linewidth=2)
+            label='Smoke (PM2.5 AQI, /150)', linewidth=2)
     ax.axhline(_SMOKE_AQI_SEVERE / 150 * 90, color='saddlebrown', linestyle=':',
-               linewidth=1, alpha=0.4, label=f'Smoke gate (AQI {_SMOKE_AQI_SEVERE})')
+               linewidth=1, alpha=0.4, label=f'Smoke gate (PM2.5 AQI {_SMOKE_AQI_SEVERE})')
     ax.plot(local_datetime, clipped_jet, color='darkorange', linestyle='-.',
             label='Jet Stream (250 hPa km/h, /150)', linewidth=2)
     ax.axhline(55 / 150 * 90, color='darkorange', linestyle=':',
@@ -513,47 +515,61 @@ def air_mass(altitude: float) -> float:
     else:
         return 1.0 / math.sin(math.radians(altitude))
 
-# Smoke gating uses US AQI, NOT aerosol optical depth. Validated against four
-# labelled sh2-92 nights (Jul 11-14 2026, same site): Open-Meteo's AOD field did
-# not track the smoke that crushed transparency (N4 smoke AOD 0.37 < N1 clear
-# AOD 0.35), but US AQI did — good nights ~46-49, bad/smoky nights ~62-69,
-# monotonic with detected star count. The threshold sits in the empirical gap
-# (49 | 62). Calibrated on limited data — adjust this one constant if it over- or
-# under-fires over more nights.
-_SMOKE_AQI_SEVERE = 60   # US AQI at/above which the imaging window is gated as too smoky
+# Smoke gating uses the US AQI PM2.5 sub-index, NOT the composite us_aqi and NOT
+# aerosol optical depth. Ground-level ozone does not scatter or absorb in the
+# visible band and can never be a reason not to image; only particulates can.
+#
+# This gated on the composite ``us_aqi`` (the max over all pollutant sub-indices)
+# until 2026-07-27, when composite AQI hit 102 on pure surface ozone, reported
+# "very heavy smoke", and gated a night whose PM2.5 sub-index was 61. Switching
+# the input to us_aqi_pm2_5 removes that whole false-alarm class.
+#
+# THE THRESHOLD ITSELF IS NOT VALIDATED. It was fit to four sh2-92 nights
+# (Jul 11-14 2026) treating the Jul 13/14 star-count collapse as smoke, but AirNow
+# ground stations measured 10.8 and 13.3 µg/m³ at those imaging hours — clean air.
+# That collapse was seeing (dew spread 5.2/4.5 °C, FWHM 2.98"/2.68"), not aerosol.
+# The one real smoke event on record (Jul 15-19, measured peak 131 µg/m³) fell in a
+# gap in the imaging record, so whether smoke degrades images here is UNTESTED, not
+# disproven. 60 is a placeholder pending a labelled night at genuinely high PM2.5.
+#
+# These are CAMS *model* values, which validate poorly here: vs AirNow over Jul
+# 11-25 the model/measured ratio swings 0.24-1.70, running ~1.5x high on clean
+# nights and badly under-calling the real smoke event. Measured PM2.5 is the column
+# to trust — see scripts/night_quality_vs_conditions.py (pm25_epa).
+_SMOKE_AQI_SEVERE = 60   # PM2.5 AQI at/above which the imaging window is gated as too smoky
 
 
-def smoke_descriptor(aqi: float | None) -> str:
-    """Plain-language smoke level from US AQI, calibrated to imaging transparency
-    at this site (finer than the health-AQI categories: local smoke events that
-    wreck transparency here only reach the AQI-60s)."""
-    if aqi is None:
+def smoke_descriptor(pm25_aqi: float | None) -> str:
+    """Plain-language smoke level from the US AQI PM2.5 sub-index, calibrated to
+    imaging transparency at this site (finer than the health-AQI categories: local
+    smoke events that wreck transparency here only reach the AQI-60s)."""
+    if pm25_aqi is None:
         return "unknown"
-    if aqi < 55:
+    if pm25_aqi < 55:
         return "clear"
-    if aqi < 70:
+    if pm25_aqi < 70:
         return "smoky/hazy"
-    if aqi < 100:
+    if pm25_aqi < 100:
         return "heavy smoke"
     return "very heavy smoke"
 
 
 def weather_issues(cloud_cover: float, precipitation_probability: float, wind_speed: float,
-                   aqi: float | None = None) -> list[str]:
+                   pm25_aqi: float | None = None) -> list[str]:
     """Return human-readable weather problems for one forecast hour, empty if OK."""
     issues = []
     if cloud_cover > 80:
         issues.append("heavy cloud cover")
     if precipitation_probability > 20:
         issues.append("a chance of rain")
-    if aqi is not None and aqi >= _SMOKE_AQI_SEVERE:
+    if pm25_aqi is not None and pm25_aqi >= _SMOKE_AQI_SEVERE:
         issues.append("smoke in the air")
     return issues
 
 
 def is_weather_ok(cloud_cover: float, precipitation_probability: float, wind_speed: float,
-                  aqi: float | None = None) -> bool:
-    return not weather_issues(cloud_cover, precipitation_probability, wind_speed, aqi)
+                  pm25_aqi: float | None = None) -> bool:
+    return not weather_issues(cloud_cover, precipitation_probability, wind_speed, pm25_aqi)
 
 
 def map_az_to_horizon() -> tuple[list[float], list[float]]:
@@ -821,11 +837,11 @@ def best_object_tonight(instructions_path: Path | str) -> tuple[str, Optional[da
     az_horizon, al_horizon = map_az_to_horizon()
 
     cloud_times, cloud_covers, pp, wsp, hum = weather.get_weather_by_hour(latitude, longitude, 48)
-    aq_hours, aq_aod, aq_pm25, aq_aqi = weather.get_air_quality_by_hour(latitude, longitude, 48)
-    aqi_by_hour: dict[int, float] = {}
+    aq_hours, aq_aod, aq_pm25, aq_pm25_aqi = weather.get_air_quality_by_hour(latitude, longitude, 48)
+    pm25_aqi_by_hour: dict[int, float] = {}
     for k in range(len(aq_hours)):
-        if aq_hours[k] not in aqi_by_hour:
-            aqi_by_hour[aq_hours[k]] = aq_aqi[k]
+        if aq_hours[k] not in pm25_aqi_by_hour:
+            pm25_aqi_by_hour[aq_hours[k]] = aq_pm25_aqi[k]
     # Use the first occurrence of each hour (today's data) — the API returns hours
     # in chronological order so duplicate hours (same hour tomorrow) must not overwrite.
     weather_by_hour: dict[int, bool] = {}
@@ -833,7 +849,7 @@ def best_object_tonight(instructions_path: Path | str) -> tuple[str, Optional[da
         hour = cloud_times[j]
         if hour not in weather_by_hour:
             weather_by_hour[hour] = is_weather_ok(cloud_covers[j], pp[j], wsp[j],
-                                                  aqi=aqi_by_hour.get(hour))
+                                                  pm25_aqi=pm25_aqi_by_hour.get(hour))
 
     # Build the list of full hours within the dark window
     t = start_of_dark.replace(minute=0, second=0, microsecond=0)

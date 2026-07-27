@@ -93,17 +93,22 @@ def get_air_quality_by_hour(lat: float, lon: float, hours: int) -> tuple[list, l
 
     Mirrors get_weather_by_hour exactly — same past-hour filtering and hour-of-day
     alignment — so the returned hours line up with the weather hours for a given
-    forecast. Returns (hours, aod, pm2_5, us_aqi) as parallel lists, where
+    forecast. Returns (hours, aod, pm2_5, us_aqi_pm2_5) as parallel lists, where
     ``aod`` is the column aerosol optical depth (the light-extinction measure that
     matters for starlight; smoke drives it up). Returns empty lists on any error,
     which callers treat as "smoke unknown".
+
+    The AQI returned is the PM2.5 *sub-index*, not the composite ``us_aqi``. The
+    composite is the max across all pollutants, so a hot summer afternoon of
+    surface ozone pushes it to 100+ with perfectly clean air — ozone has no effect
+    on visible-band transparency and must never gate imaging. Only particulates do.
     """
     air_quality_url = "https://air-quality-api.open-meteo.com/v1/air-quality"
     forecast_days = max(1, (hours + 23) // 24)
     params = {
         "latitude": lat,
         "longitude": lon,
-        "hourly": ["aerosol_optical_depth", "pm2_5", "us_aqi"],
+        "hourly": ["aerosol_optical_depth", "pm2_5", "us_aqi_pm2_5"],
         "forecast_days": forecast_days,
         "timezone": "auto"
     }
@@ -111,7 +116,7 @@ def get_air_quality_by_hour(lat: float, lon: float, hours: int) -> tuple[list, l
     local_times: list = []
     local_aod: list = []
     local_pm25: list = []
-    local_aqi: list = []
+    local_pm25_aqi: list = []
 
     try:
         # Non-critical data — fail fast rather than stall the nightly weather check.
@@ -122,7 +127,7 @@ def get_air_quality_by_hour(lat: float, lon: float, hours: int) -> tuple[list, l
         times = data["hourly"]["time"]
         aod = data["hourly"]["aerosol_optical_depth"]
         pm25 = data["hourly"]["pm2_5"]
-        aqi = data["hourly"]["us_aqi"]
+        pm25_aqi = data["hourly"]["us_aqi_pm2_5"]
 
         local_tz = pytz.timezone('America/New_York')
         now = datetime.now(local_tz)
@@ -137,12 +142,12 @@ def get_air_quality_by_hour(lat: float, lon: float, hours: int) -> tuple[list, l
             local_times.append(hour)
             local_aod.append(aod[i])
             local_pm25.append(pm25[i])
-            local_aqi.append(aqi[i])
+            local_pm25_aqi.append(pm25_aqi[i])
 
     except requests.RequestException as e:
         print(f"Error fetching air quality: {e}")
 
-    return local_times, local_aod, local_pm25, local_aqi
+    return local_times, local_aod, local_pm25, local_pm25_aqi
 
 
 # Jet-stream wind level (hPa) used as the astronomical-seeing proxy. Upper-air
@@ -223,9 +228,9 @@ if __name__ == '__main__':
     latitude = cfg["location"]["latitude"]
     get_weather_by_hour(latitude, longitude, 24)
     print(get_sunrise_sunset())
-    aq_hours, aod, pm25, aqi = get_air_quality_by_hour(latitude, longitude, 24)
+    aq_hours, aod, pm25, pm25_aqi = get_air_quality_by_hour(latitude, longitude, 24)
     for i in range(len(aq_hours)):
-        print(f"{aq_hours[i]:>2}h: AOD {aod[i]}  PM2.5 {pm25[i]}  US AQI {aqi[i]}")
+        print(f"{aq_hours[i]:>2}h: AOD {aod[i]}  PM2.5 {pm25[i]}  PM2.5 AQI {pm25_aqi[i]}")
     jet_hours, jet_wind = get_jetstream_by_hour(latitude, longitude, 24)
     for i in range(len(jet_hours)):
         print(f"{jet_hours[i]:>2}h: jet {jet_wind[i]:>3.0f} km/h  seeing {seeing_from_jetstream(jet_wind[i])}")
