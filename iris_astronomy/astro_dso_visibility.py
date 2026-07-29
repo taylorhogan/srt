@@ -286,8 +286,7 @@ def plot_my_dso_and_horizon(dso: FixedTarget, my_observatory: Observer, observe_
                              or start_time <= local_datetime[i] <= window_finish)
                 if in_window:
                     hour_pm25_aqi = pm25_aqi_by_hour.get(hour)
-                    hour_issues = weather_issues(cloud_covers[j], pp[j], wsp[j],
-                                                 pm25_aqi=hour_pm25_aqi)
+                    hour_issues = weather_issues(cloud_covers[j], pp[j], wsp[j])
                     if hour_issues:
                         weather_ok = False
                         issues.update(hour_issues)
@@ -326,6 +325,9 @@ def plot_my_dso_and_horizon(dso: FixedTarget, my_observatory: Observer, observe_
     if peak_pm25_aqi is not None:
         weather_msg += (f"\nSmoke: {smoke_descriptor(peak_pm25_aqi)} "
                         f"(PM2.5 AQI {peak_pm25_aqi:.0f}, PM2.5 {peak_pm25:.0f} µg/m³)")
+        advisory = smoke_advisory(peak_pm25_aqi)
+        if advisory:
+            weather_msg += f"\n{advisory}"
     else:
         weather_msg += "\nSmoke: unknown"
 
@@ -342,8 +344,9 @@ def plot_my_dso_and_horizon(dso: FixedTarget, my_observatory: Observer, observe_
     ax.plot(local_datetime, clipped_hum, color='green', label='Humidity %',linewidth=2)
     ax.plot(local_datetime, clipped_smoke, color='saddlebrown', linestyle='--',
             label='Smoke (PM2.5 AQI, /150)', linewidth=2)
-    ax.axhline(_SMOKE_AQI_SEVERE / 150 * 90, color='saddlebrown', linestyle=':',
-               linewidth=1, alpha=0.4, label=f'Smoke gate (PM2.5 AQI {_SMOKE_AQI_SEVERE})')
+    ax.axhline(_SMOKE_AQI_ADVISORY / 150 * 90, color='saddlebrown', linestyle=':',
+               linewidth=1, alpha=0.4,
+               label=f'Smoke advisory (PM2.5 AQI {_SMOKE_AQI_ADVISORY})')
     ax.plot(local_datetime, clipped_jet, color='darkorange', linestyle='-.',
             label='Jet Stream (250 hPa km/h, /150)', linewidth=2)
     ax.axhline(55 / 150 * 90, color='darkorange', linestyle=':',
@@ -515,28 +518,28 @@ def air_mass(altitude: float) -> float:
     else:
         return 1.0 / math.sin(math.radians(altitude))
 
-# Smoke gating uses the US AQI PM2.5 sub-index, NOT the composite us_aqi and NOT
-# aerosol optical depth. Ground-level ozone does not scatter or absorb in the
-# visible band and can never be a reason not to image; only particulates can.
+# Smoke is REPORTED, NOT GATED. It is measured from the US AQI PM2.5 sub-index —
+# never the composite us_aqi (the max over all pollutant sub-indices), because
+# ground-level ozone does not scatter or absorb in the visible band. On 2026-07-27
+# the composite hit 102 on pure surface ozone and blocked a night whose PM2.5
+# sub-index was 61.
 #
-# This gated on the composite ``us_aqi`` (the max over all pollutant sub-indices)
-# until 2026-07-27, when composite AQI hit 102 on pure surface ozone, reported
-# "very heavy smoke", and gated a night whose PM2.5 sub-index was 61. Switching
-# the input to us_aqi_pm2_5 removes that whole false-alarm class.
-#
-# THE THRESHOLD ITSELF IS NOT VALIDATED. It was fit to four sh2-92 nights
-# (Jul 11-14 2026) treating the Jul 13/14 star-count collapse as smoke, but AirNow
-# ground stations measured 10.8 and 13.3 µg/m³ at those imaging hours — clean air.
-# That collapse was seeing (dew spread 5.2/4.5 °C, FWHM 2.98"/2.68"), not aerosol.
-# The one real smoke event on record (Jul 15-19, measured peak 131 µg/m³) fell in a
-# gap in the imaging record, so whether smoke degrades images here is UNTESTED, not
-# disproven. 60 is a placeholder pending a labelled night at genuinely high PM2.5.
+# The gate was removed 2026-07-27 because the threshold was never validated. It was
+# fit to four sh2-92 nights (Jul 11-14 2026) treating the Jul 13/14 star-count
+# collapse as smoke, but AirNow ground stations measured 10.8 and 13.3 µg/m³ at
+# those imaging hours — clean air. That collapse was seeing (dew spread 5.2/4.5 °C,
+# FWHM 2.98"/2.68"), not aerosol. The one real smoke event on record (Jul 15-19,
+# measured peak 131 µg/m³) fell in a gap in the imaging record, so whether smoke
+# degrades images here is UNTESTED, not disproven — which is no basis for throwing
+# away clear nights.
 #
 # These are CAMS *model* values, which validate poorly here: vs AirNow over Jul
 # 11-25 the model/measured ratio swings 0.24-1.70, running ~1.5x high on clean
 # nights and badly under-calling the real smoke event. Measured PM2.5 is the column
 # to trust — see scripts/night_quality_vs_conditions.py (pm25_epa).
-_SMOKE_AQI_SEVERE = 60   # PM2.5 AQI at/above which the imaging window is gated as too smoky
+#
+# Restoring a gate needs a labelled night at genuinely high *measured* PM2.5.
+_SMOKE_AQI_ADVISORY = 60   # PM2.5 AQI at/above which the report carries a warning
 
 
 def smoke_descriptor(pm25_aqi: float | None) -> str:
@@ -554,22 +557,32 @@ def smoke_descriptor(pm25_aqi: float | None) -> str:
     return "very heavy smoke"
 
 
-def weather_issues(cloud_cover: float, precipitation_probability: float, wind_speed: float,
-                   pm25_aqi: float | None = None) -> list[str]:
-    """Return human-readable weather problems for one forecast hour, empty if OK."""
+def weather_issues(cloud_cover: float, precipitation_probability: float,
+                   wind_speed: float) -> list[str]:
+    """Return human-readable weather problems for one forecast hour, empty if OK.
+
+    Smoke is deliberately absent: it is reported as an advisory alongside the
+    verdict, never allowed to veto a night. See _SMOKE_AQI_ADVISORY above.
+    """
     issues = []
     if cloud_cover > 80:
         issues.append("heavy cloud cover")
     if precipitation_probability > 20:
         issues.append("a chance of rain")
-    if pm25_aqi is not None and pm25_aqi >= _SMOKE_AQI_SEVERE:
-        issues.append("smoke in the air")
     return issues
 
 
-def is_weather_ok(cloud_cover: float, precipitation_probability: float, wind_speed: float,
-                  pm25_aqi: float | None = None) -> bool:
-    return not weather_issues(cloud_cover, precipitation_probability, wind_speed, pm25_aqi)
+def is_weather_ok(cloud_cover: float, precipitation_probability: float,
+                  wind_speed: float) -> bool:
+    return not weather_issues(cloud_cover, precipitation_probability, wind_speed)
+
+
+def smoke_advisory(pm25_aqi: float | None) -> str | None:
+    """Warning line when smoke is high enough to be worth flagging, else None."""
+    if pm25_aqi is None or pm25_aqi < _SMOKE_AQI_ADVISORY:
+        return None
+    return (f"WARNING: {smoke_descriptor(pm25_aqi)} — transparency may be reduced. "
+            f"Not blocking imaging (modelled value, threshold unvalidated).")
 
 
 def map_az_to_horizon() -> tuple[list[float], list[float]]:
@@ -848,8 +861,7 @@ def best_object_tonight(instructions_path: Path | str) -> tuple[str, Optional[da
     for j in range(len(cloud_times)):
         hour = cloud_times[j]
         if hour not in weather_by_hour:
-            weather_by_hour[hour] = is_weather_ok(cloud_covers[j], pp[j], wsp[j],
-                                                  pm25_aqi=pm25_aqi_by_hour.get(hour))
+            weather_by_hour[hour] = is_weather_ok(cloud_covers[j], pp[j], wsp[j])
 
     # Build the list of full hours within the dark window
     t = start_of_dark.replace(minute=0, second=0, microsecond=0)
