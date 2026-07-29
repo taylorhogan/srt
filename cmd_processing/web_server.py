@@ -118,29 +118,13 @@ _OUTSIDE_AQI_TTL = 600.0
 # which draws to global pyplot state under a TkAgg backend — neither is safe
 # in a polled request handler or a worker thread. So the producer writes its
 # pick to a file and the ticker is a plain file read.
-_TONIGHT_TARGET_MAX_AGE = 24 * 3600.0   # a night's pick goes stale after a day
-
-
 def _read_tonight_target() -> Optional[str]:
     """The DSO the imaging grid last selected, or None if absent/stale.
 
     Cheap: a small JSON read, no astropy, no network, no pyplot.
     """
-    import time as _time
-    try:
-        from configs import config as _config
-
-        _root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-        path = os.path.join(_root, _config.data()["location"]["tonight_target"])
-        if not os.path.exists(path):
-            return None
-        if (_time.time() - os.path.getmtime(path)) > _TONIGHT_TARGET_MAX_AGE:
-            return None
-        with open(path, "r", encoding="utf-8") as f:
-            return json.load(f).get("dso") or None
-    except Exception:
-        _logger.exception("tonight target read failed")
-        return None
+    from control import tonight_target
+    return tonight_target.read()
 
 
 def _read_outside_aqi() -> Optional[int]:

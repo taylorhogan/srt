@@ -2819,8 +2819,15 @@ def doit_cmd(words: list[str], account: str) -> None:
         _kill_nina()
         do_flats()
 
-        instr = instructions.get_dso_object_tonight()
-        eon_dso = instr.get("dso") if instr else None
+        # Report on what was actually imaged: the DSO the grid published when it
+        # planned the night. Re-running the selector here would rank against the
+        # COMING night's dark hours and weather and could name a different DSO
+        # than the one just shot. Falls back to the live queue if unpublished.
+        from control import tonight_target
+        eon_dso = tonight_target.read()
+        if not eon_dso:
+            instr = instructions.get_dso_object_tonight()
+            eon_dso = instr.get("dso") if instr else None
         eon_words = ["snr", eon_dso] if eon_dso else ["snr"]
         social_server.post_social_message(
             f"End of night: SNR analysis for {eon_dso or 'most recent DSO'}…"

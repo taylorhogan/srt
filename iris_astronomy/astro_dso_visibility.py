@@ -1072,26 +1072,14 @@ def best_object_tonight(instructions_path: Path | str) -> tuple[str, Optional[da
 
 
 def _publish_tonight_target(dso: str, good_hours: int) -> None:
-    """Record the grid's pick so the status ticker can show the same DSO.
+    """Record the grid's pick so every other consumer reads the same DSO.
 
-    The ticker cannot run the selector itself: it resolves names through SIMBAD
-    with caching off (~78 s here) and map_az_to_horizon() draws to global
-    pyplot state under a TkAgg backend, neither of which belongs in a polled
-    web request. Publishing to a file keeps the two in step for the cost of a
-    small write. Best-effort — never let this break grid generation.
+    This function is the ONLY writer. See control.tonight_target for why the
+    ticker and the end-of-night SNR report read the published value instead of
+    re-running the selection.
     """
-    try:
-        _root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
-        path = os.path.join(_root, CFG["location"]["tonight_target"])
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump({
-                "dso": dso,
-                "good_hours": good_hours,
-                "computed": datetime.datetime.now().isoformat(timespec="seconds"),
-            }, f)
-    except Exception as e:
-        print(f"WARN: could not publish tonight's target: {e}")
+    from control import tonight_target
+    tonight_target.publish(dso, good_hours)
 
 
 def test_me() -> None:
