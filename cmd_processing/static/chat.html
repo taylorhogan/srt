@@ -187,7 +187,7 @@
   .sheet-log::-webkit-scrollbar { width: 6px; }
   .sheet-log::-webkit-scrollbar-thumb { background: #30363d; border-radius: 3px; }
   .log-line { font-size: 12.5px; line-height: 1.5; }
-  .log-time { color: #475061; margin-right: 9px; }
+  .log-time { color: #475061; margin-right: 9px; white-space: nowrap; }
   .log-text { color: #c9d1d9; white-space: pre-wrap; word-wrap: break-word; }
   .log-text a { color: #58a6ff; }
   .log-line.err .log-text { color: #f0a3a3; }
@@ -320,7 +320,15 @@
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { closeLightbox(); if (openDetailId) closeDetail(); } });
 
   // ── Helpers ─────────────────────────────────────────────────────
-  function fmtTime(epochSec) { return new Date(epochSec * 1000).toLocaleTimeString([], { hour12: false }); }
+  // Date + time, built from local parts rather than toLocaleDateString so the
+  // format is always YYYY-MM-DD regardless of browser locale — matching the
+  // %Y-%m-%d used everywhere on the Python side.
+  function fmtTime(epochSec) {
+    const d = new Date(epochSec * 1000);
+    const p = (n) => String(n).padStart(2, '0');
+    return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) +
+           ' ' + p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
+  }
   function fmtClock(ms) { return new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); }
   function fmtTimeLeft(secs) {
     if (secs == null) return null;
