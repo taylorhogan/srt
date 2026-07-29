@@ -110,6 +110,38 @@ _outside_aqi: Optional[float] = None
 _outside_aqi_fetched: float = 0.0
 _OUTSIDE_AQI_TTL = 600.0
 
+# Tonight's target, as published by the imaging grid.
+#
+# The ticker must show the SAME DSO the grid picks, but it must not compute it.
+# The grid's selector resolves every unqueued target through SIMBAD with
+# caching off (~78 s for a 37-target queue) and calls map_az_to_horizon(),
+# which draws to global pyplot state under a TkAgg backend — neither is safe
+# in a polled request handler or a worker thread. So the producer writes its
+# pick to a file and the ticker is a plain file read.
+_TONIGHT_TARGET_MAX_AGE = 24 * 3600.0   # a night's pick goes stale after a day
+
+
+def _read_tonight_target() -> Optional[str]:
+    """The DSO the imaging grid last selected, or None if absent/stale.
+
+    Cheap: a small JSON read, no astropy, no network, no pyplot.
+    """
+    import time as _time
+    try:
+        from configs import config as _config
+
+        _root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+        path = os.path.join(_root, _config.data()["location"]["tonight_target"])
+        if not os.path.exists(path):
+            return None
+        if (_time.time() - os.path.getmtime(path)) > _TONIGHT_TARGET_MAX_AGE:
+            return None
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f).get("dso") or None
+    except Exception:
+        _logger.exception("tonight target read failed")
+        return None
+
 
 def _read_outside_aqi() -> Optional[int]:
     """Current US AQI via Open-Meteo Air Quality (no key). Cached ~10 min.
@@ -414,11 +446,16 @@ async def api_ticker():
         if isinstance(tonight, bool):
             tonight = "Yes" if tonight else "No"
 
-        # Read the live queue so reprioritisation is reflected immediately.
-        try:
-            dso = instructions.get_dso_object_tonight().get("dso", "—")
-        except Exception:
-            dso = sched.get("dso") or "—"
+        # Show the DSO the imaging grid picked, so the ticker and the grid can
+        # never disagree. Cheap file read — see _read_tonight_target. Falls back
+        # to the live queue, then to the scheduler's persisted pick, when the
+        # grid has not run yet (fresh install, or first run of the day).
+        dso = _read_tonight_target()
+        if not dso:
+            try:
+                dso = instructions.get_dso_object_tonight().get("dso", "—")
+            except Exception:
+                dso = sched.get("dso") or "—"
 
         metrics = [
             {"label": "Scheduler", "value": sched_state},

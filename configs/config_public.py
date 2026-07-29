@@ -21,7 +21,10 @@ class PublicConfig():
             "observatory_name": "Iris",
             "timezone": "America/New_York",
             "instructions":"local/my_instructions.json",
-            "image_grid":"local/imaging_grid.png"
+            "image_grid":"local/imaging_grid.png",
+            # Written by the imaging grid, read by the status ticker so both
+            # always name the same DSO. See _publish_tonight_target.
+            "tonight_target":"local/tonight_target.json"
     },
 
         "scratch": {

@@ -815,25 +815,42 @@ def build_grid_html(
     return "".join(rows)
 
 
-def best_object_tonight(instructions_path: Path | str) -> tuple[str, Optional[datetime.datetime], int]:
+def rank_targets_tonight(instructions_path: Path | str, verbose: bool = False):
+    """Rank tonight's ``waiting`` targets, best first.
+
+    SINGLE source of truth for "tonight's target". Both the imaging grid and
+    the status ticker go through this, so the two cannot disagree about the
+    selection. They did until 2026-07-29: the grid read the queue raw while the
+    ticker went via ``instructions.get_sorted_instructions``, which applies the
+    convergence flip — so a converged high-priority target (sh2-92, priority
+    100, is_dso_done True) was picked by the grid and skipped by the ticker,
+    which fell through to sh2-129.
+
+    Returns ``(rows, dark_hours, weather_by_hour)``, each row being
+    ``(dso_name, good_count, max_alt, dso_type, start_time, symbols, priority)``
+    sorted by priority, then good hours, then max altitude. Returns
+    ``([], [], {})`` when nothing is selectable.
+
+    Does no printing (unless *verbose*), no plotting and no file writing, so a
+    polling caller such as the ticker can use it cheaply behind a short cache.
     """
-    Read a list of DSO objects from a JSON file, compute how many hours of
-    good-weather imaging time each 'waiting' object has tonight, and print
-    the results sorted best-first.
-    """
-    print(f"DEBUG: loading instructions from: {instructions_path}")
+    if verbose:
+        print(f"DEBUG: loading instructions from: {instructions_path}")
     with open(instructions_path, "r") as f:
         objects = json.load(f)
 
-    print(f"DEBUG: total objects in file: {len(objects)}")
-    for obj in objects:
-        print(f"DEBUG:   {obj.get('dso', '?')} — status={obj.get('status', '?')}")
+    if verbose:
+        print(f"DEBUG: total objects in file: {len(objects)}")
+        for obj in objects:
+            print(f"DEBUG:   {obj.get('dso', '?')} — status={obj.get('status', '?')}")
 
     waiting = [obj for obj in objects if obj.get("status") == "waiting"]
-    print(f"DEBUG: waiting objects: {len(waiting)}")
+    if verbose:
+        print(f"DEBUG: waiting objects: {len(waiting)}")
     if not waiting:
-        print("No waiting objects found.")
-        return "", None, 0, ""
+        if verbose:
+            print("No waiting objects found.")
+        return [], [], {}
 
     longitude = CFG["location"]["longitude"]
     latitude = CFG["location"]["latitude"]
@@ -873,8 +890,9 @@ def best_object_tonight(instructions_path: Path | str) -> tuple[str, Optional[da
         t += datetime.timedelta(hours=1)
 
     if not dark_hours:
-        print("No dark hours found tonight.")
-        return "", None, 0, ""
+        if verbose:
+            print("No dark hours found tonight.")
+        return [], [], {}
 
     # Convert to astropy Time (UTC) for altaz calculations
     hour_times = Time(
@@ -890,14 +908,16 @@ def best_object_tonight(instructions_path: Path | str) -> tuple[str, Optional[da
         # silently dropped here (they have no resolvable name).
         dso = resolve_target(obj)
         if dso is None:
-            print(f"DEBUG: could not resolve DSO: {dso_name}")
+            if verbose:
+                print(f"DEBUG: could not resolve DSO: {dso_name}")
             continue
         try:
             altaz = my_observatory.altaz(hour_times, dso)
             altitude = altaz.alt.deg
             azimuth = altaz.az.deg
         except Exception as e:
-            print(f"DEBUG: altaz failed for {dso_name}: {e}")
+            if verbose:
+                print(f"DEBUG: altaz failed for {dso_name}: {e}")
             continue
 
         symbols: list[str] = []
@@ -919,6 +939,23 @@ def best_object_tonight(instructions_path: Path | str) -> tuple[str, Optional[da
 
     # Sort by priority first (higher = better), then good hours, then max altitude.
     rows.sort(key=lambda x: (x[6], x[1], x[2]), reverse=True)
+
+    return rows, dark_hours, weather_by_hour
+
+
+def best_object_tonight(instructions_path: Path | str) -> tuple[str, Optional[datetime.datetime], int, str]:
+    """
+    Read a list of DSO objects from a JSON file, compute how many hours of
+    good-weather imaging time each 'waiting' object has tonight, and print
+    the results sorted best-first.
+
+    Selection is delegated to rank_targets_tonight; this adds the console
+    dump, the grid PNG and the HTML table. Callers that only need the target
+    name should use rank_targets_tonight directly — it has no side effects.
+    """
+    rows, dark_hours, weather_by_hour = rank_targets_tonight(instructions_path, verbose=True)
+    if not rows or not dark_hours:
+        return "", None, 0, ""
 
     # Build table data shared by both the console print and the PNG
     col = 3
@@ -1030,7 +1067,31 @@ def best_object_tonight(instructions_path: Path | str) -> tuple[str, Optional[da
     if not rows:
         return "", None, 0, ""
     best_name, best_good_count, _, _, best_start, _, _ = rows[0]
+    _publish_tonight_target(best_name, best_good_count)
     return best_name, best_start, best_good_count, grid_html
+
+
+def _publish_tonight_target(dso: str, good_hours: int) -> None:
+    """Record the grid's pick so the status ticker can show the same DSO.
+
+    The ticker cannot run the selector itself: it resolves names through SIMBAD
+    with caching off (~78 s here) and map_az_to_horizon() draws to global
+    pyplot state under a TkAgg backend, neither of which belongs in a polled
+    web request. Publishing to a file keeps the two in step for the cost of a
+    small write. Best-effort — never let this break grid generation.
+    """
+    try:
+        _root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+        path = os.path.join(_root, CFG["location"]["tonight_target"])
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump({
+                "dso": dso,
+                "good_hours": good_hours,
+                "computed": datetime.datetime.now().isoformat(timespec="seconds"),
+            }, f)
+    except Exception as e:
+        print(f"WARN: could not publish tonight's target: {e}")
 
 
 def test_me() -> None:
