@@ -3117,6 +3117,10 @@ def _snr_run_locked(words: list[str]) -> None:
         except jobs.Cancelled:
             raise
         except Exception as exc:
+            # Log too: a filter that dies here used to leave nothing in iris.log,
+            # so a half-finished `snr` looked like a hang rather than a failure.
+            _logger.exception("Convergence [%s] failed after %.1fs",
+                              fn, time.perf_counter() - _t0)
             social_server.post_social_message(f"Convergence [{fn}]: failed — {exc}")
             return
         _logger.info("Convergence [%s]: %d frames in %.1fs", fn, len(paths), time.perf_counter() - _t0)

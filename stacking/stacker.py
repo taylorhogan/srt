@@ -33,6 +33,7 @@ import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from contextlib import contextmanager
 from enum import Enum, auto
 from pathlib import Path
 from typing import Callable, Optional
@@ -348,6 +349,194 @@ _REG_MAX_MEDIAN_RESIDUAL_PX = 2.0
 _REG_MAX_CONTROL_POINTS = 200
 
 
+def _reference_control_points(reference_det: np.ndarray) -> Optional[np.ndarray]:
+    """Return the reference's (N, 2) control points, or None if unavailable.
+
+    ``astroalign.find_transform(source, target)`` runs its own source extraction
+    on *both* arguments every call, so registering N frames against one reference
+    re-detects the reference's stars N times — 1.5 s of the 3.8 s per-frame
+    find_transform on a 61 MP frame, repeated for nothing. find_transform also
+    accepts an (N, 2) array of source positions in place of an image, so extract
+    the reference's points once and pass those instead. Verified on sh2-92 Ha
+    subs: the returned transform matrix is bit-identical either way.
+
+    Returns None if astroalign's private extractor moves or finds too few
+    sources; callers then pass the reference image itself, as before — same
+    result, just slower.
+    """
+    try:
+        pts = np.asarray(_astroalign._find_sources(reference_det))[:_REG_MAX_CONTROL_POINTS]
+        if len(pts) >= 3:
+            return pts
+    except Exception:
+        _logger.debug("Reference source pre-extraction unavailable", exc_info=True)
+    return None
+
+
+def _apply_affine(transform, frame: np.ndarray, ref_shape: tuple[int, int]):
+    """Warp *frame* onto a *ref_shape* grid. Returns (aligned float32, footprint).
+
+    Does what ``astroalign.apply_transform`` does, minus its two avoidable costs.
+    On a 61 MP frame that call takes 4.1 s — about half the per-frame
+    registration budget — and only 2.4 s of it is the warp anyone wanted:
+
+      * 1.15 s warping a second, all-zero image just to learn which output
+        pixels fell outside the source. That is pure geometry, and cv2 gets the
+        same mask in 0.09 s (1758 differing pixels out of 61 M, all in a 1-px
+        edge sliver — cv2 and skimage are bit-identical on integer shifts).
+      * 0.52 s taking the median of the whole frame for the out-of-bounds fill
+        value. Every pixel it fills is about to be masked anyway; a ::8
+        subsample gives the same number to 1 ADU in 0.01 s.
+
+    The data warp itself is left exactly as astroalign does it — same order-3
+    spline, same clip and preserve_range — because the convergence RMSE this
+    feeds is sensitive to the resampling kernel. Swapping in cv2's bicubic
+    (sharpening) moved the whole curve +8%, and its bilinear (smoothing) -13%,
+    which would quietly shift every stored slope in convergence.json and the
+    `done` decisions made from them. 1.6x is worth more than 34x here.
+    """
+    try:
+        from stacking import gpu_accel
+        res = gpu_accel.apply_affine(np.asarray(transform.params), frame, ref_shape)
+        if res is not None:
+            return res
+    except Exception:
+        _logger.exception("GPU warp failed — falling back to CPU")
+
+    try:
+        from skimage.transform import warp
+
+        aligned = warp(
+            frame, inverse_map=transform.inverse, output_shape=ref_shape, order=3,
+            mode="constant", cval=float(np.median(frame[::8, ::8])),
+            clip=True, preserve_range=True,
+        )
+        footprint = _warp_footprint(transform, frame.shape, ref_shape)
+        return aligned, footprint
+    except Exception:
+        _logger.debug("Fast warp unavailable, falling back to astroalign", exc_info=True)
+
+    # apply_transform only reads the target's shape, so an unwritten array is
+    # enough and costs nothing.
+    return _astroalign.apply_transform(transform, frame, np.empty(ref_shape, dtype=np.float32))
+
+
+def _warp_footprint(transform, src_shape: tuple[int, int], ref_shape: tuple[int, int]):
+    """True where the warped output pulled from outside the source frame.
+
+    Matches astroalign's ``warp(zeros, cval=1.0) > 0.4`` test, computed on a
+    uint8 mask with cv2 when available (0.09 s vs 1.15 s).
+    """
+    h, w = ref_shape
+    try:
+        import cv2
+        covered = cv2.warpAffine(
+            np.ones(src_shape, dtype=np.uint8),
+            np.asarray(transform.params, dtype=np.float64)[:2, :], (w, h),
+            flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT, borderValue=0,
+        )
+        return covered < 0.6
+    except Exception:
+        _logger.debug("cv2 footprint unavailable, using skimage", exc_info=True)
+    from skimage.transform import warp
+    return warp(np.zeros(src_shape, dtype="float32"), inverse_map=transform.inverse,
+                output_shape=ref_shape, cval=1.0) > 0.4
+
+
+def _register_one(
+    path: Path,
+    det_target: np.ndarray,
+    ref_shape: tuple[int, int],
+    scale: int,
+) -> tuple[Optional[np.ndarray], str]:
+    """Register one frame against *det_target*, downscaled by *scale*.
+
+    Returns (downscaled aligned frame, "") on success, or (None, reason) — the
+    reason is prefixed "QA:" when the frame was rejected rather than errored.
+    Runs in a worker process (see _registration_pool), so it takes a path rather
+    than an array, reports outcomes by return value rather than by logging, and
+    never touches shared state.
+
+    *det_target* is the reference's control points (see
+    _reference_control_points) or, in the serial fallback, the reference image.
+    """
+    try:
+        frame = _load_fits_2d(path)
+        transform, (src_pts, dst_pts) = _astroalign.find_transform(
+            _despike(frame), det_target,
+            max_control_points=_REG_MAX_CONTROL_POINTS,
+        )
+    except Exception as exc:
+        return None, f"registration failed: {exc}"
+
+    n_matched = len(src_pts) if src_pts is not None else 0
+    if n_matched < _REG_MIN_MATCHED_STARS:
+        return None, f"QA: dropped — {n_matched} matched stars"
+
+    pts_tx = transform(np.asarray(src_pts))
+    residuals = np.sqrt(np.sum((pts_tx - np.asarray(dst_pts)) ** 2, axis=1))
+    if float(np.median(residuals)) > _REG_MAX_MEDIAN_RESIDUAL_PX:
+        return None, "QA: dropped — high residual"
+
+    try:
+        aligned, footprint = _apply_affine(transform, frame, ref_shape)
+    except Exception as exc:
+        return None, f"apply_transform failed: {exc}"
+
+    frame = None  # free full-res copy
+    aligned = aligned.astype(np.float32)
+    aligned[footprint.astype(bool)] = np.nan
+    return _downsample_mean(aligned, scale), ""
+
+
+# Workers per registration pool. `snr` already runs its filters in parallel
+# threads, so the real budget is workers x filters, and RAM binds before cores
+# do: a worker peaks near 1 GB, because skimage's warp upcasts the 61 MP frame
+# to float64. Measured peak RSS on the usual two-filter night was 9.7 GB at 4
+# workers each; 3 holds it to 8.0 GB, which leaves room for N.I.N.A on this
+# 29 GB box and costs only 9% wall-clock (347 s -> 378 s).
+_REG_POOL_WORKERS = 3
+
+
+def _reg_worker_init() -> None:
+    """Detach a spawned worker from the app's log file.
+
+    Windows spawn makes each worker re-import the parent's __main__ — in
+    production that is start_srt.py, which pulls in the whole app and with it a
+    FileHandler on iris.log. Three workers appending to the one log file is
+    exactly what the logging docs warn against, and they have nothing to say
+    anyway: _register_one reports outcomes through its return value.
+    """
+    root = logging.getLogger()
+    root.handlers.clear()
+    root.addHandler(logging.NullHandler())
+
+
+@contextmanager
+def _registration_pool(enabled: bool):
+    """Yield a process pool for one prep call's registration, or None.
+
+    Created and torn down per call so the worker processes' full-resolution
+    frame buffers are returned to the OS between runs rather than sitting on an
+    idle long-lived pool — this module lives inside an always-on server.
+    """
+    if not enabled:
+        yield None
+        return
+    try:
+        from concurrent.futures import ProcessPoolExecutor
+        pool = ProcessPoolExecutor(max_workers=_REG_POOL_WORKERS,
+                                   initializer=_reg_worker_init)
+    except Exception:
+        _logger.exception("Could not start registration pool — registering serially")
+        yield None
+        return
+    try:
+        yield pool
+    finally:
+        pool.shutdown(wait=False, cancel_futures=True)
+
+
 def _register_frames(
     frames: list[np.ndarray],
     fwhm_scores: Optional[list[float]] = None,
@@ -379,6 +568,9 @@ def _register_frames(
     # sensor and would vote for the identity transform — see _despike) but
     # applied to the original frames so no real signal is filtered.
     reference_det = _despike(reference)
+    ref_pts = _reference_control_points(reference_det)
+    if ref_pts is not None:
+        reference_det = ref_pts
     registered = [reference]
     surviving_indices = [ref_idx]
     failed = 0
@@ -417,17 +609,7 @@ def _register_frames(
             continue
 
         try:
-            aligned = footprint = None
-            try:
-                from stacking import gpu_accel
-                res = gpu_accel.apply_affine(
-                    np.asarray(transform.params), frame, reference.shape)
-                if res is not None:
-                    aligned, footprint = res
-            except Exception:
-                _logger.exception("GPU warp failed — using CPU apply_transform")
-            if aligned is None:
-                aligned, footprint = _astroalign.apply_transform(transform, frame, reference)
+            aligned, footprint = _apply_affine(transform, frame, reference.shape)
         except Exception as exc:
             failed += 1
             _logger.warning("apply_transform failed for frame %d: %s", i, exc)
@@ -1144,56 +1326,83 @@ def _prepare_for_convergence(
     reference = _load_fits_2d(accepted[actual_ref_idx])
     # Same despike-for-detection as _register_frames: hot pixels must not
     # provide the control points (they'd vote for the identity transform).
+    # Extracted to a point list once so find_transform doesn't redo it per frame.
     reference_det = _despike(reference)
+    ref_pts = _reference_control_points(reference_det)
     scale = 1 if downscale_to is None else max(1, min(reference.shape) // downscale_to)
+    ref_shape = reference.shape
 
     result_frames: list[np.ndarray] = [_downsample_mean(reference, scale)]
     result_accepted: list[Path] = [accepted[actual_ref_idx]]
     failed, poor_qa = 0, 0
 
-    for i, p in enumerate(accepted):
-        if i == actual_ref_idx:
-            continue
-        _ckpt(cancel_cb)
+    todo = [(i, p) for i, p in enumerate(accepted) if i != actual_ref_idx]
+
+    # Registering one frame is ~3 s of pure CPU (source detection, triangle
+    # matching, warp) and holds the GIL throughout — sep and skimage are C, but
+    # neither releases it, so threads give ~1.15x on 4 workers. Processes do
+    # scale: each worker loads its own frame from disk and sends back only the
+    # downscaled result (~2 MB), so there is nothing large to pickle. The full-
+    # resolution path (transit photometry, downscale_to=None) stays serial —
+    # there the results are 245 MB each and pickling them would cost more than
+    # the registration saves.
+    use_pool = ref_pts is not None and downscale_to is not None and len(todo) > 2
+    det_target = reference_det if ref_pts is None else ref_pts
+
+    def _serial_results():
+        for i, p in todo:
+            yield i, _register_one(p, det_target, ref_shape, scale)
+
+    def _pooled_results(pool):
+        # Read back in submission order so result_frames keeps the same ordering
+        # as the serial loop; anything raised here cancels the rest.
+        futures = [(i, pool.submit(_register_one, p, ref_pts, ref_shape, scale))
+                   for i, p in todo]
         try:
-            frame = _load_fits_2d(p)
-            transform, (src_pts, dst_pts) = _astroalign.find_transform(
-                _despike(frame), reference_det,
-                max_control_points=_REG_MAX_CONTROL_POINTS,
-            )
-        except Exception as exc:
-            failed += 1
-            _logger.warning("Convergence registration failed for frame %d: %s", i, exc)
-            continue
+            for i, fut in futures:
+                yield i, fut.result()
+        except BaseException:
+            for _, fut in futures:
+                fut.cancel()
+            raise
 
-        n_matched = len(src_pts) if src_pts is not None else 0
-        if n_matched < _REG_MIN_MATCHED_STARS:
-            poor_qa += 1
-            _logger.warning("Convergence: frame %d dropped — %d matched stars", i, n_matched)
-            continue
+    def _consume(results):
+        frames, paths, failed, poor_qa = [], [], 0, 0
+        for i, (small, reason) in results:
+            _ckpt(cancel_cb)
+            if small is None:
+                if reason.startswith("QA:"):
+                    poor_qa += 1
+                else:
+                    failed += 1
+                _logger.warning("Convergence: frame %d — %s", i, reason)
+                continue
+            frames.append(small)
+            paths.append(accepted[i])
+        return frames, paths, failed, poor_qa
 
-        pts_tx = transform(np.asarray(src_pts))
-        residuals = np.sqrt(np.sum((pts_tx - np.asarray(dst_pts)) ** 2, axis=1))
-        if float(np.median(residuals)) > _REG_MAX_MEDIAN_RESIDUAL_PX:
-            poor_qa += 1
-            _logger.warning("Convergence: frame %d dropped — high residual", i)
-            continue
+    reference = None  # free full-res reference; only its shape is needed now
+    reference_det = None if ref_pts is not None else reference_det
 
-        try:
-            aligned, footprint = _astroalign.apply_transform(transform, frame, reference)
-        except Exception as exc:
-            failed += 1
-            _logger.warning("Convergence: apply_transform failed for frame %d: %s", i, exc)
-            continue
+    from concurrent.futures.process import BrokenProcessPool
 
-        frame = None  # free full-res copy
-        aligned = aligned.astype(np.float32)
-        aligned[footprint.astype(bool)] = np.nan
-        result_frames.append(_downsample_mean(aligned, scale))
-        result_accepted.append(p)
+    with _registration_pool(use_pool) as pool:
+        if pool is None:
+            registered, paths, failed, poor_qa = _consume(_serial_results())
+        else:
+            try:
+                registered, paths, failed, poor_qa = _consume(_pooled_results(pool))
+            except Cancelled:
+                raise
+            except BrokenProcessPool:
+                # A worker died (OOM, or a bad FITS taking the interpreter down).
+                # Don't lose the night's analysis over it — redo it serially.
+                _logger.exception("Registration pool broke — falling back to serial")
+                registered, paths, failed, poor_qa = _consume(_serial_results())
 
-    reference = None  # free reference
-    reference_det = None
+    result_frames.extend(registered)
+    result_accepted.extend(paths)
+
     n_dropped = len(accepted) - len(result_frames)
     _logger.info(
         "Convergence prep: %d/%d frames registered, %d failed, %d dropped QA",
