@@ -1491,7 +1491,10 @@ def convergence_curve(
 
     if golden_output_path is not None:
         golden_output_path.parent.mkdir(parents=True, exist_ok=True)
-        _label = f"{filter_name} golden  {n} frames" if filter_name else f"golden  {n} frames"
+        # Say both counts on the image itself: n is what went into this stack,
+        # len(paths) is what was on disk before the quality cut and registration.
+        _count = f"{n} of {len(paths)} frames" if n != len(paths) else f"{n} frames"
+        _label = f"{filter_name} golden  {_count}" if filter_name else f"golden  {_count}"
         _save_jpg(golden, golden_output_path, title=_label)
 
     _ckpt(cancel_cb)

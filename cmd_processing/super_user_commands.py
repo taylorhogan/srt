@@ -3105,7 +3105,7 @@ def _snr_run_locked(words: list[str]) -> None:
             social_server.post_social_message(f"Convergence [{_fn}]: {msg}")
         _t0 = time.perf_counter()
         try:
-            _, _, slope_pct, final_rmse_pct = stacker.convergence_curve(
+            counts, _, slope_pct, final_rmse_pct = stacker.convergence_curve(
                 paths,
                 filter_name=fn,
                 output_path=out,
@@ -3123,20 +3123,29 @@ def _snr_run_locked(words: list[str]) -> None:
                               fn, time.perf_counter() - _t0)
             social_server.post_social_message(f"Convergence [{fn}]: failed — {exc}")
             return
-        _logger.info("Convergence [%s]: %d frames in %.1fs", fn, len(paths), time.perf_counter() - _t0)
+        # The curve's last point is the all-frames stack, so counts[-1] is exactly
+        # how many frames went into the golden — which is what these numbers
+        # describe. len(paths) is every LIGHT frame on disk, before the quality
+        # cut and any registration failures; report both so the gap is visible
+        # rather than showing a count the plots disagree with.
+        stacked = counts[-1]
+        n_frames = f"{stacked} of {len(paths)} frames" if stacked != len(paths) \
+            else f"{stacked} frames"
+        _logger.info("Convergence [%s]: %s in %.1fs", fn, n_frames, time.perf_counter() - _t0)
         with _saved_lock:
             saved[fn] = {
                 "tail_slope_pct": round(slope_pct, 6),
                 "final_rmse_pct": round(final_rmse_pct, 4),
-                "frame_count": len(paths),
+                "frame_count": stacked,
+                "total_frames": len(paths),
                 "updated": _date.today().isoformat(),
             }
         social_server.post_social_message(
-            f"Stack convergence vs golden — {fn}  ({len(paths)} frames)  slope {slope_pct:+.4f}%/frame  RMSE {final_rmse_pct:.2f}%",
+            f"Stack convergence vs golden — {fn}  ({n_frames})  slope {slope_pct:+.4f}%/frame  RMSE {final_rmse_pct:.2f}%",
             str(out),
         )
         social_server.post_social_message(
-            f"Golden stack — {fn}  ({len(paths)} frames)",
+            f"Golden stack — {fn}  ({n_frames})",
             str(gold),
         )
 

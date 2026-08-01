@@ -3,10 +3,17 @@
 JSON structure (local/convergence.json):
 {
   "m31": {
-    "Ha": {"tail_slope_pct": 0.23, "frame_count": 45, "updated": "2026-05-04"},
-    "R":  {"tail_slope_pct": 0.89, "frame_count": 12, "updated": "2026-05-04"}
+    "Ha": {"tail_slope_pct": 0.23, "frame_count": 45, "total_frames": 52,
+           "updated": "2026-05-04"},
+    "R":  {"tail_slope_pct": 0.89, "frame_count": 12, "total_frames": 12,
+           "updated": "2026-05-04"}
   }
 }
+
+frame_count is the number of frames actually stacked into the golden (post
+quality cut and registration) — the N the slope describes; total_frames is every
+LIGHT frame on disk for that filter. Entries written before 2026-08-01 have no
+total_frames, and their frame_count is the total rather than the stacked count.
 
 tail_slope_pct is negative (RMSE is falling), so "done" means abs(slope) < threshold.
 """
@@ -87,7 +94,7 @@ def save_convergence(dso_name: str, results: dict) -> None:
 
 
 def compute_dso_convergence(dso_name: str, image_dir: Path) -> dict[str, dict]:
-    """Return {filter: {tail_slope_pct, frame_count, updated}} for all LIGHT filters.
+    """Return {filter: {tail_slope_pct, frame_count, total_frames, updated}} per filter.
 
     Reuses the same FITS-loading / filter-grouping logic as _snr_run().
     Returns an empty dict if no LIGHT frames are found.
@@ -132,11 +139,16 @@ def compute_dso_convergence(dso_name: str, image_dir: Path) -> dict[str, dict]:
     today = date.today().isoformat()
     for fname, paths in by_filter.items():
         try:
-            _, _, slope_pct, final_rmse_pct = stacker.convergence_curve(paths, filter_name=fname)
+            counts, _, slope_pct, final_rmse_pct = stacker.convergence_curve(
+                paths, filter_name=fname)
+            # counts[-1] is the all-frames point of the curve: the frames that
+            # survived the quality cut and registered, i.e. the ones the slope
+            # was actually measured on. len(paths) is every LIGHT frame on disk.
             results[fname] = {
                 "tail_slope_pct": round(slope_pct, 6),
                 "final_rmse_pct": round(final_rmse_pct, 4),
-                "frame_count": len(paths),
+                "frame_count": counts[-1],
+                "total_frames": len(paths),
                 "updated": today,
             }
         except Exception:
@@ -171,6 +183,12 @@ def frames_needed_estimate(dso_name: str) -> Optional[int]:
     In the tail, slope ≈ k/N, so N_target = N * (|slope| / threshold),
     meaning frames_needed = N * (|slope| / threshold - 1).
     Returns None if no convergence data exists.
+
+    N is ``frame_count``, the frames that survived the quality cut and got
+    stacked — that is the N the slope was measured against. The answer, though,
+    is frames to *shoot*, and some fraction of those get rejected, so it is
+    scaled back up by the keep rate (``frame_count / total_frames``). Entries
+    written before total_frames existed keep the old unscaled behaviour.
     """
     data = load_convergence()
     key = dso_name.lower().replace(" ", "")
@@ -184,9 +202,11 @@ def frames_needed_estimate(dso_name: str) -> Optional[int]:
         slope_abs = abs(info.get("tail_slope_pct", 0.0))
         if threshold <= 0 or n <= 0:
             continue
-        needed = int(n * (slope_abs / threshold - 1))
-        if needed < 0:
-            needed = 0
+        needed = n * (slope_abs / threshold - 1)
+        total = info.get("total_frames")
+        if total and n:
+            needed *= total / n          # kept frames -> frames to shoot
+        needed = max(0, int(needed))
         if worst is None or needed > worst:
             worst = needed
     return worst
