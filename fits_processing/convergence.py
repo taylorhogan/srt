@@ -199,16 +199,33 @@ def progress_summary(
     """
     n = counts[-1] if counts else 0
     if n <= 0:
-        return f"{filter_name}: no frames measured."
+        return f"**{filter_name}** — no frames measured."
     threshold = _threshold()
+    min_frames = _min_frames()
     slope_abs = abs(slope_pct)
     gain = lambda extra: (1 - (n / (n + extra)) ** 0.5) * 100
 
-    parts = [
-        f"**{filter_name}** — {n} of {total_frames} frames stacked; "
-        f"tail slope {slope_pct:+.3f}%/frame against a {threshold:g} threshold, "
-        f"and dropping to {counts[-2]} frames costs {final_rmse_pct:.1f}% of sky."
-    ]
+    head = f"**{filter_name}** — {n} of {total_frames} frames stacked"
+    if len(counts) >= 2:
+        head += (f"; tail slope {slope_pct:+.3f}%/frame against a {threshold:g} "
+                 f"threshold, and dropping to {counts[-2]} frames costs "
+                 f"{final_rmse_pct:.1f}% of sky.")
+    else:
+        head += "."
+    parts = [head]
+
+    # Below min_frames the tail is a fit through almost nothing, so a flat slope
+    # there is noise rather than convergence. Say so instead of reading the
+    # threshold, which would contradict is_dso_done — it gates on the same count.
+    if n < min_frames:
+        parts.append(
+            f"Too early to judge: the tail fit needs at least {min_frames} frames "
+            f"and this has {n}, so the slope above is not yet meaningful. Another "
+            f"50 frames would cut stack noise by {gain(50):.0f}%."
+        )
+        parts.append("Recommendation: keep shooting — there is not enough here to call it.")
+        return " ".join(parts)
+
     if slope_abs <= threshold:
         need = 0
         parts.append(
