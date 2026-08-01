@@ -3151,7 +3151,14 @@ def _snr_run_locked(words: list[str]) -> None:
 
     max_workers = min(len(by_filter), 4)
     _t_all = time.perf_counter()
-    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+    # Bind the job to each pool thread. jobs holds the current job in a
+    # threading.local, so a worker thread starts with no job and every
+    # post_social_message it makes — the progress lines and both plots — lands
+    # on the system feed instead of this command's card. Only the final summary,
+    # posted from the calling thread, was arriving in the right place.
+    with ThreadPoolExecutor(max_workers=max_workers,
+                            initializer=jobs.set_current_job,
+                            initargs=(_job_id,)) as pool:
         futs = [pool.submit(_run_filter, fn, paths) for fn, paths in by_filter.items()]
         for fut in as_completed(futs):
             # Propagate a cancellation from any worker; still-running workers see
