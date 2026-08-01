@@ -3062,6 +3062,21 @@ def _snr_run_locked(words: list[str]) -> None:
 
     by_filter = stacker.group_by_filter(fits_files)
 
+    # Reuse the FWHM/star measurements frame_watcher already cached in
+    # frame_stats.json during the night. Without this the run re-measures every
+    # sub from scratch: on sh2-92 (2026-08-01) that was ~41 min of the 79 min
+    # Ha convergence, redoing a detection pass whose answers were already on
+    # disk for all 294 frames. Cached FWHM comes from header HFR when present,
+    # so it is close to but not identical with _measure_fwhm_and_stars — the
+    # quality-gate cut and reference pick can shift slightly. Same tradeoff the
+    # hr/stack path already takes.
+    precomputed = _load_precomputed_fwhm_stars(
+        dso_dir, fits_files, float(cfg["nina"]["arc_sec_per_pixel"]))
+    if precomputed:
+        social_server.post_social_message(
+            f"Convergence: reusing {len(precomputed)}/{len(fits_files)} cached "
+            "FWHM/star measurements")
+
     _project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
     scratch_dir = os.path.join(_project_root, cfg["scratch"]["directory"])
 
@@ -3097,6 +3112,7 @@ def _snr_run_locked(words: list[str]) -> None:
                 golden_output_path=gold,
                 progress_cb=_progress,
                 cancel_cb=_cancel,
+                precomputed_fwhm_stars=precomputed,
             )
         except jobs.Cancelled:
             raise
