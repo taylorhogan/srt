@@ -137,23 +137,33 @@ class PublicConfig():
             "flat_root": None,
         },
 
-        # Both thresholds are percentages of SKY SIGNAL, and only mean that with
-        # calibration configured above. Uncalibrated they were percentages of the
-        # bias pedestal — ~18x smaller for the same data — which is why the old
-        # values were 0.20 / 5.0. Entries in convergence.json without
-        # "calibrated": true are on that old scale and is_dso_done ignores them.
+        # Percentages of SKY SIGNAL, and only meaningful with calibration
+        # configured above. Uncalibrated they were percentages of the bias
+        # pedestal, ~18x smaller for the same data, which is why these were once
+        # 0.20 / 5.0. Entries in convergence.json without "calibrated": true are
+        # on that old scale and is_dso_done ignores them.
         #
-        # Derived 2026-08-01 on sh2-92 (the only target measured so far):
-        #   Ha    118 frames  slope -0.1624  RMSE 18.04%   (believed converged)
-        #   O-III 129 frames  slope -0.1026  RMSE 22.64%   (believed converged)
-        #   Ha     20 frames  slope -2.8621  RMSE 42.96%   (deliberately short)
-        # 0.5 is not a round number picked between those: it is the value at
-        # which frames_needed_estimate, run on the 20-frame subset, predicts 120
-        # frames to converge — against the 137 actually shot. 0.35 predicts 172
-        # and 0.75 predicts 80.
+        # Derived 2026-08-01 on sh2-92, after subset stacks moved to the same
+        # sigma-clip combine as the golden (which removed a 16-21%-of-sky floor):
+        #   Ha    118 frames  slope -0.2645  RMSE  7.08%
+        #   O-III 129 frames  slope -0.1415  RMSE 16.15%
+        #   Ha     20 frames  slope -2.4129  RMSE 12.32%   (deliberately short)
+        # 0.40 is not picked by eye: it is the value at which
+        # frames_needed_estimate, run on the 20-frame subset, predicts 127 frames
+        # to converge against the 137 actually shot (-8%). 0.30 predicts 169,
+        # 0.50 predicts 101.
+        #
+        # rmse_done_threshold is NOT a convergence gate — look at the third row.
+        # A 20-frame set scores 12.32% while fully-converged O-III scores 16.15%,
+        # because O-III's residual is dominated by a correlated term (it falls
+        # 2.4x slower than independent noise; see convergence.decay_ratio) that
+        # no number of frames removes. Once the method floor was gone, RMSE
+        # stopped measuring "enough frames" and started measuring "how clean is
+        # this channel". The slope is the gate; this is a sanity backstop for a
+        # channel far worse than anything seen so far.
         "convergence": {
-            "tail_slope_threshold": 0.50,   # %/frame — abs(slope) below this = converged
-            "rmse_done_threshold": 35.0,    # % — backstop; the slope is the real gate
+            "tail_slope_threshold": 0.40,   # %/frame — abs(slope) below this = converged
+            "rmse_done_threshold": 25.0,    # % — data-quality backstop, not a convergence test
             "min_frames_per_filter": 16,    # don't evaluate until this many frames
             "file": "local/convergence.json",
         },

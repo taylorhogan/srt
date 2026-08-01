@@ -158,6 +158,92 @@ def compute_dso_convergence(dso_name: str, image_dir: Path) -> dict[str, dict]:
     return results
 
 
+def decay_ratio(counts: list[int], residuals: list[float]) -> Optional[float]:
+    """How far the curve's tail sits above what independent noise predicts.
+
+    Stacking k of n frames and comparing against all n leaves a residual of
+    A*sqrt(1/k - 1/n) if every frame's noise is independent. Anchor A on the
+    k=1 point and the ratio at the tail says whether this filter is actually
+    averaging down: ~1.0 means textbook, and well above 1 means a correlated
+    term — sky gradients, no flats, thermal residual — that more frames will
+    not remove, so the 1/sqrt(N) promise does not apply to it.
+
+    Measured 2026-08-01 on sh2-92: Ha 1.04 (textbook), O-III 2.44.
+    """
+    if len(counts) < 3 or len(residuals) != len(counts) or residuals[0] <= 0:
+        return None
+    n = counts[-1]
+    k = counts[-2]
+    if n <= 1 or k <= 0 or k >= n:
+        return None
+    A = residuals[0] / ((1 - 1 / n) ** 0.5)
+    model = A * max(1 / k - 1 / n, 0) ** 0.5
+    return residuals[-2] / model if model > 0 else None
+
+
+def progress_summary(
+    filter_name: str,
+    counts: list[int],
+    residuals: list[float],
+    slope_pct: float,
+    final_rmse_pct: float,
+    total_frames: int,
+) -> str:
+    """A few sentences on where this filter stands and what more frames would buy.
+
+    Answers the question the curve is actually for — keep shooting this filter or
+    move on — rather than leaving a slope to be eyeballed. Stacking noise falls
+    as 1/sqrt(N), so N more frames cut it by 1 - sqrt(n/(n+N)); that is what sets
+    the "worth it" numbers here, and it is why the honest answer past a few
+    hundred frames is almost always "move on".
+    """
+    n = counts[-1] if counts else 0
+    if n <= 0:
+        return f"{filter_name}: no frames measured."
+    threshold = _threshold()
+    slope_abs = abs(slope_pct)
+    gain = lambda extra: (1 - (n / (n + extra)) ** 0.5) * 100
+
+    parts = [
+        f"**{filter_name}** — {n} of {total_frames} frames stacked; "
+        f"tail slope {slope_pct:+.3f}%/frame against a {threshold:g} threshold, "
+        f"and dropping to {counts[-2]} frames costs {final_rmse_pct:.1f}% of sky."
+    ]
+    if slope_abs <= threshold:
+        need = 0
+        parts.append(
+            f"That is converged: the curve has flattened, so more frames are "
+            f"polish rather than progress. Another 50 would cut stack noise by "
+            f"{gain(50):.0f}% and 100 by {gain(100):.0f}%, which is less than a "
+            f"night of better seeing would give you."
+        )
+        parts.append("Recommendation: move to another target or filter.")
+    else:
+        need = int(n * (slope_abs / threshold - 1) * (total_frames / max(n, 1)))
+        parts.append(
+            f"Still improving. At this rate it needs roughly {need} more frames "
+            f"to flatten out; 50 more would cut stack noise by {gain(50):.0f}% "
+            f"and 100 by {gain(100):.0f}%."
+        )
+        parts.append(
+            "Recommendation: keep shooting this filter."
+            if need <= 3 * n else
+            "Recommendation: keep shooting, but that is several more nights — "
+            "worth deciding whether this target deserves them."
+        )
+
+    ratio = decay_ratio(counts, residuals)
+    if ratio is not None and ratio >= 1.5:
+        parts.append(
+            f"Caveat: this filter's residual is falling {ratio:.1f}x slower than "
+            f"independent noise would, so it carries a correlated component — "
+            f"gradients, or the missing flats — that averaging cannot remove. "
+            f"The frame-count numbers above are an upper bound on what more "
+            f"frames will actually buy here."
+        )
+    return " ".join(parts)
+
+
 def is_dso_done(dso_name: str) -> bool:
     """True if every imaged filter has a flat tail AND low absolute RMSE AND min frames.
 

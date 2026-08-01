@@ -1674,6 +1674,8 @@ def convergence_curve(
             "to other targets", filter_name or "?", golden_median, golden_std,
         )
         golden_median = float(golden_std) if golden_std > 0 else 1.0
+    _logger.info("Convergence [%s]: sky %.3f ADU, stack noise %.3f ADU (%d frames)",
+                 filter_name or "?", golden_median, golden_std, n)
 
     if golden_output_path is not None:
         golden_output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1702,12 +1704,17 @@ def convergence_curve(
             idx = local_rng.choice(n, size=k, replace=False)
             sub_w = weights[idx]
             sub_w = sub_w / sub_w.sum()
-            nan_mask = np.isnan(arr[idx])
-            safe = np.where(nan_mask, 0.0, arr[idx])
-            contrib = (~nan_mask).astype(np.float32) * sub_w[:, None, None]
-            numer = np.sum(safe * sub_w[:, None, None], axis=0)
-            denom = contrib.sum(axis=0)
-            subset_stack = np.where(denom > 0, numer / np.where(denom > 0, denom, 1.0), golden)
+            # Combine subsets exactly as the golden is combined. Using a plain
+            # weighted mean here instead put a constant floor under the whole
+            # curve — the k=n point compares all the frames against all the same
+            # frames, so anything it reports is pure method difference, and that
+            # was 16.5% of sky on Ha and 21.2% on O-III. The floor flattened the
+            # tail and swamped the slope: O-III's slope varied 2.1x between runs
+            # on identical data. Same combine both sides means k=n is 0 by
+            # construction and the curve measures frame count alone.
+            subset_stack = _combine_tile(arr[idx], StackMethod.SIGMA_CLIP_FWHM,
+                                         sub_w, sigma=3.0)
+            subset_stack = np.where(np.isnan(subset_stack), golden, subset_stack)
             trial_rmses.append(
                 float(np.sqrt(np.nanmean((subset_stack - golden) ** 2))) / golden_median
             )
@@ -1723,9 +1730,9 @@ def convergence_curve(
     ys = np.array(mean_residuals)
     errs = np.array(std_residuals)
 
-    # Fit a line to the tail, excluding the final k=n point.  The last point is
-    # computed with only 1 trial and uses a plain weighted mean against a
-    # sigma-clipped golden, so it systematically undershoots and distorts the slope.
+    # Fit a line to the tail, excluding the final k=n point — that point compares
+    # every frame against every frame by the same method, so it is identically
+    # zero and carries no information about frame count.
     tail_n = max(4, round(len(xs) * 0.4))
     xs_tail = xs[-tail_n:-1]
     ys_tail = ys[-tail_n:-1]
@@ -1775,7 +1782,7 @@ def convergence_curve(
         plt.show()
 
     # Use second-to-last point: "how much worse with ~40% fewer frames?"
-    # This is a better flatness signal than [-1] which just measures method gap (weighted mean vs sigma clip).
+    # [-1] is zero by construction (see above), so it says nothing.
     penult = mean_residuals[-2] if len(mean_residuals) >= 2 else mean_residuals[-1]
     final_rmse_pct = float(penult) * 100
     return counts, mean_residuals, slope_pct, final_rmse_pct

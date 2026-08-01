@@ -3116,7 +3116,7 @@ def _snr_run_locked(words: list[str]) -> None:
             social_server.post_social_message(f"Convergence [{_fn}]: {msg}")
         _t0 = time.perf_counter()
         try:
-            counts, _, slope_pct, final_rmse_pct = stacker.convergence_curve(
+            counts, resid, slope_pct, final_rmse_pct = stacker.convergence_curve(
                 paths,
                 filter_name=fn,
                 output_path=out,
@@ -3160,6 +3160,9 @@ def _snr_run_locked(words: list[str]) -> None:
         social_server.post_social_message(
             f"Golden stack — {fn}  ({n_frames})",
             str(gold),
+        )
+        social_server.post_social_message(
+            _conv.progress_summary(fn, counts, resid, slope_pct, final_rmse_pct, len(paths))
         )
 
     max_workers = min(len(by_filter), 4)
