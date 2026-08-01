@@ -137,10 +137,11 @@ def compute_dso_convergence(dso_name: str, image_dir: Path) -> dict[str, dict]:
 
     results: dict[str, dict] = {}
     today = date.today().isoformat()
+    calibration = stacker.calibration_from_config()
     for fname, paths in by_filter.items():
         try:
             counts, _, slope_pct, final_rmse_pct = stacker.convergence_curve(
-                paths, filter_name=fname)
+                paths, filter_name=fname, calibration=calibration)
             # counts[-1] is the all-frames point of the curve: the frames that
             # survived the quality cut and registered, i.e. the ones the slope
             # was actually measured on. len(paths) is every LIGHT frame on disk.
@@ -149,6 +150,7 @@ def compute_dso_convergence(dso_name: str, image_dir: Path) -> dict[str, dict]:
                 "final_rmse_pct": round(final_rmse_pct, 4),
                 "frame_count": counts[-1],
                 "total_frames": len(paths),
+                "calibrated": calibration is not None,
                 "updated": today,
             }
         except Exception:
@@ -157,7 +159,15 @@ def compute_dso_convergence(dso_name: str, image_dir: Path) -> dict[str, dict]:
 
 
 def is_dso_done(dso_name: str) -> bool:
-    """True if every imaged filter has a flat tail AND low absolute RMSE AND min frames."""
+    """True if every imaged filter has a flat tail AND low absolute RMSE AND min frames.
+
+    Entries without ``calibrated: true`` were measured on the old uncalibrated
+    scale, where the RMSE was a fraction of the bias pedestal and so ~100x
+    smaller than the same data reads today. Judging them against the current
+    thresholds would call almost anything done, so they count as not-yet-known
+    and the target gets re-measured. That errs toward imaging a target twice
+    rather than abandoning one early.
+    """
     data = load_convergence()
     key = dso_name.lower().replace(" ", "")
     filters = data.get(key, {})
@@ -167,6 +177,8 @@ def is_dso_done(dso_name: str) -> bool:
     rmse_threshold = _rmse_threshold()
     min_frames = _min_frames()
     for info in filters.values():
+        if not info.get("calibrated"):
+            return False
         if info.get("frame_count", 0) < min_frames:
             return False
         if abs(info.get("tail_slope_pct", 999.0)) > slope_threshold:
@@ -198,6 +210,8 @@ def frames_needed_estimate(dso_name: str) -> Optional[int]:
     threshold = _threshold()
     worst: Optional[int] = None
     for info in filters.values():
+        if not info.get("calibrated"):
+            continue        # old pedestal-scale slope; see is_dso_done
         n = info.get("frame_count", 0)
         slope_abs = abs(info.get("tail_slope_pct", 0.0))
         if threshold <= 0 or n <= 0:

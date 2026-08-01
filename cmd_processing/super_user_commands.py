@@ -3097,6 +3097,17 @@ def _snr_run_locked(words: list[str]) -> None:
     saved: dict[str, dict] = {}
     _saved_lock = threading.Lock()
 
+    # Built once (a master is ~1 s/frame) and cached to scratch against the
+    # calibration frames' mtimes; the workers mmap it rather than each holding a
+    # 245 MB copy. Without it the curve's y-axis is a percentage of the bias
+    # pedestal rather than of sky.
+    _calibration = stacker.calibration_from_config()
+    if _calibration is None:
+        social_server.post_social_message(
+            "No bias/dark configured — convergence RMSE will be a percentage of "
+            "the bias pedestal, not of sky signal."
+        )
+
     def _run_filter(fn: str, paths: list) -> None:
         jobs.raise_if_cancelled(_job_id)
         out = Path(scratch_dir) / f"convergence_{fn}.jpg"
@@ -3113,6 +3124,7 @@ def _snr_run_locked(words: list[str]) -> None:
                 progress_cb=_progress,
                 cancel_cb=_cancel,
                 precomputed_fwhm_stars=precomputed,
+                calibration=_calibration,
             )
         except jobs.Cancelled:
             raise
@@ -3138,6 +3150,7 @@ def _snr_run_locked(words: list[str]) -> None:
                 "final_rmse_pct": round(final_rmse_pct, 4),
                 "frame_count": stacked,
                 "total_frames": len(paths),
+                "calibrated": _calibration is not None,
                 "updated": _date.today().isoformat(),
             }
         social_server.post_social_message(

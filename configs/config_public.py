@@ -128,14 +128,32 @@ class PublicConfig():
         },
 
         "calibration": {
-            "bias_dir": None,
-            "dark_dir": None,
+            # Shot 2026-07-25 at the imaging settings: -10 C, gain 0, offset 10,
+            # bin 1. The dark set holds 19x300s (plus one stray 60s that
+            # load_calibration_set drops); darks are scaled by exposure ratio for
+            # lights shot at other lengths.
+            "bias_dir": "C:/Users/iriso/Documents/N.I.N.A/Targets/cdk17/2026-07-25/BIAS",
+            "dark_dir": "C:/Users/iriso/Documents/N.I.N.A/Targets/cdk17/2026-07-25/DARK",
             "flat_root": None,
         },
 
+        # Both thresholds are percentages of SKY SIGNAL, and only mean that with
+        # calibration configured above. Uncalibrated they were percentages of the
+        # bias pedestal — ~18x smaller for the same data — which is why the old
+        # values were 0.20 / 5.0. Entries in convergence.json without
+        # "calibrated": true are on that old scale and is_dso_done ignores them.
+        #
+        # Derived 2026-08-01 on sh2-92 (the only target measured so far):
+        #   Ha    118 frames  slope -0.1624  RMSE 18.04%   (believed converged)
+        #   O-III 129 frames  slope -0.1026  RMSE 22.64%   (believed converged)
+        #   Ha     20 frames  slope -2.8621  RMSE 42.96%   (deliberately short)
+        # 0.5 is not a round number picked between those: it is the value at
+        # which frames_needed_estimate, run on the 20-frame subset, predicts 120
+        # frames to converge — against the 137 actually shot. 0.35 predicts 172
+        # and 0.75 predicts 80.
         "convergence": {
-            "tail_slope_threshold": 0.20,   # %/frame — abs(slope) below this = converged
-            "rmse_done_threshold": 5.0,     # % — final-point RMSE must also be below this
+            "tail_slope_threshold": 0.50,   # %/frame — abs(slope) below this = converged
+            "rmse_done_threshold": 35.0,    # % — backstop; the slope is the real gate
             "min_frames_per_filter": 16,    # don't evaluate until this many frames
             "file": "local/convergence.json",
         },

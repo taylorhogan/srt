@@ -36,7 +36,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import contextmanager
 from enum import Enum, auto
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Callable, NamedTuple, Optional
 
 import numpy as np
 from astropy.io import fits
@@ -130,12 +130,39 @@ def _load_cube(paths: list[Path]) -> np.ndarray:
     return np.stack(frames, axis=0)
 
 
+# Rows per band when median-combining calibration frames. 50 bias frames at
+# 61 MP is 12 GB as one cube; 400 rows at a time is under 1 GB and gives a
+# bit-identical median.
+_MASTER_BAND_ROWS = 400
+
+
 def _build_master(paths: list[Path]) -> Optional[np.ndarray]:
-    """Median-combine a list of FITS frames into a master frame."""
+    """Median-combine a list of FITS frames into a master frame.
+
+    Reads a horizontal band from every frame at a time rather than loading the
+    whole cube — a full set of 61 MP calibration frames does not fit in RAM.
+    """
     if not paths:
         return None
-    cube = _load_cube(paths)
-    return np.median(cube, axis=0).astype(np.float32)
+    with fits.open(paths[0]) as hdul:
+        shape = np.squeeze(hdul[0].data).shape
+    if len(shape) != 2:
+        raise ValueError(f"Expected 2-D calibration frame, got {shape} in {paths[0]}")
+
+    master = np.empty(shape, dtype=np.float32)
+    for y0 in range(0, shape[0], _MASTER_BAND_ROWS):
+        y1 = min(y0 + _MASTER_BAND_ROWS, shape[0])
+        band = np.empty((len(paths), y1 - y0, shape[1]), dtype=np.float32)
+        for i, p in enumerate(paths):
+            with fits.open(p) as hdul:
+                data = np.squeeze(hdul[0].data)
+                if data.shape != shape:
+                    raise ValueError(
+                        f"Calibration frame shape mismatch: {data.shape} != {shape} in {p}")
+                band[i] = data[y0:y1]
+        master[y0:y1] = np.median(band, axis=0)
+        band = None
+    return master
 
 
 def build_master_bias(bias_paths: list[Path]) -> Optional[np.ndarray]:
@@ -171,6 +198,127 @@ def build_master_flat(
     if norm == 0.0:
         raise ValueError("Master flat normalisation factor is zero")
     return (master / norm).astype(np.float32)
+
+
+class CalibrationSet(NamedTuple):
+    """Masters on disk as .npy, plus the exposure the dark was taken at.
+
+    Paths rather than arrays: the registration workers are separate processes,
+    and a 61 MP master is 245 MB. Pickling bias+dark to each worker would cost
+    1.5 GB of IPC per filter and hold a private copy in every process, where
+    np.load(mmap_mode="r") lets them all share one set of OS page-cache pages.
+    """
+    bias_npy: Optional[Path]
+    dark_npy: Optional[Path]
+    dark_exptime: Optional[float]
+
+
+def _master_cache_path(paths: list[Path], tag: str) -> Path:
+    """Scratch path keyed by the exact input frames and their mtimes."""
+    import hashlib
+    key = "|".join(f"{p}:{p.stat().st_mtime_ns}" for p in sorted(paths))
+    digest = hashlib.sha1(key.encode()).hexdigest()[:16]
+    root = Path(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+    try:
+        from configs import config
+        scratch = root / config.data()["scratch"]["directory"]
+    except Exception:
+        scratch = root / "scratch"
+    scratch.mkdir(parents=True, exist_ok=True)
+    return scratch / f"master_{tag}_{digest}.npy"
+
+
+def _cached_master(paths: list[Path], tag: str, subtract: Optional[np.ndarray] = None) -> Path:
+    """Build (or reuse) a master for *paths* and return its .npy path.
+
+    Building costs ~1 s/frame, so the result is cached against the input files'
+    mtimes: the masters only change when you shoot new calibration frames.
+    """
+    out = _master_cache_path(paths, tag)
+    if out.exists():
+        return out
+    _logger.info("Building master %s from %d frames…", tag, len(paths))
+    master = _build_master(paths)
+    if master is None:
+        raise ValueError(f"No frames to build master {tag}")
+    if subtract is not None:
+        master = master - subtract
+    tmp = out.with_suffix(".tmp.npy")
+    np.save(tmp, master.astype(np.float32))
+    tmp.replace(out)
+    return out
+
+
+def load_calibration_set(
+    bias_paths: list[Path],
+    dark_paths: list[Path],
+) -> Optional[CalibrationSet]:
+    """Build/reuse master bias and (bias-subtracted) master dark on disk.
+
+    Darks are grouped by exposure and the largest group wins, so a directory
+    holding a stray 60 s dark among 300 s ones does not poison the master.
+    Returns None when there is nothing to calibrate with.
+    """
+    if not bias_paths and not dark_paths:
+        return None
+
+    bias_npy = _cached_master(bias_paths, "bias") if bias_paths else None
+    bias_arr = np.load(bias_npy, mmap_mode="r") if bias_npy else None
+
+    dark_npy = dark_exptime = None
+    if dark_paths:
+        by_exp: dict[float, list[Path]] = {}
+        for p in dark_paths:
+            try:
+                exp = round(float(fits.getheader(p).get("EXPTIME", 0.0)), 2)
+            except Exception:
+                continue
+            by_exp.setdefault(exp, []).append(p)
+        if by_exp:
+            dark_exptime, chosen = max(by_exp.items(), key=lambda kv: len(kv[1]))
+            if len(by_exp) > 1:
+                _logger.info(
+                    "Master dark: using %d frames at %.1fs (ignoring %s)",
+                    len(chosen), dark_exptime,
+                    ", ".join(f"{len(v)}x{k:.0f}s" for k, v in by_exp.items()
+                              if k != dark_exptime),
+                )
+            dark_npy = _cached_master(chosen, f"dark{dark_exptime:g}", subtract=bias_arr)
+    bias_arr = None
+    return CalibrationSet(bias_npy, dark_npy, dark_exptime)
+
+
+def calibration_from_config() -> Optional[CalibrationSet]:
+    """Build the bias/dark masters named by ``calibration`` config, or None."""
+    try:
+        from configs import config
+        cal = config.data().get("calibration", {}) or {}
+        bias = _collect_fits(Path(cal["bias_dir"])) if cal.get("bias_dir") else []
+        dark = _collect_fits(Path(cal["dark_dir"])) if cal.get("dark_dir") else []
+        if not bias and not dark:
+            return None
+        return load_calibration_set(bias, dark)
+    except Exception:
+        _logger.exception("Could not build calibration masters — using raw frames")
+        return None
+
+
+def _apply_calibration(frame: np.ndarray, cal: Optional[CalibrationSet],
+                       exptime: Optional[float]) -> np.ndarray:
+    """Subtract master bias and exposure-scaled master dark, in place."""
+    if cal is None:
+        return frame
+    if cal.bias_npy is not None:
+        frame -= np.load(cal.bias_npy, mmap_mode="r")
+    if cal.dark_npy is not None:
+        dark = np.load(cal.dark_npy, mmap_mode="r")
+        # Dark current is linear in exposure, and the master is bias-subtracted,
+        # so a light shot at a different length scales cleanly.
+        if exptime and cal.dark_exptime and abs(exptime - cal.dark_exptime) > 1e-6:
+            frame -= np.asarray(dark, dtype=np.float32) * (exptime / cal.dark_exptime)
+        else:
+            frame -= dark
+    return frame
 
 
 def _calibrate(
@@ -443,11 +591,24 @@ def _warp_footprint(transform, src_shape: tuple[int, int], ref_shape: tuple[int,
                 output_shape=ref_shape, cval=1.0) > 0.4
 
 
+def _load_calibrated(path: Path, cal: Optional["CalibrationSet"]) -> np.ndarray:
+    """Load a light frame and remove its bias + dark pedestal."""
+    frame = _load_fits_2d(path)
+    if cal is None:
+        return frame
+    try:
+        exptime = float(fits.getheader(path).get("EXPTIME", 0.0)) or None
+    except Exception:
+        exptime = None
+    return _apply_calibration(frame, cal, exptime)
+
+
 def _register_one(
     path: Path,
     det_target: np.ndarray,
     ref_shape: tuple[int, int],
     scale: int,
+    cal: Optional["CalibrationSet"] = None,
 ) -> tuple[Optional[np.ndarray], str]:
     """Register one frame against *det_target*, downscaled by *scale*.
 
@@ -461,7 +622,7 @@ def _register_one(
     _reference_control_points) or, in the serial fallback, the reference image.
     """
     try:
-        frame = _load_fits_2d(path)
+        frame = _load_calibrated(path, cal)
         transform, (src_pts, dst_pts) = _astroalign.find_transform(
             _despike(frame), det_target,
             max_control_points=_REG_MAX_CONTROL_POINTS,
@@ -1219,10 +1380,17 @@ def _prepare_for_convergence(
     progress_cb: Optional[Callable[[str], None]] = None,
     cancel_cb: Optional[Callable[[], bool]] = None,
     precomputed_fwhm_stars: Optional[dict[Path, tuple[float, int]]] = None,
+    calibration: Optional[CalibrationSet] = None,
 ) -> tuple[list[np.ndarray], list[Path], dict[Path, float]]:
     """
     Load, FWHM-filter, register, and downscale a set of FITS paths for convergence
     analysis.
+
+    With *calibration*, every frame has its master bias and exposure-scaled
+    master dark subtracted before registration, so what comes out is sky signal
+    rather than sky-on-a-pedestal. That matters more than it sounds: on this
+    camera the bias sits at 151 ADU and an Ha sub's sky is ~1.5 ADU, so
+    uncalibrated frames are 99% pedestal.
 
     Uses *streaming* registration so the full-resolution cube never lives in RAM:
     the reference and one source frame are held at full resolution at a time;
@@ -1296,12 +1464,12 @@ def _prepare_for_convergence(
     if not register or not _REGISTER_AVAILABLE or len(accepted) < 2:
         if progress_cb:
             progress_cb(f"loading {len(accepted)} frames (no registration)…")
-        frame0 = _load_fits_2d(accepted[0])
+        frame0 = _load_calibrated(accepted[0], calibration)
         scale = 1 if downscale_to is None else max(1, min(frame0.shape) // downscale_to)
         frames_out = [_downsample_mean(frame0, scale)]
         frame0 = None
         for p in accepted[1:]:
-            f = _load_fits_2d(p)
+            f = _load_calibrated(p, calibration)
             frames_out.append(_downsample_mean(f, scale))
             f = None
         return frames_out, accepted, fwhm_values
@@ -1315,7 +1483,7 @@ def _prepare_for_convergence(
     if actual_ref_idx is None:
         step = max(1, len(accepted) // 10)
         sample_indices = list(range(0, len(accepted), step))[:10]
-        sample_frames = [_load_fits_2d(accepted[i]) for i in sample_indices]
+        sample_frames = [_load_calibrated(accepted[i], calibration) for i in sample_indices]
         actual_ref_idx = sample_indices[_best_reference_idx(sample_frames)]
         sample_frames = None  # free full-res copies
     _logger.info("Convergence: reference = accepted[%d]", actual_ref_idx)
@@ -1323,7 +1491,7 @@ def _prepare_for_convergence(
     if progress_cb:
         progress_cb(f"registering {len(accepted)} frames (streaming)…")
 
-    reference = _load_fits_2d(accepted[actual_ref_idx])
+    reference = _load_calibrated(accepted[actual_ref_idx], calibration)
     # Same despike-for-detection as _register_frames: hot pixels must not
     # provide the control points (they'd vote for the identity transform).
     # Extracted to a point list once so find_transform doesn't redo it per frame.
@@ -1351,12 +1519,12 @@ def _prepare_for_convergence(
 
     def _serial_results():
         for i, p in todo:
-            yield i, _register_one(p, det_target, ref_shape, scale)
+            yield i, _register_one(p, det_target, ref_shape, scale, calibration)
 
     def _pooled_results(pool):
         # Read back in submission order so result_frames keeps the same ordering
         # as the serial loop; anything raised here cancels the rest.
-        futures = [(i, pool.submit(_register_one, p, ref_pts, ref_shape, scale))
+        futures = [(i, pool.submit(_register_one, p, ref_pts, ref_shape, scale, calibration))
                    for i, p in todo]
         try:
             for i, fut in futures:
@@ -1430,6 +1598,7 @@ def convergence_curve(
     progress_cb: Optional[Callable[[str], None]] = None,
     cancel_cb: Optional[Callable[[], bool]] = None,
     precomputed_fwhm_stars: Optional[dict[Path, tuple[float, int]]] = None,
+    calibration: Optional[CalibrationSet] = None,
 ) -> tuple[list[int], list[float], float]:
     """
     Measure how quickly stacking converges to the golden (all-frames) stack.
@@ -1439,6 +1608,12 @@ def convergence_curve(
     draws n_trials random FWHM-weighted subsets and measures RMSE against the
     SIGMA_CLIP_FWHM golden stack.  RMSE is normalised by the golden stack's
     sigma-clipped median so the y-axis is dimensionless (0 = identical to golden).
+
+    That normalisation is only meaningful with *calibration*. Uncalibrated, the
+    golden's median is the bias pedestal (151 ADU) plus the sky (~1.5 ADU on Ha),
+    so the y-axis reads as a percentage of a number that is 99% pedestal and the
+    curve is compressed by ~100x. Calibrated, it is a percentage of sky signal,
+    and the thresholds in the convergence config are set against that scale.
 
     Args:
         paths:               LIGHT-frame FITS paths (caller already split by filter).
@@ -1473,6 +1648,7 @@ def convergence_curve(
         progress_cb=progress_cb,
         cancel_cb=cancel_cb,
         precomputed_fwhm_stars=precomputed_fwhm_stars,
+        calibration=calibration,
     )
 
     n = len(frames)
@@ -1485,9 +1661,19 @@ def convergence_curve(
     if nan_px.any():
         golden[nan_px] = float(np.nanmedian(golden))
 
-    _, golden_median, _ = sigma_clipped_stats(golden, sigma=3.0)
-    if golden_median <= 0:
-        golden_median = 1.0
+    # Denominator = sky signal once calibration has removed the pedestal. It can
+    # legitimately land near zero on a dark narrowband night, and dividing by
+    # that would report a meaningless three-digit RMSE, so fall back to the
+    # stack's own noise — the curve stays comparable within the run, and the
+    # warning says the absolute scale is not.
+    _, golden_median, golden_std = sigma_clipped_stats(golden, sigma=3.0)
+    if golden_median <= 0 or (golden_std > 0 and golden_median < golden_std):
+        _logger.warning(
+            "Convergence [%s]: sky level %.3f ADU is at or below the stack noise "
+            "%.3f ADU — normalising by noise instead; RMSE%% is not comparable "
+            "to other targets", filter_name or "?", golden_median, golden_std,
+        )
+        golden_median = float(golden_std) if golden_std > 0 else 1.0
 
     if golden_output_path is not None:
         golden_output_path.parent.mkdir(parents=True, exist_ok=True)
