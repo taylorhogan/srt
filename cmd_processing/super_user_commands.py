@@ -4206,8 +4206,12 @@ def _process_run(words: list[str]) -> None:
         return
 
     out_dir = stacker.results_dir(dso_dir.name)
-    full_path = out_dir / f"process_{dso_dir.name}_{recipe}.jpg"
-    prev_path = out_dir / f"process_{dso_dir.name}_{recipe}_preview.jpg"
+    # Keep the no-flat render under its own name: the whole reason to run one is
+    # to compare it against the flat-corrected version, and sharing a filename
+    # would overwrite the thing being compared against.
+    tag = recipe if use_flats else f"{recipe}_noflat"
+    full_path = out_dir / f"process_{dso_dir.name}_{tag}.jpg"
+    prev_path = out_dir / f"process_{dso_dir.name}_{tag}_preview.jpg"
     color_process.save_rgb(rgb, full_path)
     color_process.save_rgb(rgb, prev_path, max_px=2200)
 
