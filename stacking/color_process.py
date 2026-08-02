@@ -164,23 +164,34 @@ def compose(channels: dict[str, np.ndarray], black_pct: float = BLACK_PCT,
     return np.clip(np.nan_to_num(rgb), 0.0, 1.0)
 
 
-def channel_cache_path(cache_dir: Path, dso: str, recipe: str, chan: str) -> Path:
-    return cache_dir / f"channels_{dso}_{recipe}_{chan}.npy"
+def cache_tag(recipe: str, use_flats: bool) -> str:
+    """Cache key for a stacking run.
+
+    Includes the flat state: flat-corrected and uncorrected channels are
+    different data, and a cache that ignored the difference would let a sweep
+    silently re-render the wrong ones while reporting the settings you asked
+    for. Matches the naming of the rendered files.
+    """
+    return recipe.upper() if use_flats else f"{recipe.upper()}_noflat"
 
 
-def load_cached_channels(cache_dir: Path, dso: str, recipe: str) -> Optional[dict]:
+def channel_cache_path(cache_dir: Path, dso: str, tag: str, chan: str) -> Path:
+    return cache_dir / f"channels_{dso}_{tag}_{chan}.npy"
+
+
+def load_cached_channels(cache_dir: Path, dso: str, tag: str) -> Optional[dict]:
     """Return the stacked channels from a previous run, or None if incomplete.
 
     Stacking is ~17 minutes and the stretch is a second; caching the channels is
     what makes the display parameters worth exposing at all, because otherwise
     every tweak costs a re-stack.
     """
-    mapping = RECIPES.get(recipe.upper())
+    mapping = RECIPES.get(tag.upper().replace("_NOFLAT", ""))
     if mapping is None:
         return None
     out = {}
     for chan in mapping:
-        f = channel_cache_path(cache_dir, dso, recipe.upper(), chan)
+        f = channel_cache_path(cache_dir, dso, tag, chan)
         if not f.exists():
             if chan == "L":          # optional
                 continue
@@ -215,11 +226,12 @@ def process_dso(
     from stacking import stacker
 
     recipe = recipe.upper()
+    tag = cache_tag(recipe, use_flats)
     if reuse and cache_dir is not None:
-        cached = load_cached_channels(cache_dir, dso_dir.name, recipe)
+        cached = load_cached_channels(cache_dir, dso_dir.name, tag)
         if cached is not None:
             if progress_cb:
-                progress_cb(f"reusing cached {recipe} channels "
+                progress_cb(f"reusing cached {tag} channels "
                             f"({', '.join(sorted(cached))}) — no re-stack")
             rgb = compose(cached, **compose_kw)
             return rgb, {"recipe": recipe, "reused": True,
@@ -320,7 +332,7 @@ def process_dso(
     if cache_dir is not None:
         for c, v in stacks.items():
             try:
-                np.save(channel_cache_path(cache_dir, dso_dir.name, recipe, c),
+                np.save(channel_cache_path(cache_dir, dso_dir.name, tag, c),
                         v.astype(np.float32))
             except Exception:
                 _logger.warning("could not cache channel %s", c, exc_info=True)

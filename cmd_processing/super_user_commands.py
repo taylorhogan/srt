@@ -4275,11 +4275,13 @@ def _process_run(words: list[str]) -> None:
     # labelled contact sheet instead of a single image.
     grid = {k: v for k, v in opts.items() if isinstance(v, list)}
     if grid:
-        cached = color_process.load_cached_channels(out_dir, dso_dir.name, recipe)
+        cached = color_process.load_cached_channels(out_dir, dso_dir.name, tag)
         if cached is None:
             social_server.post_social_message(
-                f"{dso_dir.name} {recipe}: no cached channels — run "
-                f"`process {dso_dir.name} {recipe}` once first, then sweep.")
+                f"{dso_dir.name} {tag}: no cached channels — run "
+                f"`process {dso_dir.name} {recipe}"
+                f"{'' if use_flats else ' noflat'}` once first, then sweep. "
+                f"Flat and no-flat channels are cached separately.")
             return
         fixed = {k: v for k, v in opts.items() if not isinstance(v, list)}
         n = 1
