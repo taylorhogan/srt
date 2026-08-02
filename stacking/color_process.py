@@ -52,15 +52,24 @@ _ALIASES: dict[str, tuple[str, ...]] = {
     "B":     ("B", "BLUE"),
 }
 
-# Display defaults, tuned on sh2-92. A black point at 2 sigma above sky looked
-# clean but clipped the whole faint envelope — only 5.8% of pixels survived into
-# the display window, against 98.8% for the ZScale preview the stack command
-# uses. 0.8 sigma keeps the outer nebula without the sky breaking into colour
-# speckle.
-BLACK_SIGMA = 0.8
+# The black point is a PERCENTILE of the channel, not a fixed multiple of sky
+# noise. A constant "median + k sigma" cannot suit both kinds of target: it
+# clips a fixed fraction of a *Gaussian*, so on a field that is mostly empty sky
+# it crushes most of the frame. At the old 0.8 sigma, abell2151 rendered with
+# over half its pixels at exactly zero — the intracluster light was thrown away,
+# and the hard-stretched grain left around the bright parts was convincing
+# enough to be mistaken for satellite trails. A percentile clips the same share
+# of pixels whatever the target, so a sparse cluster and a nebula that fills the
+# frame both keep their faint end.
+BLACK_PCT = 25.0     # share of pixels that go to black
 WHITE_PCT = 99.0
 SOFTENING = 0.025
 EDGE_CROP = 0.02     # dithered border where not every frame contributed
+# Ceiling on the LRGB luminance rescale. The blend divides by the RGB
+# luminance, which is near zero in the background — with the old high black
+# point those pixels were already clipped to nothing, but a lower black point
+# lets them through and the division amplifies their noise into colour speckle.
+MAX_LUM_BOOST = 3.0
 
 
 def _squash(name: str) -> str:
@@ -76,16 +85,18 @@ def resolve_filter(wanted: str, available: list[str]) -> Optional[str]:
     return None
 
 
-def _stretch(chan: np.ndarray, black_sigma: float, white: float) -> np.ndarray:
-    """asinh stretch onto 0..1 with a per-channel black and a SHARED white."""
-    from astropy.stats import mad_std
-    sd = float(mad_std(chan, ignore_nan=True)) or 1.0
-    black = black_sigma * sd
+def _stretch(chan: np.ndarray, black_pct: float, white: float) -> np.ndarray:
+    """asinh stretch onto 0..1 with a per-channel black and a SHARED white.
+
+    black_pct is a percentile of this channel, so the same share of pixels goes
+    to black on any target — see BLACK_PCT.
+    """
+    black = float(np.nanpercentile(chan, black_pct))
     y = np.clip((chan - black) / max(white - black, 1e-6), 0.0, 1.0)
     return np.arcsinh(y / SOFTENING) / np.arcsinh(1.0 / SOFTENING)
 
 
-def compose(channels: dict[str, np.ndarray], black_sigma: float = BLACK_SIGMA,
+def compose(channels: dict[str, np.ndarray], black_pct: float = BLACK_PCT,
             white_pct: float = WHITE_PCT) -> np.ndarray:
     """Combine sky-subtracted channel stacks into an RGB image in 0..1.
 
@@ -97,17 +108,17 @@ def compose(channels: dict[str, np.ndarray], black_sigma: float = BLACK_SIGMA,
     white = float(np.nanpercentile(np.maximum.reduce(colour), white_pct))
     _logger.info("Compose: shared white point %.2f ADU (p%.1f)", white, white_pct)
 
-    rgb = np.dstack([_stretch(subbed[c], black_sigma, white) for c in ("R", "G", "B")])
+    rgb = np.dstack([_stretch(subbed[c], black_pct, white) for c in ("R", "G", "B")])
 
     if "L" in subbed:
         # Classic LRGB: keep the colour from RGB, take the brightness from L.
         # Scaling by the ratio preserves hue instead of washing it out, which is
         # what simply averaging L into each channel would do.
-        lum = _stretch(subbed["L"], black_sigma, white)
+        lum = _stretch(subbed["L"], black_pct, white)
         rgb_lum = rgb @ np.array([0.299, 0.587, 0.114], dtype=np.float32)
         with np.errstate(divide="ignore", invalid="ignore"):
             scale = np.where(rgb_lum > 1e-4, lum / np.maximum(rgb_lum, 1e-4), 0.0)
-        rgb = rgb * scale[:, :, None]
+        rgb = rgb * np.clip(scale, 0.0, MAX_LUM_BOOST)[:, :, None]
 
     return np.clip(np.nan_to_num(rgb), 0.0, 1.0)
 

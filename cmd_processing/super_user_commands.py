@@ -4143,6 +4143,8 @@ def _process_run(words: list[str]) -> None:
     _job_id = jobs.get_current_job()
     _cancel = jobs.cancel_cb_for(_job_id)
 
+    # This module imports numpy and stacker per-function, not at module scope.
+    import numpy as np
     from stacking import color_process, stacker
 
     cfg = config.data()
