@@ -4195,7 +4195,8 @@ def _process_run(words: list[str]) -> None:
     frames = "  ".join(f"{f}:{n}" for f, n in sorted(info["frames"].items()))
     h, w = info["shape"]
     social_server.post_social_message(
-        f"{dso_dir.name} — {recipe}   {chans}\n"
+        f"{dso_dir.name} — {recipe}"
+        f"{'' if info.get('flats', True) else '  (no flats)'}   {chans}\n"
         f"frames stacked: {frames}   ({time.perf_counter() - _t0:.0f}s)\n"
         f"shared reference: {info['reference']}\n"
         f"Saved:\n  {full_path}  ({w}x{h}, no text)\n  {prev_path}  (preview)",

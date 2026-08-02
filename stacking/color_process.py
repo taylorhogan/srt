@@ -118,11 +118,19 @@ def process_dso(
     progress_cb: Optional[Callable[[str], None]] = None,
     cancel_cb: Optional[Callable[[], bool]] = None,
     scale: int = 1,
+    use_flats: bool = True,
 ) -> tuple[np.ndarray, dict]:
     """Stack every filter a recipe needs and return (rgb 0..1, info).
 
     scale > 1 bins the output, trading resolution for speed and SNR — useful for
     a quick look, but the command defaults to 1 (full resolution).
+
+    use_flats=False drops flat correction and keeps bias+dark. Worth having
+    because flats from the wrong epoch can be worse than none: dust moves and
+    focus shifts, so a flat shot months after the lights may stamp in a mote the
+    data never had. Measured on abell2151 (May data, July flats) the flat was
+    near-neutral, +0.21% over the region in question — but that was luck, not a
+    guarantee, and it is cheap to check both ways.
     """
     from stacking import stacker
 
@@ -167,7 +175,7 @@ def process_dso(
     if progress_cb:
         progress_cb(f"shared reference: {ref_path.name} ({ref_filter})")
 
-    ref_cal = stacker.calibration_from_config(ref_filter)
+    ref_cal = stacker.calibration_from_config(ref_filter if use_flats else None)
     reference = stacker._load_calibrated(ref_path, ref_cal)
     ref_shape = reference.shape
     det_target = stacker._reference_control_points(stacker._despike(reference))
@@ -188,6 +196,8 @@ def process_dso(
         if progress_cb:
             progress_cb(f"{filt}: stacking {len(paths)} frames…")
         bias, dark, flat = stacker.calibration_paths_from_config(filt)
+        if not use_flats:
+            flat = []
         pre = _load_precomputed_fwhm_stars(dso_dir, paths, arcsec)
         data, info = stacker.stack(
             paths, method=stacker.StackMethod.SIGMA_CLIP_FWHM,
@@ -216,6 +226,7 @@ def process_dso(
     rgb = compose(stacks)
     info = {
         "recipe": recipe,
+        "flats": use_flats,
         "channels": {c: resolved[c] for c in resolved},
         "frames": used,
         "reference": ref_path.name,

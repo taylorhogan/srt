@@ -238,10 +238,15 @@ HELP: dict[str, dict] = {
     },
     "process": {
         "category": "super",
-        "summary": ("Stack a DSO's filters and combine into a colour image "
-                    "(LRGB, HOO or SHO) at full resolution."),
-        "usage": ["process <dso> <recipe>"],
-        "examples": ["process sh2-92 hoo", "process m31 lrgb", "process m16 sho"],
+        "summary": ("Stack a DSO's filters and combine into a colour image at full "
+                    "resolution. LRGB (L as luminance), HOO (Ha->R, O-III->G/B) or "
+                    "SHO (S-II->R, Ha->G, O-III->B). All filters register to one "
+                    "shared reference so the channels align. Add 'noflat' to skip "
+                    "flat correction, which is worth trying when the only flats "
+                    "available were shot in a different epoch."),
+        "usage": ["process <dso> <recipe>", "process <dso> <recipe> noflat"],
+        "examples": ["process sh2-92 hoo", "process abell2151 lrgb",
+                     "process m16 sho", "process abell2151 lrgb noflat"],
     },
     "stack": {
         "category": "super",
