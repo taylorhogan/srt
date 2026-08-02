@@ -1100,9 +1100,17 @@ def stack(
     progress_cb: Optional[Callable[[str], None]] = None,
     cancel_cb: Optional[Callable[[], bool]] = None,
     precomputed_fwhm_stars: Optional[dict[Path, tuple[float, int]]] = None,
+    shared_reference: Optional[tuple[np.ndarray, tuple[int, int]]] = None,
 ) -> tuple[np.ndarray, dict]:
     """
     Stack a list of FITS light frames with optional calibration and FWHM weighting.
+
+    shared_reference is (control_points, shape) from
+    _reference_control_points. Pass it to register these frames onto someone
+    else's grid instead of picking a reference from this set — which is how a
+    multi-filter colour process keeps its channels on the same pixels. Without
+    it each filter would align to its own reference and the channels would sit
+    apart by however far the mount drifted between them.
 
     Args:
         light_paths:  Ordered list of light-frame FITS paths.
@@ -1254,7 +1262,8 @@ def stack(
         return p
 
     try:
-        do_register = register and _REGISTER_AVAILABLE and len(accepted) >= 2
+        do_register = register and _REGISTER_AVAILABLE and (
+            len(accepted) >= 2 or shared_reference is not None)
         if not do_register:
             if progress_cb:
                 progress_cb(f"loading {len(accepted)} frames (no registration)…")
@@ -1263,20 +1272,26 @@ def stack(
                 _spill(_calibrate(_load_fits_2d(p), master_bias, master_dark,
                                   master_flat), p)
         else:
-            ref_idx = _reference_index_by_fwhm([fwhm_values.get(p, 0.0) for p in accepted])
-            if ref_idx is None:
-                ref_idx = 0
-            _logger.info("Registering %d frames to accepted[%d]…", len(accepted), ref_idx)
+            if shared_reference is not None:
+                det_target, ref_shape = shared_reference
+                ref_idx = -1          # the reference is external; stack every frame
+                _logger.info("Registering %d frames to a shared reference…", len(accepted))
+            else:
+                ref_idx = _reference_index_by_fwhm(
+                    [fwhm_values.get(p, 0.0) for p in accepted])
+                if ref_idx is None:
+                    ref_idx = 0
+                _logger.info("Registering %d frames to accepted[%d]…", len(accepted), ref_idx)
+                reference = _calibrate(_load_fits_2d(accepted[ref_idx]), master_bias,
+                                       master_dark, master_flat)
+                ref_shape = reference.shape
+                det_target = _reference_control_points(_despike(reference))
+                if det_target is None:
+                    det_target = _despike(reference)
+                _spill(reference, accepted[ref_idx])
+                reference = None
             if progress_cb:
                 progress_cb(f"registering {len(accepted)} frames (streaming)…")
-            reference = _calibrate(_load_fits_2d(accepted[ref_idx]), master_bias,
-                                   master_dark, master_flat)
-            ref_shape = reference.shape
-            det_target = _reference_control_points(_despike(reference))
-            if det_target is None:
-                det_target = _despike(reference)
-            _spill(reference, accepted[ref_idx])
-            reference = None
 
             tick = max(1, len(accepted) // 10)
             for i, p in enumerate(accepted):

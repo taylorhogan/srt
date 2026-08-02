@@ -2529,6 +2529,7 @@ def get_super_user_commands() -> dict[str, Callable]:
         "optics": optics_cmd,
         "drift": drift_cmd,
         "stack": stack_cmd,
+        "process": process_cmd,
         "bad": bad_cmd,
         "dab": dab_cmd,
         "audio": audio_cmd,
@@ -4103,3 +4104,100 @@ def _image_stats_run(words: list[str], account: str) -> None:
 
 if __name__ == "__main__":
     announce_roof_movement("The roof will be opening in 5 Minutes")
+
+def process_cmd(words: list[str], account: str) -> None:
+    """Stack a DSO's filters and combine them into a colour image.
+
+    Usage:
+        process <dso> <recipe>    — recipe is LRGB, HOO or SHO
+
+    Every filter is registered to one shared reference so the channels land on
+    the same pixels, then combined on a shared brightness scale so the ratio
+    between channels — which is the whole point of a palette — survives into
+    the picture. Full resolution; expect ~20 minutes on a few hundred frames.
+
+    Process-isolated (jobs.spawn_process) like stack, for the same reason.
+    """
+    jobs.spawn_process(_process_run, args=(words,))
+
+
+def _process_run(words: list[str]) -> None:
+    _job_id = jobs.get_current_job()
+    _cancel = jobs.cancel_cb_for(_job_id)
+
+    from stacking import color_process
+
+    cfg = config.data()
+    image_dir = Path(cfg["nina"]["image_dir"])
+    _project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+    scratch_dir = Path(os.path.join(_project_root, cfg["scratch"]["directory"]))
+
+    extra = [w for w in (words[2:] if len(words) > 2 else []) if w]
+    recipe = None
+    for i, w in enumerate(extra):
+        if w.upper() in color_process.RECIPES:
+            recipe = w.upper()
+            extra = extra[:i] + extra[i + 1:]
+            break
+    dso_arg = " ".join(extra).strip()
+    if not dso_arg or recipe is None:
+        social_server.post_social_message(
+            "Usage: process <dso> <recipe>, recipe one of "
+            f"{', '.join(sorted(color_process.RECIPES))}  e.g. `process sh2-92 hoo`")
+        return
+
+    def _find_dso_dir_by_name(name: str) -> Optional[Path]:
+        target = name.lower().replace(" ", "").replace("_", "")
+        candidates = [d for d in image_dir.iterdir()
+                      if d.is_dir()
+                      and target in d.name.lower().replace(" ", "").replace("_", "")]
+        if not candidates:
+            return None
+        if len(candidates) == 1:
+            return candidates[0]
+        def _latest(d: Path) -> float:
+            try:
+                return max(f.stat().st_mtime for f in d.rglob("*.fits"))
+            except ValueError:
+                return 0.0
+        return max(candidates, key=_latest)
+
+    dso_dir = _find_dso_dir_by_name(dso_arg)
+    if dso_dir is None:
+        social_server.post_social_message(f"No image directory found for '{dso_arg}'")
+        return
+
+    def _progress(msg: str) -> None:
+        social_server.post_social_message(f"{dso_dir.name} {recipe}: {msg}")
+
+    social_server.post_social_message(
+        f"Processing {dso_dir.name} as {recipe} at full resolution — "
+        f"this takes a while on a few hundred frames.")
+    _t0 = time.perf_counter()
+    try:
+        rgb, info = color_process.process_dso(
+            dso_dir, recipe, progress_cb=_progress, cancel_cb=_cancel)
+    except jobs.Cancelled:
+        raise
+    except Exception as exc:
+        _logger.exception("process %s %s failed", dso_dir.name, recipe)
+        social_server.post_social_message(f"{dso_dir.name} {recipe}: failed — {exc}")
+        return
+
+    scratch_dir.mkdir(parents=True, exist_ok=True)
+    full_path = scratch_dir / f"process_{dso_dir.name}_{recipe}.jpg"
+    prev_path = scratch_dir / f"process_{dso_dir.name}_{recipe}_preview.jpg"
+    color_process.save_rgb(rgb, full_path)
+    color_process.save_rgb(rgb, prev_path, max_px=2200)
+
+    chans = "  ".join(f"{c}={info['channels'][c]}" for c in ("R", "G", "B", "L")
+                      if c in info["channels"])
+    frames = "  ".join(f"{f}:{n}" for f, n in sorted(info["frames"].items()))
+    h, w = info["shape"]
+    social_server.post_social_message(
+        f"{dso_dir.name} — {recipe}   {chans}\n"
+        f"frames stacked: {frames}   ({time.perf_counter() - _t0:.0f}s)\n"
+        f"shared reference: {info['reference']}\n"
+        f"Saved:\n  {full_path}  ({w}x{h}, no text)\n  {prev_path}  (preview)",
+        str(prev_path),
+    )

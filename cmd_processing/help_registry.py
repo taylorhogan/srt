@@ -236,6 +236,13 @@ HELP: dict[str, dict] = {
         "usage": ["drift", "drift <dso>", "drift *"],
         "examples": ["drift", "drift m31"],
     },
+    "process": {
+        "category": "super",
+        "summary": ("Stack a DSO's filters and combine into a colour image "
+                    "(LRGB, HOO or SHO) at full resolution."),
+        "usage": ["process <dso> <recipe>"],
+        "examples": ["process sh2-92 hoo", "process m31 lrgb", "process m16 sho"],
+    },
     "stack": {
         "category": "super",
         "summary": "Stack all LIGHT frames of a DSO (per filter) and post each as JPEG.",
