@@ -299,16 +299,41 @@ def load_calibration_set(
     return CalibrationSet(bias_npy, dark_npy, dark_exptime)
 
 
-def calibration_from_config() -> Optional[CalibrationSet]:
-    """Build the bias/dark masters named by ``calibration`` config, or None."""
+def calibration_paths_from_config(
+    filter_name: Optional[str] = None,
+) -> tuple[list[Path], list[Path], list[Path]]:
+    """(bias, dark, flat) frame paths from the ``calibration`` config block.
+
+    Flats are only returned when *filter_name* is given, since they are
+    per-filter, and they are matched by FITS header rather than by directory
+    layout (see flats_by_filter).
+    """
+    from configs import config
+    cal = config.data().get("calibration", {}) or {}
+    bias = _collect_fits(Path(cal["bias_dir"])) if cal.get("bias_dir") else []
+    dark = _collect_fits(Path(cal["dark_dir"])) if cal.get("dark_dir") else []
+    flat: list[Path] = []
+    if filter_name and cal.get("flat_root"):
+        flat = flats_by_filter(Path(cal["flat_root"])).get(filter_name, [])
+    return bias, dark, flat
+
+
+def calibration_from_config(filter_name: Optional[str] = None) -> Optional[CalibrationSet]:
+    """Build the masters named by ``calibration`` config, or None.
+
+    Pass *filter_name* to get that filter's flat attached as well; without it
+    the set is bias+dark only, because a flat is meaningless across filters.
+    """
     try:
-        from configs import config
-        cal = config.data().get("calibration", {}) or {}
-        bias = _collect_fits(Path(cal["bias_dir"])) if cal.get("bias_dir") else []
-        dark = _collect_fits(Path(cal["dark_dir"])) if cal.get("dark_dir") else []
+        bias, dark, flat = calibration_paths_from_config(filter_name)
         if not bias and not dark:
             return None
-        return load_calibration_set(bias, dark)
+        cal = load_calibration_set(bias, dark)
+        if cal is not None and flat:
+            npy = build_master_flat_npy(flat, cal, (filter_name or "").replace("-", ""))
+            if npy is not None:
+                cal = cal._replace(flat_npy=npy)
+        return cal
     except Exception:
         _logger.exception("Could not build calibration masters — using raw frames")
         return None
@@ -1424,8 +1449,15 @@ def flat_dirs_from_root(root: Optional[Path]) -> tuple[Optional[Path], Optional[
     return root, None
 
 
+_FLATS_BY_FILTER_CACHE: dict[str, dict[str, list[Path]]] = {}
+
+
 def flats_by_filter(root: Optional[Path]) -> dict[str, list[Path]]:
     """Collect every flat under *root* and group by its FITS FILTER header.
+
+    Cached per root for the life of the process: this opens a header for every
+    flat on disk (~1000 of them here), and it is called once per filter by
+    calibration_from_config. New flats appear between runs, not during one.
 
     flat_dirs_from_root assumes root/<FILTER>/*.fits, but N.I.N.A writes one FLAT
     directory per session with all filters mixed together
@@ -1436,6 +1468,9 @@ def flats_by_filter(root: Optional[Path]) -> dict[str, list[Path]]:
     out: dict[str, list[Path]] = {}
     if root is None or not root.is_dir():
         return out
+    key = str(root)
+    if key in _FLATS_BY_FILTER_CACHE:
+        return _FLATS_BY_FILTER_CACHE[key]
     for f in sorted(root.rglob("*.fit*")):
         if f.parent.name.upper() != "FLAT":
             continue
@@ -1445,6 +1480,7 @@ def flats_by_filter(root: Optional[Path]) -> dict[str, list[Path]]:
             continue
         if filt:
             out.setdefault(filt, []).append(f)
+    _FLATS_BY_FILTER_CACHE[key] = out
     return out
 
 
@@ -1480,6 +1516,29 @@ def _write_stack(
         header.add_history(f"Rejected {len(info['rejected'])} frame(s) by quality gate (FWHM/star count)")
     output_path.parent.mkdir(parents=True, exist_ok=True)
     fits.writeto(str(output_path), result, header, overwrite=True)
+
+
+def save_plain_jpg(data: np.ndarray, output_path: Path) -> Path:
+    """Save a ZScale-stretched JPEG with no title, axes, border or resampling.
+
+    One output pixel per data pixel — unlike _save_jpg, which draws through a
+    fixed-size matplotlib figure and so downsamples a 61 MP stack to whatever
+    fits in 10 inches at 150 dpi. Written with PIL rather than matplotlib
+    precisely so nothing can add furniture to the image.
+
+    Row order matches the FITS convention used everywhere else here (origin
+    lower), so the result is oriented like the annotated preview.
+    """
+    from astropy.visualization import ZScaleInterval
+    from PIL import Image
+
+    vmin, vmax = ZScaleInterval().get_limits(data)
+    span = float(vmax - vmin) or 1.0
+    scaled = np.clip((np.asarray(data, dtype=np.float32) - vmin) / span, 0.0, 1.0)
+    img = (scaled * 255.0).astype(np.uint8)[::-1]        # flip to origin="lower"
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    Image.fromarray(img).save(output_path, quality=92, optimize=True)
+    return output_path
 
 
 def _save_jpg(data: np.ndarray, output_path: Path, title: str = "") -> Path:

@@ -137,9 +137,10 @@ def compute_dso_convergence(dso_name: str, image_dir: Path) -> dict[str, dict]:
 
     results: dict[str, dict] = {}
     today = date.today().isoformat()
-    calibration = stacker.calibration_from_config()
+    # Resolved per filter inside the loop so each gets its own flat.
     for fname, paths in by_filter.items():
         try:
+            calibration = stacker.calibration_from_config(fname)
             counts, _, slope_pct, final_rmse_pct = stacker.convergence_curve(
                 paths, filter_name=fname, calibration=calibration)
             # counts[-1] is the all-frames point of the curve: the frames that

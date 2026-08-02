@@ -1985,8 +1985,18 @@ def _stack_run(words: list[str]) -> None:
                 f"({info['method']})\n{metrics}"
             ),
         )
+        # Plain full-resolution copy with no title/axes, for actually using.
+        plain_path = scratch_dir / f"stack_{dso_dir.name}_{safe_filter}_plain.jpg"
+        try:
+            stacker.save_plain_jpg(result, plain_path)
+            saved = (f"\nSaved:\n  {fits_path}\n  {plain_path}"
+                     f"  ({result.shape[1]}x{result.shape[0]}, no text)")
+        except Exception as exc:
+            _logger.warning("stack: plain JPEG failed for %s: %s", plain_path.name, exc)
+            saved = f"\nSaved:\n  {fits_path}"
         social_server.post_social_message(
-            f"{dso_dir.name} {filter_name}: {info['n_frames']} frames stacked — {metrics}",
+            f"{dso_dir.name} {filter_name}: {info['n_frames']} frames stacked — {metrics}"
+            + saved,
             str(jpg),
         )
 
@@ -3113,7 +3123,7 @@ def _snr_run_locked(words: list[str]) -> None:
     # calibration frames' mtimes; the workers mmap it rather than each holding a
     # 245 MB copy. Without it the curve's y-axis is a percentage of the bias
     # pedestal rather than of sky.
-    _calibration = stacker.calibration_from_config()
+    _calibration = stacker.calibration_from_config()      # bias+dark, for the probe below
     if _calibration is None:
         social_server.post_social_message(
             "No bias/dark configured — convergence RMSE will be a percentage of "
@@ -3136,7 +3146,8 @@ def _snr_run_locked(words: list[str]) -> None:
                 progress_cb=_progress,
                 cancel_cb=_cancel,
                 precomputed_fwhm_stars=precomputed,
-                calibration=_calibration,
+                # Per filter, so this filter's flat comes along too.
+                calibration=stacker.calibration_from_config(fn),
             )
         except jobs.Cancelled:
             raise

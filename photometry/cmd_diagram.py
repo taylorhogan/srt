@@ -290,9 +290,16 @@ def build_cmd(
     for name, paths in ((blue_name, blue_paths), (red_name, red_paths)):
         _ckpt()
         _say(f"stacking {len(paths)} {name} subs…")
+        # Was stacking raw: every CMD was built on frames still carrying the
+        # 151 ADU bias pedestal and the sensor's hot pixels.
+        _bias, _dark, _flat = stacker.calibration_paths_from_config(name)
+        if _bias or _dark or _flat:
+            _say(f"[{name}] calibrating: {len(_bias)} bias, {len(_dark)} dark, "
+                 f"{len(_flat)} flat")
         data, _info = stacker.stack(
             paths, register=True, progress_cb=lambda m, n=name: _say(f"[{n}] {m}"),
             cancel_cb=cancel_cb, precomputed_fwhm_stars=precomputed_fwhm_stars,
+            bias_paths=_bias, dark_paths=_dark, flat_paths=_flat,
         )
         stacks[name] = data
         headers[name] = fits.getheader(paths[0])
