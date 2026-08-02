@@ -2531,6 +2531,7 @@ def get_super_user_commands() -> dict[str, Callable]:
         "drift": drift_cmd,
         "stack": stack_cmd,
         "process": process_cmd,
+        "purge": purge_cmd,
         "bad": bad_cmd,
         "dab": dab_cmd,
         "audio": audio_cmd,
@@ -4227,3 +4228,109 @@ def _process_run(words: list[str]) -> None:
         f"Saved:\n  {full_path}  ({w}x{h}, no text)\n  {prev_path}  (preview)",
         str(prev_path),
     )
+
+
+def purge_cmd(words: list[str], account: str) -> None:
+    """Delete superseded flat frames, keeping the most recent set per filter.
+
+    Usage:
+        purge            — dry run: list what would be deleted
+        purge go         — actually delete
+
+    Flats accumulate fast: 20 frames per filter per night at 122 MB each is
+    2.45 GB a night for two filters, and this observatory has ~1000 of them.
+    They are also highly redundant — masters built from 2026-07-14 and
+    2026-07-31 agreed to 0.2-0.3% RMS, so the optical train had not moved and
+    every set but the newest was contributing noise reduction at best.
+
+    Dry run by default. This is the only command that deletes data outright
+    (`bad` renames), so it will not act without `go`.
+    """
+    jobs.spawn(_purge_run, args=(words,))
+
+
+def _purge_run(words: list[str]) -> None:
+    _job_id = jobs.get_current_job()
+
+    from stacking import stacker
+
+    cfg = config.data()
+    cal = cfg.get("calibration", {}) or {}
+    root = cal.get("flat_root")
+    if not root:
+        social_server.post_social_message(
+            "No calibration.flat_root configured — nothing to purge.")
+        return
+    root = Path(root)
+
+    do_delete = any(w.lower() == "go" for w in (words[2:] if len(words) > 2 else []))
+
+    by_filter = stacker.flats_by_filter(root)
+    if not by_filter:
+        social_server.post_social_message(f"No flats found under {root}")
+        return
+
+    # A session's flats live in one FLAT directory, and one directory holds
+    # several filters, so "newest" is decided per filter: the most recent
+    # session that actually contains that filter.
+    keep: set[Path] = set()
+    kept_desc: list[str] = []
+    doomed: list[Path] = []
+    for filt, paths in sorted(by_filter.items()):
+        sessions: dict[Path, list[Path]] = {}
+        for p in paths:
+            sessions.setdefault(p.parent, []).append(p)
+        newest = max(sessions, key=lambda d: max(f.stat().st_mtime for f in sessions[d]))
+        keep.update(sessions[newest])
+        kept_desc.append(f"{filt}: {len(sessions[newest])} from {newest.parent.name}"
+                         f" ({len(sessions)} sets on disk)")
+        for d, fs in sessions.items():
+            if d != newest:
+                doomed.extend(fs)
+
+    doomed = sorted(set(doomed) - keep)
+    freed = sum(f.stat().st_size for f in doomed) / 1e9
+    total = sum(len(v) for v in by_filter.values())
+
+    lines = [f"Flat purge under {root.name} — {total} flats on disk",
+             "Keeping the newest set per filter:"]
+    lines += [f"  {d}" for d in kept_desc]
+    if not doomed:
+        lines.append("Nothing to purge — every filter already has one set.")
+        social_server.post_social_message("\n".join(lines))
+        return
+    lines.append(f"{'Deleting' if do_delete else 'Would delete'} "
+                 f"{len(doomed)} older flats, freeing {freed:.1f} GB")
+    if not do_delete:
+        lines.append("Re-run as `purge go` to actually delete. "
+                     "Note this is irreversible: older flats are the only way to "
+                     "calibrate older lights if the optics were ever disturbed.")
+        social_server.post_social_message("\n".join(lines))
+        return
+
+    removed, failed = 0, []
+    for f in doomed:
+        jobs.raise_if_cancelled(_job_id)
+        try:
+            f.unlink()
+            removed += 1
+        except Exception as exc:
+            failed.append((f, str(exc)))
+    # Tidy up FLAT directories left empty, and their session dir if it is now bare.
+    for d in {f.parent for f in doomed}:
+        try:
+            if d.is_dir() and not any(d.iterdir()):
+                d.rmdir()
+                if d.parent.is_dir() and not any(d.parent.iterdir()):
+                    d.parent.rmdir()
+        except Exception:
+            pass
+    # The cached masters were keyed on the deleted files' paths and mtimes, so
+    # the next calibration rebuilds from what remains rather than reusing them.
+    stacker._FLATS_BY_FILTER_CACHE.clear()
+
+    lines.append(f"Deleted {removed}/{len(doomed)}, freed {freed:.1f} GB")
+    if failed:
+        lines.append(f"Failed on {len(failed)}; first: {failed[0][0].name} — {failed[0][1]}")
+    _logger.info("purge: deleted %d flats, freed %.1f GB", removed, freed)
+    social_server.post_social_message("\n".join(lines))

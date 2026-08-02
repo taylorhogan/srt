@@ -236,6 +236,15 @@ HELP: dict[str, dict] = {
         "usage": ["drift", "drift <dso>", "drift *"],
         "examples": ["drift", "drift m31"],
     },
+    "purge": {
+        "category": "super",
+        "summary": ("Delete superseded flat frames, keeping the newest set per "
+                    "filter. Dry run unless you add 'go'. Frees ~4 GB per "
+                    "redundant night; irreversible, so older lights lose the "
+                    "option of epoch-matched flats."),
+        "usage": ["purge", "purge go"],
+        "examples": ["purge", "purge go"],
+    },
     "process": {
         "category": "super",
         "summary": ("Stack a DSO's filters and combine into a colour image at full "

@@ -90,6 +90,15 @@ Before writing any code that calls `toggle_roof()`, `pwi4.mount_park()`, `pwi4.m
   the ratio between channels survives into the image. Both of those are easy to
   get wrong in ways that still produce a plausible-looking picture.
 
+  Flats live per session as `<flat_root>/<date>/FLAT` with every filter mixed
+  together, so they are grouped by FITS `FILTER` header rather than by directory
+  (`flats_by_filter`). They accumulate at ~1.2 GB per filter per night and are
+  highly redundant — masters from 2026-07-14 and 2026-07-31 agreed to 0.2–0.3%
+  RMS — so the `purge` command deletes all but the newest set per filter. It is
+  dry-run unless given `go`, and is the only command that deletes data outright
+  (`bad` renames). Irreversible: older lights lose the option of epoch-matched
+  flats, which matters only if the optics were disturbed between runs.
+
   Finished products from `stack` and `process` go to
   `<image_dir>/Iris/<dso>/`, beside that target's lights and calibration frames
   rather than into scratch. Safe because every path that collects light frames
