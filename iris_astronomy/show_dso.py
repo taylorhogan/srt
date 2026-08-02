@@ -37,13 +37,21 @@ def get_dso_image(target_name: str, survey="DSS2 Red", show=True):
     coord = SkyCoord(result["ra"][0], result["dec"][0], unit=(u.deg, u.deg))
     print(f"Resolved {target_name}: RA={coord.ra.to_string(unit=u.hour)}, Dec={coord.dec:.4f}")
 
-    # Fetch image from SkyView
+    # Fetch image from SkyView.
+    #
+    # cache=False deliberately. SkyView downloads through astropy's shared
+    # ~/.astropy/cache, and on 2026-08-02 one entry there had unreadable ACLs —
+    # the directory itself denied access — so every `show` died with
+    # PermissionError on a file it only wanted to write. A survey preview is
+    # fetched once and looked at once; there is nothing to gain from caching it,
+    # and plenty to lose by depending on a cache this process cannot repair.
     images = SkyView.get_images(
         position=coord,
         survey=[survey],
         width=fov_w * u.deg,
         height=fov_h * u.deg,
         pixels=f"{min(SENSOR_WIDTH_PIX // 4, 1500)},{min(SENSOR_HEIGHT_PIX // 4, 1000)}",
+        cache=False,
     )
 
     if not images:

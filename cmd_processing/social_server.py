@@ -402,18 +402,14 @@ def schedule_cmd(words: list[str], index: int, m: Mastodon, account: str) -> Non
         post_social_message(f"Failed to generate schedule for {best_name}: {e}")
 
 
-def _preview_worker(dso_name: str, scratch_dir: str, web_chat_port: int) -> None:
+def _preview_worker(dso_name: str, scratch_dir: str, web_chat_port: int,
+                    job_id: Optional[str] = None) -> None:
     """Runs in a spawned child process — fetches DSO survey image and posts via web chat API."""
     import os, sys
     _root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
     if _root not in sys.path:
         sys.path.insert(0, _root)
 
-    import matplotlib
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-    from astropy.visualization import ZScaleInterval, ImageNormalize
-    from iris_astronomy import show_dso
     import requests
 
     def _post(msg, image_path=None):
@@ -421,7 +417,24 @@ def _preview_worker(dso_name: str, scratch_dir: str, web_chat_port: int) -> None
         data = {"message": msg}
         if image_path:
             data["image_path"] = image_path
+        # Without this the post lands in the system feed and the card the user is
+        # watching stays empty — which is what "show returned nothing" looked
+        # like even when the worker had an error to report.
+        if job_id:
+            data["job_id"] = job_id
         requests.post(url, data=data, timeout=30)
+
+    # Imports inside the try: they were above it, so anything failing to import
+    # killed the child before _post existed and the command died silently.
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        from astropy.visualization import ZScaleInterval, ImageNormalize
+        from iris_astronomy import show_dso
+    except Exception as e:
+        _post(f"Could not load the preview tools: {type(e).__name__}: {e}")
+        return
 
     try:
         data, _ = show_dso.get_dso_image(dso_name, show=False)
@@ -458,11 +471,12 @@ def post_dso_preview(dso_name: str) -> None:
     _project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
     scratch_dir = os.path.join(_project_root, cfg["scratch"]["directory"])
     web_chat_port = cfg.get("web_chat", {}).get("port", 8095)
+    job_id = jobs.get_current_job()
 
     def _watchdog():
         p = _PREVIEW_MP_CONTEXT.Process(
             target=_preview_worker,
-            args=(dso_name, scratch_dir, web_chat_port),
+            args=(dso_name, scratch_dir, web_chat_port, job_id),
             daemon=True,
         )
         p.start()
