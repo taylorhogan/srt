@@ -90,6 +90,12 @@ Before writing any code that calls `toggle_roof()`, `pwi4.mount_park()`, `pwi4.m
   the ratio between channels survives into the image. Both of those are easy to
   get wrong in ways that still produce a plausible-looking picture.
 
+  Finished products from `stack` and `process` go to
+  `<image_dir>/Iris/<dso>/`, beside that target's lights and calibration frames
+  rather than into scratch. Safe because every path that collects light frames
+  requires the parent directory to be named `LIGHT`, so FITS written under
+  `Iris/` cannot be picked up as data.
+
 - **`fits_processing/`** — FITS to JPEG conversion, FWHM analysis, header editing.
 
 - **`kasa_local/`** — Local copy of python-kasa library (used instead of the pip package for local modifications).

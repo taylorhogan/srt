@@ -1960,8 +1960,9 @@ def _stack_run(words: list[str]) -> None:
             continue
 
         safe_filter = filter_name.replace(" ", "_")
-        scratch_dir.mkdir(parents=True, exist_ok=True)
-        fits_path = scratch_dir / f"stack_{dso_dir.name}_{safe_filter}.fits"
+        # Results live with the data, not in scratch — see stacker.results_dir.
+        out_dir = stacker.results_dir(dso_dir.name)
+        fits_path = out_dir / f"stack_{dso_dir.name}_{safe_filter}.fits"
         _fits.PrimaryHDU(result.astype("float32")).writeto(fits_path, overwrite=True)
 
         try:
@@ -1977,7 +1978,7 @@ def _stack_run(words: list[str]) -> None:
         else:
             metrics = "no stars detected"
 
-        out_path = scratch_dir / f"stack_{dso_dir.name}_{safe_filter}.jpg"
+        out_path = out_dir / f"stack_{dso_dir.name}_{safe_filter}.jpg"
         jpg = stacker._save_jpg(
             result, out_path,
             title=(
@@ -1986,7 +1987,7 @@ def _stack_run(words: list[str]) -> None:
             ),
         )
         # Plain full-resolution copy with no title/axes, for actually using.
-        plain_path = scratch_dir / f"stack_{dso_dir.name}_{safe_filter}_plain.jpg"
+        plain_path = out_dir / f"stack_{dso_dir.name}_{safe_filter}_plain.jpg"
         try:
             stacker.save_plain_jpg(result, plain_path)
             saved = (f"\nSaved:\n  {fits_path}\n  {plain_path}"
@@ -4109,12 +4110,28 @@ def process_cmd(words: list[str], account: str) -> None:
     """Stack a DSO's filters and combine them into a colour image.
 
     Usage:
-        process <dso> <recipe>    — recipe is LRGB, HOO or SHO
+        process <dso> <recipe>           — recipe is LRGB, HOO or SHO
+        process <dso> <recipe> noflat    — skip flat correction (bias+dark only)
+
+    Recipes:
+        LRGB   R->red, G->green, B->blue, with L substituted as luminance
+        HOO    Ha->red, O-III->green and blue
+        SHO    S-II->red, Ha->green, O-III->blue   (the "Hubble" palette)
 
     Every filter is registered to one shared reference so the channels land on
     the same pixels, then combined on a shared brightness scale so the ratio
     between channels — which is the whole point of a palette — survives into
-    the picture. Full resolution; expect ~20 minutes on a few hundred frames.
+    the picture. Frames are bias/dark/flat calibrated, quality-gated and stacked
+    sigma-clipped at full resolution; expect ~20 minutes on a few hundred frames.
+
+    `noflat` is there because a flat from the wrong epoch can be worse than
+    none — dust migrates and focus shifts, so flats shot months after the lights
+    may stamp in a mote the data never had. Worth trying both ways when the only
+    flats available come from a different run.
+
+    Writes two files to <image_dir>/Iris/<dso>/ and names both in its reply:
+        process_<dso>_<recipe>.jpg           full resolution, no text
+        process_<dso>_<recipe>_preview.jpg   2200 px, posted to the card
 
     Process-isolated (jobs.spawn_process) like stack, for the same reason.
     """
@@ -4129,10 +4146,12 @@ def _process_run(words: list[str]) -> None:
 
     cfg = config.data()
     image_dir = Path(cfg["nina"]["image_dir"])
-    _project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
-    scratch_dir = Path(os.path.join(_project_root, cfg["scratch"]["directory"]))
 
     extra = [w for w in (words[2:] if len(words) > 2 else []) if w]
+    _NOFLAT = {"noflat", "no-flat", "noflats", "no-flats"}
+    use_flats = not any(w.lower() in _NOFLAT for w in extra)
+    if not use_flats:
+        extra = [w for w in extra if w.lower() not in _NOFLAT]
     recipe = None
     for i, w in enumerate(extra):
         if w.upper() in color_process.RECIPES:
@@ -4142,7 +4161,7 @@ def _process_run(words: list[str]) -> None:
     dso_arg = " ".join(extra).strip()
     if not dso_arg or recipe is None:
         social_server.post_social_message(
-            "Usage: process <dso> <recipe>, recipe one of "
+            "Usage: process <dso> <recipe> [noflat], recipe one of "
             f"{', '.join(sorted(color_process.RECIPES))}  e.g. `process sh2-92 hoo`")
         return
 
@@ -4171,12 +4190,14 @@ def _process_run(words: list[str]) -> None:
         social_server.post_social_message(f"{dso_dir.name} {recipe}: {msg}")
 
     social_server.post_social_message(
-        f"Processing {dso_dir.name} as {recipe} at full resolution — "
+        f"Processing {dso_dir.name} as {recipe} at full resolution"
+        f"{'' if use_flats else ' (no flats)'} — "
         f"this takes a while on a few hundred frames.")
     _t0 = time.perf_counter()
     try:
         rgb, info = color_process.process_dso(
-            dso_dir, recipe, progress_cb=_progress, cancel_cb=_cancel)
+            dso_dir, recipe, progress_cb=_progress, cancel_cb=_cancel,
+            use_flats=use_flats)
     except jobs.Cancelled:
         raise
     except Exception as exc:
@@ -4184,9 +4205,9 @@ def _process_run(words: list[str]) -> None:
         social_server.post_social_message(f"{dso_dir.name} {recipe}: failed — {exc}")
         return
 
-    scratch_dir.mkdir(parents=True, exist_ok=True)
-    full_path = scratch_dir / f"process_{dso_dir.name}_{recipe}.jpg"
-    prev_path = scratch_dir / f"process_{dso_dir.name}_{recipe}_preview.jpg"
+    out_dir = stacker.results_dir(dso_dir.name)
+    full_path = out_dir / f"process_{dso_dir.name}_{recipe}.jpg"
+    prev_path = out_dir / f"process_{dso_dir.name}_{recipe}_preview.jpg"
     color_process.save_rgb(rgb, full_path)
     color_process.save_rgb(rgb, prev_path, max_px=2200)
 

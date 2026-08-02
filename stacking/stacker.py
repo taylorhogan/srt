@@ -299,6 +299,21 @@ def load_calibration_set(
     return CalibrationSet(bias_npy, dark_npy, dark_exptime)
 
 
+def results_dir(dso_name: str) -> Path:
+    """Where finished products go: ``<image_dir>/Iris/<dso>/``.
+
+    Beside the lights and calibration frames rather than in scratch, so a
+    target's stacks and colour renders travel with its data instead of living in
+    a directory that gets cleared. Nothing under Iris/ can be mistaken for a
+    light frame — every path that collects lights requires the parent directory
+    to be named LIGHT — so writing FITS here cannot contaminate a frame scan.
+    """
+    from configs import config
+    out = Path(config.data()["nina"]["image_dir"]) / "Iris" / dso_name
+    out.mkdir(parents=True, exist_ok=True)
+    return out
+
+
 def calibration_paths_from_config(
     filter_name: Optional[str] = None,
 ) -> tuple[list[Path], list[Path], list[Path]]:
