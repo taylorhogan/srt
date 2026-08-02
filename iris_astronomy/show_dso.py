@@ -73,7 +73,13 @@ def field_of_view(focal_length_mm=None, sensor_w_mm=None, sensor_h_mm=None):
 # Pan-STARRS1 is deliberately absent: its cutout service is fixed at 0.25"/px
 # and capped at 6000 px = 25', so it cannot cover this frame without mosaicking
 # skycells, and what it does return is mis-centred with visible seams.
-PREVIEW_SOURCES = ("legacy", "sdss", "dss2")
+#   dss2rgb DSS2 Blue+Red+IR composited. Photographic and shallow, but all-sky —
+#           and all-sky is the whole point, because both deep colour surveys are
+#           *extragalactic* and deliberately mask the Milky Way. NGC 7380 (b =
+#           -0.9) and IC 405 (b = -2.0) are invisible to SDSS and to Legacy, so
+#           without this tier every galactic-plane target — which is most of the
+#           narrowband work — is permanently monochrome.
+PREVIEW_SOURCES = ("legacy", "sdss", "dss2rgb", "dss2")
 _PREVIEW_MAX_PX = 1500
 
 
@@ -129,6 +135,51 @@ def _sdss_preview(ra, dec, fov_w_deg, fov_h_deg):
     return img, "SDSS DR18 (gri)"
 
 
+def _dss2_rgb_preview(coord, fov_w_deg, fov_h_deg):
+    """Composite the DSS2 Red and Blue plates into colour. All-sky, always answers.
+
+    Red -> R, Blue -> B, green synthesised as their mean. The obvious mapping is
+    IR/Red/Blue into R/G/B, but DSS2's Red plate is where H-alpha lands, so that
+    puts every emission nebula in the green channel and IC 405 comes out teal.
+    Dropping IR and synthesising green renders emission red, reflection blue, and
+    stars roughly their real colours — and costs one fewer SkyView request.
+
+    Each plate is percentile-normalised before stacking, not noise-normalised:
+    the IR and Red plates differ ~6x in background noise, so scaling by noise
+    would have made one channel dominate on brightness alone.
+    """
+    from astropy.visualization import AsinhStretch, PercentileInterval
+    h = int(_PREVIEW_MAX_PX * fov_h_deg / fov_w_deg)
+    try:
+        images = SkyView.get_images(
+            position=coord, survey=["DSS2 Red", "DSS2 Blue"],
+            width=fov_w_deg * u.deg, height=fov_h_deg * u.deg,
+            pixels=f"{_PREVIEW_MAX_PX},{h}", cache=False,
+        )
+    except Exception:
+        return None
+    if not images or len(images) < 2:
+        return None
+
+    planes = []
+    for hdul in images:
+        data = np.asarray(hdul[0].data, dtype=float)
+        if not np.isfinite(data).any():
+            return None
+        lo, hi = PercentileInterval(99.5).get_limits(data)
+        if not np.isfinite([lo, hi]).all() or hi <= lo:
+            return None
+        planes.append(np.nan_to_num(np.clip((data - lo) / (hi - lo), 0, 1)))
+
+    red, blue = planes
+    stretch = AsinhStretch(a=0.1)
+    rgb = np.dstack([stretch(red), stretch(0.5 * (red + blue)), stretch(blue)])
+    rgb = (rgb * 255).astype(np.uint8)
+    if float(rgb.std()) < 1.0:
+        return None
+    return rgb, "DSS2 R/B composite"
+
+
 def get_preview_image(target_name: str, sources=PREVIEW_SOURCES):
     """Best available preview of *target_name*: (array, survey_label, is_colour).
 
@@ -148,6 +199,8 @@ def get_preview_image(target_name: str, sources=PREVIEW_SOURCES):
             got = _legacy_preview(ra, dec, fov_w, fov_h)
         elif name == "sdss":
             got = _sdss_preview(ra, dec, fov_w, fov_h)
+        elif name == "dss2rgb":
+            got = _dss2_rgb_preview(coord, fov_w, fov_h)
         elif name == "dss2":
             data, _hdr = get_dso_image(target_name, show=False)
             return data, "DSS2 Red", False
