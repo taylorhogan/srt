@@ -252,10 +252,15 @@ HELP: dict[str, dict] = {
                     "SHO (S-II->R, Ha->G, O-III->B). All filters register to one "
                     "shared reference so the channels align. Add 'noflat' to skip "
                     "flat correction, which is worth trying when the only flats "
-                    "available were shot in a different epoch."),
-        "usage": ["process <dso> <recipe>", "process <dso> <recipe> noflat"],
-        "examples": ["process sh2-92 hoo", "process abell2151 lrgb",
-                     "process m16 sho", "process abell2151 lrgb noflat"],
+                    "available were shot in a different epoch. Display options: "
+                    "black= white= soft= mesh= nobg scale=. Add 'reuse' to "
+                    "re-render the cached channels in seconds instead of "
+                    "re-stacking. Saves to <image_dir>/Iris/<dso>/."),
+        "usage": ["process <dso> <recipe>", "process <dso> <recipe> noflat",
+                  "process <dso> <recipe> reuse black=50 mesh=6"],
+        "examples": ["process sh2-92 hoo", "process abell2151 lrgb noflat",
+                     "process abell2151 lrgb reuse black=50",
+                     "process sh2-92 hoo reuse soft=0.01 nobg"],
     },
     "stack": {
         "category": "super",
