@@ -61,7 +61,7 @@ _ALIASES: dict[str, tuple[str, ...]] = {
 # enough to be mistaken for satellite trails. A percentile clips the same share
 # of pixels whatever the target, so a sparse cluster and a nebula that fills the
 # frame both keep their faint end.
-BLACK_PCT = 25.0     # share of pixels that go to black
+BLACK_PCT = 65.0     # share of pixels that go to black
 WHITE_PCT = 99.0
 SOFTENING = 0.025
 EDGE_CROP = 0.02     # dithered border where not every frame contributed
@@ -70,6 +70,18 @@ EDGE_CROP = 0.02     # dithered border where not every frame contributed
 # point those pixels were already clipped to nothing, but a lower black point
 # lets them through and the division amplifies their noise into colour speckle.
 MAX_LUM_BOOST = 3.0
+# Large-scale background model, subtracted per channel before stretching.
+# Without flats the frame carries a vignetting dome comparable in size to the
+# signal itself; the old crushing black point hid it, and lowering the black
+# point simply revealed it as a bright blob covering most of abell2151. Sky
+# gradients do the same on flat-corrected data. The mesh is coarse on purpose —
+# big enough that cluster galaxies and nebulosity are not absorbed into it.
+SUBTRACT_BACKGROUND = True
+BG_MESH_FRACTION = 4      # mesh boxes across the short axis
+# Measured trade-off on synthetic fields (dome 40x sky noise, nebula filling the
+# middle third).  Mesh 8 flattens the dome best but absorbs 30-45% of a large
+# nebula; mesh 3 leaves the nebula untouched but barely dents the dome.  Mesh 4
+# with black at p65: cluster saturation 3.4%, nebula centre retained 94%.
 
 
 def _squash(name: str) -> str:
@@ -96,14 +108,39 @@ def _stretch(chan: np.ndarray, black_pct: float, white: float) -> np.ndarray:
     return np.arcsinh(y / SOFTENING) / np.arcsinh(1.0 / SOFTENING)
 
 
+def _remove_gradient(chan: np.ndarray) -> np.ndarray:
+    """Subtract a coarse 2-D background model — vignetting and sky gradient.
+
+    Falls back to a flat median subtraction if photutils is unavailable, which
+    leaves the gradient in but never makes things worse.
+    """
+    try:
+        from astropy.stats import SigmaClip
+        from photutils.background import Background2D, SExtractorBackground
+        box = max(64, min(chan.shape) // BG_MESH_FRACTION)
+        bkg = Background2D(
+            chan, box_size=box, filter_size=3,
+            sigma_clip=SigmaClip(sigma=3.0), bkg_estimator=SExtractorBackground(),
+        )
+        return chan - bkg.background
+    except Exception:
+        _logger.warning("Background2D unavailable — leaving the gradient in",
+                        exc_info=True)
+        return chan - float(np.nanmedian(chan))
+
+
 def compose(channels: dict[str, np.ndarray], black_pct: float = BLACK_PCT,
-            white_pct: float = WHITE_PCT) -> np.ndarray:
-    """Combine sky-subtracted channel stacks into an RGB image in 0..1.
+            white_pct: float = WHITE_PCT,
+            subtract_background: bool = SUBTRACT_BACKGROUND) -> np.ndarray:
+    """Combine channel stacks into an RGB image in 0..1.
 
     channels holds any of R/G/B plus an optional L. Every channel must already
     be on the same pixel grid — that is what the shared reference guarantees.
     """
-    subbed = {k: v - float(np.nanmedian(v)) for k, v in channels.items()}
+    if subtract_background:
+        subbed = {k: _remove_gradient(v) for k, v in channels.items()}
+    else:
+        subbed = {k: v - float(np.nanmedian(v)) for k, v in channels.items()}
     colour = [subbed[c] for c in ("R", "G", "B") if c in subbed]
     white = float(np.nanpercentile(np.maximum.reduce(colour), white_pct))
     _logger.info("Compose: shared white point %.2f ADU (p%.1f)", white, white_pct)
