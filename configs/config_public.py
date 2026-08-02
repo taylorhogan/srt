@@ -134,7 +134,12 @@ class PublicConfig():
             # lights shot at other lengths.
             "bias_dir": "C:/Users/iriso/Documents/N.I.N.A/Targets/cdk17/2026-07-25/BIAS",
             "dark_dir": "C:/Users/iriso/Documents/N.I.N.A/Targets/cdk17/2026-07-25/DARK",
-            "flat_root": None,
+            # Flats live per session as cdk17/<date>/FLAT with every filter mixed
+            # together, so this root is scanned recursively and grouped by the
+            # FITS FILTER header (stacker.flats_by_filter) rather than by the
+            # root/<FILTER>/ directory convention. Masters agreed to 0.2-0.3% RMS
+            # between 07-14 and 07-31, so combining nights is safe.
+            "flat_root": "C:/Users/iriso/Documents/N.I.N.A/Targets/cdk17",
         },
 
         # Percentages of SKY SIGNAL, and only meaningful with calibration

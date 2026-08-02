@@ -1825,6 +1825,10 @@ def _stack_run(words: list[str]) -> None:
     # flat_dir/flat_dirs keys win if both are configured.
     if cal.get("flat_root") and not (_flat_dir or _flat_dirs):
         _flat_dir, _flat_dirs = stacker.flat_dirs_from_root(Path(cal["flat_root"]))
+    # N.I.N.A writes one FLAT dir per session with every filter mixed in, which
+    # the root/<FILTER>/ convention above cannot see. Group by FITS header too.
+    _flats_by_header = stacker.flats_by_filter(
+        Path(cal["flat_root"]) if cal.get("flat_root") else None)
 
     # words[0] is the bot mention, words[1] is "stack"; remainder is dso (+ optional filter)
     extra = words[2:] if len(words) > 2 else []
@@ -1929,7 +1933,14 @@ def _stack_run(words: list[str]) -> None:
             social_server.post_social_message(f"{_dso} {_fn}: {msg}")
 
         try:
-            flat_paths = stacker._resolve_flat_paths(filter_name, _flat_dir, _flat_dirs)
+            flat_paths = stacker._resolve_flat_paths(
+                filter_name, _flat_dir, _flat_dirs, _flats_by_header)
+            # Reuse the FWHM/star measurements stats/bad/snr already wrote to
+            # frame_stats.json instead of redoing detection on every frame — that
+            # was several minutes of duplicated work per stack.
+            precomputed = _load_precomputed_fwhm_stars(dso_dir, paths, arcsec_per_pixel)
+            if flat_paths:
+                _progress(f"using {len(flat_paths)} flats")
             result, info = stacker.stack(
                 paths,
                 method=stacker.StackMethod.SIGMA_CLIP_FWHM,
@@ -1938,6 +1949,7 @@ def _stack_run(words: list[str]) -> None:
                 flat_paths=flat_paths,
                 progress_cb=_progress,
                 cancel_cb=_cancel,
+                precomputed_fwhm_stars=precomputed,
             )
         except jobs.Cancelled:
             raise

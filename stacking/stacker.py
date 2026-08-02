@@ -149,17 +149,25 @@ def _build_master(paths: list[Path]) -> Optional[np.ndarray]:
     if len(shape) != 2:
         raise ValueError(f"Expected 2-D calibration frame, got {shape} in {paths[0]}")
 
+    # Read each band straight off disk rather than through hdul.data, which
+    # materialises the whole frame every time it is touched: banding 100 flats
+    # that way costs 16 x 100 full-frame reads (~195 GB of I/O) instead of one
+    # pass. These files carry BZERO/BSCALE, which rules out astropy's memmap
+    # unless scaling is deferred — so defer it and apply the scale by hand.
     master = np.empty(shape, dtype=np.float32)
     for y0 in range(0, shape[0], _MASTER_BAND_ROWS):
         y1 = min(y0 + _MASTER_BAND_ROWS, shape[0])
         band = np.empty((len(paths), y1 - y0, shape[1]), dtype=np.float32)
         for i, p in enumerate(paths):
-            with fits.open(p) as hdul:
-                data = np.squeeze(hdul[0].data)
-                if data.shape != shape:
+            with fits.open(p, memmap=True, do_not_scale_image_data=True) as hdul:
+                hdu = hdul[0]
+                raw = np.squeeze(hdu.data[..., y0:y1, :])
+                if raw.shape != (y1 - y0, shape[1]):
                     raise ValueError(
-                        f"Calibration frame shape mismatch: {data.shape} != {shape} in {p}")
-                band[i] = data[y0:y1]
+                        f"Calibration frame shape mismatch in {p}: got {raw.shape}")
+                band[i] = (np.asarray(raw, dtype=np.float32)
+                           * float(hdu.header.get("BSCALE", 1))
+                           + float(hdu.header.get("BZERO", 0)))
         master[y0:y1] = np.median(band, axis=0)
         band = None
     return master
@@ -211,6 +219,9 @@ class CalibrationSet(NamedTuple):
     bias_npy: Optional[Path]
     dark_npy: Optional[Path]
     dark_exptime: Optional[float]
+    # Flats are per-filter, so this is filled in per channel by the caller
+    # (see build_master_flat_npy) rather than by load_calibration_set.
+    flat_npy: Optional[Path] = None
 
 
 def _master_cache_path(paths: list[Path], tag: str) -> Path:
@@ -303,6 +314,56 @@ def calibration_from_config() -> Optional[CalibrationSet]:
         return None
 
 
+def _dark_exptime(dark_paths) -> Optional[float]:
+    """Exposure of the dominant exposure group in *dark_paths*."""
+    groups: dict[float, int] = {}
+    for p in dark_paths or []:
+        try:
+            e = round(float(fits.getheader(p).get("EXPTIME", 0.0)), 2)
+        except Exception:
+            continue
+        groups[e] = groups.get(e, 0) + 1
+    return max(groups, key=groups.get) if groups else None
+
+
+def build_master_flat_npy(flat_paths: list[Path], cal: CalibrationSet,
+                          tag: str) -> Optional[Path]:
+    """Bias/dark-corrected, mean-normalised master flat, cached as .npy.
+
+    Flats are exposed long enough for dark current to matter (47.5 s on Ha here,
+    against 300 s darks), so the master dark is scaled by the exposure ratio
+    rather than ignored. The result is floored at 0.05 so dividing by it can
+    never blow a pixel up by more than 20x, and so _apply_calibration needs no
+    zero-guard on the hot path.
+    """
+    if not flat_paths:
+        return None
+    out = _master_cache_path(flat_paths, f"flat_{tag}")
+    if out.exists():
+        return out
+    _logger.info("Building master flat %s from %d frames…", tag, len(flat_paths))
+    master = _build_master(flat_paths)
+    if master is None:
+        return None
+    try:
+        exptime = float(fits.getheader(flat_paths[0]).get("EXPTIME", 0.0))
+    except Exception:
+        exptime = 0.0
+    if cal.bias_npy is not None:
+        master = master - np.asarray(np.load(cal.bias_npy, mmap_mode="r"), np.float32)
+    if cal.dark_npy is not None and cal.dark_exptime and exptime:
+        master = master - (np.asarray(np.load(cal.dark_npy, mmap_mode="r"), np.float32)
+                           * (exptime / cal.dark_exptime))
+    mean = float(np.mean(master))
+    if not np.isfinite(mean) or mean == 0:
+        return None
+    master = np.clip(master / mean, 0.05, None).astype(np.float32)
+    tmp = out.with_suffix(".tmp.npy")
+    np.save(tmp, master)
+    tmp.replace(out)
+    return out
+
+
 def _apply_calibration(frame: np.ndarray, cal: Optional[CalibrationSet],
                        exptime: Optional[float]) -> np.ndarray:
     """Subtract master bias and exposure-scaled master dark, in place."""
@@ -318,6 +379,11 @@ def _apply_calibration(frame: np.ndarray, cal: Optional[CalibrationSet],
             frame -= np.asarray(dark, dtype=np.float32) * (exptime / cal.dark_exptime)
         else:
             frame -= dark
+    if cal.flat_npy is not None:
+        # (raw - bias - dark) / flat, in that order. The master is normalised to
+        # mean 1 and floored away from zero at build time, so this needs no
+        # guard and no temporary the size of the frame.
+        frame /= np.load(cal.flat_npy, mmap_mode="r")
     return frame
 
 
@@ -621,8 +687,27 @@ def _register_one(
     *det_target* is the reference's control points (see
     _reference_control_points) or, in the serial fallback, the reference image.
     """
+    frame = None
     try:
         frame = _load_calibrated(path, cal)
+    except Exception as exc:
+        return None, f"load failed: {exc}"
+    aligned, reason = _register_one_array(frame, det_target, ref_shape)
+    frame = None  # free full-res copy
+    if aligned is None:
+        return None, reason
+    return _downsample_mean(aligned, scale), ""
+
+
+def _register_one_array(frame: np.ndarray, det_target: np.ndarray,
+                        ref_shape: tuple[int, int]) -> tuple[Optional[np.ndarray], str]:
+    """Register one already-loaded, already-calibrated frame onto *ref_shape*.
+
+    The QA rules live here so the streaming path in stack() and the pooled path
+    in _prepare_for_convergence cannot drift apart on what counts as a good
+    registration.
+    """
+    try:
         transform, (src_pts, dst_pts) = _astroalign.find_transform(
             _despike(frame), det_target,
             max_control_points=_REG_MAX_CONTROL_POINTS,
@@ -644,10 +729,9 @@ def _register_one(
     except Exception as exc:
         return None, f"apply_transform failed: {exc}"
 
-    frame = None  # free full-res copy
     aligned = aligned.astype(np.float32)
     aligned[footprint.astype(bool)] = np.nan
-    return _downsample_mean(aligned, scale), ""
+    return aligned, ""
 
 
 # Workers per registration pool. `snr` already runs its filters in parallel
@@ -1037,10 +1121,28 @@ def stack(
         raise ValueError("No light frames provided")
 
     # Build calibration masters
+    # Masters go through the scratch .npy cache keyed on the calibration frames'
+    # mtimes. Rebuilding them from the raw frames every run costs ~170 frame
+    # reads here (50 bias + 20 dark + 100 flats) — minutes of identical work for
+    # files that only change when new calibration frames are shot.
     _logger.info("Building calibration masters…")
-    master_bias = build_master_bias(bias_paths or [])
-    master_dark = build_master_dark(dark_paths or [], master_bias)
-    master_flat = build_master_flat(flat_paths or [], master_bias, master_dark)
+    if progress_cb:
+        progress_cb("calibration masters…")
+    master_bias = master_dark = master_flat = None
+    if bias_paths:
+        master_bias = np.load(_cached_master(list(bias_paths), "bias"), mmap_mode="r")
+    if dark_paths:
+        master_dark = np.load(
+            _cached_master(list(dark_paths), "dark", subtract=master_bias), mmap_mode="r")
+    if flat_paths:
+        _cal = CalibrationSet(
+            _master_cache_path(list(bias_paths), "bias") if bias_paths else None,
+            _master_cache_path(list(dark_paths), "dark") if dark_paths else None,
+            _dark_exptime(dark_paths) if dark_paths else None,
+        )
+        _flat_npy = build_master_flat_npy(list(flat_paths), _cal, "stack")
+        if _flat_npy is not None:
+            master_flat = np.load(_flat_npy, mmap_mode="r")
 
     # Measure FWHM + star count (one detection pass) whenever a method needs
     # FWHM weights or any quality criterion is active. Both come from the same
@@ -1107,52 +1209,89 @@ def stack(
         "Loading and calibrating %d frames (rejected %d)…", len(accepted), len(rejected)
     )
     _ckpt(cancel_cb)
-    calibrated = [_calibrate(_load_fits_2d(p), master_bias, master_dark, master_flat)
-                  for p in accepted]
 
-    if register:
-        _logger.info("Registering %d frames to reference…", len(calibrated))
-        if progress_cb:
-            progress_cb(f"registering {len(calibrated)} frames…")
-        ref_fwhm = [fwhm_values.get(p, 0.0) for p in accepted] if fwhm_values else None
-        calibrated, surviving_indices = _register_frames(calibrated, fwhm_scores=ref_fwhm)
-        accepted = [accepted[i] for i in surviving_indices]
-        _logger.info("%d frames remain after registration", len(calibrated))
-        if progress_cb:
-            n_dropped = len(light_paths) - len(accepted) - len(rejected)
-            progress_cb(
-                f"registration done — {len(calibrated)} frames aligned"
-                + (f", {n_dropped} dropped" if n_dropped > 0 else "")
-                + ", combining…"
-            )
-
-    n_frames = len(calibrated)
-    if n_frames == 0:
-        raise ValueError("All frames were dropped during registration")
-    H, W = calibrated[0].shape
-
-    # Stream each registered frame to a temp memmap on disk and free the
-    # in-memory array, so we never hold all frames in RAM at once. A full
-    # cube of e.g. 60 × 6388 × 9576 float32 is ~14 GiB and OOMs the typical
-    # observatory machine.
+    # Load, calibrate, register and spill each frame one at a time. Building the
+    # calibrated list first — as this used to — needs every frame in RAM at once:
+    # 118 sh2-92 subs at 61 MP float32 is ~29 GB, so full resolution was not
+    # actually reachable on this box. Peak is now two frames plus the tile cube.
     import shutil
     import tempfile
     tmp_dir = Path(tempfile.mkdtemp(prefix="srt_stack_"))
+    mmap_paths: list[Path] = []
+    survivors: list[Path] = []
+    failed = poor_qa = 0
 
-    weights = None
-    if method in (StackMethod.FWHM_WEIGHTED, StackMethod.SIGMA_CLIP_FWHM):
-        weights = _fwhm_weights(fwhm_values, accepted)
-        _logger.info("FWHM weights: min=%.4f max=%.4f", weights.min(), weights.max())
+    def _spill(frame: np.ndarray, path: Path) -> Path:
+        p = tmp_dir / f"f{len(mmap_paths):04d}.npy"
+        np.save(p, frame.astype(np.float32, copy=False))
+        mmap_paths.append(p)
+        survivors.append(path)
+        return p
 
     try:
-        mmap_paths: list[Path] = []
-        for i, frame in enumerate(calibrated):
-            p = tmp_dir / f"f{i:04d}.npy"
-            np.save(p, frame.astype(np.float32, copy=False))
-            mmap_paths.append(p)
-        calibrated = None  # release the in-memory list
+        do_register = register and _REGISTER_AVAILABLE and len(accepted) >= 2
+        if not do_register:
+            if progress_cb:
+                progress_cb(f"loading {len(accepted)} frames (no registration)…")
+            for p in accepted:
+                _ckpt(cancel_cb)
+                _spill(_calibrate(_load_fits_2d(p), master_bias, master_dark,
+                                  master_flat), p)
+        else:
+            ref_idx = _reference_index_by_fwhm([fwhm_values.get(p, 0.0) for p in accepted])
+            if ref_idx is None:
+                ref_idx = 0
+            _logger.info("Registering %d frames to accepted[%d]…", len(accepted), ref_idx)
+            if progress_cb:
+                progress_cb(f"registering {len(accepted)} frames (streaming)…")
+            reference = _calibrate(_load_fits_2d(accepted[ref_idx]), master_bias,
+                                   master_dark, master_flat)
+            ref_shape = reference.shape
+            det_target = _reference_control_points(_despike(reference))
+            if det_target is None:
+                det_target = _despike(reference)
+            _spill(reference, accepted[ref_idx])
+            reference = None
+
+            tick = max(1, len(accepted) // 10)
+            for i, p in enumerate(accepted):
+                if i == ref_idx:
+                    continue
+                _ckpt(cancel_cb)
+                frame = _calibrate(_load_fits_2d(p), master_bias, master_dark, master_flat)
+                aligned, reason = _register_one_array(frame, det_target, ref_shape)
+                frame = None
+                if aligned is None:
+                    if reason.startswith("QA:"):
+                        poor_qa += 1
+                    else:
+                        failed += 1
+                    _logger.warning("Registration: frame %d — %s", i, reason)
+                    continue
+                _spill(aligned, p)
+                aligned = None
+                if progress_cb and i % tick == 0:
+                    progress_cb(f"registered {len(mmap_paths)}/{len(accepted)}…")
+
+            _logger.info("Registration: %d/%d aligned, %d failed, %d dropped QA",
+                         len(mmap_paths), len(accepted), failed, poor_qa)
+            if progress_cb:
+                progress_cb(f"registration done — {len(mmap_paths)} frames aligned"
+                            + (f", {failed + poor_qa} dropped" if failed + poor_qa else "")
+                            + ", combining…")
+
+        accepted = survivors
+        n_frames = len(mmap_paths)
+        if n_frames == 0:
+            raise ValueError("All frames were dropped during registration")
+
+        weights = None
+        if method in (StackMethod.FWHM_WEIGHTED, StackMethod.SIGMA_CLIP_FWHM):
+            weights = _fwhm_weights(fwhm_values, accepted)
+            _logger.info("FWHM weights: min=%.4f max=%.4f", weights.min(), weights.max())
 
         mmaps = [np.load(p, mmap_mode="r") for p in mmap_paths]
+        H, W = mmaps[0].shape
 
         result = np.empty((H, W), dtype=np.float32)
         coverage = np.zeros((H, W), dtype=np.int32)
@@ -1201,7 +1340,9 @@ def stack(
         x0, x1 = int(cols[0]), int(cols[-1]) + 1
         result = result[y0:y1, x0:x1]
         _logger.info(
-            "Cropped stack to high-coverage region: %dx%d → %dx%d (>=%d/%d frames)",
+            # ASCII arrow: the console handler on this box is cp1252 and raises
+            # UnicodeEncodeError on U+2192, which prints a logging traceback.
+            "Cropped stack to high-coverage region: %dx%d -> %dx%d (>=%d/%d frames)",
             W, H, x1 - x0, y1 - y0, min_cov, n_frames,
         )
 
@@ -1283,12 +1424,43 @@ def flat_dirs_from_root(root: Optional[Path]) -> tuple[Optional[Path], Optional[
     return root, None
 
 
+def flats_by_filter(root: Optional[Path]) -> dict[str, list[Path]]:
+    """Collect every flat under *root* and group by its FITS FILTER header.
+
+    flat_dirs_from_root assumes root/<FILTER>/*.fits, but N.I.N.A writes one FLAT
+    directory per session with all filters mixed together
+    (cdk17/2026-07-25/FLAT/...). Reading the header instead works for both
+    layouts and picks up flats spread across many nights, which is what this
+    observatory actually has.
+    """
+    out: dict[str, list[Path]] = {}
+    if root is None or not root.is_dir():
+        return out
+    for f in sorted(root.rglob("*.fit*")):
+        if f.parent.name.upper() != "FLAT":
+            continue
+        try:
+            filt = str(fits.getheader(f).get("FILTER", "")).strip()
+        except Exception:
+            continue
+        if filt:
+            out.setdefault(filt, []).append(f)
+    return out
+
+
 def _resolve_flat_paths(
     filter_name: str,
     flat_dir: Optional[Path],
     flat_dirs: Optional[dict[str, Path]],
+    by_header: Optional[dict[str, list[Path]]] = None,
 ) -> list[Path]:
-    """Return flat paths for *filter_name*, preferring flat_dirs over flat_dir."""
+    """Return flat paths for *filter_name*, preferring flat_dirs over flat_dir.
+
+    *by_header* (from flats_by_filter) wins when it has this filter — it is the
+    only one of the three that copes with per-session FLAT directories.
+    """
+    if by_header and by_header.get(filter_name):
+        return by_header[filter_name]
     if flat_dirs and filter_name in flat_dirs:
         return _collect_fits(flat_dirs[filter_name])
     return _collect_fits(flat_dir)
