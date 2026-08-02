@@ -437,15 +437,18 @@ def _preview_worker(dso_name: str, scratch_dir: str, web_chat_port: int,
         return
 
     try:
-        data, _ = show_dso.get_dso_image(dso_name, show=False)
-        fov_w, fov_h = show_dso.field_of_view(
-            show_dso.FOCAL_LENGTH_MM, show_dso.SENSOR_WIDTH_MM, show_dso.SENSOR_HEIGHT_MM,
-        )
-        norm = ImageNormalize(data, interval=ZScaleInterval())
+        data, survey_label, is_colour = show_dso.get_preview_image(dso_name)
+        fov_w, fov_h = show_dso.field_of_view()
         fig, ax = plt.subplots(figsize=(12, 8), facecolor="black")
-        ax.imshow(data, origin="lower", cmap="gray", norm=norm, aspect="equal")
+        if is_colour:
+            # Colour cutouts arrive as display-oriented RGB (north up, east left),
+            # so row 0 is the top — unlike the FITS path below.
+            ax.imshow(data, origin="upper", aspect="equal")
+        else:
+            norm = ImageNormalize(data, interval=ZScaleInterval())
+            ax.imshow(data, origin="lower", cmap="gray", norm=norm, aspect="equal")
         ax.set_title(
-            f"{dso_name.upper()}  |  DSS2 Red\n"
+            f"{dso_name.upper()}  |  {survey_label}\n"
             f"FOV {fov_w * 60:.1f}' × {fov_h * 60:.1f}'",
             color="white", pad=10,
         )
