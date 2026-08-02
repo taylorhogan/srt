@@ -4111,8 +4111,21 @@ def process_cmd(words: list[str], account: str) -> None:
     """Stack a DSO's filters and combine them into a colour image.
 
     Usage:
-        process <dso> <recipe>           — recipe is LRGB, HOO or SHO
-        process <dso> <recipe> noflat    — skip flat correction (bias+dark only)
+        process <dso> <recipe>                  — recipe is LRGB, HOO or SHO
+        process <dso> <recipe> noflat           — bias+dark only, no flats
+        process <dso> <recipe> reuse black=50   — re-render from cached channels
+
+    Display options (all optional, any order):
+        black=65    percentile of each channel sent to black; lower = brighter
+        white=99    percentile taken as full white
+        soft=0.025  asinh softening; smaller lifts the faint end harder
+        mesh=4      background mesh boxes across the short axis; higher removes
+                    gradients harder but eats large nebulosity
+        nobg        skip background subtraction entirely
+        scale=N     bin the output N-fold (quick look)
+        reuse       skip stacking and re-render the cached channels — seconds
+                    instead of ~20 minutes, which is the only sane way to tune
+                    the options above
 
     Recipes:
         LRGB   R->red, G->green, B->blue, with L substituted as luminance
@@ -4151,10 +4164,45 @@ def _process_run(words: list[str]) -> None:
     image_dir = Path(cfg["nina"]["image_dir"])
 
     extra = [w for w in (words[2:] if len(words) > 2 else []) if w]
-    _NOFLAT = {"noflat", "no-flat", "noflats", "no-flats"}
-    use_flats = not any(w.lower() in _NOFLAT for w in extra)
-    if not use_flats:
-        extra = [w for w in extra if w.lower() not in _NOFLAT]
+
+    # Display knobs as key=value, plus bare flags. The stretch is a second and
+    # the stack is 17 minutes, so `reuse` re-renders from the cached channels.
+    _FLAGS = {"noflat": ("use_flats", False), "no-flat": ("use_flats", False),
+              "noflats": ("use_flats", False), "no-flats": ("use_flats", False),
+              "nobg": ("subtract_background", False),
+              "no-bg": ("subtract_background", False),
+              "reuse": ("reuse", True)}
+    _KEYS = {"black": ("black_pct", float), "white": ("white_pct", float),
+             "soft": ("softening", float), "mesh": ("mesh", int),
+             "scale": ("scale", int)}
+    opts = {"use_flats": True, "reuse": False}
+    rest = []
+    bad = []
+    for w in extra:
+        lw = w.lower()
+        if lw in _FLAGS:
+            k, v = _FLAGS[lw]; opts[k] = v; continue
+        if "=" in lw:
+            k, _, v = lw.partition("=")
+            if k in _KEYS:
+                name, cast = _KEYS[k]
+                try:
+                    opts[name] = cast(v)
+                except ValueError:
+                    bad.append(w)
+                continue
+            bad.append(w); continue
+        rest.append(w)
+    if bad:
+        social_server.post_social_message(
+            f"Unrecognised option(s): {', '.join(bad)}. "
+            f"Known: {', '.join(sorted(_KEYS))}=value, "
+            f"{', '.join(sorted(set(k for k in _FLAGS)))}")
+        return
+    extra = rest
+    use_flats = opts.pop("use_flats")
+    reuse = opts.pop("reuse")
+    scale = opts.pop("scale", 1)
     recipe = None
     for i, w in enumerate(extra):
         if w.upper() in color_process.RECIPES:
@@ -4212,7 +4260,8 @@ def _process_run(words: list[str]) -> None:
     try:
         rgb, info = color_process.process_dso(
             dso_dir, recipe, progress_cb=_progress, cancel_cb=_cancel,
-            use_flats=use_flats)
+            use_flats=use_flats, scale=scale, cache_dir=out_dir, reuse=reuse,
+            **opts)
     except jobs.Cancelled:
         raise
     except Exception as exc:
@@ -4220,12 +4269,8 @@ def _process_run(words: list[str]) -> None:
         social_server.post_social_message(f"{dso_dir.name} {recipe}: failed — {exc}")
         return
 
-    # The stacking is the expensive part; if a render or a post fails after it,
-    # keep the array so the run can be salvaged instead of repeated.
-    try:
-        np.save(out_dir / f"process_{dso_dir.name}_{tag}.npy", rgb.astype(np.float32))
-    except Exception:
-        _logger.warning("process: could not save the raw RGB array", exc_info=True)
+    # The channel stacks are cached by process_dso, which is both the salvage
+    # path and what makes `reuse` fast — no need for a separate RGB dump.
     color_process.save_rgb(rgb, full_path)
     color_process.save_rgb(rgb, prev_path, max_px=2200)
 
