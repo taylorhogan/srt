@@ -4127,6 +4127,18 @@ def process_cmd(words: list[str], account: str) -> None:
                     instead of ~20 minutes, which is the only sane way to tune
                     the options above
 
+    Give any option a comma list and it sweeps: several sweeping options take
+    the product, and the result is one labelled contact sheet to choose from.
+    A stretch has no measurable right answer — it is a choice about what the
+    image should say — so seeing the alternatives together beats arguing about
+    one at a time.
+
+        process abell2151 lrgb reuse black=45,55,65,75
+        process sh2-92 hoo reuse black=55,65 mesh=3,6
+
+    Then re-run with the winning values (no comma) for the full-resolution
+    render.
+
     Recipes:
         LRGB   R->red, G->green, B->blue, with L substituted as luminance
         HOO    Ha->red, O-III->green and blue
@@ -4186,10 +4198,17 @@ def _process_run(words: list[str]) -> None:
             k, _, v = lw.partition("=")
             if k in _KEYS:
                 name, cast = _KEYS[k]
+                # A comma-separated value sweeps that option; several sweeping
+                # options take the product. Cheap because the channels are
+                # cached — the whole point of picking a stretch by eye is being
+                # able to see the alternatives side by side.
                 try:
-                    opts[name] = cast(v)
+                    vals = [cast(x) for x in v.split(",") if x != ""]
                 except ValueError:
-                    bad.append(w)
+                    bad.append(w); continue
+                if not vals:
+                    bad.append(w); continue
+                opts[name] = vals if len(vals) > 1 else vals[0]
                 continue
             bad.append(w); continue
         rest.append(w)
@@ -4251,6 +4270,44 @@ def _process_run(words: list[str]) -> None:
     tag = recipe if use_flats else f"{recipe}_noflat"
     full_path = out_dir / f"process_{dso_dir.name}_{tag}.jpg"
     prev_path = out_dir / f"process_{dso_dir.name}_{tag}_preview.jpg"
+
+    # Sweep mode: any option given a comma list renders the product as one
+    # labelled contact sheet instead of a single image.
+    grid = {k: v for k, v in opts.items() if isinstance(v, list)}
+    if grid:
+        cached = color_process.load_cached_channels(out_dir, dso_dir.name, recipe)
+        if cached is None:
+            social_server.post_social_message(
+                f"{dso_dir.name} {recipe}: no cached channels — run "
+                f"`process {dso_dir.name} {recipe}` once first, then sweep.")
+            return
+        fixed = {k: v for k, v in opts.items() if not isinstance(v, list)}
+        n = 1
+        for v in grid.values():
+            n *= len(v)
+        social_server.post_social_message(
+            f"{dso_dir.name} {recipe}: rendering {n} variants from cached channels…")
+        try:
+            sheet, combos = color_process.sweep(
+                cached, grid | {k: [v] for k, v in fixed.items()},
+                progress_cb=_progress)
+        except jobs.Cancelled:
+            raise
+        except Exception as exc:
+            _logger.exception("process sweep failed")
+            social_server.post_social_message(f"{dso_dir.name} {recipe}: sweep failed — {exc}")
+            return
+        sheet_path = out_dir / f"process_{dso_dir.name}_{recipe}_sweep.jpg"
+        color_process.save_sheet(sheet, sheet_path)
+        lines = [f"{dso_dir.name} — {recipe} sweep, {len(combos)} variants:"]
+        for i, c in enumerate(combos, 1):
+            args = " ".join(f"{k.replace('_pct','').replace('softening','soft')}={v}"
+                            for k, v in c.items())
+            lines.append(f"  {i}. {args}")
+        lines.append(f"Pick one and run: process {dso_dir.name} {recipe} reuse <its options>")
+        lines.append(f"Saved: {sheet_path}")
+        social_server.post_social_message("\n".join(lines), str(sheet_path))
+        return
 
     social_server.post_social_message(
         f"Processing {dso_dir.name} as {recipe} at full resolution"

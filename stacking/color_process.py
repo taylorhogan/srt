@@ -337,6 +337,67 @@ def process_dso(
     return rgb, info
 
 
+def sweep(channels: dict, grid: dict, bin_factor: int = 4,
+          progress_cb=None) -> tuple[np.ndarray, list[dict]]:
+    """Render every combination in *grid* and tile them into one labelled sheet.
+
+    grid maps a compose() keyword to a list of values; the product is rendered.
+    Channels are binned first — the point is comparing the look, not the pixels,
+    and binning keeps a nine-panel sweep to a few seconds instead of minutes.
+
+    Returns (sheet, combos) where combos[i] is the settings for panel i, so the
+    caller can tell the user which `reuse` invocation reproduces each one.
+    """
+    import itertools
+    from PIL import Image, ImageDraw
+
+    binned = {k: (v if bin_factor <= 1 else
+                  v[:v.shape[0] // bin_factor * bin_factor,
+                    :v.shape[1] // bin_factor * bin_factor]
+                  .reshape(v.shape[0] // bin_factor, bin_factor,
+                           v.shape[1] // bin_factor, bin_factor).mean((1, 3)))
+              for k, v in channels.items()}
+
+    keys = sorted(grid)
+    combos = [dict(zip(keys, vals)) for vals in itertools.product(*(grid[k] for k in keys))]
+    panels = []
+    for i, combo in enumerate(combos, 1):
+        if progress_cb:
+            progress_cb(f"sweep {i}/{len(combos)}: "
+                        + "  ".join(f"{k}={v}" for k, v in combo.items()))
+        rgb = compose(binned, **combo)
+        img = Image.fromarray((np.clip(rgb, 0, 1) * 255).astype(np.uint8)[::-1])
+        img.thumbnail((760, 760))
+        d = ImageDraw.Draw(img)
+        label = "  ".join(f"{k.replace('_pct','').replace('softening','soft')}={v}"
+                          for k, v in combo.items())
+        d.rectangle([0, 0, img.width, 18], fill=(0, 0, 0))
+        d.text((5, 4), f"{i}.  {label}", fill=(255, 255, 0))
+        panels.append(np.asarray(img))
+
+    cols = min(3, len(panels))
+    rows = (len(panels) + cols - 1) // cols
+    ph, pw = max(p.shape[0] for p in panels), max(p.shape[1] for p in panels)
+    sheet = np.zeros((rows * (ph + 4), cols * (pw + 4), 3), np.uint8)
+    for i, pnl in enumerate(panels):
+        r, c = divmod(i, cols)
+        sheet[r*(ph+4):r*(ph+4)+pnl.shape[0], c*(pw+4):c*(pw+4)+pnl.shape[1]] = pnl
+    return sheet, combos
+
+
+def save_sheet(sheet: np.ndarray, path: Path) -> Path:
+    """Write a contact sheet as-is.
+
+    Not save_rgb: that flips vertically for the FITS origin convention, which
+    would turn the panel labels upside down — the sheet is already in display
+    orientation because its panels were flipped individually.
+    """
+    from PIL import Image
+    path.parent.mkdir(parents=True, exist_ok=True)
+    Image.fromarray(sheet.astype(np.uint8)).save(path, quality=92, optimize=True)
+    return path
+
+
 def save_rgb(rgb: np.ndarray, path: Path, max_px: Optional[int] = None) -> Path:
     """Write an RGB float image (0..1) as a JPEG with no text or furniture."""
     from PIL import Image
