@@ -4143,7 +4143,7 @@ def _process_run(words: list[str]) -> None:
     _job_id = jobs.get_current_job()
     _cancel = jobs.cancel_cb_for(_job_id)
 
-    from stacking import color_process
+    from stacking import color_process, stacker
 
     cfg = config.data()
     image_dir = Path(cfg["nina"]["image_dir"])
@@ -4190,6 +4190,18 @@ def _process_run(words: list[str]) -> None:
     def _progress(msg: str) -> None:
         social_server.post_social_message(f"{dso_dir.name} {recipe}: {msg}")
 
+    # Resolve where the output goes BEFORE the half-hour of stacking. A mistake
+    # in this block used to surface only after the work was finished — an
+    # undefined name here threw away a complete 33-minute abell2151 run — and
+    # anything wrong with the destination is knowable up front.
+    out_dir = stacker.results_dir(dso_dir.name)
+    # Keep the no-flat render under its own name: the whole reason to run one is
+    # to compare it against the flat-corrected version, and sharing a filename
+    # would overwrite the thing being compared against.
+    tag = recipe if use_flats else f"{recipe}_noflat"
+    full_path = out_dir / f"process_{dso_dir.name}_{tag}.jpg"
+    prev_path = out_dir / f"process_{dso_dir.name}_{tag}_preview.jpg"
+
     social_server.post_social_message(
         f"Processing {dso_dir.name} as {recipe} at full resolution"
         f"{'' if use_flats else ' (no flats)'} — "
@@ -4206,13 +4218,12 @@ def _process_run(words: list[str]) -> None:
         social_server.post_social_message(f"{dso_dir.name} {recipe}: failed — {exc}")
         return
 
-    out_dir = stacker.results_dir(dso_dir.name)
-    # Keep the no-flat render under its own name: the whole reason to run one is
-    # to compare it against the flat-corrected version, and sharing a filename
-    # would overwrite the thing being compared against.
-    tag = recipe if use_flats else f"{recipe}_noflat"
-    full_path = out_dir / f"process_{dso_dir.name}_{tag}.jpg"
-    prev_path = out_dir / f"process_{dso_dir.name}_{tag}_preview.jpg"
+    # The stacking is the expensive part; if a render or a post fails after it,
+    # keep the array so the run can be salvaged instead of repeated.
+    try:
+        np.save(out_dir / f"process_{dso_dir.name}_{tag}.npy", rgb.astype(np.float32))
+    except Exception:
+        _logger.warning("process: could not save the raw RGB array", exc_info=True)
     color_process.save_rgb(rgb, full_path)
     color_process.save_rgb(rgb, prev_path, max_px=2200)
 
