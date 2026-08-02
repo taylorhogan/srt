@@ -8,7 +8,12 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 # ── Your setup ────────────────────────────────────────────────────────────────
-FOCAL_LENGTH_MM = 2563  # CDK17 native focal length
+# 2939 mm is what the FITS headers report (FOCALLEN), not the CDK17's 2563 mm
+# native figure this used to carry. The stale number made every `show` preview
+# frame 48.2' x 32.1' when the camera actually sees 41.5' x 27.7' — 16% wider
+# than reality, which is misleading precisely when you are using the preview to
+# judge whether a target fits.
+FOCAL_LENGTH_MM = 2939  # measured: matches FOCALLEN in the light frames
 SENSOR_WIDTH_MM = 35.9  # QHY600M (Sony IMX455, full-frame width)
 SENSOR_HEIGHT_MM = 23.9
 SENSOR_WIDTH_PIX = 9576
@@ -17,18 +22,48 @@ SENSOR_HEIGHT_PIX = 6388
 
 # ─────────────────────────────────────────────────────────────────────────────
 
-def field_of_view(focal_length_mm, sensor_w_mm, sensor_h_mm):
-    """Returns (fov_width_deg, fov_height_deg)"""
-    fov_w = 2 * np.degrees(np.arctan(sensor_w_mm / (2 * focal_length_mm)))
-    fov_h = 2 * np.degrees(np.arctan(sensor_h_mm / (2 * focal_length_mm)))
-    return fov_w, fov_h
+def pixel_scale_arcsec() -> float:
+    """Arcsec per pixel for the imaging train.
+
+    Prefers nina.arc_sec_per_pixel from config: that is the number the stacker,
+    the FWHM measurements and the plate solver all work from, so the preview
+    agrees with the rest of the system by construction instead of by someone
+    remembering to update a constant here. Falls back to the optics when config
+    is not importable (this module is runnable standalone).
+    """
+    try:
+        from configs import config
+        aspp = float(config.data()["nina"]["arc_sec_per_pixel"])
+        if aspp > 0:
+            return aspp
+    except Exception:
+        pass
+    return (SENSOR_WIDTH_MM / SENSOR_WIDTH_PIX) / FOCAL_LENGTH_MM * 206265
+
+
+def field_of_view(focal_length_mm=None, sensor_w_mm=None, sensor_h_mm=None):
+    """Returns (fov_width_deg, fov_height_deg) for the real imaging train.
+
+    Arguments are accepted for backwards compatibility but ignored unless config
+    is unavailable — see pixel_scale_arcsec.
+    """
+    if focal_length_mm and sensor_w_mm and sensor_h_mm:
+        try:
+            from configs import config
+            config.data()["nina"]["arc_sec_per_pixel"]
+        except Exception:
+            fov_w = 2 * np.degrees(np.arctan(sensor_w_mm / (2 * focal_length_mm)))
+            fov_h = 2 * np.degrees(np.arctan(sensor_h_mm / (2 * focal_length_mm)))
+            return fov_w, fov_h
+    aspp = pixel_scale_arcsec()
+    return (SENSOR_WIDTH_PIX * aspp / 3600.0, SENSOR_HEIGHT_PIX * aspp / 3600.0)
 
 
 def get_dso_image(target_name: str, survey="DSS2 Red", show=True):
     fov_w, fov_h = field_of_view(FOCAL_LENGTH_MM, SENSOR_WIDTH_MM, SENSOR_HEIGHT_MM)
 
     print(f"FOV: {fov_w * 60:.2f}' x {fov_h * 60:.2f}'")
-    print(f"Image scale: {(SENSOR_WIDTH_MM / SENSOR_WIDTH_PIX) / FOCAL_LENGTH_MM * 206265:.3f} \"/px")
+    print(f"Image scale: {pixel_scale_arcsec():.3f} \"/px")
 
     # Resolve name → coordinates
     result = Simbad.query_object(target_name)
