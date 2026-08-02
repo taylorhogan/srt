@@ -201,12 +201,14 @@ def process_dso(
         if progress_cb:
             progress_cb(f"{filt}: {used[filt]} frames stacked")
 
-    # stack() crops each channel to its own >=80% coverage box, so the channels
-    # can differ by a few pixels; trim them all to the common size before
-    # stacking into RGB.
-    h = min(v.shape[0] for v in stacks.values())
-    w = min(v.shape[1] for v in stacks.values())
-    stacks = {k: v[:h, :w] for k, v in stacks.items()}
+    # Under a shared reference stack() skips its per-filter coverage crop, so
+    # every channel is on the identical grid. Trimming to a common size from the
+    # corner would silently mis-align them if that ever stopped being true.
+    shapes = {v.shape for v in stacks.values()}
+    if len(shapes) != 1:
+        raise ValueError(f"channels are on different grids: {shapes} — "
+                         "they cannot be combined without re-registration")
+    h, w = shapes.pop()
     m = int(EDGE_CROP * min(h, w))
     if m > 0:
         stacks = {k: v[m:-m, m:-m] for k, v in stacks.items()}

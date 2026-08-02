@@ -1371,9 +1371,20 @@ def stack(
 
     # Coverage-based crop: keep the bounding box where at least 80% of frames
     # contributed a real (non-NaN) pixel.
-    min_cov = max(1, int(round(0.8 * n_frames)))
+    #
+    # Skipped entirely when the caller supplied a shared reference. That box
+    # depends on this filter's own dither pattern and frame count, so cropping
+    # per filter leaves each channel starting at a different place on the sky —
+    # which is exactly what a shared reference exists to prevent. On abell2151
+    # it split every galaxy into separate red, green and blue blobs. The caller
+    # aligning several stacks is responsible for its own common crop.
+    if shared_reference is not None:
+        _logger.info("Shared reference: skipping per-filter coverage crop")
+        min_cov = 0
+    else:
+        min_cov = max(1, int(round(0.8 * n_frames)))
     well_covered = coverage >= min_cov
-    if well_covered.any():
+    if min_cov and well_covered.any():
         rows = np.where(well_covered.any(axis=1))[0]
         cols = np.where(well_covered.any(axis=0))[0]
         y0, y1 = int(rows[0]), int(rows[-1]) + 1
