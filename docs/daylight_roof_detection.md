@@ -1,6 +1,9 @@
 # Daylight roof detection — capture protocol and decision tree
 
-Status as of 2026-08-03: **collecting evidence. No safety behaviour changed yet.**
+Status as of 2026-08-03: **RESOLVED.** Diagnosis confirmed on real frames, fix
+shipped and validated live — the roof was confirmed open in daylight for the
+first time. Details below; the original diagnosis is kept because it is what the
+evidence tested.
 
 ## The problem, in the user's words
 
@@ -76,7 +79,59 @@ exposure ladder 2026-08-03_14-22-01: scorer chose exp -4 (parked_conf 0.31),
 Then point me at `docs/daylight_roof_detection.md` and I will read
 `base_images/exposure_sets/*/meta.json`.
 
-## Decision tree once the data exists
+## Outcome (2026-08-03, roof opened in daylight, sun alt ~34 deg az 263)
+
+**The diagnosis was right, and the margin was brutal.** In ladder
+`2026-08-03_16-57-08` the open marker resolves at **exposure -7 only** — 0.66
+confidence, 30 px from expected — and sits ~565 px away at every other exposure.
+Exposure -7 scores **-2.343** on `best_exposure_score` because the frame is 82%
+clipped, so the sweep chose -11. The information was always there; the scorer
+threw it away.
+
+`marker_match_score` (in `sentry/vision_safety.py`) now scores the sweep by the
+sum of match confidence over templates landing near their expected position.
+Summing is the part that matters — it prefers the frame where the most markers
+are readable at once, not where any single one is sharpest.
+
+A/B on the captured ladders (`scripts/ab_exposure_scorer.py`, replays saved
+frames, no camera):
+
+```
+roof CLOSED   old exp -8   PASS      new exp -7   PASS
+roof OPEN     old exp -11  FAIL      new exp -7   PASS
+roof OPEN     old exp -11  FAIL      new exp -7   PASS
+```
+
+Confirmed live afterwards: `status` reported the roof open in daylight.
+
+### Two long-standing questions answered by the same frames
+
+**`open pos` was correct all along** at (172, 142). It could never be verified
+because no frame had ever been captured at the exposure where it resolves.
+
+**`match_confidence` should stay at 0.6.** True-open confidence measures
+**0.66**, against the 0.684 false positive the open template scores on a CLOSED
+scene. Confidence cannot separate the two states — position does all the work,
+and raising the threshold would break open detection entirely. This closes the
+question that was open since 2026-05-29.
+
+**The centre-of-match fix is now unblocked.** Measured on four roof-open ladders
+agreeing to 1 px, at the exposure the new scorer selects:
+
+| marker | current config | corrected (`x + w/2`) |
+| --- | --- | --- |
+| `parked pos` | (590, 290) | **(888, 526)** |
+| `closed pos` | (829, 152) | **(1534, 274)** |
+| `open pos` | (172, 142) | **(240, 230)** |
+
+Parked and closed agree with the 2026-07-27 measurements to 4 px. Line 56 and
+all three positions must change in one commit or every roof operation refuses to
+run. After the fix `accuracy = 150` becomes a real 150 px instead of an
+effective 300; observed errors at the reference frames are 17-29 px in the
+current convention, so the tightening is comfortable. **Not landed — the user
+declined this fix previously; do not land it unprompted.**
+
+## Decision tree (kept for reference — outcome was the first branch)
 
 **If `DISAGREE` fires consistently in daylight** — the diagnosis holds. Fix is a
 new scorer passed to `take_snapshot`: score each candidate exposure by the
