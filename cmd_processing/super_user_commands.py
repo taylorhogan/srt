@@ -4137,6 +4137,10 @@ def process_cmd(words: list[str], account: str) -> None:
         reuse       skip stacking and re-render the cached channels — seconds
                     instead of ~20 minutes, which is the only sane way to tune
                     the options above
+        auto        sweep the standard grid — black 45/55/65, white 99/99.5/99.9,
+                    soft 0.025/0.05/0.1 — without enumerating it. Any axis you
+                    give explicitly is left alone, so `auto black=55` sweeps the
+                    other two around your black. Needs cached channels.
 
     Give any option a comma list and it sweeps: several sweeping options take
     the product, and the result is one labelled contact sheet to choose from.
@@ -4146,6 +4150,8 @@ def process_cmd(words: list[str], account: str) -> None:
 
         process abell2151 lrgb reuse black=45,55,65,75
         process sh2-92 hoo reuse black=55,65 mesh=3,6
+        process sh2-92 hoo auto                     (27 variants, ~1 minute)
+        process sh2-92 hoo auto black=55            (9, black pinned)
 
     Then re-run with the winning values (no comma) for the full-resolution
     render.
@@ -4205,6 +4211,7 @@ def _process_run(words: list[str]) -> None:
               "noflats": ("use_flats", False), "no-flats": ("use_flats", False),
               "nobg": ("subtract_background", False),
               "no-bg": ("subtract_background", False),
+              "auto": ("auto", True),
               "reuse": ("reuse", True)}
     _KEYS = {"black": ("black_pct", float), "white": ("white_pct", float),
              "soft": ("softening", float), "mesh": ("mesh", int),
@@ -4244,6 +4251,13 @@ def _process_run(words: list[str]) -> None:
     use_flats = opts.pop("use_flats")
     reuse = opts.pop("reuse")
     scale = opts.pop("scale", 1)
+
+    # `auto` fills in the standard sweep grid for every axis the user did NOT
+    # pin down, so `auto black=55` sweeps white and soft around a fixed black
+    # rather than ignoring the black they asked for. Explicit always wins.
+    if opts.pop("auto", False):
+        for key, values in color_process.AUTO_SWEEP.items():
+            opts.setdefault(key, list(values))
     recipe = None
     for i, w in enumerate(extra):
         if w.upper() in color_process.RECIPES:

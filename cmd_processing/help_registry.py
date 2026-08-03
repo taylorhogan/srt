@@ -259,6 +259,9 @@ HELP: dict[str, dict] = {
                     "re-render the cached channels in seconds instead of "
                     "re-stacking; give an option a comma list (black=45,55,65) "
                     "to sweep it and get a labelled contact sheet to pick from. "
+                    "'auto' sweeps the standard black/white/soft grid (27 "
+                    "variants, ~1 min) without enumerating it, leaving any axis "
+                    "you set explicitly alone. "
                     "Saves the colour image, plus each stacked channel as linear "
                     "FITS (with WCS) and as a mono JPEG, to <image_dir>/Iris/<dso>/."),
         "usage": ["process <dso> <recipe>", "process <dso> <recipe> noflat",
@@ -267,7 +270,9 @@ HELP: dict[str, dict] = {
                      "process abell2151 lrgb reuse black=50",
                      "process sh2-92 hoo reuse soft=0.01 nobg",
                      "process abell2151 lrgb reuse black=45,55,65,75",
-                     "process ngc5907 lrgb reuse scnr=0,0.5,1"],
+                     "process ngc5907 lrgb reuse scnr=0,0.5,1",
+                     "process sh2-92 hoo auto",
+                     "process sh2-92 hoo auto black=55"],
     },
     "stack": {
         "category": "super",

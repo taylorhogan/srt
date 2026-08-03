@@ -93,6 +93,17 @@ SCNR_AMOUNT = 0.0
 # is what the per-channel FITS is for.
 CHANNEL_JPG_MAX_PX = 2200
 
+# What `process <dso> <recipe> auto` sweeps. Chosen from the sh2-92 HOO study in
+# Iris/sh2-92/analysis: white above 99.5 guts the nebula whatever else is set,
+# and softening past 0.1 costs more than it returns, so the grid brackets the
+# useful range rather than exploring past its edges. 27 variants renders in
+# under a minute from cached channels.
+AUTO_SWEEP: dict[str, list] = {
+    "black_pct": [45.0, 55.0, 65.0],
+    "white_pct": [99.0, 99.5, 99.9],
+    "softening": [0.025, 0.05, 0.1],
+}
+
 
 def _squash(name: str) -> str:
     return "".join(ch for ch in str(name).upper() if ch.isalnum() or ch == "-")
