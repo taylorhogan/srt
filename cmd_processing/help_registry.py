@@ -259,7 +259,8 @@ HELP: dict[str, dict] = {
                     "re-render the cached channels in seconds instead of "
                     "re-stacking; give an option a comma list (black=45,55,65) "
                     "to sweep it and get a labelled contact sheet to pick from. "
-                    "Saves to <image_dir>/Iris/<dso>/."),
+                    "Saves the colour image, plus each stacked channel as linear "
+                    "FITS (with WCS) and as a mono JPEG, to <image_dir>/Iris/<dso>/."),
         "usage": ["process <dso> <recipe>", "process <dso> <recipe> noflat",
                   "process <dso> <recipe> reuse black=50 mesh=6"],
         "examples": ["process sh2-92 hoo", "process abell2151 lrgb noflat",

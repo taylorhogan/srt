@@ -4166,9 +4166,20 @@ def process_cmd(words: list[str], account: str) -> None:
     may stamp in a mote the data never had. Worth trying both ways when the only
     flats available come from a different run.
 
-    Writes two files to <image_dir>/Iris/<dso>/ and names both in its reply:
+    Writes to <image_dir>/Iris/<dso>/ and names everything in its reply:
         process_<dso>_<recipe>.jpg           full resolution, no text
         process_<dso>_<recipe>_preview.jpg   2200 px, posted to the card
+        process_<dso>_<recipe>_<chan>.fits   per-channel linear float32 ADU,
+                                             the reference frame's WCS carried
+                                             across (omitted if scale>1)
+        process_<dso>_<recipe>_<chan>.jpg    per-channel mono, stretched on the
+                                             composite's shared scale so a faint
+                                             channel looks faint
+
+    The FITS are the scientific product — calibrated, registered, sigma-clip
+    combined, sky level restored — and are what to hand to PixInsight. `reuse`
+    re-renders the JPEGs against the new stretch but leaves the FITS alone,
+    since the pixels did not change.
 
     Process-isolated (jobs.spawn_process) like stack, for the same reason.
     """
@@ -4331,7 +4342,7 @@ def _process_run(words: list[str]) -> None:
         rgb, info = color_process.process_dso(
             dso_dir, recipe, progress_cb=_progress, cancel_cb=_cancel,
             use_flats=use_flats, scale=scale, cache_dir=out_dir, reuse=reuse,
-            **opts)
+            products_dir=out_dir, **opts)
     except jobs.Cancelled:
         raise
     except Exception as exc:
@@ -4353,9 +4364,26 @@ def _process_run(words: list[str]) -> None:
         f"{'' if info.get('flats', True) else '  (no flats)'}   {chans}\n"
         f"frames stacked: {frames}   ({time.perf_counter() - _t0:.0f}s)\n"
         f"shared reference: {info['reference']}\n"
-        f"Saved:\n  {full_path}  ({w}x{h}, no text)\n  {prev_path}  (preview)",
+        f"Saved:\n  {full_path}  ({w}x{h}, no text)\n  {prev_path}  (preview)"
+        + _channel_products_note(info),
         str(prev_path),
     )
+
+
+def _channel_products_note(info: dict) -> str:
+    """Name the per-channel exports in the reply, or say why there are none."""
+    lines = []
+    fits_paths = info.get("fits") or []
+    jpgs = info.get("channel_jpgs") or []
+    if fits_paths:
+        lines.append(f"  {len(fits_paths)} channel FITS (linear ADU, WCS carried): "
+                     + ", ".join(p.name for p in fits_paths))
+    elif info.get("reused"):
+        lines.append("  channel FITS unchanged from the original stack")
+    if jpgs:
+        lines.append(f"  {len(jpgs)} channel JPEGs on the composite's scale: "
+                     + ", ".join(p.name for p in jpgs))
+    return ("\n" + "\n".join(lines)) if lines else ""
 
 
 def purge_cmd(words: list[str], account: str) -> None:

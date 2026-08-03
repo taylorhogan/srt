@@ -23,6 +23,7 @@ import logging
 import os
 import sys
 from pathlib import Path
+from datetime import datetime, timezone
 from typing import Callable, Optional
 
 import numpy as np
@@ -135,6 +136,24 @@ def _remove_gradient(chan: np.ndarray, mesh: int = BG_MESH_FRACTION) -> np.ndarr
         return chan - float(np.nanmedian(chan))
 
 
+def _prepare(channels: dict[str, np.ndarray], subtract_background: bool,
+             mesh: int, white_pct: float) -> tuple[dict, float]:
+    """Background-subtract every channel and find the shared white point.
+
+    Factored out of compose() because the per-channel exports have to be the
+    exact same pixels on the exact same scale — a channel JPEG rendered against
+    its own white point would look nothing like its contribution to the
+    composite, which defeats the point of being able to inspect it.
+    """
+    if subtract_background:
+        subbed = {k: _remove_gradient(v, mesh) for k, v in channels.items()}
+    else:
+        subbed = {k: v - float(np.nanmedian(v)) for k, v in channels.items()}
+    colour = [subbed[c] for c in ("R", "G", "B") if c in subbed]
+    white = float(np.nanpercentile(np.maximum.reduce(colour), white_pct))
+    return subbed, white
+
+
 def _scnr(rgb: np.ndarray, amount: float = 1.0) -> np.ndarray:
     """Average-neutral SCNR: clip green at the mean of red and blue.
 
@@ -184,12 +203,7 @@ def compose(channels: dict[str, np.ndarray], black_pct: float = BLACK_PCT,
     channels holds any of R/G/B plus an optional L. Every channel must already
     be on the same pixel grid — that is what the shared reference guarantees.
     """
-    if subtract_background:
-        subbed = {k: _remove_gradient(v, mesh) for k, v in channels.items()}
-    else:
-        subbed = {k: v - float(np.nanmedian(v)) for k, v in channels.items()}
-    colour = [subbed[c] for c in ("R", "G", "B") if c in subbed]
-    white = float(np.nanpercentile(np.maximum.reduce(colour), white_pct))
+    subbed, white = _prepare(channels, subtract_background, mesh, white_pct)
     _logger.info("Compose: shared white point %.2f ADU (p%.1f)", white, white_pct)
 
     rgb = np.dstack([_stretch(subbed[c], black_pct, white, softening)
@@ -260,6 +274,7 @@ def process_dso(
     use_flats: bool = True,
     cache_dir: Optional[Path] = None,
     reuse: bool = False,
+    products_dir: Optional[Path] = None,
     **compose_kw,
 ) -> tuple[np.ndarray, dict]:
     """Stack every filter a recipe needs and return (rgb 0..1, info).
@@ -285,10 +300,20 @@ def process_dso(
                 progress_cb(f"reusing cached {tag} channels "
                             f"({', '.join(sorted(cached))}) — no re-stack")
             rgb = compose(cached, **compose_kw)
-            return rgb, {"recipe": recipe, "reused": True,
-                         "channels": {c: c for c in cached}, "frames": {},
-                         "reference": "(cached)", "shape": rgb.shape[:2],
-                         "flats": use_flats}
+            out = {"recipe": recipe, "reused": True,
+                   "channels": {c: c for c in cached}, "frames": {},
+                   "reference": "(cached)", "shape": rgb.shape[:2],
+                   "flats": use_flats}
+            if products_dir is not None:
+                # The FITS are unchanged — same pixels — but the channel JPEGs
+                # are rendered with the stretch, so they follow the new options.
+                try:
+                    out["channel_jpgs"] = save_channel_jpgs(
+                        cached, products_dir, dso_dir.name, tag,
+                        **{k: v for k, v in compose_kw.items() if k != "scnr"})
+                except Exception:
+                    _logger.exception("channel JPEG export failed")
+            return rgb, out
         if progress_cb:
             progress_cb("no cached channels found — stacking")
 
@@ -397,6 +422,29 @@ def process_dso(
         "reference": ref_path.name,
         "shape": rgb.shape[:2],
     }
+
+    if products_dir is not None:
+        try:
+            from astropy.io import fits as _fits
+            ref_header = _fits.getheader(ref_path)
+        except Exception:
+            ref_header = None
+            _logger.warning("could not read reference header for WCS", exc_info=True)
+        try:
+            info["fits"] = save_channel_fits(
+                stacks, products_dir, dso_dir.name, tag, info,
+                ref_header=ref_header, crop_margin=m, scale=scale)
+            info["channel_jpgs"] = save_channel_jpgs(
+                stacks, products_dir, dso_dir.name, tag,
+                **{k: v for k, v in compose_kw.items() if k != "scnr"})
+            if progress_cb:
+                progress_cb(f"wrote {len(info['fits'])} channel FITS + "
+                            f"{len(info['channel_jpgs'])} channel JPEGs")
+        except Exception:
+            # The colour image is the deliverable; losing the per-channel
+            # exports must not lose a 20-minute stack.
+            _logger.exception("channel product export failed")
+
     return rgb, info
 
 
@@ -446,6 +494,103 @@ def sweep(channels: dict, grid: dict, bin_factor: int = 4,
         r, c = divmod(i, cols)
         sheet[r*(ph+4):r*(ph+4)+pnl.shape[0], c*(pw+4):c*(pw+4)+pnl.shape[1]] = pnl
     return sheet, combos
+
+
+def save_channel_jpgs(channels: dict[str, np.ndarray], out_dir: Path, dso: str,
+                      tag: str, black_pct: float = BLACK_PCT,
+                      white_pct: float = WHITE_PCT,
+                      subtract_background: bool = SUBTRACT_BACKGROUND,
+                      softening: float = SOFTENING,
+                      mesh: int = BG_MESH_FRACTION) -> list[Path]:
+    """Write one mono JPEG per channel, on the composite's shared scale.
+
+    Deliberately not per-channel autostretch: these are meant to explain the
+    colour image, so a channel that is genuinely faint has to *look* faint here.
+    Stretched with the same black/white/softening the composite used, so each
+    one is literally that channel's plane before SCNR and the L substitution.
+    """
+    from PIL import Image
+    subbed, white = _prepare(channels, subtract_background, mesh, white_pct)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    written = []
+    for chan in ("R", "G", "B", "L"):
+        if chan not in subbed:
+            continue
+        mono = _stretch(subbed[chan], black_pct, white, softening)
+        arr = (np.clip(np.nan_to_num(mono), 0.0, 1.0) * 255).astype(np.uint8)[::-1]
+        path = out_dir / f"process_{dso}_{tag}_{chan}.jpg"
+        Image.fromarray(arr, mode="L").save(path, quality=92, optimize=True)
+        written.append(path)
+    return written
+
+
+def save_channel_fits(channels: dict[str, np.ndarray], out_dir: Path, dso: str,
+                      tag: str, info: dict, ref_header=None,
+                      crop_margin: int = 0, scale: int = 1) -> list[Path]:
+    """Write each stacked channel as a linear float32 FITS.
+
+    This is the scientific product: calibrated, registered, sigma-clip combined
+    ADU with the sky level restored — the thing worth handing to PixInsight or
+    re-measuring later. The JPEGs are a rendering of it and throw most of it
+    away.
+
+    IMAGETYP is 'STACK', never 'LIGHT'. Nothing here can be collected as data
+    anyway (every light-gathering path requires a LIGHT parent directory, and
+    these land under Iris/<dso>/), but a stack that announces itself as a light
+    frame is an accident waiting for the one path that forgets to check.
+    """
+    from astropy.io import fits
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    written = []
+    for chan, data in channels.items():
+        hdu = fits.PrimaryHDU(np.asarray(data, dtype=np.float32))
+        h = hdu.header
+        h["OBJECT"] = (dso, "target")
+        h["IMAGETYP"] = ("STACK", "combined result, not a light frame")
+        h["FILTER"] = (info.get("channels", {}).get(chan, "?"), "source filter")
+        h["CHANNEL"] = (chan, "role in the colour recipe")
+        h["RECIPE"] = (info.get("recipe", "?"), "colour recipe")
+        h["NFRAMES"] = (int(info.get("frames", {}).get(
+            info.get("channels", {}).get(chan, ""), 0)), "frames combined")
+        h["FLATCOR"] = (bool(info.get("flats", True)), "flat correction applied")
+        h["STACKMTH"] = ("SIGMA_CLIP_FWHM", "combine method")
+        h["REFFRAME"] = (str(info.get("reference", "?"))[:68], "registration reference")
+        h["BUNIT"] = ("ADU", "sky level restored after levelling")
+        h["DATE"] = (datetime.now(timezone.utc).isoformat(timespec="seconds"), "file written (UTC)")
+
+        # Pointing and optics, always. These are the mount's estimate rather
+        # than a solve, so they are not a WCS and must not be dressed up as one
+        # — but they are exactly the hint a plate solver wants, which makes the
+        # difference between a blind solve and an instant one.
+        if ref_header is not None:
+            for k in ("OBJCTRA", "OBJCTDEC", "RA", "DEC", "FOCALLEN", "XPIXSZ",
+                      "YPIXSZ", "INSTRUME", "TELESCOP", "SITELAT", "SITELONG"):
+                if k in ref_header:
+                    h[k] = ref_header[k]
+
+        # Carry the reference frame's plate solution, but only when it is still
+        # true of these pixels. The edge crop shifts the reference pixel, and
+        # binning changes the plate scale — a silently wrong WCS is worse than
+        # none, so anything unusual means we simply omit it.
+        if ref_header is not None and scale <= 1:
+            wcs_keys = ("CTYPE1", "CTYPE2", "CRVAL1", "CRVAL2", "CRPIX1", "CRPIX2",
+                        "CD1_1", "CD1_2", "CD2_1", "CD2_2", "CDELT1", "CDELT2",
+                        "CROTA2", "EQUINOX", "RADESYS")
+            if all(k in ref_header for k in ("CRPIX1", "CRPIX2", "CRVAL1", "CRVAL2")):
+                for k in wcs_keys:
+                    if k in ref_header:
+                        h[k] = ref_header[k]
+                h["CRPIX1"] = float(ref_header["CRPIX1"]) - crop_margin
+                h["CRPIX2"] = float(ref_header["CRPIX2"]) - crop_margin
+                h["HISTORY"] = f"WCS from {info.get('reference','?')}, CRPIX-{crop_margin}"
+        elif ref_header is not None:
+            h["HISTORY"] = f"WCS omitted: output binned {scale}x"
+
+        path = out_dir / f"process_{dso}_{tag}_{chan}.fits"
+        hdu.writeto(path, overwrite=True)
+        written.append(path)
+    return written
 
 
 def save_sheet(sheet: np.ndarray, path: Path) -> Path:
