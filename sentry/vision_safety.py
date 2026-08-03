@@ -2,6 +2,7 @@
 import os,sys
 import time
 import math
+from pathlib import Path
 import logging
 import cv2 as cv
 if __package__ is None or __package__ == "":
@@ -84,6 +85,66 @@ def find_template(image, template_image_path):
 
 
 
+def _score_exposure_set(capture_dir, accuracy, min_conf):
+    """Add per-template match confidence to the most recent saved ladder.
+
+    The frames alone do not answer the question. What we need to know is which
+    exposure the *matcher* wanted, versus the one best_exposure_score picked —
+    that scorer grades the whole frame, so a blown-out sky patch drags it to an
+    exposure that leaves the markers dark. Writing both into meta.json makes the
+    disagreement measurable instead of theoretical.
+
+    Best-effort throughout: this is diagnostics hanging off a safety path and
+    must never affect the verdict or raise into it.
+    """
+    import json
+    try:
+        root = Path(capture_dir)
+        sets = sorted((d for d in root.iterdir() if d.is_dir()), key=lambda d: d.name)
+        if not sets:
+            return
+        latest = sets[-1]
+        meta_path = latest / "meta.json"
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        templates = {
+            "parked": (cfg["camera safety"]["parked template"], cfg["camera safety"]["parked pos"]),
+            "closed": (cfg["camera safety"]["closed template"], cfg["camera safety"]["closed pos"]),
+            "open":   (cfg["camera safety"]["open template"],   cfg["camera safety"]["open pos"]),
+        }
+        rows = []
+        for entry in meta.get("frames", []):
+            frame = cv.imread(str(latest / entry["file"]), cv.IMREAD_COLOR)
+            if frame is None:
+                continue
+            for name, (tpl, expected) in templates.items():
+                _, _, center, conf = find_template_rectangle(frame, tpl)
+                err = math.dist(center, expected)
+                entry[f"{name}_conf"] = float(conf)
+                entry[f"{name}_err"] = float(err)
+                entry[f"{name}_ok"] = bool(conf >= min_conf and abs(err) < accuracy)
+            rows.append(entry)
+        meta_path.write_text(json.dumps(meta, indent=1), encoding="utf-8")
+
+        # One compact table per capture: exposure vs what each gate saw.
+        best_scorer = max(rows, key=lambda r: r["score"], default=None)
+        best_parked = max(rows, key=lambda r: r["parked_conf"], default=None)
+        _logger.info("exposure ladder %s: scorer chose exp %s (parked_conf %.2f), "
+                     "best parked_conf %.2f at exp %s%s",
+                     latest.name,
+                     best_scorer["exposure"], best_scorer["parked_conf"],
+                     best_parked["parked_conf"], best_parked["exposure"],
+                     "  <-- DISAGREE" if best_scorer["exposure"] != best_parked["exposure"] else "")
+        for r in rows:
+            _logger.info("   exp %-4s luma %5.1f clip %4.1f%% score %+.3f  "
+                         "parked %.2f/%3.0fpx  closed %.2f/%3.0fpx  open %.2f/%3.0fpx",
+                         r["exposure"], r["luma"], r["clipped_pct"], r["score"],
+                         r["parked_conf"], r["parked_err"],
+                         r["closed_conf"], r["closed_err"],
+                         r["open_conf"], r["open_err"])
+    except Exception:
+        _logger.warning("scoring the exposure ladder failed", exc_info=True)
+
+
 def _visual_status_once():
     global last_match
 
@@ -94,9 +155,14 @@ def _visual_status_once():
     # None/placeholder frame or a misclassified state. Hold the camera session
     # across both (the RLock lets take_snapshot re-acquire the lock).
     image_path = cfg["camera safety"]["scope_view"]
+    # In daylight, keep the whole exposure ladder the sweep already takes. It is
+    # the dataset needed to fix daytime roof detection and costs no extra camera
+    # time; the camera server discards it unless the scene reads as daylight.
+    capture_dir = (cfg["camera safety"].get("exposure_capture_dir")
+                   if cfg["camera safety"].get("exposure_capture") else None)
     with inside_camera_server.camera_session():
         print ("take snapshot")
-        inside_camera_server.take_snapshot()
+        inside_camera_server.take_snapshot(capture_dir=capture_dir)
 
         print("read snapshot")
         image_rgb = cv.imread(image_path, cv.IMREAD_COLOR)
@@ -193,6 +259,9 @@ def _visual_status_once():
         # Not parked (or too dark): the roof state is undeterminable by design.
         closed = open = False
         closed_verdict = open_verdict = "unreadable (scope not parked)"
+
+    if capture_dir:
+        _score_exposure_set(capture_dir, accuracy, min_conf)
 
     trusted = bool(parked)
     print ("parked, closed, open", str(parked), str(closed), str(open))

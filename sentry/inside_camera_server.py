@@ -1,5 +1,7 @@
 import contextlib
 import shutil
+from datetime import datetime
+from pathlib import Path
 
 import cv2 as cv
 import numpy as np
@@ -24,6 +26,74 @@ from utils import utils
 
 
 _loger = utils.set_logger()
+
+def _save_exposure_set(capture_dir, exposure_values, pictures, scores):
+    """Write every frame of one exposure sweep plus a metadata sidecar.
+
+    Only saved in daylight — the whole point is the roof-open-in-sunlight case
+    the vision check cannot currently call. The gate is the sun's altitude, not
+    a brightness heuristic: the ladder spans ~500x in shutter time, so any fixed
+    luma cut is a guess, while solar altitude is exact and costs nothing.
+
+    Sun altitude and azimuth go into the metadata as well. Shadow *pattern* is
+    the part no exposure setting can fix, and it is a function of sun position —
+    so binning captures by azimuth is what a per-illumination template library
+    would later be built from.
+    """
+    import json
+    from configs import config as _config
+
+    cfg = _config.data()["camera safety"]
+    sun_alt = sun_az = None
+    try:
+        from datetime import datetime as _dt
+        import pytz
+        from astral import LocationInfo
+        from astral.sun import elevation, azimuth
+        loc = _config.data()["location"]
+        li = LocationInfo("obs", "", loc["timezone"], loc["latitude"], loc["longitude"])
+        now = _dt.now(pytz.timezone(loc["timezone"]))
+        sun_alt = float(elevation(li.observer, now))
+        sun_az = float(azimuth(li.observer, now))
+    except Exception:
+        _loger.warning("could not compute sun altitude; skipping capture", exc_info=True)
+        return None
+
+    min_alt = float(cfg.get("exposure_capture_min_sun_alt", -6.0))
+    if sun_alt < min_alt:
+        _loger.debug("exposure set not kept: sun altitude %.1f < %.1f", sun_alt, min_alt)
+        return None
+
+    gray_of = (lambda f: f if f.ndim == 2 else cv.cvtColor(f, cv.COLOR_BGR2GRAY))
+    lumas = [float(gray_of(f).mean()) for f in pictures]
+
+    root = Path(capture_dir)
+    root.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    out = root / stamp
+    out.mkdir(exist_ok=True)
+    meta = {"captured": stamp, "sun_altitude_deg": sun_alt, "sun_azimuth_deg": sun_az,
+            "shortest_exposure_luma": lumas[-1], "frames": []}
+    for exp, frame, score, luma in zip(exposure_values, pictures, scores, lumas):
+        name = f"exp{exp}.jpg"
+        cv.imwrite(str(out / name), frame)
+        g = gray_of(frame)
+        meta["frames"].append({
+            "file": name, "exposure": exp, "score": float(score), "luma": luma,
+            "clipped_pct": float((g > 240).mean() * 100),
+        })
+    (out / "meta.json").write_text(json.dumps(meta, indent=1), encoding="utf-8")
+    _loger.info("Kept exposure ladder (%d frames, sun alt %.1f deg az %.0f, "
+                "shortest-exposure luma %.1f) in %s",
+                len(pictures), sun_alt, sun_az, lumas[-1], out)
+
+    # Rolling cap so this cannot grow without bound on an unattended box.
+    keep = int(cfg.get("exposure_capture_keep", 30))
+    sets = sorted((d for d in root.iterdir() if d.is_dir()), key=lambda d: d.name)
+    for old_set in sets[:-keep] if len(sets) > keep else []:
+        shutil.rmtree(old_set, ignore_errors=True)
+    return out
+
 
 def best_exposure_score(img):
     if len(img.shape) == 3:
@@ -182,7 +252,8 @@ def _combine_stable(frames, stack_frames=1):
     return out.round().astype(frames[0].dtype)
 
 
-def take_snapshot(test_path=None, light=True, out_path=None, scorer=None, stack_frames=1, gain=None):
+def take_snapshot(test_path=None, light=True, out_path=None, scorer=None, stack_frames=1, gain=None,
+                  capture_dir=None):
     """Serialize all camera access, then delegate to :func:`_take_snapshot`.
 
     The lock makes each snapshot atomic with respect to both the USB camera and
@@ -200,13 +271,18 @@ def take_snapshot(test_path=None, light=True, out_path=None, scorer=None, stack_
     gain:         no-light sensor gain (default max, 100). `live` uses a low value
                   for its star pass so the longest sub isn't blown out; ignored
                   for a lit snapshot.
+    capture_dir:  keep every frame of the exposure sweep here, not just the
+                  winner. The sweep happens regardless, so this is free
+                  diagnostic data; see the exposure_capture config block.
     """
     with _camera_lock:
         return _take_snapshot(test_path, light=light, out_path=out_path,
-                              scorer=scorer, stack_frames=stack_frames, gain=gain)
+                              scorer=scorer, stack_frames=stack_frames, gain=gain,
+                              capture_dir=capture_dir)
 
 
-def _take_snapshot(test_path=None, light=True, out_path=None, scorer=None, stack_frames=1, gain=None):
+def _take_snapshot(test_path=None, light=True, out_path=None, scorer=None, stack_frames=1, gain=None,
+                   capture_dir=None):
     _loger.info("Starting camera snapshot (light=%s)", light)
     cfg = config.data()
     print (utils.set_install_dir())
@@ -348,6 +424,14 @@ def _take_snapshot(test_path=None, light=True, out_path=None, scorer=None, stack
             scores.append(score)
 
         vid.release()
+
+        # Keep the whole ladder when asked. Deliberately after release() so a
+        # failure writing files can never hold the camera open.
+        if capture_dir and pictures:
+            try:
+                _save_exposure_set(capture_dir, exposure_values, pictures, scores)
+            except Exception:
+                _loger.warning("exposure-set capture failed", exc_info=True)
 
     def _restore_light():
         # Restore the inside light to its prior state (only if we changed it).

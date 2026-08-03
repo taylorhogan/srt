@@ -56,6 +56,23 @@ class PublicConfig():
             # against a spurious low-confidence match that happens to land near
             # the expected pixel position.
             "match_confidence": 0.6,
+            # Daylight exposure-ladder capture. visual_status already sweeps ten
+            # exposures every call and throws away nine; when the scene is bright
+            # enough to be daylight, keep the whole ladder plus each frame's
+            # per-template match confidence. This is the dataset needed to fix
+            # daytime roof detection — the exposure scorer grades the WHOLE frame,
+            # so a blown-out sky patch drags it to an exposure that leaves the
+            # markers dark, and the roof cannot be confirmed open in daylight.
+            # Costs no extra camera time: the frames are taken either way.
+            "exposure_capture": True,
+            # Daylight test: the sun's altitude, not a brightness heuristic. A
+            # luma threshold has to be guessed and the ladder spans ~500x in
+            # shutter time, so any fixed cut is fragile; solar altitude is exact
+            # and free. -6 deg is civil twilight, which covers the whole window
+            # where opening earlier is worth doing.
+            "exposure_capture_min_sun_alt": -6.0,
+            "exposure_capture_dir": "./base_images/exposure_sets",
+            "exposure_capture_keep": 30,      # rolling cap on saved ladders
             "scope_view": "./base_images/scope_view.jpg",
             "processed_view": "./base_images/processed.jpg",
             "no_image": "./base_images/no_image.jpg",
