@@ -68,6 +68,8 @@ Before writing any code that calls `toggle_roof()`, `pwi4.mount_park()`, `pwi4.m
 
 ### Key Subsystems
 
+- **`cmd_processing/jobs.py`** — Job registry behind the web chat's cards. Long commands run in their own OS process via `jobs.spawn_process`; the child binds the job id so its `/api/post` messages route to that card. Those children hold one end of a parent-death pipe and exit the moment the server does — `update` restarts via `os._exit`, so without it a stack outlives the restart, keeps saturating the disk, and posts to a card that no longer exists. Posts carrying an unknown job id are labelled `[orphan <id>]` in the Observatory feed rather than blending in.
+
 - **`configs/config.py`** — Merges `PublicConfig` + `PrivateConfig`. Every module calls `config.data()` to get a flat dict. Private credentials live in `configs/config_private.py` (gitignored).
 
 - **`iris_astronomy/`** — Astronomy logic: DSO visibility windows, air mass, best imaging night, weather (Open-Meteo API, no key needed), sunrise/sunset via `astral`.

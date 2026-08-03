@@ -655,6 +655,11 @@ def post_social_message(message: str, image: Optional[str] = None, vis: Optional
     # Route through in-process message bus if available (web server process),
     # otherwise fall back to HTTP POST (scheduler process, standalone scripts).
     if message_bus.is_initialized():
+        from cmd_processing import jobs as _jobs
+        if _jobs.get_current_job() is None:
+            logger.warning(
+                "in-process post with no job id (goes to the feed) thread=%s: %.60s",
+                threading.current_thread().name, message)
         message_bus.post_message(message, image, audio_path=audio)
     else:
         try:
@@ -671,6 +676,12 @@ def post_social_message(message: str, image: Optional[str] = None, vis: Optional
             job_id = jobs.get_current_job()
             if job_id:
                 data["job_id"] = job_id
+            else:
+                # No job on this thread: the server will file it under the
+                # system feed. Nearly always a lost binding rather than intent.
+                logger.warning(
+                    "post with no job id (goes to the feed) from pid=%d thread=%s: %.60s",
+                    os.getpid(), threading.current_thread().name, message)
             _requests_lib.post(f"http://localhost:{port}/api/post", data=data, timeout=30)
         except Exception:
             logger.exception("Failed to post message via web chat API")
@@ -841,6 +852,13 @@ def main() -> None:
     images_dir = os.path.join(_project_root, web_cfg.get("upload_dir", "saved_dso"))
     message_bus.init(images_dir, max_history=web_cfg.get("max_history", 500))
     jobs.init()
+
+    # Reclaim scratch from stacks that were killed before their cleanup ran.
+    try:
+        from stacking import stacker as _stacker
+        _stacker.cleanup_stale_spill_dirs()
+    except Exception:
+        logger.exception("stale stack scratch cleanup failed")
 
     try:
         mqtt_client = utils.connect_mqtt()

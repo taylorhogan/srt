@@ -55,6 +55,12 @@ _order: list = []            # creation order of job ids (newest appended last)
 _lock = threading.RLock()
 _counter = 0
 _local = threading.local()   # holds .job_id for the current thread
+
+# Job-id tracing. Posts route to a card by the job bound to the calling thread,
+# and that binding has to survive dispatch -> spawn -> child process. When it
+# does not, everything silently lands in the system feed instead, which is a
+# symptom with no stack trace. Set SRT_JOBTRACE=1 to log the id at each hop.
+_TRACE = os.environ.get("SRT_JOBTRACE", "") not in ("", "0", "false", "False")
 _cancelled: set = set()      # job ids for which a cancel was requested
 
 # First command word -> (kind, resource_class). ``kind`` drives the card's
@@ -172,6 +178,9 @@ def make_title(command_text: str) -> str:
 
 def set_current_job(job_id: Optional[str]) -> None:
     _local.job_id = job_id
+    if _TRACE:
+        _logger.info("JOBTRACE bind job=%s pid=%d thread=%s",
+                     job_id, os.getpid(), threading.current_thread().name)
 
 
 def get_current_job() -> Optional[str]:
@@ -322,6 +331,14 @@ def append_log(job_id: Optional[str], entry: dict) -> None:
     with _lock:
         job = _jobs.get(job_id) if job_id else None
         if job is None:
+            # An id we do not know is a message from a worker whose card is
+            # gone — nearly always a child that outlived a server restart. It
+            # still has to go somewhere, but it must not read as observatory
+            # output, because that looks like the system reporting work nobody
+            # started. See _watch_parent for why those children now die.
+            if job_id and job_id != SYSTEM_JOB_ID:
+                entry = dict(entry)
+                entry["text"] = f"[orphan {job_id}] {entry.get('text', '')}"
             job = _ensure_system_locked()
         log = job["log"]
         log.append(entry)
@@ -498,8 +515,34 @@ def spawn(target: Callable[..., Any], args: tuple = (), kwargs: Optional[dict] =
 _child_procs: set = set()
 
 
+def _watch_parent(conn: Any, job_id: Optional[str]) -> None:
+    """Exit this child as soon as the parent server goes away.
+
+    A process-isolated job is only ever meaningful to the server that started
+    it: its progress goes to a card in the server's job registry and its output
+    is a file the server names back to the user. Once the parent is gone the
+    work is unreachable, and an hour-long stack left running is not harmless —
+    it saturates the disk the new server needs and overwrites results with
+    output nobody can see. Blocking on a pipe that only the parent holds open
+    turns "parent died" into a plain EOF, however it died.
+    """
+    try:
+        conn.recv()                       # never written to; blocks until EOF
+    except (EOFError, OSError):
+        pass
+    except Exception:
+        _logger.exception("parent watchdog failed; leaving the job running")
+        return
+    _logger.warning("Parent server exited — abandoning job %s (pid %d)",
+                    job_id, os.getpid())
+    # _exit, not sys.exit: the work is deep inside numpy/astroalign and the
+    # point is to stop now, not to unwind.
+    os._exit(3)
+
+
 def _child_main(job_id: Optional[str], target: Callable[..., Any],
-                args: tuple, kwargs: Optional[dict]) -> None:
+                args: tuple, kwargs: Optional[dict],
+                death_conn: Any = None) -> None:
     """Entry point that runs inside a freshly spawned child process.
 
     Binds the job id so the worker's posts route to the right card — this
@@ -517,7 +560,12 @@ def _child_main(job_id: Optional[str], target: Callable[..., Any],
         config.data()
     except Exception:
         pass
+    if _TRACE or job_id is None:
+        _logger.info("JOBTRACE child pid=%d received job=%s", os.getpid(), job_id)
     set_current_job(job_id)
+    if death_conn is not None:
+        threading.Thread(target=_watch_parent, args=(death_conn, job_id),
+                         daemon=True, name="parent-watchdog").start()
     # Process-isolated jobs (snr/stack: astroalign over dozens of 62MP frames
     # across thread pools) otherwise run at NORMAL priority and can saturate the
     # machine, starving the real-time USB camera capture — which corrupts not
@@ -567,15 +615,31 @@ def spawn_process(target: Callable[..., Any], args: tuple = (),
     """
     kwargs = kwargs or {}
     job_id = get_current_job()
+    if _TRACE or job_id is None:
+        _logger.info("JOBTRACE spawn_process captured job=%s on thread=%s "
+                     "(None here means the child cannot route its posts)",
+                     job_id, threading.current_thread().name)
     if job_id:
         mark_async(job_id)
 
     ctx = multiprocessing.get_context("spawn")
+    # Parent-death detector. daemon=False (below) means the OS will happily let
+    # these children outlive us, and the `update` command exits via os._exit, so
+    # the atexit teardown never runs — the result was 75-minute stacks still
+    # grinding the disk and posting to a job registry that no longer had their
+    # card. The child holds the read end of this pipe and nothing ever writes to
+    # it; whenever this process goes away — clean exit, os._exit, crash or
+    # kill — the write end closes and the child sees EOF. Unlike a pid check it
+    # cannot be fooled by pid reuse, and it needs no psutil.
+    death_r, death_w = ctx.Pipe(duplex=False)
     # daemon=False: workers may create their own pools, which daemonic
     # processes are forbidden from doing.
-    proc = ctx.Process(target=_child_main, args=(job_id, target, args, kwargs),
+    proc = ctx.Process(target=_child_main,
+                       args=(job_id, target, args, kwargs, death_r),
                        daemon=False)
     proc.start()
+    death_r.close()          # only the child may hold the read end
+    proc._srt_death_w = death_w   # keep the write end alive as long as proc is
     if job_id:
         register_resource(job_id, proc)
     with _lock:
@@ -597,6 +661,16 @@ def spawn_process(target: Callable[..., Any], args: tuple = (),
 
     threading.Thread(target=_monitor, daemon=True).start()
     return proc
+
+
+def terminate_child_procs() -> None:
+    """Kill any live process-isolated job children.
+
+    Called explicitly from the `update` restart path, which exits via os._exit
+    and so never runs the atexit hook below. The children's own parent watchdog
+    is the backstop for every other way this process can die.
+    """
+    _terminate_child_procs()
 
 
 @atexit.register

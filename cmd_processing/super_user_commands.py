@@ -1247,6 +1247,13 @@ def update_cmd(words: list[str], account: str) -> None:
         social_server.post_social_message(f"git pull succeeded:\n{output}")
         social_server.post_social_message("Restarting in 2 seconds…")
         time.sleep(2)
+        # os._exit skips atexit, so tear the job children down by hand —
+        # otherwise they outlive the restart and post to a registry that no
+        # longer holds their card.
+        try:
+            jobs.terminate_child_procs()
+        except Exception:
+            logger.exception("failed to terminate job children before restart")
         os._exit(social_server.RESTART_EXIT_CODE)
 
     jobs.spawn(_do_update)

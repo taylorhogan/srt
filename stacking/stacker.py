@@ -1101,6 +1101,39 @@ def _select_by_quality(
 # Core stacking
 # ---------------------------------------------------------------------------
 
+def cleanup_stale_spill_dirs(min_age_hours: float = 2.0) -> int:
+    """Delete leftover srt_stack_* scratch directories. Returns bytes freed.
+
+    A stack spills one calibrated float32 frame per sub to temp — ~245 MB each,
+    tens of GB per run — and cleans up in a finally. A killed worker never
+    reaches that finally, so the scratch survives (26.9 GB from one such run).
+    Called at server start, where anything older than a couple of hours cannot
+    belong to a live stack.
+    """
+    import shutil
+    import tempfile
+    import time as _time
+    cutoff = _time.time() - min_age_hours * 3600
+    freed = 0
+    try:
+        root = Path(tempfile.gettempdir())
+        for d in root.glob("srt_stack_*"):
+            try:
+                if not d.is_dir() or d.stat().st_mtime > cutoff:
+                    continue
+                size = sum(f.stat().st_size for f in d.rglob("*") if f.is_file())
+                shutil.rmtree(d, ignore_errors=True)
+                if not d.exists():
+                    freed += size
+            except OSError:
+                continue        # in use, or vanished under us
+    except Exception:
+        _logger.exception("stale spill cleanup failed")
+    if freed:
+        _logger.info("Reclaimed %.1f GB of stale stack scratch", freed / 1e9)
+    return freed
+
+
 def stack(
     light_paths: list[Path],
     method: StackMethod = StackMethod.SIGMA_CLIP,
