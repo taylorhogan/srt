@@ -1269,7 +1269,26 @@ def stack(
     survivors: list[Path] = []
     failed = poor_qa = 0
 
+    # Sky levels vary hugely between frames — moon, transparency, altitude. On
+    # ngc5907 the G subs ran 149 to 442 ADU across nights. Combining them at
+    # their native levels turns that spread into per-pixel NOISE: sigma-clip
+    # rejects a different subset of frames at every pixel, and because those
+    # frames sit at different levels the surviving mean jumps pixel to pixel.
+    # Measured there: 8.04x the photon limit at 39 frames, and worse than a
+    # single frame. It gets worse with MORE frames, because more frames means
+    # more nights and a wider spread, which is why it hides in small tests.
+    #
+    # So each frame is levelled to a common sky before combining, and the level
+    # is restored afterwards so the output keeps a physical ADU scale.
+    frame_levels: list[float] = []
+
     def _spill(frame: np.ndarray, path: Path) -> Path:
+        level = float(np.nanmedian(frame))
+        if np.isfinite(level):
+            frame = frame - level
+            frame_levels.append(level)
+        else:
+            frame_levels.append(0.0)
         p = tmp_dir / f"f{len(mmap_paths):04d}.npy"
         np.save(p, frame.astype(np.float32, copy=False))
         mmap_paths.append(p)
@@ -1383,6 +1402,17 @@ def stack(
         # Drop memmaps before deleting the backing files (matters on Windows).
         mmaps = None
         shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    # Put the sky back: the frames were levelled before combining (see _spill),
+    # so add the weighted mean of what was removed. Without this the stack would
+    # sit near zero and every downstream sky/ADU measurement would be wrong.
+    if frame_levels:
+        lv = np.asarray(frame_levels, dtype=np.float64)
+        restored = float(np.average(lv, weights=weights) if weights is not None
+                         else lv.mean())
+        result = result + restored
+        _logger.info("Frame levelling: sky spread %.1f..%.1f ADU, restored %.1f",
+                     lv.min(), lv.max(), restored)
 
     # Coverage-based crop: keep the bounding box where at least 80% of frames
     # contributed a real (non-NaN) pixel.

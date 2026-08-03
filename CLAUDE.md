@@ -90,6 +90,14 @@ Before writing any code that calls `toggle_roof()`, `pwi4.mount_park()`, `pwi4.m
   the ratio between channels survives into the image. Both of those are easy to
   get wrong in ways that still produce a plausible-looking picture.
 
+  Frames are **levelled to a common sky before combining** and the level is
+  restored afterwards. This is not cosmetic: sky varies 3x across nights (moon,
+  transparency), and combining at native levels turns that spread into per-pixel
+  noise, because sigma-clip rejects a different subset at every pixel and those
+  frames sit at different levels. Measured on ngc5907 G: 8x the photon limit at
+  39 frames, worse than a single frame, and it got worse with more frames — so
+  it hides in any small test.
+
   Flats live per session as `<flat_root>/<date>/FLAT` with every filter mixed
   together, so they are grouped by FITS `FILTER` header rather than by directory
   (`flats_by_filter`). They accumulate at ~1.2 GB per filter per night and are
