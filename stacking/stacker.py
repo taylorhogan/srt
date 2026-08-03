@@ -1126,7 +1126,11 @@ def cleanup_stale_spill_dirs(min_age_hours: float = 2.0) -> int:
                 if not d.exists():
                     freed += size
             except OSError:
-                continue        # in use, or vanished under us
+                # Usually delete-pending: a killed worker's rmtree ran while its
+                # memmaps were still open, so the (now empty) directory entry
+                # lingers and even listdir returns access-denied. Nothing to
+                # reclaim there — skip it and leave it to the OS.
+                continue
     except Exception:
         _logger.exception("stale spill cleanup failed")
     if freed:
