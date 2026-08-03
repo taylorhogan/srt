@@ -64,6 +64,13 @@ class PublicConfig():
             # so a blown-out sky patch drags it to an exposure that leaves the
             # markers dark, and the roof cannot be confirmed open in daylight.
             # Costs no extra camera time: the frames are taken either way.
+            # Score the exposure sweep by marker readability rather than
+            # whole-frame brightness (vision_safety.marker_match_score). The
+            # whole-frame scorer picked an exposure where the open marker was
+            # 565 px out of place while a frame existed in the same ladder with
+            # it 30 px out — see docs/daylight_roof_detection.md. Set False to
+            # fall back to best_exposure_score.
+            "marker_exposure_scorer": True,
             "exposure_capture": True,
             # Daylight test: the sun's altitude, not a brightness heuristic. A
             # luma threshold has to be guessed and the ladder spans ~500x in

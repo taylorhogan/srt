@@ -24,9 +24,23 @@ _logger = logging.getLogger(__name__)
 last_match: dict | None = None
 
 
+_TEMPLATE_CACHE: dict = {}
+
+
+def _load_template(path):
+    """Read a template once and keep it. The marker scorer runs three matches
+    per swept exposure, so an uncached imread would be 30 disk reads a sweep."""
+    tpl = _TEMPLATE_CACHE.get(path)
+    if tpl is None:
+        tpl = cv.imread(path, cv.IMREAD_COLOR)
+        if tpl is not None:
+            _TEMPLATE_CACHE[path] = tpl
+    return tpl
+
+
 def find_template_rectangle (image, template_image_path):
     # Load the main image and the template
-    template = cv.imread(template_image_path, cv.IMREAD_COLOR)  # Path to the template
+    template = _load_template(template_image_path)
     main_image = image
 
     # Convert the images to grayscale for processing
@@ -83,6 +97,46 @@ def find_template(image, template_image_path):
 
 
 
+
+
+def marker_match_score(frame) -> float:
+    """Exposure score for the vision-safety sweep: how readable are the markers?
+
+    Replaces best_exposure_score for this one caller. That scorer grades the
+    WHOLE frame — mean brightness, contrast, clipping — but the parked/closed/
+    open verdict depends only on three small marker regions. With the roof open
+    in daylight the two disagree badly. Measured 2026-08-03 on a real roof-open
+    ladder: the open marker resolves at exposure -7 (0.66 confidence, 30 px from
+    its expected position) and at NO other exposure, but -7 scores -2.343 on the
+    whole-frame metric because the frame is 82% clipped, so the sweep chose -11
+    and the roof could not be confirmed open.
+
+    Score = sum of match confidence over templates that land near where they are
+    expected. Summing is what makes it work: it prefers the frame where the most
+    markers are simultaneously readable, rather than the one where any single
+    marker is sharpest. Validated against both captured ladders — it selects
+    exposure -7 for the roof-closed set (parked 0.88 + closed 0.91 = 1.79) and
+    for the roof-open set (parked 0.91 + open 0.66 = 1.57), and -7 gives the
+    correct verdict in both.
+
+    Position is judged with find_template_rectangle's own centre convention, the
+    same one the verdict uses. That convention is off by a factor of two (see
+    the note on line 56), but scoring and gating must agree, so this must NOT be
+    "fixed" here independently.
+    """
+    cs = cfg["camera safety"]
+    accuracy = cs["accuracy"]
+    total = 0.0
+    for tpl_key, pos_key in (("parked template", "parked pos"),
+                             ("closed template", "closed pos"),
+                             ("open template", "open pos")):
+        try:
+            _, _, center, conf = find_template_rectangle(frame, cs[tpl_key])
+            if math.dist(center, cs[pos_key]) < accuracy:
+                total += float(conf)
+        except Exception:
+            _logger.debug("marker_match_score: %s failed", tpl_key, exc_info=True)
+    return total
 
 
 def _score_exposure_set(capture_dir, accuracy, min_conf):
@@ -168,10 +222,13 @@ def _visual_status_once():
     # separate them at all). Neither needs daylight, and the roof is far more
     # often open at night. Uses the previous verdict — one call stale at worst.
     was_open = bool((last_match or {}).get("is_open"))
+    scorer = (marker_match_score
+              if cfg["camera safety"].get("marker_exposure_scorer", True) else None)
     with inside_camera_server.camera_session():
         print ("take snapshot")
         inside_camera_server.take_snapshot(capture_dir=capture_dir,
-                                           capture_force=was_open)
+                                           capture_force=was_open,
+                                           scorer=scorer)
 
         print("read snapshot")
         image_rgb = cv.imread(image_path, cv.IMREAD_COLOR)
