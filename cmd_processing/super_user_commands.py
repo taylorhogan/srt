@@ -357,6 +357,27 @@ def _mount_power_blocked_reason(dev_map: dict | None = None) -> str | None:
     return None
 
 
+def _imaging_blocked_reason() -> str | None:
+    """Why imaging activity blocks a roof operation, naming which check tripped.
+
+    These are two independent conditions and they fail for different reasons, so
+    reporting them with one message sends you looking in the wrong place: a
+    `roof!! open` refused because NINA happens to be OPEN used to claim "imaging
+    state is not none" while imaging.txt read NONE.
+
+    Both are kept. imaging.txt can be cleared by a process restart while NINA
+    keeps capturing, so the process check is the hardware-truth backstop — see
+    is_nina_running.
+    """
+    state = get_imaging_state()
+    if state != ImagingState.NONE:
+        return f"an imaging run is in progress (imaging state is {state.name})"
+    if is_nina_running():
+        return ("NINA.exe is running — close NINA first, or it may be mid-capture. "
+                "(imaging state is NONE, so this is the process check, not a run.)")
+    return None
+
+
 def _roof_move_blocked_reason(imaging_run: bool = False, dev_map: dict | None = None) -> str | None:
     """Return why the roof must not MOVE right now, or None if movement may proceed.
 
@@ -368,8 +389,10 @@ def _roof_move_blocked_reason(imaging_run: bool = False, dev_map: dict | None = 
     2. the observatory is marked safe (``safe!``);
     3. the telescope mount is powered off (:func:`_mount_power_blocked_reason`).
     """
-    if not imaging_run and (is_imaging() or is_nina_running()):
-        return "an imaging run is in progress (imaging state is not none)"
+    if not imaging_run:
+        blocked = _imaging_blocked_reason()
+        if blocked:
+            return blocked
     if not is_safe():
         return "observatory is not marked safe — issue safe! first"
     return _mount_power_blocked_reason(dev_map)
@@ -383,8 +406,9 @@ def _roof_status_blocked_reason() -> str | None:
     observatory. It is still skipped while imaging is in progress and while
     the mount is powered on (fail-safe if power can't be confirmed).
     """
-    if is_imaging() or is_nina_running():
-        return "an imaging run is in progress (imaging state is not none)"
+    blocked = _imaging_blocked_reason()
+    if blocked:
+        return blocked
     return _mount_power_blocked_reason()
 
 
