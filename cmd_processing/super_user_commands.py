@@ -4281,6 +4281,10 @@ def _process_run(words: list[str]) -> None:
     def _progress(msg: str) -> None:
         social_server.post_social_message(f"{dso_dir.name} {recipe}: {msg}")
 
+    # What the user actually typed, so a log entry can be replayed verbatim.
+    _cmd_text = " ".join(words[1:]) if len(words) > 1 else "process"
+    _display_opts = dict(opts)
+
     # Resolve where the output goes BEFORE the half-hour of stacking. A mistake
     # in this block used to surface only after the work was finished — an
     # undefined name here threw away a complete 33-minute abell2151 run — and
@@ -4321,13 +4325,20 @@ def _process_run(words: list[str]) -> None:
             _logger.exception("process sweep failed")
             social_server.post_social_message(f"{dso_dir.name} {recipe}: sweep failed — {exc}")
             return
-        sheet_path = out_dir / f"process_{dso_dir.name}_{recipe}_sweep.jpg"
+        # tag, not recipe: every other output distinguishes flat from no-flat,
+        # and a sweep sheet that did not would overwrite its counterpart.
+        sheet_path = out_dir / f"process_{dso_dir.name}_{tag}_sweep.jpg"
         color_process.save_sheet(sheet, sheet_path)
         lines = [f"{dso_dir.name} — {recipe} sweep, {len(combos)} variants:"]
         for i, c in enumerate(combos, 1):
             args = " ".join(f"{k.replace('_pct','').replace('softening','soft')}={v}"
                             for k, v in c.items())
             lines.append(f"  {i}. {args}")
+        color_process.record_render(out_dir, {
+            "time": datetime.now().astimezone().isoformat(timespec="seconds"),
+            "command": _cmd_text, "kind": "sweep", "recipe": recipe, "tag": tag,
+            "flats": use_flats, "file": sheet_path.name, "variants": combos,
+        })
         lines.append(f"Pick one and run: process {dso_dir.name} {recipe} reuse <its options>")
         lines.append(f"Saved: {sheet_path}")
         social_server.post_social_message("\n".join(lines), str(sheet_path))
@@ -4354,6 +4365,22 @@ def _process_run(words: list[str]) -> None:
     # path and what makes `reuse` fast — no need for a separate RGB dump.
     color_process.save_rgb(rgb, full_path)
     color_process.save_rgb(rgb, prev_path, max_px=2200)
+
+    # These filenames are keyed on dso+recipe+flats only, so this render just
+    # replaced whatever was there. Record what made it.
+    color_process.record_render(out_dir, {
+        "time": datetime.now().astimezone().isoformat(timespec="seconds"),
+        "command": _cmd_text, "kind": "render", "recipe": recipe, "tag": tag,
+        "flats": use_flats, "reused": bool(info.get("reused")), "scale": scale,
+        "options": _display_opts,
+        "files": {"full": full_path.name, "preview": prev_path.name,
+                  "fits": [p.name for p in (info.get("fits") or [])],
+                  "channels": [p.name for p in (info.get("channel_jpgs") or [])]},
+        "frames": info.get("frames") or {},
+        "channels": info.get("channels") or {},
+        "reference": info.get("reference"),
+        "seconds": round(time.perf_counter() - _t0, 1),
+    })
 
     chans = "  ".join(f"{c}={info['channels'][c]}" for c in ("R", "G", "B", "L")
                       if c in info["channels"])

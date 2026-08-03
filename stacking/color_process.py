@@ -77,17 +77,21 @@ MAX_LUM_BOOST = 3.0
 # point simply revealed it as a bright blob covering most of abell2151. Sky
 # gradients do the same on flat-corrected data. The mesh is coarse on purpose —
 # big enough that cluster galaxies and nebulosity are not absorbed into it.
-# Average-neutral SCNR strength, 0..1. Off by default: it is the right move on
-# LRGB and a matter of taste on SHO, but on HOO it actively destroys the palette
-# (see _scnr), so it has to be asked for rather than assumed.
-SCNR_AMOUNT = 0.0
-
 SUBTRACT_BACKGROUND = True
 BG_MESH_FRACTION = 4      # mesh boxes across the short axis
 # Measured trade-off on synthetic fields (dome 40x sky noise, nebula filling the
 # middle third).  Mesh 8 flattens the dome best but absorbs 30-45% of a large
 # nebula; mesh 3 leaves the nebula untouched but barely dents the dome.  Mesh 4
 # with black at p65: cluster saturation 3.4%, nebula centre retained 94%.
+
+# Average-neutral SCNR strength, 0..1. Off by default: it is the right move on
+# LRGB and a matter of taste on SHO, but on HOO it actively destroys the palette
+# (see _scnr), so it has to be asked for rather than assumed.
+SCNR_AMOUNT = 0.0
+
+# Per-channel inspection JPEGs are capped at the preview's size; full resolution
+# is what the per-channel FITS is for.
+CHANNEL_JPG_MAX_PX = 2200
 
 
 def _squash(name: str) -> str:
@@ -501,13 +505,19 @@ def save_channel_jpgs(channels: dict[str, np.ndarray], out_dir: Path, dso: str,
                       white_pct: float = WHITE_PCT,
                       subtract_background: bool = SUBTRACT_BACKGROUND,
                       softening: float = SOFTENING,
-                      mesh: int = BG_MESH_FRACTION) -> list[Path]:
+                      mesh: int = BG_MESH_FRACTION,
+                      max_px: int = CHANNEL_JPG_MAX_PX) -> list[Path]:
     """Write one mono JPEG per channel, on the composite's shared scale.
 
     Deliberately not per-channel autostretch: these are meant to explain the
     colour image, so a channel that is genuinely faint has to *look* faint here.
     Stretched with the same black/white/softening the composite used, so each
     one is literally that channel's plane before SCNR and the L substitution.
+
+    Downscaled to preview size by default. At full resolution these are ~41 MB
+    each — 164 MB of mono JPEG per render, more than the colour image itself —
+    to answer a question ("what is this channel contributing?") that a screen
+    cannot ask at full resolution anyway. The FITS is the archival copy.
     """
     from PIL import Image
     subbed, white = _prepare(channels, subtract_background, mesh, white_pct)
@@ -518,8 +528,13 @@ def save_channel_jpgs(channels: dict[str, np.ndarray], out_dir: Path, dso: str,
             continue
         mono = _stretch(subbed[chan], black_pct, white, softening)
         arr = (np.clip(np.nan_to_num(mono), 0.0, 1.0) * 255).astype(np.uint8)[::-1]
+        img = Image.fromarray(arr, mode="L")
+        if max_px and max(img.size) > max_px:
+            ratio = max_px / max(img.size)
+            img = img.resize((max(1, int(img.width * ratio)),
+                              max(1, int(img.height * ratio))), Image.LANCZOS)
         path = out_dir / f"process_{dso}_{tag}_{chan}.jpg"
-        Image.fromarray(arr, mode="L").save(path, quality=92, optimize=True)
+        img.save(path, quality=92, optimize=True)
         written.append(path)
     return written
 
@@ -591,6 +606,57 @@ def save_channel_fits(channels: dict[str, np.ndarray], out_dir: Path, dso: str,
         hdu.writeto(path, overwrite=True)
         written.append(path)
     return written
+
+
+RENDER_LOG_NAME = "process_log.json"
+RENDER_LOG_MAX = 200
+
+
+def record_render(out_dir: Path, entry: dict,
+                  max_entries: int = RENDER_LOG_MAX) -> Optional[Path]:
+    """Append one render to Iris/<dso>/process_log.json.
+
+    Output filenames are keyed on dso + recipe + flat state only, so every
+    re-render at a different stretch overwrites the last one. Without a record,
+    a picture on disk cannot tell you what made it — and since the interesting
+    parameters are exactly the ones that leave no trace (black, white, soft,
+    mesh, scnr), that is the difference between an experiment and a guess.
+
+    Read-append-atomic-replace. Two renders finishing in the same instant on the
+    same target could lose one entry; that is worth accepting to avoid a lock
+    file in a directory the user browses. Never raises — a lost log entry must
+    not fail a render.
+    """
+    import json
+    import os
+    path = out_dir / RENDER_LOG_NAME
+    try:
+        out_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            existing = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(existing, list):
+                existing = []
+        except FileNotFoundError:
+            existing = []
+        except ValueError:
+            # Truncated by a crash mid-write, say. Keep it rather than silently
+            # dropping the render history on the floor.
+            existing = []
+            try:
+                path.replace(path.with_suffix(".json.bad"))
+                _logger.warning("unreadable %s kept as %s.bad", path.name, path.name)
+            except OSError:
+                pass
+        existing.append(entry)
+        if len(existing) > max_entries:
+            existing = existing[-max_entries:]
+        tmp = path.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(existing, indent=1, default=str), encoding="utf-8")
+        os.replace(tmp, path)
+        return path
+    except Exception:
+        _logger.warning("could not write %s", path, exc_info=True)
+        return None
 
 
 def save_sheet(sheet: np.ndarray, path: Path) -> Path:
