@@ -108,13 +108,23 @@ def resolve_filter(wanted: str, available: list[str]) -> Optional[str]:
 
 
 def _stretch(chan: np.ndarray, black_pct: float, white: float,
-             softening: float = SOFTENING) -> np.ndarray:
+             softening: float = SOFTENING,
+             label: Optional[str] = None) -> np.ndarray:
     """asinh stretch onto 0..1 with a per-channel black and a SHARED white.
 
     black_pct is a percentile of this channel, so the same share of pixels goes
     to black on any target — see BLACK_PCT.
+
+    With a *label*, logs the ADU the percentile actually resolved to. The
+    percentile is a relative instruction and lands somewhere different on every
+    channel and every target; the absolute value is the only way to see whether
+    it crushed one channel's faint end while leaving another's intact. The white
+    point is already reported in ADU for the same reason.
     """
     black = float(np.nanpercentile(chan, black_pct))
+    if label:
+        _logger.info("Stretch %s: black %.2f ADU (p%.1f), white %.2f, soft %.3f",
+                     label, black, black_pct, white, softening)
     y = np.clip((chan - black) / max(white - black, 1e-6), 0.0, 1.0)
     return np.arcsinh(y / softening) / np.arcsinh(1.0 / softening)
 
@@ -156,6 +166,35 @@ def _prepare(channels: dict[str, np.ndarray], subtract_background: bool,
     colour = [subbed[c] for c in ("R", "G", "B") if c in subbed]
     white = float(np.nanpercentile(np.maximum.reduce(colour), white_pct))
     return subbed, white
+
+
+def effective_options(**overrides) -> dict:
+    """Every compose() display knob with its default filled in.
+
+    The command parser only carries the options the user actually typed, so a
+    record built from it says nothing about the settings that did most of the
+    work. Reproducing a render means knowing all of them.
+    """
+    opts = {"black_pct": BLACK_PCT, "white_pct": WHITE_PCT,
+            "softening": SOFTENING, "mesh": BG_MESH_FRACTION,
+            "subtract_background": SUBTRACT_BACKGROUND, "scnr": SCNR_AMOUNT}
+    opts.update({k: v for k, v in overrides.items() if k in opts})
+    return opts
+
+
+def describe_options(opts: dict, scale: int = 1) -> str:
+    """One line of compose settings, in the spelling the command accepts."""
+    parts = [f"black={opts['black_pct']:g}", f"white={opts['white_pct']:g}",
+             f"soft={opts['softening']:g}"]
+    if opts.get("subtract_background", True):
+        parts.append(f"mesh={opts['mesh']:g}")
+    else:
+        parts.append("nobg")
+    if opts.get("scnr"):
+        parts.append(f"scnr={opts['scnr']:g}")
+    if scale and scale > 1:
+        parts.append(f"scale={scale:g}")
+    return "  ".join(parts)
 
 
 def _scnr(rgb: np.ndarray, amount: float = 1.0) -> np.ndarray:
@@ -210,7 +249,7 @@ def compose(channels: dict[str, np.ndarray], black_pct: float = BLACK_PCT,
     subbed, white = _prepare(channels, subtract_background, mesh, white_pct)
     _logger.info("Compose: shared white point %.2f ADU (p%.1f)", white, white_pct)
 
-    rgb = np.dstack([_stretch(subbed[c], black_pct, white, softening)
+    rgb = np.dstack([_stretch(subbed[c], black_pct, white, softening, label=c)
                      for c in ("R", "G", "B")])
 
     if scnr > 0.0:
@@ -224,7 +263,7 @@ def compose(channels: dict[str, np.ndarray], black_pct: float = BLACK_PCT,
         # Classic LRGB: keep the colour from RGB, take the brightness from L.
         # Scaling by the ratio preserves hue instead of washing it out, which is
         # what simply averaging L into each channel would do.
-        lum = _stretch(subbed["L"], black_pct, white, softening)
+        lum = _stretch(subbed["L"], black_pct, white, softening, label="L")
         rgb_lum = rgb @ np.array([0.299, 0.587, 0.114], dtype=np.float32)
         with np.errstate(divide="ignore", invalid="ignore"):
             scale = np.where(rgb_lum > 1e-4, lum / np.maximum(rgb_lum, 1e-4), 0.0)

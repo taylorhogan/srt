@@ -4283,7 +4283,7 @@ def _process_run(words: list[str]) -> None:
 
     # What the user actually typed, so a log entry can be replayed verbatim.
     _cmd_text = " ".join(words[1:]) if len(words) > 1 else "process"
-    _display_opts = dict(opts)
+    _display_opts = color_process.effective_options(**opts)
 
     # Resolve where the output goes BEFORE the half-hour of stacking. A mistake
     # in this block used to surface only after the work was finished — an
@@ -4391,6 +4391,7 @@ def _process_run(words: list[str]) -> None:
         f"{'' if info.get('flats', True) else '  (no flats)'}   {chans}\n"
         f"frames stacked: {frames}   ({time.perf_counter() - _t0:.0f}s)\n"
         f"shared reference: {info['reference']}\n"
+        f"stretch: {color_process.describe_options(_display_opts, scale)}\n"
         f"Saved:\n  {full_path}  ({w}x{h}, no text)\n  {prev_path}  (preview)"
         + _channel_products_note(info),
         str(prev_path),
