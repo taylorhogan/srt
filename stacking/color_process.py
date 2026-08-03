@@ -76,6 +76,11 @@ MAX_LUM_BOOST = 3.0
 # point simply revealed it as a bright blob covering most of abell2151. Sky
 # gradients do the same on flat-corrected data. The mesh is coarse on purpose —
 # big enough that cluster galaxies and nebulosity are not absorbed into it.
+# Average-neutral SCNR strength, 0..1. Off by default: it is the right move on
+# LRGB and a matter of taste on SHO, but on HOO it actively destroys the palette
+# (see _scnr), so it has to be asked for rather than assumed.
+SCNR_AMOUNT = 0.0
+
 SUBTRACT_BACKGROUND = True
 BG_MESH_FRACTION = 4      # mesh boxes across the short axis
 # Measured trade-off on synthetic fields (dome 40x sky noise, nebula filling the
@@ -130,11 +135,50 @@ def _remove_gradient(chan: np.ndarray, mesh: int = BG_MESH_FRACTION) -> np.ndarr
         return chan - float(np.nanmedian(chan))
 
 
+def _scnr(rgb: np.ndarray, amount: float = 1.0) -> np.ndarray:
+    """Average-neutral SCNR: clip green at the mean of red and blue.
+
+        g' = min(g, (r + b) / 2)
+
+    Almost nothing in space is genuinely green — hydrogen is red, reflection
+    nebulae and hot stars are blue, and there is no strong broadband green
+    emitter — so a green-dominant pixel is nearly always sky glow, a residual
+    gradient, or per-channel noise. That is what makes this better than a global
+    colour balance: it is one-sided. Pixels that were never green-dominant are
+    returned untouched, so the operation costs nothing where there was nothing
+    wrong, and it cannot introduce a magenta cast of its own the way scaling the
+    whole green channel down would.
+
+    *amount* blends toward the clipped result (PixInsight's amount slider), so
+    partial strengths are available for palettes where green carries real signal.
+    """
+    g = rgb[:, :, 1]
+    neutral = 0.5 * (rgb[:, :, 0] + rgb[:, :, 2])
+    limited = np.minimum(g, neutral)
+    if amount < 1.0:
+        limited = g * (1.0 - amount) + limited * amount
+
+    touched = np.isfinite(g) & np.isfinite(limited) & (limited < g)
+    n = int(touched.sum())
+    if n:
+        _logger.info("SCNR (amount %.2f): green reduced on %.1f%% of pixels, "
+                     "median cut %.3f", amount, 100.0 * n / g.size,
+                     float(np.median((g - limited)[touched])))
+    else:
+        _logger.info("SCNR (amount %.2f): no green-dominant pixels; no change",
+                     amount)
+
+    out = rgb.copy()
+    out[:, :, 1] = limited
+    return out
+
+
 def compose(channels: dict[str, np.ndarray], black_pct: float = BLACK_PCT,
             white_pct: float = WHITE_PCT,
             subtract_background: bool = SUBTRACT_BACKGROUND,
             softening: float = SOFTENING,
-            mesh: int = BG_MESH_FRACTION) -> np.ndarray:
+            mesh: int = BG_MESH_FRACTION,
+            scnr: float = SCNR_AMOUNT) -> np.ndarray:
     """Combine channel stacks into an RGB image in 0..1.
 
     channels holds any of R/G/B plus an optional L. Every channel must already
@@ -150,6 +194,13 @@ def compose(channels: dict[str, np.ndarray], black_pct: float = BLACK_PCT,
 
     rgb = np.dstack([_stretch(subbed[c], black_pct, white, softening)
                      for c in ("R", "G", "B")])
+
+    if scnr > 0.0:
+        # Before the luminance substitution, not after: L then re-establishes
+        # brightness, so SCNR acts purely on hue instead of darkening wherever
+        # it pulled green down. Same order PixInsight uses (SCNR, then
+        # LRGBCombination).
+        rgb = _scnr(rgb, float(np.clip(scnr, 0.0, 1.0)))
 
     if "L" in subbed:
         # Classic LRGB: keep the colour from RGB, take the brightness from L.

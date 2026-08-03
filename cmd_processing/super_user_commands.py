@@ -4128,6 +4128,10 @@ def process_cmd(words: list[str], account: str) -> None:
         soft=0.025  asinh softening; smaller lifts the faint end harder
         mesh=4      background mesh boxes across the short axis; higher removes
                     gradients harder but eats large nebulosity
+        scnr=0      average-neutral green removal, g = min(g, (r+b)/2), 0..1.
+                    Off by default. Right on LRGB, taste on SHO, and wrong on
+                    HOO — there G and B are the same O-III data, so any amount
+                    breaks G==B and shifts the teal toward blue
         nobg        skip background subtraction entirely
         scale=N     bin the output N-fold (quick look)
         reuse       skip stacking and re-render the cached channels — seconds
@@ -4193,7 +4197,7 @@ def _process_run(words: list[str]) -> None:
               "reuse": ("reuse", True)}
     _KEYS = {"black": ("black_pct", float), "white": ("white_pct", float),
              "soft": ("softening", float), "mesh": ("mesh", int),
-             "scale": ("scale", int)}
+             "scnr": ("scnr", float), "scale": ("scale", int)}
     opts = {"use_flats": True, "reuse": False}
     rest = []
     bad = []

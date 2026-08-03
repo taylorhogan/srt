@@ -253,7 +253,9 @@ HELP: dict[str, dict] = {
                     "shared reference so the channels align. Add 'noflat' to skip "
                     "flat correction, which is worth trying when the only flats "
                     "available were shot in a different epoch. Display options: "
-                    "black= white= soft= mesh= nobg scale=. Add 'reuse' to "
+                    "black= white= soft= mesh= scnr= nobg scale=. scnr=0..1 is "
+                    "average-neutral green removal, min(g,(r+b)/2) — good on "
+                    "LRGB, leave off for HOO. Add 'reuse' to "
                     "re-render the cached channels in seconds instead of "
                     "re-stacking; give an option a comma list (black=45,55,65) "
                     "to sweep it and get a labelled contact sheet to pick from. "
@@ -263,7 +265,8 @@ HELP: dict[str, dict] = {
         "examples": ["process sh2-92 hoo", "process abell2151 lrgb noflat",
                      "process abell2151 lrgb reuse black=50",
                      "process sh2-92 hoo reuse soft=0.01 nobg",
-                     "process abell2151 lrgb reuse black=45,55,65,75"],
+                     "process abell2151 lrgb reuse black=45,55,65,75",
+                     "process ngc5907 lrgb reuse scnr=0,0.5,1"],
     },
     "stack": {
         "category": "super",
