@@ -160,9 +160,18 @@ def _visual_status_once():
     # time; the camera server discards it unless the scene reads as daylight.
     capture_dir = (cfg["camera safety"].get("exposure_capture_dir")
                    if cfg["camera safety"].get("exposure_capture") else None)
+    # Also keep the ladder at night when the roof last read OPEN. A real
+    # roof-open frame is the missing piece for both the centre-of-match fix
+    # (open pos has never been measured in corrected coordinates) and the
+    # match_confidence question (the open template scores 0.684 against a
+    # CLOSED scene, so the true-open value decides whether the threshold can
+    # separate them at all). Neither needs daylight, and the roof is far more
+    # often open at night. Uses the previous verdict — one call stale at worst.
+    was_open = bool((last_match or {}).get("is_open"))
     with inside_camera_server.camera_session():
         print ("take snapshot")
-        inside_camera_server.take_snapshot(capture_dir=capture_dir)
+        inside_camera_server.take_snapshot(capture_dir=capture_dir,
+                                           capture_force=was_open)
 
         print("read snapshot")
         image_rgb = cv.imread(image_path, cv.IMREAD_COLOR)
@@ -277,6 +286,12 @@ def _visual_status_once():
         "frame_luma": frame_luma,
         "min_trust_luma": min_luma,
         "trusted": trusted,
+        # The resolved booleans. The per-template dicts below carry the evidence;
+        # these carry the verdict, so a caller cannot mistake "the key exists"
+        # for "the roof is open".
+        "is_parked": bool(parked),
+        "is_closed": bool(closed),
+        "is_open": bool(open),
         "parked": {"conf": float(max_val_parked), "error": float(parked_error), "verdict": parked_verdict},
         "closed": {"conf": float(max_val_closed), "error": float(closed_error), "verdict": closed_verdict},
         "open":   {"conf": float(max_val_open),   "error": float(open_error),   "verdict": open_verdict},

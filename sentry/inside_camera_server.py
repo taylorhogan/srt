@@ -27,7 +27,7 @@ from utils import utils
 
 _loger = utils.set_logger()
 
-def _save_exposure_set(capture_dir, exposure_values, pictures, scores):
+def _save_exposure_set(capture_dir, exposure_values, pictures, scores, force=False):
     """Write every frame of one exposure sweep plus a metadata sidecar.
 
     Only saved in daylight — the whole point is the roof-open-in-sunlight case
@@ -60,7 +60,7 @@ def _save_exposure_set(capture_dir, exposure_values, pictures, scores):
         return None
 
     min_alt = float(cfg.get("exposure_capture_min_sun_alt", -6.0))
-    if sun_alt < min_alt:
+    if sun_alt < min_alt and not force:
         _loger.debug("exposure set not kept: sun altitude %.1f < %.1f", sun_alt, min_alt)
         return None
 
@@ -253,7 +253,7 @@ def _combine_stable(frames, stack_frames=1):
 
 
 def take_snapshot(test_path=None, light=True, out_path=None, scorer=None, stack_frames=1, gain=None,
-                  capture_dir=None):
+                  capture_dir=None, capture_force=False):
     """Serialize all camera access, then delegate to :func:`_take_snapshot`.
 
     The lock makes each snapshot atomic with respect to both the USB camera and
@@ -274,15 +274,19 @@ def take_snapshot(test_path=None, light=True, out_path=None, scorer=None, stack_
     capture_dir:  keep every frame of the exposure sweep here, not just the
                   winner. The sweep happens regardless, so this is free
                   diagnostic data; see the exposure_capture config block.
+    capture_force: keep the ladder even at night. Used when the roof reads open:
+                  a genuine roof-open frame is what both the centre-of-match fix
+                  and the match_confidence question have been blocked on, and
+                  neither of those needs daylight.
     """
     with _camera_lock:
         return _take_snapshot(test_path, light=light, out_path=out_path,
                               scorer=scorer, stack_frames=stack_frames, gain=gain,
-                              capture_dir=capture_dir)
+                              capture_dir=capture_dir, capture_force=capture_force)
 
 
 def _take_snapshot(test_path=None, light=True, out_path=None, scorer=None, stack_frames=1, gain=None,
-                   capture_dir=None):
+                   capture_dir=None, capture_force=False):
     _loger.info("Starting camera snapshot (light=%s)", light)
     cfg = config.data()
     print (utils.set_install_dir())
@@ -429,7 +433,8 @@ def _take_snapshot(test_path=None, light=True, out_path=None, scorer=None, stack
         # failure writing files can never hold the camera open.
         if capture_dir and pictures:
             try:
-                _save_exposure_set(capture_dir, exposure_values, pictures, scores)
+                _save_exposure_set(capture_dir, exposure_values, pictures, scores,
+                                   force=capture_force)
             except Exception:
                 _loger.warning("exposure-set capture failed", exc_info=True)
 
