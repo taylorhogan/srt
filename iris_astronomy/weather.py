@@ -1,4 +1,5 @@
 from datetime import datetime
+from zoneinfo import ZoneInfo
 import pytz
 import requests
 import sys
@@ -24,10 +25,18 @@ def get_sunrise_sunset() -> tuple[datetime, datetime]:
     name = cfg["location"]["city"]
     timezone = cfg["location"]["timezone"]
     city = LocationInfo(name, "USA", timezone, latitude, longitude)
-    s = sun(city.observer, date=datetime.now())
+    # Both arguments matter. Without tzinfo, astral resolves the event for the
+    # UTC date, and at this longitude the sunset whose UTC timestamp falls on
+    # today is *yesterday evening* local — e.g. on 2026-08-03 it returned
+    # 00:07 UTC = 2026-08-02 20:07 EDT, a time already in the past. The
+    # scheduler's pre-sunset check is sunset - 10 min, so it fell straight
+    # through and generated the night's sequence around noon instead of dusk.
+    # Passing the local date with tzinfo gives the local evening: 20:06 EDT.
+    local_date = datetime.now(ZoneInfo(timezone)).date()
+    s = sun(city.observer, date=local_date, tzinfo=city.timezone)
 
-    sunrise = s["sunrise"]  # datetime with timezone
-    sunset = s["sunset"]  # datetime with timezone
+    sunrise = s["sunrise"]  # local-date event, tz-aware
+    sunset = s["sunset"]    # local-date event, tz-aware
     print(sunrise, sunset)
     return sunrise, sunset
 
