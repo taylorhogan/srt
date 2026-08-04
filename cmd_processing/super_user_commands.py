@@ -92,10 +92,17 @@ def _roof_stall_abort(dev_map: dict, direction: Optional[str],
               else "POWER CUT FAILED — motor may still be running!")
            + " Roof state UNKNOWN — inspect before any further roof or scope moves.")
     _logger.error(msg)
+    # push_message verifies delivery and returns False rather than raising, so a
+    # silently-rejected emergency (bad token, quota, malformed priority-2) is
+    # visible here instead of looking exactly like success.
+    notified = False
     try:
-        pushover.push_message(msg, priority=2)
+        notified = pushover.push_message(msg, priority=2)
     except Exception:  # noqa: BLE001
-        _logger.exception("roof stall: pushover emergency failed")
+        _logger.exception("roof stall: pushover emergency raised")
+    if not notified:
+        _logger.error("roof stall: EMERGENCY PUSH NOT DELIVERED — the observatory has "
+                      "cut roof motor power but could not reach anyone. %s", msg)
     try:
         social_server.post_social_message(msg)
     except Exception:  # noqa: BLE001
