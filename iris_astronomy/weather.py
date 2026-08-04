@@ -177,6 +177,13 @@ def get_air_quality_by_hour(lat: float, lon: float, hours: int) -> tuple[list, l
 # bloats FWHM here is low-level. 850 hPa (~1.5 km) is the best single predictor.
 SEEING_LEVEL_HPA = 850
 
+# Band edges for seeing_from_wind, in km/h at SEEING_LEVEL_HPA. Named because
+# the tonight chart draws them as threshold lines, and a chart whose lines sat
+# at different numbers than the words in the report would be worse than no lines.
+SEEING_FAIR_KMH = 20
+SEEING_POOR_KMH = 30
+SEEING_BAD_KMH = 45
+
 
 def get_seeing_wind_by_hour(lat: float, lon: float, hours: int) -> tuple[list, list]:
     """Hourly wind speed (km/h at SEEING_LEVEL_HPA) from Open-Meteo.
@@ -246,11 +253,11 @@ def seeing_from_wind(wind_kmh: float | None) -> str:
     """
     if wind_kmh is None:
         return "unknown"
-    if wind_kmh < 20:
+    if wind_kmh < SEEING_FAIR_KMH:
         return "good"
-    if wind_kmh < 30:
+    if wind_kmh < SEEING_POOR_KMH:
         return "fair"
-    if wind_kmh < 45:
+    if wind_kmh < SEEING_BAD_KMH:
         return "poor"
     return "bad"
 

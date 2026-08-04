@@ -263,7 +263,7 @@ def plot_my_dso_and_horizon(dso: FixedTarget, my_observatory: Observer, observe_
     clipped_wsp = []
     clipped_hum = []
     clipped_smoke = []   # PM2.5 AQI scaled onto the 0-90 axis (AQI/150*90)
-    clipped_seeing = []  # 850 hPa km/h scaled onto the 0-90 axis (kmh/60*90)
+    clipped_seeing = []  # 850 hPa wind in real km/h — drawn on its own right axis
     weather_ok = True
     issues: set[str] = set()
     # Judge weather only during the imaging window (dark + above horizon).
@@ -283,9 +283,10 @@ def plot_my_dso_and_horizon(dso: FixedTarget, my_observatory: Observer, observe_
                 smoke_aqi = pm25_aqi_by_hour.get(hour)
                 clipped_smoke.append(smoke_aqi/150*90 if smoke_aqi is not None else float('nan'))
                 seeing_kmh = seeing_by_hour.get(hour)
-                # /60 not /150: the 850 hPa wind runs far slower than the jet it
-                # replaced, and on the old scale every night drew as a flat line.
-                clipped_seeing.append(seeing_kmh/60*90 if seeing_kmh is not None else float('nan'))
+                # Kept in real km/h, unlike every other series here: seeing gets
+                # its own right-hand axis further down. Squeezing it onto the
+                # 0-90 altitude axis is what made it invisible — see there.
+                clipped_seeing.append(seeing_kmh if seeing_kmh is not None else float('nan'))
                 in_window = (start_time is None
                              or start_time <= local_datetime[i] <= window_finish)
                 if in_window:
@@ -352,16 +353,10 @@ def plot_my_dso_and_horizon(dso: FixedTarget, my_observatory: Observer, observe_
     ax.axhline(_SMOKE_AQI_ADVISORY / 150 * 90, color='saddlebrown', linestyle=':',
                linewidth=1, alpha=0.4,
                label=f'Smoke advisory (PM2.5 AQI {_SMOKE_AQI_ADVISORY})')
-    ax.plot(local_datetime, clipped_seeing, color='darkorange', linestyle='-.',
-            label='Seeing wind (850 hPa km/h, /60)', linewidth=2)
-    ax.axhline(30 / 60 * 90, color='darkorange', linestyle=':',
-               linewidth=1, alpha=0.4, label='Seeing turns poor (30 km/h)')
-
     ax.set_xlim([local_datetime[0], local_datetime[-1]])
     date_formatter = dates.DateFormatter('%H', tz=local_tz)
     ax.xaxis.set_major_formatter(date_formatter)
     plt.setp(ax.get_xticklabels(), rotation=30, ha='right')
-    plt.legend(loc="center", bbox_to_anchor = (0.5, -0.1), title="Legend", fontsize=10, ncol=4, fancybox=True, shadow=True)
 
     # Shade background during night time
 
@@ -384,6 +379,42 @@ def plot_my_dso_and_horizon(dso: FixedTarget, my_observatory: Observer, observe_
                    ymin=0, ymax=1, color='grey', alpha=twi[1])
 
     ax.set_ylim([0, 90])
+
+    # Seeing gets its own right-hand axis, in real km/h, instead of being scaled
+    # onto the 0-90 altitude axis like everything else. It has to: the good case
+    # is a CALM night, so any scale anchored at zero draws the good nights flat
+    # along the x-axis, on top of the tick marks and under the wind and altitude
+    # traces. Rescaling does not help — that was already tried twice (/150, then
+    # /60) and a 5 km/h night still landed at y=7 of 90. An axis that follows the
+    # data shows the shape of the night at any wind speed, and the tick labels
+    # carry the absolute level that the shape alone would lose.
+    ax_seeing = ax.twinx()
+    ax_seeing.plot(local_datetime, clipped_seeing, color='darkorange',
+                   linestyle='-.', linewidth=2.5,
+                   label=f'Seeing wind ({weather.SEEING_LEVEL_HPA} hPa, right axis)')
+    finite_seeing = [v for v in clipped_seeing if not math.isnan(v)]
+    if finite_seeing:
+        lo, hi = min(finite_seeing), max(finite_seeing)
+        pad = max(1.0, (hi - lo) * 0.25)
+        ax_seeing.set_ylim([max(0.0, lo - pad), hi + pad])
+        # Thresholds only when they fall in view; off-scale ones would otherwise
+        # pin the axis and undo the point of letting it follow the data.
+        for level, txt in ((weather.SEEING_FAIR_KMH, 'fair'),
+                           (weather.SEEING_POOR_KMH, 'poor')):
+            if lo - pad <= level <= hi + pad:
+                ax_seeing.axhline(level, color='darkorange', linestyle=':',
+                                  linewidth=1, alpha=0.5,
+                                  label=f'Seeing turns {txt} ({level:.0f} km/h)')
+    ax_seeing.set_ylabel(f"{weather.SEEING_LEVEL_HPA} hPa wind (km/h) — seeing proxy",
+                         color='darkorange')
+    ax_seeing.tick_params(axis='y', colors='darkorange')
+    ax_seeing.spines['right'].set_color('darkorange')
+
+    handles, labels = ax.get_legend_handles_labels()
+    s_handles, s_labels = ax_seeing.get_legend_handles_labels()
+    ax.legend(handles + s_handles, labels + s_labels, loc="center",
+              bbox_to_anchor=(0.5, -0.1), title="Legend", fontsize=10, ncol=4,
+              fancybox=True, shadow=True)
 
     # Set labels.
     ax.set_ylabel("Altitude")
