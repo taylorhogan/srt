@@ -248,20 +248,22 @@ def plot_my_dso_and_horizon(dso: FixedTarget, my_observatory: Observer, observe_
             pm25_by_hour[aq_hours[k]] = aq_pm25[k]
     peak_pm25_aqi = None   # worst (highest PM2.5 AQI) hour over the imaging window
     peak_pm25 = None
-    # Jet-stream wind (250 hPa) as a seeing proxy — first occurrence of each hour wins.
-    jet_hours, jet_wind = weather.get_jetstream_by_hour(latitude, longitude, 48)
-    jet_by_hour: dict = {}
-    for k in range(len(jet_hours)):
-        if jet_hours[k] not in jet_by_hour:
-            jet_by_hour[jet_hours[k]] = jet_wind[k]
-    peak_jet = None      # worst (highest) jet-stream wind over the imaging window
+    # Low-level (850 hPa) wind as the seeing proxy — first occurrence of each
+    # hour wins. NOT the jet stream: see weather.SEEING_LEVEL_HPA for why the
+    # 250 hPa level was dropped after it measured no relationship with FWHM here.
+    seeing_hours, seeing_wind = weather.get_seeing_wind_by_hour(latitude, longitude, 48)
+    seeing_by_hour: dict = {}
+    for k in range(len(seeing_hours)):
+        if seeing_hours[k] not in seeing_by_hour:
+            seeing_by_hour[seeing_hours[k]] = seeing_wind[k]
+    peak_seeing_wind = None   # worst (highest) 850 hPa wind over the imaging window
     time_format = "%Y-%m-%d %H:%M"
     clipped_cloud = []
     clipped_pp = []
     clipped_wsp = []
     clipped_hum = []
     clipped_smoke = []   # PM2.5 AQI scaled onto the 0-90 axis (AQI/150*90)
-    clipped_jet = []     # jet-stream km/h scaled onto the 0-90 axis (kmh/150*90)
+    clipped_seeing = []  # 850 hPa km/h scaled onto the 0-90 axis (kmh/60*90)
     weather_ok = True
     issues: set[str] = set()
     # Judge weather only during the imaging window (dark + above horizon).
@@ -280,8 +282,10 @@ def plot_my_dso_and_horizon(dso: FixedTarget, my_observatory: Observer, observe_
                 clipped_hum.append(hum[j]/100*90)
                 smoke_aqi = pm25_aqi_by_hour.get(hour)
                 clipped_smoke.append(smoke_aqi/150*90 if smoke_aqi is not None else float('nan'))
-                jet_kmh = jet_by_hour.get(hour)
-                clipped_jet.append(jet_kmh/150*90 if jet_kmh is not None else float('nan'))
+                seeing_kmh = seeing_by_hour.get(hour)
+                # /60 not /150: the 850 hPa wind runs far slower than the jet it
+                # replaced, and on the old scale every night drew as a flat line.
+                clipped_seeing.append(seeing_kmh/60*90 if seeing_kmh is not None else float('nan'))
                 in_window = (start_time is None
                              or start_time <= local_datetime[i] <= window_finish)
                 if in_window:
@@ -294,9 +298,10 @@ def plot_my_dso_and_horizon(dso: FixedTarget, my_observatory: Observer, observe_
                                                       or hour_pm25_aqi > peak_pm25_aqi):
                         peak_pm25_aqi = hour_pm25_aqi
                         peak_pm25 = pm25_by_hour.get(hour)
-                    hour_jet = jet_by_hour.get(hour)
-                    if hour_jet is not None and (peak_jet is None or hour_jet > peak_jet):
-                        peak_jet = hour_jet
+                    hour_wind = seeing_by_hour.get(hour)
+                    if hour_wind is not None and (peak_seeing_wind is None
+                                                  or hour_wind > peak_seeing_wind):
+                        peak_seeing_wind = hour_wind
 
             if found_hour:
                 break
@@ -319,7 +324,7 @@ def plot_my_dso_and_horizon(dso: FixedTarget, my_observatory: Observer, observe_
             clipped_wsp.append(float('nan'))
             clipped_hum.append(float('nan'))
             clipped_smoke.append(float('nan'))
-            clipped_jet.append(float('nan'))
+            clipped_seeing.append(float('nan'))
 
     # Always report the smoke level for the imaging window, even when it's clear.
     if peak_pm25_aqi is not None:
@@ -331,12 +336,12 @@ def plot_my_dso_and_horizon(dso: FixedTarget, my_observatory: Observer, observe_
     else:
         weather_msg += "\nSmoke: unknown"
 
-    # Report the jet-stream seeing proxy for the imaging window (worst hour).
-    if peak_jet is not None:
-        weather_msg += (f"\nSeeing (jet stream): {weather.seeing_from_jetstream(peak_jet)} "
-                        f"({peak_jet:.0f} km/h at {weather.JET_LEVEL_HPA} hPa)")
+    # Report the seeing proxy for the imaging window (worst hour).
+    if peak_seeing_wind is not None:
+        weather_msg += (f"\nSeeing: {weather.seeing_from_wind(peak_seeing_wind)} "
+                        f"({peak_seeing_wind:.0f} km/h at {weather.SEEING_LEVEL_HPA} hPa)")
     else:
-        weather_msg += "\nSeeing (jet stream): unknown"
+        weather_msg += "\nSeeing: unknown"
 
     ax.plot(local_datetime, clipped_cloud, color='red', label = 'Cloud Cover',linewidth=2)
     ax.plot(local_datetime, clipped_pp, color='pink', label='Prob. Precip.',linewidth=2)
@@ -347,10 +352,10 @@ def plot_my_dso_and_horizon(dso: FixedTarget, my_observatory: Observer, observe_
     ax.axhline(_SMOKE_AQI_ADVISORY / 150 * 90, color='saddlebrown', linestyle=':',
                linewidth=1, alpha=0.4,
                label=f'Smoke advisory (PM2.5 AQI {_SMOKE_AQI_ADVISORY})')
-    ax.plot(local_datetime, clipped_jet, color='darkorange', linestyle='-.',
-            label='Jet Stream (250 hPa km/h, /150)', linewidth=2)
-    ax.axhline(55 / 150 * 90, color='darkorange', linestyle=':',
-               linewidth=1, alpha=0.4, label='Seeing gate (55 km/h)')
+    ax.plot(local_datetime, clipped_seeing, color='darkorange', linestyle='-.',
+            label='Seeing wind (850 hPa km/h, /60)', linewidth=2)
+    ax.axhline(30 / 60 * 90, color='darkorange', linestyle=':',
+               linewidth=1, alpha=0.4, label='Seeing turns poor (30 km/h)')
 
     ax.set_xlim([local_datetime[0], local_datetime[-1]])
     date_formatter = dates.DateFormatter('%H', tz=local_tz)

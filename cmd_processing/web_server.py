@@ -155,33 +155,34 @@ def _read_outside_aqi() -> Optional[int]:
     return _outside_aqi
 
 
-# Jet-stream (250 hPa) wind cache as a seeing proxy, refreshed ~15 min.
-_jetstream_kmh: Optional[float] = None
-_jetstream_fetched: float = 0.0
-_JETSTREAM_TTL = 900.0
+# Seeing-level (850 hPa) wind cache as a seeing proxy, refreshed ~15 min.
+_seeing_wind_kmh: Optional[float] = None
+_seeing_wind_fetched: float = 0.0
+_SEEING_WIND_TTL = 900.0
 
 
-def _read_jetstream_kmh() -> Optional[float]:
-    """Current jet-stream wind (km/h at 250 hPa) via Open-Meteo. Cached ~15 min.
+def _read_seeing_wind_kmh() -> Optional[float]:
+    """Current 850 hPa wind (km/h) via Open-Meteo. Cached ~15 min.
 
-    Upper-air wind is the dominant driver of astronomical seeing (FWHM); this is
-    the same 250 hPa proxy the nightly weather plot uses. Pressure-level fields
+    Low-level wind is what actually tracks seeing (FWHM) at this site — measured,
+    not assumed; see weather.SEEING_LEVEL_HPA. Same proxy the nightly weather
+    plot uses, so the dashboard and the `tonight` report cannot disagree. Pressure-level fields
     are hourly-only on Open-Meteo, so we fetch today's hourly series and pick the
     current hour. Blocking (requests) — call via asyncio.to_thread. Returns the
     last cached value on failure, or None if never fetched.
     """
-    global _jetstream_kmh, _jetstream_fetched
+    global _seeing_wind_kmh, _seeing_wind_fetched
     import time as _time
-    if _jetstream_kmh is not None and (_time.time() - _jetstream_fetched) < _JETSTREAM_TTL:
-        return _jetstream_kmh
+    if _seeing_wind_kmh is not None and (_time.time() - _seeing_wind_fetched) < _SEEING_WIND_TTL:
+        return _seeing_wind_kmh
     try:
         import requests
         import pytz
         from datetime import datetime
         from configs import config
-        from iris_astronomy.weather import JET_LEVEL_HPA
+        from iris_astronomy.weather import SEEING_LEVEL_HPA
         loc = config.data()["location"]
-        field = f"wind_speed_{JET_LEVEL_HPA}hPa"
+        field = f"wind_speed_{SEEING_LEVEL_HPA}hPa"
         r = requests.get(
             "https://api.open-meteo.com/v1/forecast",
             params={"latitude": loc["latitude"], "longitude": loc["longitude"],
@@ -194,11 +195,11 @@ def _read_jetstream_kmh() -> Optional[float]:
         # Open-Meteo returns local (site) times with timezone=auto; match the wall-clock hour.
         now_hour = datetime.now(pytz.timezone("America/New_York")).strftime("%Y-%m-%dT%H:00")
         idx = times.index(now_hour) if now_hour in times else 0
-        _jetstream_kmh = round(float(winds[idx]))
-        _jetstream_fetched = _time.time()
+        _seeing_wind_kmh = round(float(winds[idx]))
+        _seeing_wind_fetched = _time.time()
     except Exception:
-        _logger.exception("jet-stream wind fetch failed")
-    return _jetstream_kmh
+        _logger.exception("seeing-level wind fetch failed")
+    return _seeing_wind_kmh
 
 
 def init(images_dir: str) -> None:
@@ -475,13 +476,13 @@ async def api_ticker():
         except Exception:
             pass
 
-        # Jet-stream seeing proxy (250 hPa wind) via Open-Meteo (no key needed)
+        # Seeing proxy: 850 hPa wind via Open-Meteo (no key needed)
         try:
-            from iris_astronomy.weather import seeing_from_jetstream
-            jet = await asyncio.to_thread(_read_jetstream_kmh)
-            if jet is not None:
+            from iris_astronomy.weather import seeing_from_wind
+            seeing_wind = await asyncio.to_thread(_read_seeing_wind_kmh)
+            if seeing_wind is not None:
                 metrics.append({"label": "Seeing",
-                                "value": f"{jet:.0f} km/h · {seeing_from_jetstream(jet)}"})
+                                "value": f"{seeing_wind:.0f} km/h · {seeing_from_wind(seeing_wind)}"})
         except Exception:
             pass
 

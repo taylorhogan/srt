@@ -19,9 +19,17 @@
 | YYYY-MM-DD | | | | | | |
 
 Conditions worth recording: sky background (ADU/s above pedestal), seeing proxy
-(jet-stream wind at 250 hPa), dew-point spread, measured PM2.5 if elevated.
-Dew-point spread is the strongest predictor of FWHM at this site — humid nights
-are the sharp ones.
+(850 hPa wind — NOT the jet stream, see below), dew-point spread, measured PM2.5
+if elevated.
+
+Measured 2026-08-04 over 9 nights of sh2-92, against median FWHM: 850 hPa wind
+ρ=+0.87, dew-point spread ρ=+0.88 (humid nights are the sharp ones), and the
+250 hPa jet ρ=+0.33 — no relationship. The wind correlation decays monotonically
+with altitude, so the turbulence that matters here is low-level, as expected for
+a site inside the boundary layer rather than above it. Cloud cover ρ=-0.07: it
+costs frames, not sharpness. Re-run `scripts/seeing_vs_weather.py` as nights
+accumulate — nine is a thin calibration and wind and humidity are entangled
+(ρ=-0.65), so which one is causal is still open.
 
 ## Image
 
