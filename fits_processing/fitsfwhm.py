@@ -1,3 +1,4 @@
+import logging
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -33,6 +34,8 @@ _MIN_SNR = 10.0
 # Ratio of the larger axis stddev to the smaller must not exceed this (1.0 = perfect circle)
 _MAX_ELLIPTICITY = 2.0
 
+_logger = logging.getLogger(__name__)
+
 _DARK_BG   = "#0d0d1a"
 _DARK_AXES = "#1a1a2e"
 
@@ -66,7 +69,7 @@ def _fit_stars(
       - Post-fit ellipticity (long_axis / short_axis) <= max_ellipticity
 
     Returns:
-        (image_data, [(x, y, fwhm_pixels, eccentricity), ...])
+        (image_data, [(x, y, fwhm_pixels, eccentricity, major_angle_rad, amplitude), ...])
         Eccentricity is sqrt(1 - (short_axis/long_axis)^2); 0 = perfect circle, 1 = line.
     """
     with fits.open(fits_path) as hdul:
@@ -133,7 +136,12 @@ def _fit_stars(
             # Major axis angle: if x_stddev >= y_stddev it's theta, otherwise theta + 90°.
             theta = float(fitted.theta.value)
             major_angle = theta if sigma_x >= sigma_y else theta + np.pi / 2.0
-            stars.append((float(xc), float(yc), fwhm, ecc, major_angle))
+            # Amplitude rides along as a 6th element so callers can select a
+            # fixed, brightness-matched star sample (see
+            # compute_optics_trend_metrics). Appended, never inserted: existing
+            # callers index s[0..4] positionally.
+            stars.append((float(xc), float(yc), fwhm, ecc, major_angle,
+                          float(fitted.amplitude.value)))
         except Exception:
             continue
 
@@ -528,7 +536,7 @@ def save_eccentricity_angle_map(
         # Arrow length is proportional to eccentricity, scaled to ~2 % of image width
         arrow_scale = max(data.shape) * 0.05
 
-        for x, y, fwhm, ecc, angle in stars:
+        for x, y, fwhm, ecc, angle, *_ in stars:
             length = ecc * arrow_scale
             if length < 1.0:
                 length = 1.0          # always draw a tiny stub so every star is visible
@@ -645,6 +653,278 @@ def compute_optical_metrics(
         "coma_score":           coma_score,
         "collimation_score":    collimation_score,
     }
+
+
+# --- Seeing-robust optical-trend metrics -----------------------------------
+#
+# compute_optical_metrics above answers "how good is this frame". These answer a
+# different question: "has the TELESCOPE changed" — which needs metrics that
+# survive the weather, and its metrics do not. Measured on sh2-92 (same target,
+# same filter, no optical change in between): from the best night to the worst,
+# seeing went 1.88" -> 3.11" and field_uniformity moved +88%, coma_score -41%,
+# collimation_score -29% — all in the direction that reads as "optics improved".
+# See docs/optics_trend_plan.md for the full table and the reasoning.
+#
+# Two rules make these different:
+#   * fixed-N star sampling — always the same number of stars in the same
+#     brightness band, so the population cannot change with the seeing (the star
+#     count fell 718 -> 130 across those two nights, which is most of the effect);
+#   * quadrature, never ratios — seeing adds isotropic blur that combines in
+#     quadrature, so subtracting the best patch of field removes it to first
+#     order. Dividing by the mean, as field_uniformity does, builds an inverse
+#     seeing dependence straight into the metric.
+
+_TREND_N_STARS = 150            # fixed sample size; a night with fewer is reported as-is
+_TREND_SATURATION_SKIP = 0.02   # drop the brightest 2% — flat-topped fits lie
+_TREND_GRID = 4                 # 4x4 cells: ~9 stars per cell at N=150
+
+
+def _fits_shape(fits_path: Path) -> tuple[int, int]:
+    """(height, width) of a FITS image without keeping the pixels around."""
+    with fits.open(fits_path) as hdul:
+        shape = np.squeeze(hdul[0].data).shape
+    return int(shape[0]), int(shape[1])
+
+
+def compute_optics_trend_metrics(
+    fits_path: Path,
+    arcsec_per_pixel: float = 1.0,
+    n_stars: int = _TREND_N_STARS,
+    threshold_sigma: float = _DETECTION_THRESHOLD_SIGMA,
+    min_snr: float = _MIN_SNR,
+    max_ellipticity: float = _MAX_ELLIPTICITY,
+) -> dict:
+    """Optical metrics designed to hold still when the seeing moves.
+
+    Returns {} when the frame cannot support the measurement (too few stars).
+
+    Keys, and what each is for:
+
+        stars_used            how many stars the fixed sample actually got
+        seeing_floor_arcsec   p10 of per-cell FWHM — the best patch of field,
+                              where the optics contribute least. A better
+                              per-night seeing estimate than median FWHM, which
+                              folds in the optical field degradation.
+        field_excess_arcsec   sqrt(median_cell^2 - floor^2): the optical blur
+                              added across the field, seeing removed.
+        edge_excess_arcsec    the same at the p90 cell — the worst of the field.
+                              Up while field_excess is flat means tilt/spacing.
+        sweet_spot_x/y/r      where FWHM is minimised, in normalised field
+                              coordinates (-1..1, 0 = centre). THE collimation
+                              indicator: seeing lifts the whole surface without
+                              moving its minimum.
+        radial_fraction       mean cos(2*delta) between elongation and the radial
+                              direction: +1 all radial (coma), 0 random,
+                              -1 tangential.
+        uniform_fraction      Rayleigh R of doubled elongation angles. 1 = every
+                              star elongated the same way, which is NOT optics —
+                              that is guiding, wind shake or a cable snag.
+        uniform_angle_deg     the direction of that elongation, 0-180.
+        median_ecc            eccentricity over the fixed sample.
+
+    Angles are doubled throughout because an elongation axis is defined modulo
+    180 degrees, not 360 — a star elongated "north" and one elongated "south" are
+    the same measurement, and averaging raw angles would cancel them out.
+    """
+    sample, detected, shape = trend_sample(
+        fits_path, n_stars, threshold_sigma, min_snr, max_ellipticity)
+    if not sample:
+        return {}
+    return optics_trend_from_sample(sample, detected, shape, arcsec_per_pixel)
+
+
+def trend_sample(
+    fits_path: Path,
+    n_stars: int = _TREND_N_STARS,
+    threshold_sigma: float = _DETECTION_THRESHOLD_SIGMA,
+    min_snr: float = _MIN_SNR,
+    max_ellipticity: float = _MAX_ELLIPTICITY,
+):
+    """One frame's fixed-N, brightness-matched star sample.
+
+    Split out from the metrics so a whole night's frames can be POOLED into one
+    measurement. That matters more than it looks: the spatial metrics are
+    limited by stars-per-cell, and measured across three comparable Ha nights the
+    per-frame-then-median approach still scattered 86% on field_excess and 123%
+    on radial_fraction. Pooling ~15 frames puts ~10x the stars in each cell.
+
+    Returns (sample, detected_count, (h, w)); sample is empty when the frame
+    cannot support a measurement.
+    """
+    _, stars = _fit_stars(fits_path, threshold_sigma, min_snr, max_ellipticity)
+    if len(stars) < 20:
+        return [], len(stars), (0, 0)
+    # Sort bright-first, drop the top few percent (saturated cores fit badly, and
+    # they are the stars most likely to survive when the seeing collapses), then
+    # take a fixed count.
+    ordered = sorted(stars, key=lambda s: s[5], reverse=True)
+    skip = int(len(ordered) * _TREND_SATURATION_SKIP)
+    sample = ordered[skip:skip + n_stars]
+    if len(sample) < 20:
+        sample = ordered[:n_stars]
+    if len(sample) < 20:
+        return [], len(stars), (0, 0)
+    return sample, len(stars), _fits_shape(fits_path)
+
+
+def optics_trend_from_sample(sample, detected: int, shape, arcsec_per_pixel: float) -> dict:
+    """Derive the trend metrics from a star sample — one frame's or a night's.
+
+    Pooling across frames is safe here because everything measured is a function
+    of position in the FIELD, and dither offsets are a few pixels against a 4x4
+    grid. An equatorial mount adds no field rotation to undo.
+    """
+    h, w = shape
+    if not sample or h <= 0 or w <= 0:
+        return {}
+    n_stars = len(sample)
+    cx, cy = w / 2.0, h / 2.0
+
+    xs = np.array([s[0] for s in sample], float)
+    ys = np.array([s[1] for s in sample], float)
+    fwhm_as = np.array([s[2] for s in sample], float) * arcsec_per_pixel
+    eccs = np.array([s[3] for s in sample], float)
+    angles = np.array([s[4] for s in sample], float)
+
+    out: dict = {
+        "stars_used": len(sample),
+        "stars_detected": detected,
+        "median_fwhm_arcsec": float(np.median(fwhm_as)),
+        "median_ecc": float(np.median(eccs)),
+    }
+
+    # --- quadrature field excess -------------------------------------------
+    # Per-cell median FWHM^2, then compare the typical and worst cells against
+    # the best. p10/p90 rather than min/max: the extreme of a set of noisy cell
+    # medians is biased, the deciles are not.
+    sq = fwhm_as ** 2
+    cell_x = np.clip((xs / w * _TREND_GRID).astype(int), 0, _TREND_GRID - 1)
+    cell_y = np.clip((ys / h * _TREND_GRID).astype(int), 0, _TREND_GRID - 1)
+    cell_med = []
+    for i in range(_TREND_GRID):
+        for j in range(_TREND_GRID):
+            m = (cell_x == i) & (cell_y == j)
+            if m.sum() >= 3:
+                cell_med.append(float(np.median(sq[m])))
+    if len(cell_med) >= 4:
+        cells = np.array(cell_med)
+        floor_sq = float(np.percentile(cells, 10))
+        out["seeing_floor_arcsec"] = float(np.sqrt(max(floor_sq, 0.0)))
+        out["field_excess_arcsec"] = float(
+            np.sqrt(max(float(np.median(cells)) - floor_sq, 0.0)))
+        out["edge_excess_arcsec"] = float(
+            np.sqrt(max(float(np.percentile(cells, 90)) - floor_sq, 0.0)))
+        out["cells_used"] = len(cell_med)
+
+    # --- sweet spot: where the FWHM surface bottoms out ---------------------
+    # Quadratic surface fit to FWHM^2 in normalised coordinates. Seeing raises
+    # the constant term and leaves the location of the minimum alone, which is
+    # what makes this the collimation indicator worth trending.
+    u = (xs - cx) / (w / 2.0)
+    v = (ys - cy) / (h / 2.0)
+    try:
+        A = np.column_stack([np.ones_like(u), u, v, u * u, v * v, u * v])
+        coef, *_ = np.linalg.lstsq(A, sq, rcond=None)
+        _, b, c, d, e, f = coef
+        hess = np.array([[2.0 * d, f], [f, 2.0 * e]])
+        if np.linalg.det(hess) > 0 and d > 0:   # a genuine minimum, not a saddle
+            su, sv = np.linalg.solve(hess, [-b, -c])
+            # Clamp: an almost-flat field puts the fitted minimum far outside the
+            # frame, where it means nothing. Report the edge rather than a number
+            # that would swamp any trend.
+            su = float(np.clip(su, -1.5, 1.5))
+            sv = float(np.clip(sv, -1.5, 1.5))
+            out["sweet_spot_x"] = su
+            out["sweet_spot_y"] = sv
+            out["sweet_spot_r"] = float(np.hypot(su, sv))
+    except Exception:
+        _logger.debug("sweet-spot fit failed for %s", fits_path, exc_info=True)
+
+    # --- elongation geometry: optics vs tracking ---------------------------
+    # Radial elongation is coma/collimation; one shared direction across the
+    # whole field is not optics at all. Separating those is the point — the old
+    # collimation_score conflates them.
+    radial = np.arctan2(ys - cy, xs - cx)
+    out["radial_fraction"] = float(np.mean(np.cos(2.0 * (angles - radial))))
+    cs, sn = np.cos(2.0 * angles), np.sin(2.0 * angles)
+    out["uniform_fraction"] = float(np.hypot(cs.mean(), sn.mean()))
+    out["uniform_angle_deg"] = float(
+        (np.degrees(np.arctan2(sn.mean(), cs.mean())) / 2.0) % 180.0)
+    return out
+
+
+# A frame only joins the pool if it supplied the FULL fixed-N sample, and a
+# night needs this many such frames to be measured at all.
+#
+# Gating on the pooled total instead does not work, and the failure is
+# instructive: on 2026-07-13 each frame held only ~130 stars, but eleven of them
+# pooled to 1489 — comfortably past any total-star threshold, while every single
+# frame was too thin for a comparable sample. The whole point of fixed-N is that
+# the population is the same every night, and a frame that cannot fill it breaks
+# that guarantee no matter how many such frames are added together.
+#
+# The consequence is deliberate: a bad-seeing or clouded night records NOTHING.
+# An honest gap in the series beats a number that is really a seeing measurement
+# wearing an optics label.
+_TREND_MIN_FULL_FRAMES = 5
+
+
+def compute_optics_trend_for_frames(
+    fits_paths,
+    arcsec_per_pixel: float = 1.0,
+    n_stars: int = _TREND_N_STARS,
+    progress_cb=None,
+) -> dict:
+    """Pool several frames into ONE optics measurement for the night.
+
+    Per-frame metrics then medians is the obvious approach and it is too noisy:
+    across three comparable Ha nights it scattered 86% on field_excess and 123%
+    on radial_fraction, because each 4x4 cell only held ~9 stars. Pooling puts
+    roughly ten times that in every cell, which is where the precision has to
+    come from.
+
+    Returns {} when too few frames could supply a full sample (see
+    _TREND_MIN_FULL_FRAMES).
+    """
+    pooled: list = []
+    detected_total = 0
+    shape = (0, 0)
+    used = 0
+    thin = 0
+    for path in fits_paths:
+        try:
+            sample, detected, sh = trend_sample(path, n_stars)
+        except Exception:
+            _logger.debug("trend sample failed for %s", path, exc_info=True)
+            continue
+        detected_total += detected
+        if len(sample) < n_stars:
+            # Short sample = a different star population from a night that could
+            # fill it. Pooling it would silently reintroduce the seeing
+            # dependence this whole design exists to remove.
+            thin += 1
+            continue
+        if shape == (0, 0):
+            shape = sh
+        elif sh != shape:
+            continue          # different sensor/binning — not poolable
+        pooled.extend(sample)
+        used += 1
+        if progress_cb:
+            progress_cb(f"optics trend: {used} frames, {len(pooled)} stars pooled")
+
+    if used < _TREND_MIN_FULL_FRAMES:
+        _logger.info(
+            "Optics trend: skipped — only %d frames could supply %d stars "
+            "(%d too thin, need %d frames)",
+            used, n_stars, thin, _TREND_MIN_FULL_FRAMES)
+        return {}
+
+    metrics = optics_trend_from_sample(pooled, detected_total, shape, arcsec_per_pixel)
+    if metrics:
+        metrics["frames_used"] = used
+        metrics["stars_pooled"] = len(pooled)
+    return metrics
 
 
 def save_optical_metrics_table(metrics: dict, output_path: Path) -> Path:

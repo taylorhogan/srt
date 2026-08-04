@@ -222,6 +222,113 @@ def _post_imaging_summary(imaging_start: datetime) -> None:
         len(fits_files), float(np.median(fwhm_list)), float(np.median(ecc_list)),
     )
 
+    # Best-effort and last: an optics measurement is never worth risking the
+    # rest of the shutdown, and by here the roof is closed and the dehumidifier
+    # is on, so the couple of minutes it takes costs nothing.
+    try:
+        _record_optics_trend(dso_dir, frames, arcsec_per_pixel, logger)
+    except Exception:
+        logger.exception("Optics trend measurement failed")
+
+
+# How many of the night's frames feed the pooled optics measurement. 12 frames
+# is ~3 min of star fitting for ~1800 pooled stars; more would be tighter still
+# but this runs on every shutdown.
+_OPTICS_TREND_FRAMES = 12
+
+# A frame claiming better than this is lying — one 08-03 frame measured 0.22",
+# which is physically impossible and would drag the "best frames" selection
+# straight onto the worst data.
+_OPTICS_MIN_PLAUSIBLE_FWHM = 0.5
+
+
+def _record_optics_trend(dso_dir, frames: list[dict], arcsec_per_pixel: float,
+                         logger) -> None:
+    """Measure tonight's seeing-robust optics metrics and append them to history.
+
+    Logged and persisted only — nothing consumes this yet, deliberately. The
+    thresholds a comparison command would need do not exist until there is a
+    baseline to set them from, and a change detector that cries wolf gets
+    ignored. See docs/optics_trend_plan.md.
+
+    Uses the night's SHARPEST frames, not a random sample: optical field errors
+    are easiest to see when the seeing is not smearing them, and the frames are
+    already measured so choosing them is free.
+    """
+    import json as _json
+
+    if dso_dir is None:
+        return
+    candidates = [
+        e for e in frames
+        if e.get("fwhm_arcsec") and float(e["fwhm_arcsec"]) >= _OPTICS_MIN_PLAUSIBLE_FWHM
+        and Path(e["path"]).exists()
+    ]
+    if len(candidates) < 4:
+        logger.info("Optics trend: skipped — only %d usable frames", len(candidates))
+        return
+    candidates.sort(key=lambda e: float(e["fwhm_arcsec"]))
+    chosen = candidates[:_OPTICS_TREND_FRAMES]
+
+    metrics = fitsfwhm.compute_optics_trend_for_frames(
+        [Path(e["path"]) for e in chosen], arcsec_per_pixel=arcsec_per_pixel,
+    )
+    if not metrics:
+        return
+
+    filters = sorted({e.get("filter") for e in chosen if e.get("filter")})
+    night = Path(chosen[0]["path"]).parent.parent.name
+    record = {
+        "night": night,
+        "dso": dso_dir.name,
+        "filters": filters,
+        "computed": datetime.now().astimezone().isoformat(timespec="seconds"),
+        **{k: (round(v, 4) if isinstance(v, float) else v) for k, v in metrics.items()},
+    }
+
+    logger.info(
+        "Optics trend [%s %s]: %d frames / %d stars — seeing floor %.2f\", "
+        "field excess %.2f\", edge excess %.2f\", sweet spot (%+.2f, %+.2f) r=%.2f, "
+        "radial %.2f, uniform %.2f @ %.0f deg",
+        night, ",".join(filters) or "?", metrics.get("frames_used", 0),
+        metrics.get("stars_pooled", 0), metrics.get("seeing_floor_arcsec", float("nan")),
+        metrics.get("field_excess_arcsec", float("nan")),
+        metrics.get("edge_excess_arcsec", float("nan")),
+        metrics.get("sweet_spot_x", float("nan")), metrics.get("sweet_spot_y", float("nan")),
+        metrics.get("sweet_spot_r", float("nan")), metrics.get("radial_fraction", float("nan")),
+        metrics.get("uniform_fraction", float("nan")),
+        metrics.get("uniform_angle_deg", float("nan")),
+    )
+
+    # One row per night, newest last; a re-run of the same night replaces its row
+    # rather than adding a second one the trend would read as two nights.
+    hist_path = dso_dir / "optics_trend.json"
+    history = []
+    if hist_path.exists():
+        try:
+            loaded = _json.load(open(hist_path))
+            if isinstance(loaded, list):
+                history = [r for r in loaded if r.get("night") != night]
+        except Exception:
+            logger.warning("optics_trend.json unreadable — starting a new history")
+    history.append(record)
+    history.sort(key=lambda r: r.get("night", ""))
+    tmp = hist_path.with_suffix(".tmp")
+    try:
+        with open(tmp, "w") as f:
+            _json.dump(history, f, indent=1)
+        tmp.replace(hist_path)
+    except Exception:
+        logger.exception("Could not write %s", hist_path)
+        return
+
+    social_server.post_social_message(
+        f"Optics: field excess {metrics.get('field_excess_arcsec', 0):.2f}\", "
+        f"sweet spot r={metrics.get('sweet_spot_r', 0):.2f}, "
+        f"radial {metrics.get('radial_fraction', 0):+.2f} "
+        f"({metrics.get('stars_pooled', 0)} stars, night {len(history)} of history)"
+    )
+
 
 def do_main():
     logger = utils.set_logger()
