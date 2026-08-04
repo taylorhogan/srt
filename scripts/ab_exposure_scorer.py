@@ -30,7 +30,14 @@ TRUTH = {
 
 
 def verdict(frame):
-    """parked/closed/open exactly as _visual_status_once decides them."""
+    """parked/closed/open from ONE frame — how vision safety used to decide.
+
+    Production no longer works this way: it votes the verdict across the whole
+    ladder (vision_safety._decide_from_rungs), because choosing a frame got 3
+    of 8 labelled ladders wrong. Kept per-frame here on purpose — comparing two
+    exposure scorers means asking what each one's chosen frame would have said.
+    See scripts/replay_ladder_verdicts.py for the verdict that actually ships.
+    """
     out = {}
     for name, tpl, pos in (("parked", "parked template", "parked pos"),
                            ("closed", "closed template", "closed pos"),

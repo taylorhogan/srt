@@ -185,6 +185,27 @@ def camera_session():
         yield
 
 
+# Every frame of the most recent sweep, kept in memory for the caller that
+# needs to reason across exposures rather than about one chosen frame — vision
+# safety votes its verdict over all of them. Written by _take_snapshot under
+# _camera_lock and read by the caller while it still holds camera_session(), so
+# it always describes that caller's own snapshot. None when no sweep ran (a
+# test_path copy, or a failure before the sweep).
+last_ladder: dict | None = None
+
+
+def take_ladder():
+    """Hand the last sweep to its caller, releasing this module's reference.
+
+    A ladder is ~60 MB of frames, so ownership passes rather than being shared:
+    whoever takes it holds it only as long as it is being read. Call while still
+    inside :func:`camera_session` so the ladder can only be your own snapshot's.
+    """
+    global last_ladder
+    ladder, last_ladder = last_ladder, None
+    return ladder
+
+
 def _capture_burst(exposure, n, light, gain=None):
     """Reopen the USB camera at a fixed exposure and grab up to ``n`` frames.
 
@@ -223,6 +244,12 @@ def _combine_stable(frames, stack_frames=1):
     Reject frames whose RMS deviation from that median is a MAD outlier, then:
     a single-frame request returns the cleanest surviving *real* frame; a stack
     averages the survivors (noise ~ 1/sqrt(N)). Returns None for an empty list.
+
+    NOTE for vision safety: the frame this returns is NOT what decides the
+    parked/roof verdict — that is voted across the whole exposure ladder (see
+    vision_safety._decide_from_rungs), precisely so that no single frame's
+    brightness can decide a safety question. This combine only produces the
+    image a human looks at.
     """
     if not frames:
         return None
@@ -287,6 +314,10 @@ def take_snapshot(test_path=None, light=True, out_path=None, scorer=None, stack_
 
 def _take_snapshot(test_path=None, light=True, out_path=None, scorer=None, stack_frames=1, gain=None,
                    capture_dir=None, capture_force=False):
+    global last_ladder
+    # Clear first: a caller must never read the PREVIOUS snapshot's ladder as
+    # though it described this one, however this call ends.
+    last_ladder = None
     _loger.info("Starting camera snapshot (light=%s)", light)
     cfg = config.data()
     print (utils.set_install_dir())
@@ -399,6 +430,10 @@ def _take_snapshot(test_path=None, light=True, out_path=None, scorer=None, stack
 
         pictures = []
         scores = []
+        # Exposures actually captured. A failed read skips its exposure, so
+        # zipping the requested list against the frames would mislabel every
+        # frame after the gap — and these labels now feed a safety verdict.
+        taken = []
         for exposure_value in exposure_values:
             vid.set(cv.CAP_PROP_EXPOSURE, exposure_value)
             actual = vid.get(cv.CAP_PROP_EXPOSURE)
@@ -426,14 +461,22 @@ def _take_snapshot(test_path=None, light=True, out_path=None, scorer=None, stack
                             exposure_value, actual, score, clip)
             pictures.append(frame)
             scores.append(score)
+            taken.append(exposure_value)
 
         vid.release()
+
+        # Hand the whole sweep to the caller. The sweep is taken regardless, so
+        # this is free, and it is the only record of what the markers looked
+        # like at every exposure — the evidence vision safety votes over.
+        last_ladder = {"exposures": list(taken),
+                       "frames": list(pictures),
+                       "scores": list(scores)}
 
         # Keep the whole ladder when asked. Deliberately after release() so a
         # failure writing files can never hold the camera open.
         if capture_dir and pictures:
             try:
-                _save_exposure_set(capture_dir, exposure_values, pictures, scores,
+                _save_exposure_set(capture_dir, taken, pictures, scores,
                                    force=capture_force)
             except Exception:
                 _loger.warning("exposure-set capture failed", exc_info=True)

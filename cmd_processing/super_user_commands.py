@@ -454,6 +454,50 @@ def _roof_confirm_wait(seconds: float, imaging_run: bool) -> None:
         time.sleep(min(1.0, remaining))
 
 
+_MAX_ROOF_CHECKS = 5
+
+
+def confirm_roof_state(target: str, imaging_run: bool = False) -> bool:
+    """Wait for vision to confirm the roof reached *target* ("open"/"closed").
+
+    Shared by :func:`open_roof`, :func:`close_roof` and the end-of-night
+    shutdown, so every path that moves the roof judges the outcome the same
+    way. One look is never a verdict: on 2026-08-04 the end sequence took a
+    single frame 30s after the close, read it as "roof is NOT closed", and
+    posted that to the imaging card — while the roof was in fact closed (the
+    move's audio and motor-current signatures both filed as good, and the next
+    snapshot 72s later read closed at 0.89 confidence). The end sequence was
+    the one roof path that did not retry.
+
+    Call once the relay has fired: waits 30s for the travel, then re-checks up
+    to ``_MAX_ROOF_CHECKS`` times, 5 minutes apart, returning True as soon as
+    vision confirms *target*. Opening additionally requires the scope to still
+    read parked. Refusal/progress messages go to the web chat.
+    """
+    closing = target == "closed"
+    word = "close" if closing else "open"
+    _roof_confirm_wait(30, imaging_run)
+    for attempt in range(_MAX_ROOF_CHECKS):
+        _roof_cancel_point(_ROOF_CANCEL_AFTER_FIRE_MSG, imaging_run)
+        parked, closed, is_open, mod_date = get_status_with_lights()
+        reached = closed if closing else (is_open and parked)
+        if reached:
+            return True
+        if attempt < _MAX_ROOF_CHECKS - 1:
+            msg = (
+                f"Roof {word} not confirmed (attempt {attempt + 1}/{_MAX_ROOF_CHECKS})"
+                f"{_vision_fail_reason(target)}, waiting 5 min"
+            )
+            social_server.post_social_message(msg)
+            _logger.warning(msg)
+            _roof_confirm_wait(5 * 60, imaging_run)
+    social_server.post_social_message(
+        f"Roof could not be confirmed {target} after {_MAX_ROOF_CHECKS} attempts, stopping"
+    )
+    _logger.warning("Roof %s check failed after %d attempts", word, _MAX_ROOF_CHECKS)
+    return False
+
+
 def open_roof(force: bool = False, imaging_run: bool = False) -> bool:
     """Open the observatory roof with full gating — the single open path for
     both ``roof!! open`` and the imaging run.
@@ -515,24 +559,7 @@ def open_roof(force: bool = False, imaging_run: bool = False) -> bool:
         if force:
             social_server.post_social_message("Roof open relay fired (forced, unverified)")
             return True
-        _roof_confirm_wait(30, imaging_run)
-        MAX_ROOF_CHECKS = 5
-        for attempt in range(MAX_ROOF_CHECKS):
-            _roof_cancel_point(_ROOF_CANCEL_AFTER_FIRE_MSG, imaging_run)
-            parked, closed, is_open, mod_date = get_status_with_lights()
-            if is_open and parked:
-                return True
-            if attempt < MAX_ROOF_CHECKS - 1:
-                msg = (
-                    f"Roof open not confirmed (attempt {attempt + 1}/{MAX_ROOF_CHECKS})"
-                    f"{_vision_fail_reason('open')}, waiting 5 min"
-                )
-                social_server.post_social_message(msg)
-                _logger.warning(msg)
-                _roof_confirm_wait(5 * 60, imaging_run)
-        social_server.post_social_message(f"Roof could not be confirmed open after {MAX_ROOF_CHECKS} attempts, stopping")
-        _logger.warning("Roof open check failed after %d attempts", MAX_ROOF_CHECKS)
-        return False
+        return confirm_roof_state("open", imaging_run)
     finally:
         _roof_lock.release()
 
@@ -591,24 +618,7 @@ def close_roof(force: bool = False, imaging_run: bool = False) -> bool:
         if force:
             social_server.post_social_message("Roof close relay fired (forced, unverified)")
             return True
-        _roof_confirm_wait(30, imaging_run)
-        MAX_ROOF_CHECKS = 5
-        for attempt in range(MAX_ROOF_CHECKS):
-            _roof_cancel_point(_ROOF_CANCEL_AFTER_FIRE_MSG, imaging_run)
-            parked, closed, is_open, mod_date = get_status_with_lights()
-            if closed:
-                return True
-            if attempt < MAX_ROOF_CHECKS - 1:
-                msg = (
-                    f"Roof close not confirmed (attempt {attempt + 1}/{MAX_ROOF_CHECKS})"
-                    f"{_vision_fail_reason('closed')}, waiting 5 min"
-                )
-                social_server.post_social_message(msg)
-                _logger.warning(msg)
-                _roof_confirm_wait(5 * 60, imaging_run)
-        social_server.post_social_message(f"Roof could not be confirmed closed after {MAX_ROOF_CHECKS} attempts, stopping")
-        _logger.warning("Roof close check failed after %d attempts", MAX_ROOF_CHECKS)
-        return False
+        return confirm_roof_state("closed", imaging_run)
     finally:
         _roof_lock.release()
 

@@ -273,15 +273,24 @@ def do_main():
                     social_server.post_social_message("Vision Safety says Scope is parked, closing roof")
                     super_user_commands.announce_roof_movement("The roof will be closing in one minute")
                     super_user_commands.toggle_roof(dev_map, capture_direction="close")
-                    # wait for roof to close
-                    time.sleep(30)
-
-                    parked, closed, is_open, mod_date = vision_safety.visual_status()
-                    pushover.push_message("Investigating if roof is closed", inside_view)
+                    # Judge the close exactly as roof!! close does — a single
+                    # frame 30s after the relay is not a verdict, and reporting
+                    # one as though it were is what told the imaging card the
+                    # roof had not closed when it had (2026-08-04). Runs with
+                    # imaging_run=True so a cancel on the imaging card can never
+                    # unwind the shutdown half-done: each check posts its own
+                    # annotated snapshot, and the loop gives the roof 20 minutes.
+                    closed = super_user_commands.confirm_roof_state(
+                        "closed", imaging_run=True)
                     if closed:
                         social_server.post_social_message("Vision Safety says roof is closed")
                     else:
                         social_server.post_social_message("Vision Safety says roof is NOT closed")
+                        # An unclosed roof at end of night is the one thing here
+                        # that needs a human tonight, not in the morning log.
+                        pushover.push_message(
+                            "ROOF NOT CONFIRMED CLOSED after the end sequence — check the observatory",
+                            inside_view)
                     logger.info("step 4")
                     # Turn off the inside light + roof motor FIRST so a later
                     # failure (e.g. an unreachable dehumidifier relay) can never

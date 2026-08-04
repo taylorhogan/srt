@@ -199,6 +199,210 @@ def _score_exposure_set(capture_dir, accuracy, min_conf):
         _logger.warning("scoring the exposure ladder failed", exc_info=True)
 
 
+# How many exposure rungs must agree before a roof state is believed. One is
+# enough because the rule that actually protects us is that the OTHER state
+# must score ZERO. Replayed over all 13 ladders captured so far, every vote is
+# unanimous: the 5 closed sets scored closed 3-5 and open 0; the 8 open sets
+# scored open 1-5 and closed 0. Open resolves on exactly ONE rung in 7 of those
+# 8 — the open marker is readable in a far narrower exposure band than the
+# closed one — so requiring two votes would fail almost every roof-open check.
+_MIN_ROOF_VOTES = 1
+
+# How many rungs must agree before the scope is called parked. NOT a majority:
+# the sweep deliberately spans exposures that are unusable at both ends, and in
+# daylight the whole bright half blows out — two real roof-open ladders
+# (2026-08-03 17:02, 17:07) read parked on exactly 5 of 10 rungs and nothing at
+# all on the top 5, so a majority rule called a parked scope unparked. Counting
+# is the right test: 3 exposures independently putting the marker within
+# `accuracy` px of the parked position is not a coincidence (wrong matches miss
+# by 120-400px, never narrowly), and every ladder measured so far has 5 or more.
+_MIN_PARKED_VOTES = 3
+
+
+def _evaluate_rung(frame, exposure=None):
+    """Match all three markers against one exposure of the sweep."""
+    cs = cfg["camera safety"]
+    rung = {
+        "exposure": exposure,
+        "luma": float(cv.cvtColor(frame, cv.COLOR_BGR2GRAY).mean()),
+        "frame": frame,
+    }
+    for name, tpl_key, pos_key in (("parked", "parked template", "parked pos"),
+                                   ("closed", "closed template", "closed pos"),
+                                   ("open",   "open template",   "open pos")):
+        top_left, bottom_right, center, conf = find_template_rectangle(frame, cs[tpl_key])
+        rung[name] = {
+            "conf": float(conf),
+            "error": float(math.dist(center, cs[pos_key])),
+            "rect": (top_left, bottom_right),
+        }
+    return rung
+
+
+def _decide_from_rungs(rungs):
+    """Vote the parked/roof verdict across every exposure of one sweep.
+
+    The safety question is never "what does this frame say" — it is "what is
+    the observatory doing". A single frame answers that only if its exposure
+    happens to land where the markers are readable, and the readable band is
+    narrow: on 2026-08-04 the closed marker sat at its expected position (0.88
+    confidence, 19px) at exposures -6..-8 and was 610px away at -5, one rung
+    brighter. Picking a frame and reading it therefore stakes a hardware-safety
+    verdict on an exposure guess, and it has now failed in both directions —
+    a closed roof reported NOT closed, and an open roof reported not open.
+
+    The ladder does not have that problem. Replayed over all 13 ladders
+    captured so far, the vote is unanimous every time — the losing state scores
+    exactly zero rungs — while the single-frame verdict gets 3 of the 8
+    labelled sets wrong, every one of them a roof-open case. So the verdict
+    comes from counting rungs instead of choosing one:
+
+    * only rungs bright enough to trust at all are counted (``min_trust_luma``);
+    * ``parked`` needs ``_MIN_PARKED_VOTES`` of those rungs — a count, not a
+      majority, because the ladder's bright end is unusable by design;
+    * the roof is then read only from rungs that are themselves parked-ok (the
+      open/closed marker positions are only meaningful in the parked geometry),
+      and a state wins only if it has votes and the opposite state has NONE.
+
+    Votes on both sides means the ladder cannot discriminate this scene, which
+    is reported as unknown — not guessed. Unknown is safe: visual_status()
+    re-takes the whole ladder, and callers refuse to move hardware on it.
+    """
+    cs = cfg["camera safety"]
+    accuracy = cs["accuracy"]
+    min_conf = cs["match_confidence"]
+    min_luma = cs.get("min_trust_luma", 25.0)
+
+    def ok(rung, state):
+        m = rung[state]
+        return m["conf"] >= min_conf and abs(m["error"]) < accuracy
+
+    lit = [r for r in rungs if r["luma"] >= min_luma]
+    parked_rungs = [r for r in lit if ok(r, "parked")]
+    # Capped by the rungs available so the no-ladder fallback (a single frame)
+    # still decides on that frame, exactly as before.
+    need_parked = min(_MIN_PARKED_VOTES, len(lit)) if lit else 1
+    parked = len(parked_rungs) >= need_parked
+
+    closed_rungs: list = []
+    open_rungs: list = []
+    closed = is_open = False
+    if parked:
+        closed_rungs = [r for r in parked_rungs if ok(r, "closed")]
+        open_rungs = [r for r in parked_rungs if ok(r, "open")]
+        closed = len(closed_rungs) >= _MIN_ROOF_VOTES and not open_rungs
+        is_open = len(open_rungs) >= _MIN_ROOF_VOTES and not closed_rungs
+        if closed_rungs and open_rungs:
+            _logger.warning(
+                "vision ROOF STATE AMBIGUOUS — %d rung(s) read closed and %d read open; "
+                "roof unknown", len(closed_rungs), len(open_rungs),
+            )
+
+    # Representative rung per state: the winning rung when the state won,
+    # otherwise the lit rung that came closest, so a refusal message quotes the
+    # best evidence against itself rather than an arbitrary frame.
+    def representative(state, winners):
+        pool = winners or lit or rungs
+        return max(pool, key=lambda r: r[state]["conf"])
+
+    def gate_fails(rung, state):
+        fails = []
+        if abs(rung[state]["error"]) >= accuracy:
+            fails.append("position")
+        if rung[state]["conf"] < min_conf:
+            fails.append("confidence")
+        return "+".join(fails) if fails else "ok"
+
+    def describe(state, won, winners):
+        rung = representative(state, winners)
+        if won:
+            return rung, "ok"
+        if not lit:
+            return rung, f"all {len(rungs)} rung(s) below min luma {min_luma:.0f}"
+        if state != "parked" and not parked:
+            return rung, "unreadable (scope not parked)"
+        if state != "parked" and closed_rungs and open_rungs:
+            return rung, (f"ambiguous (closed {len(closed_rungs)} rung(s), "
+                          f"open {len(open_rungs)} rung(s))")
+        return rung, f"{len(winners)}/{len(lit)} rungs: {gate_fails(rung, state)}"
+
+    parked_rep, parked_verdict = describe("parked", parked, parked_rungs)
+    closed_rep, closed_verdict = describe("closed", closed, closed_rungs)
+    open_rep, open_verdict = describe("open", is_open, open_rungs)
+
+    # The frame a human is shown is the one that best demonstrates the verdict.
+    # This is the ONLY place a frame is singled out, and nothing depends on it.
+    if closed:
+        display = closed_rep
+    elif is_open:
+        display = open_rep
+    else:
+        display = parked_rep
+
+    _logger.info(
+        "vision parked=%s closed=%s open=%s — votes parked %d/%d lit (%d rungs), "
+        "closed %d, open %d; showing exp %s luma %.1f",
+        parked, closed, is_open, len(parked_rungs), len(lit), len(rungs),
+        len(closed_rungs), len(open_rungs), display["exposure"], display["luma"],
+    )
+    for r in rungs:
+        _logger.debug(
+            "   exp %-4s luma %5.1f  parked %.2f/%4.0fpx  closed %.2f/%4.0fpx  open %.2f/%4.0fpx",
+            r["exposure"], r["luma"],
+            r["parked"]["conf"], r["parked"]["error"],
+            r["closed"]["conf"], r["closed"]["error"],
+            r["open"]["conf"], r["open"]["error"],
+        )
+
+    return {
+        "parked": parked, "closed": closed, "open": is_open,
+        "display": display,
+        "last_match": {
+            "min_conf": min_conf,
+            "accuracy": accuracy,
+            "frame_luma": display["luma"],
+            "min_trust_luma": min_luma,
+            "trusted": bool(parked),
+            "rungs": len(rungs),
+            "lit_rungs": len(lit),
+            "votes": {"parked": len(parked_rungs),
+                      "closed": len(closed_rungs),
+                      "open": len(open_rungs)},
+            # The resolved booleans. The per-template dicts below carry the
+            # evidence; these carry the verdict, so a caller cannot mistake
+            # "the key exists" for "the roof is open".
+            "is_parked": bool(parked),
+            "is_closed": bool(closed),
+            "is_open": bool(is_open),
+            "parked": {"conf": parked_rep["parked"]["conf"],
+                       "error": parked_rep["parked"]["error"],
+                       "verdict": parked_verdict},
+            "closed": {"conf": closed_rep["closed"]["conf"],
+                       "error": closed_rep["closed"]["error"],
+                       "verdict": closed_verdict},
+            "open": {"conf": open_rep["open"]["conf"],
+                     "error": open_rep["open"]["error"],
+                     "verdict": open_verdict},
+        },
+    }
+
+
+def _write_annotated(rung, image_path):
+    """Write the frame the verdict was read from, with each marker's best match
+    boxed (parked red, closed green, open white), for the chat card / pushover.
+
+    Copies first: the ladder frames are the evidence, and drawing on them would
+    alter what a later re-read of the same sweep would see.
+    """
+    image = rung["frame"].copy()
+    for name, color in (("parked", (0, 0, 255)),
+                        ("closed", (0, 255, 0)),
+                        ("open", (255, 255, 255))):
+        top_left, bottom_right = rung[name]["rect"]
+        cv.rectangle(image, top_left, bottom_right, color, 2)
+    cv.imwrite(image_path, image)
+
+
 def _visual_status_once():
     global last_match
 
@@ -232,6 +436,9 @@ def _visual_status_once():
 
         print("read snapshot")
         image_rgb = cv.imread(image_path, cv.IMREAD_COLOR)
+        # Take the ladder while we still hold the camera session, so it can
+        # only ever be the sweep belonging to OUR snapshot.
+        ladder = inside_camera_server.take_ladder()
 
     # A flaky USB webcam snapshot can yield no frame / a half-written file, so
     # cv.imread returns None. Fail safe instead of crashing in cvtColor below:
@@ -247,115 +454,57 @@ def _visual_status_once():
             mod_date = time.ctime()
         return False, False, False, mod_date
 
-    mod_date = time.ctime(os.path.getmtime(image_path))
-
     print ("analysing image")
-    parked_best_match_top_left, parked_best_match_bottom_right, parked_center, max_val_parked = find_template_rectangle(image_rgb, cfg['camera safety']['parked template'])
-    closed_best_match_top_left, closed_best_match_bottom_right, closed_center, max_val_closed = find_template_rectangle(image_rgb, cfg['camera safety']['closed template'])
-    open_best_match_top_left, open_best_match_bottom_right, open_center, max_val_open = find_template_rectangle(image_rgb, cfg['camera safety']['open template'])
-    cv.rectangle(image_rgb, parked_best_match_top_left, parked_best_match_bottom_right, (0, 0, 255), 2)
-    cv.imwrite(cfg["camera safety"]["scope_view"], image_rgb)
-    cv.rectangle(image_rgb, closed_best_match_top_left, closed_best_match_bottom_right, (0, 255, 0), 2)
-    cv.imwrite(cfg["camera safety"]["scope_view"], image_rgb)
-    cv.rectangle(image_rgb, open_best_match_top_left, open_best_match_bottom_right, (255, 255, 255), 2)
-    cv.imwrite(cfg["camera safety"]["scope_view"], image_rgb)
-
-    accuracy = cfg["camera safety"]["accuracy"]
-    print(accuracy)
-    # A state is only trusted when the template match is both close to the
-    # expected pixel position AND confident enough. cv.matchTemplate always
-    # returns a best-match location somewhere, so confidence alone only says the
-    # marker pattern appears in frame — it is *position* that determines state.
-    min_conf = cfg["camera safety"]["match_confidence"]
-    print("min match confidence", min_conf)
-
-    gray = cv.cvtColor(image_rgb, cv.COLOR_BGR2GRAY)
-    frame_luma = float(gray.mean())
-    # Conservative default: a correctly exposed lit frame targets mean ~115, so a
-    # floor of 25 only trips on genuinely dark frames. Tunable via config once a
-    # real lit-vs-dark snapshot pair is measured (the logged value calibrates it).
-    min_luma = cfg["camera safety"].get("min_trust_luma", 25.0)
-    too_dark = frame_luma < min_luma
-
-    def _verdict(error: float, conf: float) -> str:
-        """Which gate(s) a template failed: 'ok', 'position', 'confidence', or both."""
-        fails = []
-        if abs(error) >= accuracy:
-            fails.append("position")
-        if conf < min_conf:
-            fails.append("confidence")
-        return "+".join(fails) if fails else "ok"
-
-    # --- Scope parked? ---------------------------------------------------------
-    # Parked is the gating state: the parked marker must sit near its expected
-    # position with enough confidence, on a lit frame.
-    parked_error = math.dist(parked_center, cfg["camera safety"]["parked pos"])
-    print(parked_center)
-    print(cfg["camera safety"]["parked pos"])
-    print (parked_error)
-    print("parked confidence", max_val_parked)
-    parked = (not too_dark) and abs(parked_error) < accuracy and max_val_parked >= min_conf
-    parked_verdict = "dark frame" if too_dark else _verdict(parked_error, max_val_parked)
-
-    # --- Roof open / closed ----------------------------------------------------
-    # The open/closed marker positions are only valid in the PARKED geometry: a
-    # slewed scope changes what the camera sees at those pixels, so the roof state
-    # cannot be read at all unless the scope is parked. When parked, position
-    # decides state (confidence is only a sanity floor against a spurious hit).
-    closed_error = math.dist(closed_center, cfg["camera safety"]["closed pos"])
-    open_error = math.dist(open_center, cfg["camera safety"]["open pos"])
-    print(closed_center, cfg["camera safety"]["closed pos"], closed_error, "closed conf", max_val_closed)
-    print(open_center, cfg["camera safety"]["open pos"], open_error, "open conf", max_val_open)
-    if parked:
-        closed = abs(closed_error) < accuracy and max_val_closed >= min_conf
-        open = abs(open_error) < accuracy and max_val_open >= min_conf
-        closed_verdict = _verdict(closed_error, max_val_closed)
-        open_verdict = _verdict(open_error, max_val_open)
-        if closed and open:
-            # Both markers landed at their (well-separated) positions — physically
-            # impossible. The templates can't discriminate this frame, so report
-            # the roof state as unknown rather than guess.
-            _logger.warning(
-                "vision ROOF STATE AMBIGUOUS (closed_conf=%.2f open_conf=%.2f) — roof unknown",
-                max_val_closed, max_val_open,
-            )
-            closed = open = False
-            closed_verdict = open_verdict = "ambiguous (both matched)"
+    # Every exposure the sweep took is evidence. The frame that happened to be
+    # written to disk is only one of them, and not necessarily the readable one
+    # — so it decides nothing here. Fall back to it alone only when there is no
+    # ladder (a test_path copy, or a sweep that captured nothing), which
+    # reduces exactly to the old single-frame behaviour.
+    if ladder and ladder.get("frames"):
+        rungs = [_evaluate_rung(frame, exposure) for frame, exposure
+                 in zip(ladder["frames"], ladder["exposures"])]
     else:
-        # Not parked (or too dark): the roof state is undeterminable by design.
-        closed = open = False
-        closed_verdict = open_verdict = "unreadable (scope not parked)"
+        _logger.warning("vision: no exposure ladder — deciding on the single written frame")
+        rungs = [_evaluate_rung(image_rgb)]
 
+    decision = _decide_from_rungs(rungs)
+    parked = decision["parked"]
+    closed = decision["closed"]
+    open = decision["open"]
+    last_match = decision["last_match"]
+    _write_annotated(decision["display"], image_path)
+
+    # Diagnostics: annotate the ladder kept on disk with the same per-rung
+    # measurements. Best-effort and after the verdict, so it can never affect it.
     if capture_dir:
-        _score_exposure_set(capture_dir, accuracy, min_conf)
+        _score_exposure_set(capture_dir, last_match["accuracy"], last_match["min_conf"])
 
-    trusted = bool(parked)
+    mod_date = time.ctime(os.path.getmtime(image_path))
     print ("parked, closed, open", str(parked), str(closed), str(open))
-    print("frame luma", frame_luma, "min", min_luma, "trusted", trusted)
-    _logger.info(
-        "vision parked=%s closed=%s open=%s luma=%.1f (min %.1f)",
-        parked, closed, open, frame_luma, min_luma,
-    )
+    return parked, closed, open, mod_date
 
-    last_match = {
-        "min_conf": min_conf,
-        "accuracy": accuracy,
-        "frame_luma": frame_luma,
-        "min_trust_luma": min_luma,
-        "trusted": trusted,
-        # The resolved booleans. The per-template dicts below carry the evidence;
-        # these carry the verdict, so a caller cannot mistake "the key exists"
-        # for "the roof is open".
-        "is_parked": bool(parked),
-        "is_closed": bool(closed),
-        "is_open": bool(open),
-        "parked": {"conf": float(max_val_parked), "error": float(parked_error), "verdict": parked_verdict},
-        "closed": {"conf": float(max_val_closed), "error": float(closed_error), "verdict": closed_verdict},
-        "open":   {"conf": float(max_val_open),   "error": float(open_error),   "verdict": open_verdict},
-    }
 
-    mod_date = time.ctime(os.path.getmtime(cfg["camera safety"]["scope_view"]))
-    return parked,  closed, open, mod_date
+def _unresolved_reason():
+    """Why the last read is not usable, or None when it resolved both states.
+
+    Two ways a frame can fail to answer the question it was taken to answer:
+
+    * ``trusted`` is False — the scope is not confirmed parked, so nothing
+      (including the roof) can be read from the frame at all.
+    * the scope IS parked but the roof matched neither ``closed`` nor ``open``.
+      The roof is always in one of those two states when the scope is parked,
+      so "neither" is not a state — it means the templates could not read this
+      particular frame.
+    """
+    lm = last_match or {}
+    if not lm.get("trusted"):
+        return lm.get("error") or "scope not confirmed parked"
+    if not lm.get("is_closed") and not lm.get("is_open"):
+        closed_verdict = (lm.get("closed") or {}).get("verdict", "?")
+        open_verdict = (lm.get("open") or {}).get("verdict", "?")
+        return (f"roof neither closed nor open (closed: {closed_verdict}; "
+                f"open: {open_verdict})")
+    return None
 
 
 def visual_status(retries: int = 2, delay: float = 2.0):
@@ -372,22 +521,31 @@ def visual_status(retries: int = 2, delay: float = 2.0):
     so re-take it up to *retries* extra times whenever the read is untrusted,
     and return the first trusted result.
 
-    ``trusted`` is exactly "scope confirmed parked", so this only re-tries when
-    the frame gives us no usable state. A genuinely-unparked scope stays
-    untrusted through every retry and the (still-safe) not-parked result is
-    returned unchanged — callers fail safe exactly as before, just after having
-    given a garbage frame a few more chances to resolve. Retrying never
-    fabricates a "parked": each attempt is an independent snapshot subject to
-    the same position/confidence/luma gates, so the roof-move preconditions are
-    unchanged per frame — we simply stop acting on the first corrupt one.
+    A parked scope whose roof reads neither closed NOR open is retried for the
+    same reason (see :func:`_unresolved_reason`): the roof is always in one of
+    those states, so "neither" is a failure to read the frame, not a finding.
+    That case bit us on 2026-08-04 — the roof had just closed (audio and motor
+    current both nominal) but the confirming frame came back ~35 luma brighter
+    than the exposure the ladder scored, which puts the closed marker ~610px
+    off its expected position. It reported "roof is NOT closed", and because
+    the scope WAS parked the read counted as trusted and was never re-taken.
+    The very next snapshot, 72s later, read closed at 0.89 confidence.
+
+    A genuinely-unresolvable read stays unresolved through every retry and the
+    (still-safe) all-False result is returned unchanged — callers fail safe
+    exactly as before, just after having given a garbage frame a few more
+    chances. Retrying never fabricates a state: each attempt is an independent
+    snapshot subject to the same position/confidence/luma gates, so the
+    roof-move preconditions are unchanged per frame — we simply stop acting on
+    the first unreadable one.
     """
     parked, closed, open, mod_date = _visual_status_once()
     for attempt in range(1, retries + 1):
-        if last_match and last_match.get("trusted"):
+        reason = _unresolved_reason()
+        if reason is None:
             break
-        reason = (last_match or {}).get("error") or "scope not confirmed parked"
         _logger.warning(
-            "vision read untrusted (%s) — retrying snapshot %d/%d",
+            "vision read unresolved (%s) — retrying snapshot %d/%d",
             reason, attempt, retries,
         )
         time.sleep(delay)
