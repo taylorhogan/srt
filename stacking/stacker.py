@@ -2079,6 +2079,36 @@ def convergence_curve(
     tail_fit = np.polyval([tail_slope, tail_intercept], xs_tail)
     slope_pct = tail_slope * 100  # convert fraction/frame → %/frame
 
+    # Reference curve: where this data would sit if every frame's noise were
+    # independent. Stacking k of n frames and comparing against all n leaves
+    # A*sqrt(1/k - 1/n), which is zero at k=n exactly like the measured curve,
+    # so the two are directly comparable over the whole x range.
+    #
+    # A is anchored on the k=1 point, which makes this the SAME model
+    # convergence.decay_ratio reports — so the gap a human sees at the tail IS
+    # that ratio, not a second differently-scaled opinion. Note what that means:
+    # this is the best case *for this data's own single-frame noise*, not an
+    # absolute floor. A noisier night lifts both curves together. Riding the
+    # line means frames are averaging down as they should; sitting above it
+    # means a correlated term — sky gradients, missing flats, thermal residual —
+    # that more frames will not remove.
+    ideal_xs = ideal_ys = None
+    ideal_label = ""
+    if len(xs) >= 3 and ys[0] > 0 and n > 1:
+        amplitude = float(ys[0]) / np.sqrt(1.0 - 1.0 / n)
+        ideal_xs = np.linspace(1.0, float(n), 200)
+        ideal_ys = amplitude * np.sqrt(np.maximum(1.0 / ideal_xs - 1.0 / n, 0.0))
+        ideal_label = "Independent-noise ideal:  A·√(1/k − 1/n)"
+        try:
+            from fits_processing.convergence import decay_ratio
+            ratio = decay_ratio(counts, mean_residuals)
+        except Exception:  # diagnostics only — never break the plot
+            _logger.debug("convergence: decay_ratio unavailable", exc_info=True)
+            ratio = None
+        if ratio is not None:
+            ideal_label += ("\ntail is riding it" if ratio < 1.15
+                            else f"\ntail is {ratio:.2f}× above it")
+
     fig = Figure(figsize=(10, 5))
     FigureCanvasAgg(fig)
     fig.patch.set_facecolor("#0d0d1a")
@@ -2091,6 +2121,12 @@ def convergence_curve(
     for spine in ax.spines.values():
         spine.set_edgecolor("#444466")
 
+    # Drawn first so the measured curve reads on top of it. Dotted, where the
+    # measured curve is solid and the tail fit dashed: the three lines differ in
+    # style as well as hue, so they stay tellable apart without colour.
+    if ideal_ys is not None:
+        ax.plot(ideal_xs, ideal_ys, ":", color="#f7d774", linewidth=1.8,
+                label=ideal_label)
     ax.plot(xs, ys, "o-", color="#5fa8d3", label="Mean residual")
     ax.fill_between(xs, np.maximum(ys - errs, 0), ys + errs,
                     alpha=0.25, color="#5fa8d3", label="±1 σ  (trial spread)")
