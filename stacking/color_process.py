@@ -22,6 +22,7 @@ Two things here are not obvious and were both learned the hard way on sh2-92:
 import logging
 import os
 import sys
+from functools import lru_cache
 from pathlib import Path
 from datetime import datetime, timezone
 from typing import Callable, Optional
@@ -502,6 +503,104 @@ def process_dso(
     return rgb, info
 
 
+@lru_cache(maxsize=8)
+def _label_font(size: int):
+    """A TrueType font at *size*, or PIL's bitmap default if none can be loaded.
+
+    PIL's default font is a ~11px bitmap that does not scale, which is why the
+    sweep labels were unreadable on a 760px panel. matplotlib is already a
+    dependency and ships DejaVuSans, so it is the one scalable font this machine
+    is guaranteed to have; the rest are fallbacks, and the bitmap default is the
+    last resort so a missing font can never cost someone their sweep sheet.
+    """
+    from PIL import ImageFont
+
+    candidates = []
+    try:
+        from matplotlib import font_manager
+        candidates.append(font_manager.findfont("DejaVu Sans"))
+    except Exception:
+        _logger.debug("matplotlib font lookup failed", exc_info=True)
+    candidates += ["DejaVuSans.ttf", "arial.ttf", "segoeui.ttf"]
+    for path in candidates:
+        try:
+            return ImageFont.truetype(path, size)
+        except Exception:
+            continue
+    _logger.warning("no scalable font found — sweep labels will be tiny")
+    try:
+        return ImageFont.load_default(size=size)  # Pillow >= 10.1
+    except TypeError:
+        return ImageFont.load_default()
+
+
+def _wrap_tokens(draw, tokens: list[str], font, avail: float) -> tuple[list[str], bool]:
+    """Greedily pack *tokens* into lines no wider than *avail*.
+
+    Returns (lines, fits) — *fits* is False when some single token is wider than
+    *avail* even alone, which is the caller's signal to try a smaller font.
+    """
+    lines: list[str] = []
+    current = ""
+    fits = True
+    for token in tokens:
+        trial = f"{current}  {token}" if current else token
+        if current and draw.textlength(trial, font=font) > avail:
+            lines.append(current)
+            current = token
+        else:
+            current = trial
+        if draw.textlength(current, font=font) > avail:
+            fits = False
+    if current:
+        lines.append(current)
+    return lines, fits
+
+
+def _draw_panel_label(draw, width: int, panel_id: int, label: str) -> None:
+    """Stamp *panel_id* and its settings across the top of one sweep panel.
+
+    The id is drawn far larger than the settings on purpose: it is the one thing
+    a human reads off the sheet — pick a panel, then type its number back — and
+    it has to survive being viewed on a phone.
+
+    The settings wrap onto extra lines rather than shrinking without limit. A
+    narrow panel (a tall target thumbnailed to well under 760px) or a sweep over
+    more keys than the usual three would otherwise drive the font down until the
+    text was both unreadable AND clipped at the panel edge — which is the bug
+    this label was rewritten to fix, so it is worth keeping wrapped.
+    """
+    pad = max(6, width // 90)
+    id_font = _label_font(max(34, width // 13))
+    id_text = f"#{panel_id}"
+    id_box = draw.textbbox((0, 0), id_text, font=id_font)
+    id_h = id_box[3] - id_box[1]
+
+    text_x = pad + (id_box[2] - id_box[0]) + 2 * pad
+    avail = max(1, width - text_x - pad)
+    tokens = [t for t in label.split("  ") if t]
+
+    size = max(22, width // 26)
+    while True:
+        font = _label_font(size)
+        lines, fits = _wrap_tokens(draw, tokens, font, avail)
+        if fits or size <= 10:
+            break
+        size -= 2
+
+    line_h = draw.textbbox((0, 0), "Ag", font=font)[3] if lines else 0
+    text_h = line_h * len(lines)
+    bar_h = max(id_h, text_h) + 2 * pad
+
+    draw.rectangle([0, 0, width, bar_h], fill=(0, 0, 0))
+    draw.text((pad, (bar_h - id_h) // 2 - id_box[1]), id_text,
+              font=id_font, fill=(255, 214, 0))
+    y = (bar_h - text_h) // 2
+    for line in lines:
+        draw.text((text_x, y), line, font=font, fill=(255, 255, 255))
+        y += line_h
+
+
 def sweep(channels: dict, grid: dict, bin_factor: int = 4,
           progress_cb=None) -> tuple[np.ndarray, list[dict]]:
     """Render every combination in *grid* and tile them into one labelled sheet.
@@ -536,8 +635,9 @@ def sweep(channels: dict, grid: dict, bin_factor: int = 4,
         d = ImageDraw.Draw(img)
         label = "  ".join(f"{k.replace('_pct','').replace('softening','soft')}={v}"
                           for k, v in combo.items())
-        d.rectangle([0, 0, img.width, 18], fill=(0, 0, 0))
-        d.text((5, 4), f"{i}.  {label}", fill=(255, 255, 0))
+        # i is 1-based and matches the numbering the chat listing prints, so the
+        # number on the panel is the number the user quotes back.
+        _draw_panel_label(d, img.width, i, label)
         panels.append(np.asarray(img))
 
     cols = min(3, len(panels))
