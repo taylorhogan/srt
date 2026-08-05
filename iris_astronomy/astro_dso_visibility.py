@@ -58,24 +58,66 @@ LOGGER = utils.set_logger()
 CFG["logger"]["logging"] = LOGGER
 
 
+# SIMBAD otype codes for the grid's one-letter class. Every code below was
+# checked against the live `otypedef` table on 2026-08-04, because a code that
+# is not in that table simply never matches and the mistake is silent: 'HzG',
+# 'BCD', 'dSph', 'cD', 'Neb', 'DNeb', 'GNeb' and 'RfN' all sat in these sets
+# matching nothing. Verify with:
+#     Simbad.query_tap("SELECT otype_shortname, description FROM otypedef")
 _GALAXY_TYPES = {
-    'G', 'GiC', 'GiG', 'GiP', 'SyG', 'Sy1', 'Sy2', 'rG', 'HzG',
-    'AGN', 'EmG', 'BiC', 'BCD', 'dSph', 'LSB', 'cD', 'LIN',
+    'G', 'IG', 'PaG', 'GiC', 'GiG', 'GiP', 'LSB', 'SBG', 'EmG', 'H2G',
+    'rG', 'AGN', 'AG?', 'SyG', 'Sy1', 'Sy2', 'LIN', 'Bla', 'BLL', 'BiC',
+    # Clusters and groups OF galaxies are filed under G, not C. What the
+    # telescope frames is a field of galaxies, and C on this grid means a
+    # cluster of stars -- the reading that makes M13 a C.
+    'ClG', 'GrG', 'PCG', 'SCG',
 }
-_CLUSTER_TYPES = {'ClG', 'GrG', 'PCG', 'SCG'}
-_NEBULA_TYPES  = {'PN', 'HII', 'SNR', 'RNe', 'MoC', 'Neb', 'HH', 'DNeb', 'GNeb', 'RfN'}
+# Star clusters. This set previously held only the four galaxy-cluster codes
+# above and not one stellar code, so M13 and M3 -- the most obvious C objects
+# in the queue -- both came back "?".
+_CLUSTER_TYPES = {'GlC', 'Gl?', 'OpC', 'Cl*', 'As*'}
+_NEBULA_TYPES  = {'PN', 'HII', 'SNR', 'RNe', 'MoC', 'DNe', 'glb', 'HH',
+                  'SFR', 'EmO', 'Cld', 'ISM'}
+
+# Targets whose SIMBAD headline type is not the thing the telescope is pointed
+# at. SIMBAD reports the dominant catalogued source at a position, which for an
+# emission nebula with an embedded cluster is the cluster, and for the Crescent
+# is the central Wolf-Rayet star -- ngc6888 resolves to HD 192163, a single
+# star. No otype mapping can fix these: the disagreement is about the subject of
+# the photograph, not about the catalogue, so it takes a human judgement.
+_TYPE_OVERRIDES = {
+    'm20':     'N',   # Trifid Nebula         SIMBAD: OpC
+    'ngc7380': 'N',   # Wizard Nebula         SIMBAD: OpC
+    'ic5146':  'N',   # Cocoon Nebula         SIMBAD: OpC
+    'ic1396':  'N',   # Elephant Trunk Nebula SIMBAD: OpC
+    'ngc2237': 'N',   # Rosette Nebula        SIMBAD: Cl*
+    'ngc6888': 'N',   # Crescent Nebula       SIMBAD: WR* (HD 192163)
+    'ic405':   'N',   # Flaming Star Nebula   SIMBAD: Rad
+}
 
 _simbad = Simbad()
 _simbad.add_votable_fields('otype')
 
 
 def get_dso_type(name: str) -> str:
+    """One-letter class for the imaging grid: G galaxy, N nebula, C star cluster.
+
+    "?" is a real answer rather than a failure. It means SIMBAD did not resolve
+    the name, or resolved it to something outside the three families -- the
+    queue carries placeholder entries such as ``gravwav`` that are not objects
+    at all, and those should stay visibly unclassified.
+    """
+    override = _TYPE_OVERRIDES.get(name.strip().lower().replace(" ", ""))
+    if override is not None:
+        return override
     try:
         result = _simbad.query_object(name)
-        if result is None:
+        # An unresolvable name yields an empty table, not None; indexing it
+        # raises rather than returning anything useful.
+        if result is None or len(result) == 0:
             return "?"
         col = 'OTYPE' if 'OTYPE' in result.colnames else 'otype'
-        otype = str(result[col][0])
+        otype = str(result[col][0]).strip()
         if otype in _GALAXY_TYPES:
             return "G"
         if otype in _CLUSTER_TYPES:
