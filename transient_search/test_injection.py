@@ -29,6 +29,7 @@ from astropy.io import fits
 from configs import config
 from transient_search import difference as tr
 from transit_search.transit import _find_dso_dir
+from utils.injection_checks import check_monotonic_recovery, report
 
 # Flux levels (total ADU) injected, from faint to bright.
 FLUX_LEVELS = [100, 200, 400, 800, 1600, 3200, 6400]
@@ -102,9 +103,11 @@ def main() -> None:
     for (tx, ty, flux) in truth:
         by_level.setdefault(flux, []).append(_recovered(tx, ty))
     faintest = None
+    counts: list[int] = []
     for flux in FLUX_LEVELS:
         hits = by_level.get(flux, [])
         frac = sum(hits) / len(hits) if hits else 0.0
+        counts.append(sum(hits))
         print(f"  {flux:>8}   {sum(hits)}/{len(hits)}  ({frac*100:.0f}%)")
         if frac >= 0.5 and faintest is None:
             faintest = flux
@@ -113,6 +116,13 @@ def main() -> None:
     print(f"  false positives : {len(false_positives)}")
     print(f"  faintest 50%-recovered flux : "
           f"{faintest if faintest is not None else 'none recovered'} ADU")
+
+    # A brighter source must not be harder to find. Asserted rather than
+    # eyeballed, because this is the check that exposed both the shape window
+    # and the self-masking bright-source mask.
+    ok, problems = check_monotonic_recovery(
+        FLUX_LEVELS, counts, PER_LEVEL, label="flux", fmt="{:.0f} ADU")
+    sys.exit(report(ok, problems))
 
 
 if __name__ == "__main__":

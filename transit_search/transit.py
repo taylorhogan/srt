@@ -1471,6 +1471,100 @@ def _notify_push(
         _logger.exception("transit push notification failed")
 
 
+def _inject_transits(
+    flux_matrix: np.ndarray,
+    times_mjd: np.ndarray,
+    positions: np.ndarray,
+    spec: dict,
+    notify: Callable[[str], None],
+    eligible: Optional[np.ndarray] = None,
+) -> list[dict]:
+    """Multiply chosen stars by a box dip of known depth. Returns the truth list.
+
+    Injected into the RAW flux matrix, before differential normalisation and
+    before common-mode detrending, so a synthetic transit is subjected to every
+    step a real one would be — including the ensemble it is measured against and
+    the per-frame median that is divided out. Injecting into the already-
+    normalised curves would skip exactly the machinery most able to erase a
+    real signal, and would measure the scoring rather than the pipeline.
+
+    Targets are drawn from the middle of the brightness distribution: the
+    brightest stars risk saturation and the faintest are noise-dominated, so
+    either end would measure the wrong limit.
+
+    ``eligible`` must be the set of stars the pipeline will actually search.
+    This is not a detail: on hatp32 only 490 of 1055 detected stars survive the
+    edge/validity/saturation filter, so choosing targets by any other rule
+    scatters most injections onto stars that are never examined, and the test
+    reports 0% recovery at every depth — including depths well above one the
+    pipeline is known to find. A completeness curve can only answer "given a
+    star the search looks at, how deep must a transit be", so the injections
+    have to land inside that set.
+    """
+    depths = [float(d) for d in spec.get("depths", [])]
+    per_depth = int(spec.get("per_depth", 3))
+    duration_d = float(spec.get("duration_h", 2.0)) / 24.0
+    rng = np.random.default_rng(int(spec.get("seed", 0)))
+
+    t = np.asarray(times_mjd, dtype=float)
+    med = np.nanmedian(flux_matrix, axis=0)
+    valid = np.isfinite(flux_matrix).mean(axis=0)
+    ok = np.where(np.isfinite(med) & (med > 0) & (valid >= 0.9))[0]
+    if eligible is not None:
+        ok = np.intersect1d(ok, np.asarray(eligible, dtype=int))
+    n_need = len(depths) * per_depth
+    if len(ok) < n_need:
+        raise ValueError(
+            f"only {len(ok)} stars are valid enough to inject into, need {n_need}")
+
+    # Central 60% of the brightness range, then sample without replacement.
+    order = ok[np.argsort(med[ok])]
+    lo, hi = int(0.2 * len(order)), int(0.8 * len(order))
+    pool = order[lo:hi] if hi - lo >= n_need else order
+    targets = rng.choice(pool, size=n_need, replace=False)
+
+    # Every injection gets its OWN epoch, spread across the night.
+    #
+    # They originally shared one epoch, which quietly wrecked the measurement:
+    # 15 of 490 stars dipping at the same instant is a correlated signal, and
+    # both the comparison ensemble and the common-mode detrending are built to
+    # remove exactly that. Depths came back at 7.31%, 13.24% and 5.60% for a 4%
+    # injection, while a single isolated 4% injection measured 3.96%. Real
+    # transits do not coincide, so neither should synthetic ones.
+    #
+    # Candidate epochs are restricted to instants that are at least 80% as well
+    # sampled as the best one, so no injection is handicapped by falling into a
+    # gap, then spread evenly over that set.
+    counts = np.array([(np.abs(t - t0) <= duration_d / 2.0).sum() for t0 in t])
+    good = np.flatnonzero(counts >= 0.8 * counts.max())
+    picks = good[np.linspace(0, len(good) - 1, n_need).round().astype(int)]
+
+    truth: list[dict] = []
+    for i, s in enumerate(targets):
+        depth = depths[i // per_depth]
+        t0 = float(t[picks[i]])
+        in_transit = np.abs(t - t0) <= duration_d / 2.0
+        flux_matrix[in_transit, s] *= (1.0 - depth)
+        truth.append({
+            "star": int(s),
+            "x": round(float(positions[s][0]), 2),
+            "y": round(float(positions[s][1]), 2),
+            "depth": depth,
+            # NOT rounded. Rounding to 5 dp moves t0 by up to half a second,
+            # which is enough to flip samples sitting exactly on the window
+            # edge, so anyone reconstructing the transit window from this record
+            # dims a different set of frames than the injector did and measures
+            # a shallower depth than was requested.
+            "t0_mjd": t0,
+            "duration_d": duration_d,
+            "duration_h": round(duration_d * 24.0, 2),
+            "n_in_transit": int(in_transit.sum()),
+        })
+    notify(f"inject: {len(truth)} synthetic transit(s) at depths "
+           f"{sorted(set(depths))}")
+    return truth
+
+
 def run_transit_search(
     dso_name: str,
     filter_name: str,
@@ -1478,6 +1572,8 @@ def run_transit_search(
     output_plot_path: Path,
     progress_cb: Optional[Callable[[str], None]] = None,
     cancel_cb: Optional[Callable[[], bool]] = None,
+    inject: Optional[dict] = None,
+    top_n_override: Optional[int] = None,
 ) -> dict:
     """Top-level orchestrator. Returns the entry that was saved to transits.json.
 
@@ -1502,7 +1598,10 @@ def run_transit_search(
     sky_mult = cfg.get("sky_annulus_fwhm_mult", (3.0, 5.0))
     sky_in_mult, sky_out_mult = float(sky_mult[0]), float(sky_mult[1])
     comp_q = float(cfg.get("comparison_quantile", 0.25))
-    top_n = int(cfg.get("top_n_plot", 5))
+    # The reported list is normally short because a human reads it. A
+    # completeness test needs it long enough that a genuine-but-modest
+    # detection is not scored as a miss purely for ranking sixth.
+    top_n = int(top_n_override or cfg.get("top_n_plot", 5))
     min_valid_fraction = float(cfg.get("min_valid_fraction", 0.8))
     edge_margin_mult = float(cfg.get("edge_margin_mult", 1.0))
     outlier_high_sigma = float(cfg.get("outlier_high_sigma", 5.0))
@@ -1650,6 +1749,25 @@ def run_transit_search(
                 _ck()
 
     _notify(f"photometry: done — {np.isfinite(flux_matrix).mean()*100:.1f}% valid")
+
+    # Synthetic injection goes here and nowhere later: everything below this
+    # line is machinery a real transit has to survive.
+    injected: list[dict] = []
+    if inject:
+        # Reproduce the keep filter applied further down, so injections land
+        # only on stars that will actually be searched. Saturation is not
+        # rechecked here because targets are drawn from mid-brightness.
+        _fh, _fw = frames[0].shape
+        _edge = edge_margin_mult * sky_out
+        _xs, _ys = positions[:, 0], positions[:, 1]
+        _on_chip = ((_xs >= _edge) & (_xs < _fw - _edge)
+                    & (_ys >= _edge) & (_ys < _fh - _edge))
+        _min_valid = max(20, int(np.ceil(min_valid_fraction * n_frames)))
+        _eligible = np.flatnonzero(
+            _on_chip & (np.isfinite(flux_matrix).sum(axis=0) >= _min_valid))
+        _notify(f"inject: {len(_eligible)} of {n_stars} stars are searchable")
+        injected = _inject_transits(flux_matrix, times_mjd, positions, inject,
+                                    _notify, eligible=_eligible)
 
     _notify(f"differential photometry: comparison_quantile={comp_q}…")
     rel_flux, comp_mask = _differential_normalize(flux_matrix, comp_q)
@@ -1896,9 +2014,13 @@ def run_transit_search(
                 lc_path = None
             _notify_push(best, dso_name, filter_name, field_z, lc_path, field_image_path)
 
-    _notify(f"plotting top {len(top)} candidate(s)…")
+    # How many candidates are RECORDED and how many are DRAWN are different
+    # questions. The injection test needs a long recorded list to find where an
+    # injection ranked; nobody needs 500 light-curve panels to look at.
+    n_plot = min(len(top), int(cfg.get("top_n_plot", 5)))
+    _notify(f"plotting top {n_plot} candidate(s)…")
     _plot_top_candidates(
-        times_mjd, rel_flux, top, output_plot_path,
+        times_mjd, rel_flux, top[:n_plot], output_plot_path,
         title=f"{dso_name} [{filter_name}]",
     )
 
@@ -1931,6 +2053,8 @@ def run_transit_search(
             for v in variables
         ],
     }
+    if injected:
+        entry["injected"] = injected
     if field_image_path is not None and field_image_path.exists():
         entry["field_image"] = str(field_image_path)
     if variables_plot_path is not None and variables_plot_path.exists():
