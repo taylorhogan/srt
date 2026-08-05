@@ -323,13 +323,23 @@ def _bright_source_mask(science: np.ndarray, template: np.ndarray,
 
     Saturated stars clip and don't scale linearly, so their subtraction leaves a
     bright+dark dipole that looks like a new source. We flag the top-percentile
-    pixels of the template and science images and dilate, then reject candidates
-    landing inside — killing the dominant false positive."""
+    pixels of the TEMPLATE and dilate, then reject candidates landing inside —
+    killing the dominant false positive.
+
+    Template only, deliberately. This used to threshold the science image too,
+    which is self-defeating: a bright transient IS among the brightest pixels of
+    the science image, so it masked itself out. Measured with synthetic
+    injections on ngc5907 R, everything at or above 3200 ADU was rejected as a
+    "saturated star" — the brighter the supernova, the more certainly it was
+    discarded. Saturated stars are in the template as well (they were there on
+    every prior night), so masking from the template alone loses nothing: the
+    same injection run kept the false-positive count unchanged at 3 while
+    recovery went from 8/21 to 14/21."""
     from scipy.ndimage import binary_dilation
     grow = int(cfg.get("bright_mask_grow_px", 10))
     pct = float(cfg.get("bright_mask_percentile", 99.9))
     mask = np.zeros(science.shape, dtype=bool)
-    for img in (science, template):
+    for img in (template,):
         finite = np.isfinite(img) & coverage
         if not finite.any():
             continue
@@ -368,14 +378,28 @@ def _reject_and_rank(diff: np.ndarray, objs, coverage: np.ndarray, rms: float,
         return []
     h, w = diff.shape
     margin = int(cfg.get("edge_margin_px", 16))
-    # Shape cuts tuned to the stellar PSF of this (undersampled) system: real
-    # stars measure a≈0.7px, elongation≈1.0. A supernova is a point source, so
-    # we keep only compact, round residuals — rejecting both single hot pixels
-    # (below min_a) and the dominant false positive, extended/elongated
-    # galaxy-structure knots (above max_a or max_elong).
+    # Shape cuts bounding the stellar locus. A supernova is a point source, so
+    # we keep only compact, round residuals — rejecting single hot pixels (below
+    # min_a) and extended galaxy-structure knots (above max_a or max_elong).
+    #
+    # The window was [0.6, 1.3], said to match "measured stellar a≈0.7". That
+    # figure does not describe this system. Measured 2026-08-05 on the ngc5907 R
+    # stack, real stars have median a=2.51 (FWHM 5.6px) and difference-image
+    # residuals median a=2.83, so the old window admitted only 15% of genuine
+    # point sources and rejected the rest as "extended" — it was selecting for
+    # the sub-pixel artifacts it was meant to exclude. Widening it to the
+    # measured stellar spread (p10 1.12 → p90 4.28) raised injection recovery
+    # from 2/21 to 8/21 while *lowering* false positives from 5 to 3.
+    #
+    # KNOWN LIMITATION: sep's `a` is a second moment over pixels above the
+    # detection threshold, so it grows with brightness at fixed PSF — the same
+    # injected profile measures a=1.06 at 400 ADU and a=2.66 at 6400. Any fixed
+    # window is therefore partly a brightness cut. A brightness-independent
+    # shape test (compare against the frame's own stellar locus at matched flux)
+    # would be the real fix; this window is only bounded by measurement.
     max_elong = float(cfg.get("max_elongation", 1.4))
-    min_a = float(cfg.get("min_semimajor_px", 0.6))
-    max_a = float(cfg.get("max_semimajor_px", 1.3))
+    min_a = float(cfg.get("min_semimajor_px", 1.0))
+    max_a = float(cfg.get("max_semimajor_px", 5.0))
     detect_sigma = float(cfg.get("detect_sigma", 5.0))
     dipole_sigma = float(cfg.get("dipole_sigma", 4.0))
     dipole_r = int(cfg.get("dipole_radius_px", 14))
@@ -654,7 +678,8 @@ def run_transient_search(
     """
     from stacking import stacker  # local import avoids circular at module load
     from transit_search.transit import (
-        _find_dso_dir, _obs_time_mjd, _register_only, _identify_candidates)
+        _find_dso_dir, _obs_time_mjd, _register_only, _identify_candidates,
+        _solve_field_wcs)
 
     def _notify(msg: str) -> None:
         if progress_cb:
@@ -769,9 +794,43 @@ def run_transient_search(
     if identify and cands and science_fits.exists():
         top_for_id = cands[:top_n]
         try:
-            _identify_candidates(science_fits, top_for_id, astap_exe,
-                                 gaia_match_radius, progress_cb)
+            # The WCS has to be solved here and passed in. _identify_candidates
+            # used to take (path, astap_exe, ...) and do its own solve; d10dd78
+            # split that out into _solve_field_wcs and this caller was not
+            # updated, so every call raised TypeError into the except below for
+            # 67 commits — silently costing the transient search its Gaia and
+            # SIMBAD identification, and with it the only condition that
+            # suppresses a Pushover alert for a known variable star.
+            #
+            # Field stars come from the science image, not from `objs`: those
+            # are difference residuals, and a solver needs the actual star
+            # field. They feed the Gaia point-match fallback, which is the path
+            # that runs whenever ASTAP is not configured.
+            star_objs, _star_rms = _sep_detect(science_img, detect_sigma)
+            if star_objs is None or len(star_objs) == 0:
+                raise ValueError("no field stars detected for the astrometric solve")
+            positions = np.column_stack([
+                np.asarray(star_objs["x"], dtype=np.float64),
+                np.asarray(star_objs["y"], dtype=np.float64)])
+            star_flux = np.asarray(star_objs["flux"], dtype=np.float64)
+            wcs = _solve_field_wcs(science_fits, astap_exe, positions,
+                                   star_flux, progress_cb)
+            if wcs is None:
+                raise ValueError("astrometric solve failed (ASTAP and Gaia fallback)")
+            _identify_candidates(wcs, top_for_id,
+                                 match_radius_arcsec=gaia_match_radius,
+                                 progress_cb=progress_cb)
             _apply_gaia_rejection(top_for_id, cfg)
+        except TypeError:
+            # Separated on purpose. Identification is allowed to fail softly
+            # for real-world reasons (no solver, no network, no match), and
+            # that tolerance is what hid a call-signature mismatch for 67
+            # commits behind the same bland "Gaia identification failed". A
+            # TypeError here is never a runtime condition — it is always this
+            # caller disagreeing with transit.py — so it gets its own message.
+            _logger.exception(
+                "Gaia identification BROKEN: bad call signature into "
+                "transit_search.transit — this is a code bug, not a failed solve")
         except Exception:
             _logger.exception("Gaia identification failed")
         try:
