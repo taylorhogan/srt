@@ -26,7 +26,19 @@ _DETECTION_FWHM = 5.0
 _DETECTION_THRESHOLD_SIGMA = 10.0
 
 # Half-width (pixels) of the cutout stamp used for Gaussian fitting
-_STAMP_HALF = 15
+# Half-width of the fitting stamp, pixels. Was 15 (a 31x31 box), which is barely
+# wider than a real star: measured stellar FWHM on this system is ~14.7 px, and a
+# Gaussian fit needs roughly 3x the FWHM of wings to constrain the width. 25 gives
+# a 51x51 box. The upper FWHM bound below is tied to this, so at 15 a genuine
+# 14.7 px star sat one pixel under the rejection threshold.
+_STAMP_HALF = 25
+
+# Nothing narrower than this can be starlight. The 17-inch diffraction limit is
+# 0.32" and the plate scale is 0.26"/px, so a real star cannot be under ~1.2 px
+# however good the seeing. The old lower bound of 0.5 px admitted exactly the
+# single-pixel sensor defects that despiking now removes -- belt and braces,
+# because a defect that survives despiking must still not be called a star.
+_MIN_PHYSICAL_FWHM_PX = 1.5
 
 # Fitted Gaussian amplitude must be at least this many × background std
 _MIN_SNR = 10.0
@@ -79,8 +91,36 @@ def _fit_stars(
     if data.ndim != 2:
         raise ValueError(f"Expected 2D image data after squeeze, got shape {data.shape}")
 
-    _, median, std = sigma_clipped_stats(data, sigma=3.0)
-    background_subtracted = data - median
+    # Remove single-pixel sensor defects BEFORE detecting anything.
+    #
+    # No darks are taken, so raw subs are dominated by hot pixels — and hot
+    # pixels are sharper and brighter than stars, so every detector locks onto
+    # them first. Measured 2026-08-06 on a 300 s O-III sub: 1482 bright peaks at
+    # a median FWHM of 1.13 px (0.29"), which is below this telescope's 0.32"
+    # diffraction limit and therefore cannot be starlight. After despiking, 17
+    # peaks at 14.71 px (3.83") — real stars. Roughly 90 of every 91 "stars"
+    # this function used to measure were sensor defects.
+    #
+    # That is where the "measured stellar a≈0.7px" figure came from, which was
+    # then adopted as the transient search's point-source window and made the
+    # supernova search unable to detect a supernova (see the injection note).
+    # Any FWHM measured on a raw sub through this path returns ~1 px, because
+    # that is the width of a hot pixel.
+    #
+    # stacker._despike already exists for exactly this reason — registration hit
+    # the same problem, where hot pixels voted for the identity transform. It was
+    # simply never applied on this path. Detection and fitting use the cleaned
+    # copy; the ORIGINAL frame is returned for display, so the rendered image
+    # still shows what the sensor actually recorded.
+    from stacking import stacker  # local import: avoids a circular import at load
+    try:
+        measured = stacker._despike(data)
+    except Exception:
+        _logger.exception("despike failed; measuring the raw frame (expect hot-pixel FWHM)")
+        measured = data
+
+    _, median, std = sigma_clipped_stats(measured, sigma=3.0)
+    background_subtracted = measured - median
 
     finder = DAOStarFinder(fwhm=_DETECTION_FWHM, threshold=threshold_sigma * std)
     sources = finder(background_subtracted)
@@ -121,7 +161,7 @@ def _fit_stars(
             fwhm = _FWHM_SIGMA_FACTOR * np.sqrt(sigma_x * sigma_y)
 
             # Reject bad FWHM range
-            if not (0.5 < fwhm < _STAMP_HALF):
+            if not (_MIN_PHYSICAL_FWHM_PX < fwhm < _STAMP_HALF):
                 continue
             # Reject faint fits (noise spikes that squeaked past detection)
             if fitted.amplitude.value < min_snr * std:
