@@ -93,25 +93,28 @@ def _fit_stars(
 
     # Remove single-pixel sensor defects BEFORE detecting anything.
     #
-    # No darks are taken, so raw subs are dominated by hot pixels — and hot
-    # pixels are sharper and brighter than stars, so every detector locks onto
-    # them first. Measured 2026-08-06 on a 300 s O-III sub: 1482 bright peaks at
-    # a median FWHM of 1.13 px (0.29"), which is below this telescope's 0.32"
-    # diffraction limit and therefore cannot be starlight. After despiking, 17
-    # peaks at 14.71 px (3.83") — real stars. Roughly 90 of every 91 "stars"
-    # this function used to measure were sensor defects.
+    # No darks are taken, so raw subs carry hot pixels, and hot pixels are
+    # sharper than stars. On a NORMAL frame this barely matters -- real stars
+    # dominate detection and the measured FWHM shifts by only ~3%. The failure
+    # is rare and conditional: when stars go broad and faint, the defects win
+    # the detection competition outright and the measurement collapses.
     #
-    # That is where the "measured stellar a≈0.7px" figure came from, which was
-    # then adopted as the transient search's point-source window and made the
-    # supernova search unable to detect a supernova (see the injection note).
-    # Any FWHM measured on a raw sub through this path returns ~1 px, because
-    # that is the width of a hot pixel.
+    # Measured 2026-08-06, old code vs new, same frames:
     #
-    # stacker._despike already exists for exactly this reason — registration hit
-    # the same problem, where hot pixels voted for the identity transform. It was
-    # simply never applied on this path. Detection and fitting use the cleaned
-    # copy; the ORIGINAL frame is returned for display, so the rendered image
-    # still shows what the sensor actually recorded.
+    #     2026-07-12 O-III (mid-night)   775 stars 1.85"  ->  1653 stars 1.91"
+    #     2026-07-23 Ha    (mid-night)   903 stars 1.73"  ->  1926 stars 1.78"
+    #     2026-08-04 O-III (end, poor)     5 stars 0.21"  ->   256 stars 4.21"
+    #
+    # So this is a robustness fix, not a systemic correction. It matters because
+    # a metric that silently returns nonsense on bad nights is worse than one
+    # that is merely noisy: it would poison any trend containing a poor night,
+    # and 0.21" is not obviously wrong to anything downstream that consumes it.
+    #
+    # stacker._despike already existed for the same underlying reason on the
+    # registration path, where hot pixels voted for the identity transform. It
+    # was simply never applied here. Detection and fitting use the cleaned copy;
+    # the ORIGINAL frame is returned for display, so the rendered image still
+    # shows what the sensor actually recorded.
     from stacking import stacker  # local import: avoids a circular import at load
     try:
         measured = stacker._despike(data)
