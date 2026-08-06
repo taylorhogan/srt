@@ -152,3 +152,39 @@ limiting magnitude quotable, via the photometric zero-point.
 `stacking/stacker.py` shares `_register_frames`, so if registration is the
 origin the convergence curves published on the lab site inherit the same
 instability.
+
+### The difference pipeline applies NO calibration
+
+Noticed 2026-08-06 and not yet judged. `_register_only` loads frames through
+`stacker._load_fits_2d`, which returns the raw FITS as float32 — **no bias, no
+dark, no flat**. `stacking/stacker.py` performs full calibration with cached
+masters, so this path bypasses machinery that already exists in the tree.
+
+Largely defensible, and possibly deliberate:
+
+* the same optics imprint both template and science, so vignetting and dust
+  shadows are common to both and mostly cancel in the subtraction;
+* `_robust_scale_bg` fits `science ≈ s·template + b`, absorbing the global scale
+  and the additive bias/dark pedestal;
+* hot pixels are fixed to the sensor and appear in both epochs, so they subtract.
+
+Where it stops being defensible:
+
+* **flat-field response is multiplicative and spatially varying**, and a single
+  global `s` cannot correct it. Anything that changed the flat between epochs — a
+  dust mote moving, the focuser rotating, the camera being refitted — leaves
+  structured residuals indistinguishable from the artifacts the shape cuts fight;
+* hot pixels only cancel if both epochs ran at the same sensor temperature;
+* the template spans four nights and the science image one, so their noise
+  differs in ways calibration would partly equalise.
+
+On the ngc5907 R set the template is 2026-06-02 → 06-08 and the science night is
+06-09, so the flats were plausibly stable across that week — which may be the
+only reason this works. Over a longer baseline, or across an optics disturbance,
+it would degrade quietly.
+
+**Relevance to this investigation:** if calibration were applied, frame-to-frame
+differences would shrink, which could change how close registration QA sits to
+its thresholds. Worth knowing before concluding anything about marginal frames.
+Test cheaply by calibrating the same set through the stacker's masters and
+re-running the bisection.
