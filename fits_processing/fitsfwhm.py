@@ -40,6 +40,10 @@ _STAMP_HALF = 25
 # because a defect that survives despiking must still not be called a star.
 _MIN_PHYSICAL_FWHM_PX = 1.5
 
+# Stamped on records so Gaussian-era and Moffat-era values are never mixed in a
+# trend. Untagged historical records are Gaussian.
+_PSF_MODEL = "moffat"
+
 # Fitted Gaussian amplitude must be at least this many × background std
 _MIN_SNR = 10.0
 
@@ -161,7 +165,42 @@ def _fit_stars(
             fitted = fitter(init_model, x_grid, y_grid, stamp)
             sigma_x = abs(fitted.x_stddev.value)
             sigma_y = abs(fitted.y_stddev.value)
+
+            # Width comes from a Moffat fit; SHAPE still comes from the Gaussian
+            # above. Two fits per star, deliberately.
+            #
+            # A real stellar profile has broader wings than a Gaussian can
+            # represent, so a Gaussian widens its core to cover them and reports
+            # a width that is too large. A Moffat models the wings with its
+            # power-law term and keeps the core honest. Measured 2026-08-06 on
+            # 118 bright stars in one sh2-92 sub: Gaussian 6.77 px (1.76"),
+            # Moffat 6.00 px (1.56") -- 11.5% smaller. This is also what
+            # PixInsight fits, so the numbers are now comparable with it.
+            #
+            # astropy's Moffat2D is circularly symmetric: no x/y widths, no
+            # angle. Eccentricity and major-axis angle therefore still come from
+            # the Gaussian, which the optics-trend metrics need for tilt, coma
+            # and collimation. Swapping wholesale would have silently removed
+            # them.
+            #
+            # The offset is NOT a constant that historical values can be scaled
+            # by -- it depends on the fitted power-law index, which moves with
+            # seeing. Records carry _PSF_MODEL so the two families are never
+            # averaged together; recompute from the frames instead.
             fwhm = _FWHM_SIGMA_FACTOR * np.sqrt(sigma_x * sigma_y)
+            try:
+                moffat = fitter(
+                    models.Moffat2D(amplitude=float(stamp.max()),
+                                    x_0=float(_STAMP_HALF), y_0=float(_STAMP_HALF),
+                                    gamma=max(sigma_x, 0.5), alpha=3.0),
+                    x_grid, y_grid, stamp)
+                gamma, alpha = abs(moffat.gamma.value), abs(moffat.alpha.value)
+                if gamma > 0 and alpha > 0:
+                    m_fwhm = 2.0 * gamma * np.sqrt(2.0 ** (1.0 / alpha) - 1.0)
+                    if np.isfinite(m_fwhm) and m_fwhm > 0:
+                        fwhm = float(m_fwhm)
+            except Exception:
+                pass          # keep the Gaussian width if the Moffat will not fit
 
             # Reject bad FWHM range
             if not (_MIN_PHYSICAL_FWHM_PX < fwhm < _STAMP_HALF):
