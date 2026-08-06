@@ -278,10 +278,16 @@ def _record_optics_trend(dso_dir, frames: list[dict], arcsec_per_pixel: float,
 
     filters = sorted({e.get("filter") for e in chosen if e.get("filter")})
     night = Path(chosen[0]["path"]).parent.parent.name
+    from fits_processing.fitsfwhm import _PSF_MODEL
     record = {
         "night": night,
         "dso": dso_dir.name,
         "filters": filters,
+        # Which PSF model produced these widths. Gaussian-era and Moffat-era
+        # numbers differ by ~11% and the offset is not a constant, so they must
+        # never share a series. Records written before 2026-08-06 carry no tag
+        # and are Gaussian by definition.
+        "psf_model": _PSF_MODEL,
         "computed": datetime.now().astimezone().isoformat(timespec="seconds"),
         **{k: (round(v, 4) if isinstance(v, float) else v) for k, v in metrics.items()},
     }
@@ -309,6 +315,19 @@ def _record_optics_trend(dso_dir, frames: list[dict], arcsec_per_pixel: float,
             loaded = _json.load(open(hist_path))
             if isinstance(loaded, list):
                 history = [r for r in loaded if r.get("night") != night]
+                # Refuse to mix PSF models rather than trusting a downstream
+                # reader to check the tag. A trend that silently spans the
+                # change would show an 11% step and read as an optical fault.
+                stale = [r for r in history
+                         if r.get("psf_model", "gaussian") != _PSF_MODEL]
+                if stale:
+                    logger.warning(
+                        "optics trend: dropping %d row(s) measured with a "
+                        "different PSF model (%s) — recompute them to restore "
+                        "the history", len(stale),
+                        ", ".join(sorted({r.get("psf_model", "gaussian") for r in stale})))
+                    history = [r for r in history
+                               if r.get("psf_model", "gaussian") == _PSF_MODEL]
         except Exception:
             logger.warning("optics_trend.json unreadable — starting a new history")
     history.append(record)
