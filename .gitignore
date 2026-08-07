@@ -43,6 +43,11 @@ instructions.png
 test_*.jpg
 test_*.fits
 
+# Sky-camera captures (scripts/probe_kasa_camera.py)
+sky.jpg
+*.h264
+*.stream
+
 # Personal / non-project files
 *.scad
 
