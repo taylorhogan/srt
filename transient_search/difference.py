@@ -213,30 +213,99 @@ def _gaussian_match(image: np.ndarray, fwhm: float, target_fwhm: float) -> np.nd
     return gaussian_filter(image, sigma)
 
 
+# Pixels below sky + this many robust sigma carry no leverage on a slope, so
+# they are excluded from the scale fit (they still set the pedestal, via the
+# medians). Raising it trades sample size for less attenuation bias: measured on
+# ngc5907 R, s = 0.934 / 0.960 / 0.972 / 0.975 at 5 / 10 / 25 / 50 MADs, i.e.
+# converging, so any value in that range gives the same answer to a few percent.
+_SCALE_LEVERAGE_MADS = 10.0
+# Above this the sensor is non-linear and the pair no longer scales.
+_SCALE_SATURATION_ADU = 50_000.0
+_SCALE_MIN_LEVERAGE_PX = 100
+
+
 def _robust_scale_bg(science: np.ndarray, template: np.ndarray,
                      mask: np.ndarray) -> tuple:
-    """Fit science ≈ s·template + b over covered pixels with sigma-clipping."""
+    """Fit science ≈ s·template + b over covered pixels.
+
+    Each parameter is estimated where it is actually identifiable: the sky is
+    additive and independent per epoch, so ``b`` follows from the two medians;
+    source flux scales, so ``s`` is fit only on pixels well above sky, which is
+    the only place a slope has any leverage.
+
+    This replaces a subsampled, sigma-clipped fit over the whole scatter, which
+    was the root cause of the run-to-run non-determinism documented in
+    docs/TRANSIENT_DETERMINISM_HANDOFF.md. Two independent defects, measured on
+    ngc5907 R (46 frames, 61 MP):
+
+    1. It drew 200k pixels via ``np.random.default_rng(0).choice(xs.size, …)``.
+       The seed is fixed but the draw is a function of ``xs.size`` — the covered
+       pixel count — so any change to coverage did not perturb the subsample, it
+       replaced it (overlap between draws at N and N-14825: 650/200000, 0.33%).
+       astroalign's RANSAC is unseeded and lands a marginal frame on one of two
+       transforms at random, moving coverage by ~15k pixels, so this rerolled on
+       roughly every other run.
+
+    2. Far worse, the estimator it rerolled was unstable: ``s`` spanned
+       0.255–0.450 across subsamples of *identical* data, 62% peak-to-peak.
+       Three rounds of 3σ clipping remove exactly the bright pixels that
+       constrain a slope — per round the surviving max collapsed
+       10923 → 1521 → 496 ADU while the 1–99 percentile stayed ~[241, 262],
+       corr(xs, ys) fell 0.92 → 0.81 → 0.46 and cond(A) climbed to 1.3e4. What
+       remained was sky regressed on sky: mostly noise, so the slope was
+       attenuated toward zero (hence s ≈ 0.27 for two medians of the same
+       instrument, where ≈1 is correct), and only the product ``s·sky + b``
+       stayed pinned — 229.56 / 229.20 / 229.78 across three very different
+       (s, b) pairs. `s` was therefore free to wander, and it set the difference
+       image, its background RMS, and every threshold downstream.
+
+    Under the same 14,825-pixel disturbance this form holds ``s`` to 0.026%,
+    against 100% for the old one. Note that merely dropping the subsample is not
+    enough — the full-population fit is deterministic but still swings 5%,
+    because the ill-conditioning is the real defect — and a fixed stride is
+    worse than either, since dropping pixels shifts every later index.
+
+    The honest cost: subtracting the template at nearly full weight also
+    subtracts nearly all of its noise, so the difference background RMS roughly
+    doubles (1.53 → 3.51). The old quiet background was bought by not
+    subtracting — the same fit left 11884 ADU of median residual above 10000 ADU
+    of template, against 2461 here.
+    """
     m = mask & np.isfinite(science) & np.isfinite(template)
     xs = template[m].astype(np.float64).ravel()
     ys = science[m].astype(np.float64).ravel()
     if xs.size < 100:
         return 1.0, 0.0
-    if xs.size > 200_000:
-        idx = np.random.default_rng(0).choice(xs.size, 200_000, replace=False)
-        xs, ys = xs[idx], ys[idx]
-    s, b = 1.0, 0.0
-    for _ in range(3):
-        if xs.size < 10:
-            break
-        A = np.vstack([xs, np.ones_like(xs)]).T
-        (s, b), *_ = np.linalg.lstsq(A, ys, rcond=None)
-        resid = ys - (s * xs + b)
-        std = float(np.std(resid))
-        if std <= 0:
-            break
+    sky_t = float(np.median(xs))
+    sky_s = float(np.median(ys))
+    mad_t = 1.4826 * float(np.median(np.abs(xs - sky_t)))
+    if not np.isfinite(mad_t) or mad_t <= 0:
+        return 1.0, sky_s - sky_t
+    hi = ((xs > sky_t + _SCALE_LEVERAGE_MADS * mad_t)
+          & (xs < _SCALE_SATURATION_ADU)
+          & (ys < _SCALE_SATURATION_ADU) & (ys > 0))
+    if int(np.count_nonzero(hi)) < _SCALE_MIN_LEVERAGE_PX:
+        # Nothing bright enough to constrain a slope — a blank field, or a
+        # coverage mask that clipped the stars. Assume unit scale and carry the
+        # pedestal, rather than inventing a slope from noise.
+        return 1.0, sky_s - sky_t
+    dx = xs[hi] - sky_t
+    dy = ys[hi] - sky_s
+    s = float(np.dot(dx, dy) / np.dot(dx, dx))
+    # One clipping round, applied only WITHIN the bright set. That rejects
+    # cosmic rays and any genuine transient (which is in the science but not the
+    # template, and would otherwise bias s upward) without touching the dynamic
+    # range the fit depends on — the mistake the old form made.
+    resid = dy - s * dx
+    std = float(np.std(resid))
+    if std > 0:
         keep = np.abs(resid) < 3.0 * std
-        xs, ys = xs[keep], ys[keep]
-    return float(s), float(b)
+        if int(np.count_nonzero(keep)) >= _SCALE_MIN_LEVERAGE_PX:
+            dx, dy = dx[keep], dy[keep]
+            s = float(np.dot(dx, dy) / np.dot(dx, dx))
+    if not np.isfinite(s) or s <= 0:
+        return 1.0, sky_s - sky_t
+    return s, sky_s - s * sky_t
 
 
 def _psf_match_and_subtract(science: np.ndarray, template: np.ndarray,
