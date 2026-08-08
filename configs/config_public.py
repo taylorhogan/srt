@@ -7,7 +7,7 @@ class PublicConfig():
 
         },
         "version": {
-            "date": "2026.8.8.3"
+            "date": "2026.8.8.4"
         },
 
         "logger": {
@@ -50,6 +50,12 @@ class PublicConfig():
             # four days to under a day and a half, starving the detector of
             # exactly the labelled examples the archive exists to collect.
             "keep_frames": 1152,
+            # Frames that caught weather move to <capture_dir>/keep/ and are
+            # exempt from the cap above -- see sentry/sky_archive.py for why a
+            # flat cap is the wrong policy for a rare event. This is keep/'s own
+            # ceiling, so a long wet spell cannot fill the disk unattended.
+            # ~2.4 GB at 590 KB a frame.
+            "keep_event_frames": 4000,
             # Credentials do NOT go here. They belong in config_private.py
             # under the separate top-level "sky camera auth" key, because
             # config.data() merges the two configs with a shallow

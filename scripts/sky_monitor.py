@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
-"""Every 15 minutes: photograph the sky, count the stars if it is dark, publish.
+"""Every 5 minutes: photograph the sky, count the stars if it is dark, publish.
 
 Runs off the Kasa all-sky camera (sentry/sky_camera.py), counts point sources
 with sentry/star_count.py, and pushes the picture plus the count to the lab
-site's live panel. Frames are also kept in a rolling local archive, because the
-cloud/rain/snow detector this is groundwork for needs labelled examples and
-those can only be collected before the fact.
+site's live panel. Frames are archived locally, because the cloud/rain/snow
+detector this is groundwork for needs labelled examples and those can only be
+collected before the fact. Retention is event-aware rather than a flat rolling
+cap -- see sentry/sky_archive.py for why keeping the newest N would delete the
+storms and keep the four thousandth clear sky.
 
 Publishes to sky.json / sky.jpg, NOT to the status.json that live_skymap.py
 owns. That generator rewrites its file wholesale every 5 minutes; sharing one
@@ -17,7 +19,7 @@ when purity is low. That is not defensive padding: on a rain frame this
 detector returns several hundred "stars" of which most are false, so an
 unqualified count would report the worst sky of the night as the best.
 
-Usage:  python scripts/sky_monitor.py [--no-push] [--annotate]
+Usage:  python scripts/sky_monitor.py [--no-push] [--annotate] [--frame PATH]
 """
 import json
 import os
@@ -38,7 +40,7 @@ if __package__ is None or __package__ == "":
 
 from configs import config
 from iris_astronomy import sun
-from sentry import plate_solve, sky_camera, star_count
+from sentry import plate_solve, sky_archive, sky_camera, star_count
 from scripts import live_push
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -102,6 +104,20 @@ def main() -> int:
               % (res["stars"], 100 * res["purity"], sun_alt))
 
     _publish(status, frame)
+
+    # Log first, then preserve, then prune -- in that order. The index is what
+    # the preserve step reads to find frames the detector distrusted, so a
+    # capture must be recorded before anything is allowed to delete it.
+    try:
+        sky_archive.append_index(status)
+        ev = sky_archive.preserve_events()
+        if ev.get("moved"):
+            print("preserved %d frame(s) %s" % (ev["moved"], ev["by"]))
+    except Exception as exc:
+        # Retention must never sink a capture, but a silent failure here means
+        # the pruner below is running without the labels that protect frames.
+        print("archive step failed (%s); pruning without event labels"
+              % type(exc).__name__)
     dropped = sky_camera.prune()
     if dropped:
         print("pruned %d old frames" % dropped)
@@ -116,7 +132,7 @@ def _add_photometry(status, frame, res):
     the sky lets us see is a property of the sky. It needs the plate solution to
     know which catalogue stars should have been visible.
 
-    Never blind-solves here. That search takes minutes, and a job on a 15-minute
+    Never blind-solves here. That search takes minutes, and a job on a 5-minute
     timer must not sometimes take minutes -- run `python sentry/plate_solve.py
     <frame> --save` once, by hand, and this picks it up from then on. The camera
     is bolted down, so once is enough.
@@ -142,6 +158,17 @@ def _add_photometry(status, frame, res):
         # sky got worse, which is exactly when the reading matters. A wrong
         # solution matches a percent or two; a right one on a bad night still
         # matches a quarter.
+        #
+        # Only ever judged on a frame the detector trusts. On a rain frame the
+        # geometry is fine and the sky is simply opaque, but the count fills
+        # with junk -- 521 detections, 286 of them false, 9 matching, a 2%
+        # share -- which trips any share test and would send someone chasing a
+        # camera fault during a storm. An untrustworthy frame says nothing
+        # about where the camera points, so it gets no verdict either way.
+        if not res["trustworthy"]:
+            status["note_solve"] = ("sky too poor to check the plate solution "
+                                    "on this frame")
+            return
         share = v["matches"] / max(res["stars"], 1)
         if v["matches"] < 6 or share < 0.08:
             status["note_solve"] = (
