@@ -40,7 +40,7 @@ if __package__ is None or __package__ == "":
 
 from configs import config
 from iris_astronomy import sun
-from sentry import plate_solve, sky_archive, sky_camera, star_count
+from sentry import plate_solve, sky_annotate, sky_archive, sky_camera, star_count
 from scripts import live_push
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -67,8 +67,14 @@ def main() -> int:
         return 1
 
     status["camera"] = "ok"
-    status["captured"] = datetime.fromtimestamp(
-        frame.stat().st_mtime, timezone.utc).isoformat(timespec="seconds")
+    # The frame's own timestamp, not its mtime. For a live capture the two
+    # agree, but a frame that has been copied or reprocessed carries the mtime
+    # of the copy: the 02:00 rain frame came back as 09:03, which marked the
+    # wrong hour as interesting and preserved two innocent frames. Everything
+    # else here already dates the frame this way, and one function should not
+    # hold two notions of when a picture was taken.
+    status["captured"] = plate_solve.frame_time(frame).isoformat(
+        timespec="seconds")
 
     # The project already has one definition of night; a second one here could
     # disagree with the scheduler about whether the observatory is working.
@@ -195,9 +201,21 @@ def _publish(status, frame):
         return
     pairs = [(js, "sky.json")]
     if frame is not None:
+        # Compass bearings are drawn on a COPY, never on the archived frame.
+        # The archive is training data for the weather detector, and a label
+        # burnt into the same pixels every frame is exactly the sort of
+        # constant a classifier learns in place of the sky. Falls back to the
+        # raw frame if there is no plate solution to compute bearings from.
+        shown = out_dir / "sky_published.jpg"
+        try:
+            shown = sky_annotate.annotate(frame, shown) or frame
+        except Exception as exc:
+            print("compass annotation failed (%s); publishing the raw frame"
+                  % type(exc).__name__)
+            shown = frame
         # Picture first: a viewer that catches the pair mid-push should see an
         # old count beside a new picture, never a new count beside an old one.
-        pairs.insert(0, (frame, "sky.jpg"))
+        pairs.insert(0, (shown, "sky.jpg"))
     live_push.push(pairs)
     print("pushed", len(pairs), "file(s) to", live_push.HOST + ":" + live_push.DEST)
 
