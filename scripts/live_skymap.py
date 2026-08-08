@@ -54,23 +54,14 @@ ANCHORS = [
 
 
 def _star_cache(root: Path) -> np.ndarray:
-    """Naked-eye stars, fetched once and cached. Never re-fetched on a timer."""
-    cache = root / "local" / "bright_stars.npy"
-    if cache.exists():
-        return np.load(cache)
-    from astroquery.vizier import Vizier
-    from astropy.coordinates import SkyCoord
-    import astropy.units as u
-    v = Vizier(columns=["RAJ2000", "DEJ2000", "Vmag"], row_limit=-1)
-    v.ROW_LIMIT = -1
-    cat = v.query_constraints(catalog="V/50/catalog", Vmag="<6.0")[0]
-    c = SkyCoord(ra=cat["RAJ2000"], dec=cat["DEJ2000"], unit=(u.hourangle, u.deg))
-    arr = np.column_stack([c.ra.deg.astype(float), c.dec.deg.astype(float),
-                           np.asarray(cat["Vmag"], dtype=float)])
-    arr = arr[np.isfinite(arr).all(axis=1)]
-    cache.parent.mkdir(parents=True, exist_ok=True)
-    np.save(cache, arr)
-    return arr
+    """Naked-eye stars, fetched once and cached. Never re-fetched on a timer.
+
+    Thin wrapper kept for readability at the call site; the cache itself is
+    shared with the plate solver, which has to agree with this chart about
+    which stars are up.
+    """
+    from iris_astronomy import bright_stars
+    return bright_stars.catalogue(root)
 
 
 def _top_target(root: Path):
@@ -90,6 +81,76 @@ def _top_target(root: Path):
     if obj is None:
         return None
     return name, float(obj.coord.ra.deg), float(obj.coord.dec.deg), int(good_hours)
+
+
+
+def _latest_frame(root: Path, out_dir: Path):
+    """Annotate the most recent sub the way the `latest` webchat command does.
+
+    Deliberately the same code path as cmd_processing/social_server.latest_cmd:
+    get_latest_file -> measure_sky -> fitsfwhm.save_fwhm. Reimplementing the
+    annotation would give the site a second opinion about FWHM and sky that
+    could drift from the one the observatory reports, and two numbers that
+    disagree are worse than one.
+
+    Returns (jpg_path, meta) or (None, {}).
+    """
+    from astropy.io import fits as _fits
+    from fits_processing import fitstojpg, fitsfwhm
+    from fits_processing import sky_brightness as sb
+
+    cfg = config.data()
+    image_dir = cfg["nina"]["image_dir"]
+    aps = cfg["nina"]["arc_sec_per_pixel"]
+    latest = fitstojpg.get_latest_file(image_dir, "fits")
+    if latest is None:
+        return None, {}
+    fp = Path(str(latest))
+
+    filter_name, taken, dso = None, None, None
+    try:
+        hdr = _fits.getheader(fp)
+        filter_name = str(hdr.get("FILTER", "")).strip() or None
+        # DATE-OBS is when the shutter opened; mtime is when writing finished.
+        # For "how long ago" the exposure start is the honest answer.
+        taken = str(hdr.get("DATE-OBS", "")).strip() or None
+        dso = str(hdr.get("OBJECT", "")).strip() or None
+    except Exception:
+        pass
+    if not dso:
+        # Fall back to the directory the frame sits in: subs live under
+        # <image_dir>/<dso>/[rig/]<date>/LIGHT/.
+        try:
+            dso = fp.relative_to(Path(image_dir)).parts[0]
+        except Exception:
+            dso = None
+    if not taken:
+        taken = datetime.fromtimestamp(fp.stat().st_mtime, timezone.utc).isoformat(
+            timespec="seconds")
+    elif not taken.endswith("Z") and "+" not in taken:
+        taken = taken + "+00:00"          # N.I.N.A writes DATE-OBS in UTC
+
+    sky = None
+    try:
+        sky = sb.measure_sky(fp, arcsec_per_pixel=aps)
+    except Exception:
+        pass
+
+    jpg = out_dir / "live_latest.jpg"
+    try:
+        out, mean_px, mean_ecc = fitsfwhm.save_fwhm(
+            fp, jpg, arcsec_per_pixel=aps, annotate=False,
+            filter_name=filter_name, sky_data=sky)
+    except Exception as exc:
+        return None, {"latest_error": str(exc)}
+
+    meta = {"latest_dso": dso, "latest_taken": taken,
+            "latest_filter": filter_name, "latest_file": fp.name,
+            "latest_fwhm_arcsec": round(float(mean_px) * aps, 2) if mean_px else None,
+            "latest_ecc": round(float(mean_ecc), 3) if mean_ecc else None}
+    if sky and sky.get("sky_adu_per_s") is not None:
+        meta["latest_sky_adu_per_s"] = round(float(sky["sky_adu_per_s"]), 4)
+    return Path(str(out)), meta
 
 
 def main() -> None:
@@ -213,6 +274,10 @@ def main() -> None:
     fig.savefig(img, format="jpeg", dpi=110, facecolor=BG, bbox_inches="tight")
     plt.close(fig)
 
+    # The most recent sub, annotated the same way `latest` does.
+    latest_jpg, latest_meta = _latest_frame(root, out_dir)
+    status.update(latest_meta)
+
     js = out_dir / "live_status.json"
     js.write_text(json.dumps(status, indent=1))
     print("rendered", img.name, "->", status.get("target"), status.get("state"))
@@ -222,7 +287,10 @@ def main() -> None:
 
     # Write to .tmp and rename on the far side, so the site never serves a
     # half-copied image.
-    for src, dest in ((img, "skymap.jpg"), (js, "status.json")):
+    pushes = [(img, "skymap.jpg"), (js, "status.json")]
+    if latest_jpg is not None and latest_jpg.exists():
+        pushes.insert(1, (latest_jpg, "latest.jpg"))
+    for src, dest in pushes:
         subprocess.run(["scp", "-i", KEY, "-o", "BatchMode=yes", "-o",
                         "ConnectTimeout=15", str(src),
                         HOST + ":" + DEST + "/." + dest + ".tmp"], check=True)

@@ -32,22 +32,28 @@ from configs import config
 NIGHT_SUN_ALT_DEG = -10.0
 
 
-def get_sun_angle():
-    """The sun's altitude in degrees right now. Negative is below the horizon."""
+def get_sun_angle(when=None):
+    """The sun's altitude in degrees. Negative is below the horizon.
+
+    `when` defaults to now. Pass it explicitly when judging a stored frame:
+    asking whether it is dark *now* tells you nothing about a frame captured
+    forty minutes ago, and near twilight that is the difference between a
+    plausible star count and an alarming one.
+    """
     cfg = config.data()
     loc_cfg = cfg["location"]
     loc = EarthLocation.from_geodetic(
         float(loc_cfg["longitude"]) * u.deg,
         float(loc_cfg["latitude"]) * u.deg,
         float(loc_cfg.get("elevation", 0)) * u.m)
-    now = Time(datetime.datetime.now(datetime.timezone.utc))
-    return float(get_sun(now).transform_to(
-        AltAz(obstime=now, location=loc)).alt.deg)
+    t = Time(when or datetime.datetime.now(datetime.timezone.utc))
+    return float(get_sun(t).transform_to(
+        AltAz(obstime=t, location=loc)).alt.deg)
 
 
-def is_night():
-    """(is_it_night, sun_altitude_deg)."""
-    sun_angle = get_sun_angle()
+def is_night(when=None):
+    """(is_it_night, sun_altitude_deg), at `when` or now."""
+    sun_angle = get_sun_angle(when)
     return sun_angle < NIGHT_SUN_ALT_DEG, sun_angle
 
 

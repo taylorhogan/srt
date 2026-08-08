@@ -38,7 +38,7 @@ if __package__ is None or __package__ == "":
 
 from configs import config
 from iris_astronomy import sun
-from sentry import sky_camera, star_count
+from sentry import plate_solve, sky_camera, star_count
 from scripts import live_push
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -70,7 +70,9 @@ def main() -> int:
 
     # The project already has one definition of night; a second one here could
     # disagree with the scheduler about whether the observatory is working.
-    night, sun_alt = sun.is_night()
+    # Judged at the frame's own timestamp, not at wall-clock now, so that
+    # reprocessing an archived frame reports the sky that frame actually saw.
+    night, sun_alt = sun.is_night(plate_solve.frame_time(frame))
     status["night"] = bool(night)
     status["sun_alt_deg"] = round(float(sun_alt), 1)
 
@@ -84,12 +86,12 @@ def main() -> int:
             ann = ROOT / "iris_astronomy" / "scratch" / "sky_marked.png"
             ann.parent.mkdir(parents=True, exist_ok=True)
         res = star_count.count_stars(frame, annotate=ann)
-        res.pop("_stars", None)
         status.update({k: res[k] for k in (
             "stars", "false_positives", "purity", "trustworthy",
             "threshold_adu", "threshold_sigma", "noise_adu",
             "sky_median_adu", "masked_fraction", "median_fwhm_px",
             "brightest_peak_adu")})
+        _add_photometry(status, frame, res)
         if not res["trustworthy"]:
             # Keep the raw number for the archive, but say plainly that it is
             # not a reading of the sky.
@@ -104,6 +106,55 @@ def main() -> int:
     if dropped:
         print("pruned %d old frames" % dropped)
     return 0
+
+
+def _add_photometry(status, frame, res):
+    """Limiting magnitude, if the camera's plate solution still fits.
+
+    Limiting magnitude is the better cloud reading. A star count also falls when
+    a branch grows into the field or the frame is cropped differently; how faint
+    the sky lets us see is a property of the sky. It needs the plate solution to
+    know which catalogue stars should have been visible.
+
+    Never blind-solves here. That search takes minutes, and a job on a 15-minute
+    timer must not sometimes take minutes -- run `python sentry/plate_solve.py
+    <frame> --save` once, by hand, and this picks it up from then on. The camera
+    is bolted down, so once is enough.
+    """
+    sol = plate_solve.load()
+    if sol is None:
+        status["note_solve"] = ("no plate solution stored; run "
+                                "sentry/plate_solve.py <frame> --save once")
+        return
+    when = plate_solve.frame_time(frame)
+    try:
+        v = plate_solve.verify(sol, frame, when, res["_stars"])
+        status["solve_matches"] = v["matches"]
+        status["solve_residual_px"] = v["residual_px"]
+        # A knocked or refocused camera shows up here first: the stored geometry
+        # stops landing on the stars. Say so rather than publish a magnitude
+        # derived from a solution that no longer describes this camera.
+        #
+        # Tested as a FRACTION of what was detected, never an absolute count.
+        # Cloud drives the count down without moving the camera -- 187 stars and
+        # 88 matches at 03:34 became 112 and 29 forty minutes later as twilight
+        # came up -- so an absolute floor would cry "re-solve" every time the
+        # sky got worse, which is exactly when the reading matters. A wrong
+        # solution matches a percent or two; a right one on a bad night still
+        # matches a quarter.
+        share = v["matches"] / max(res["stars"], 1)
+        if v["matches"] < 6 or share < 0.08:
+            status["note_solve"] = (
+                "plate solution no longer fits (%d matches, %.0f%% of "
+                "detections); re-solve" % (v["matches"], 100 * share))
+            return
+        lm = plate_solve.limiting_magnitude(sol, frame, when, res["_stars"],
+                                            res["_mask"])
+        status["limiting_mag"] = lm["limiting_mag"]
+        status["stars_expected"] = lm["stars_visible_area"]
+        status["stars_matched"] = lm["stars_matched"]
+    except Exception as exc:            # never let photometry sink the capture
+        status["note_solve"] = "photometry failed: %s" % type(exc).__name__
 
 
 def _publish(status, frame):

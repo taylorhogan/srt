@@ -165,7 +165,11 @@ def count_stars(image, threshold=None, fwhm_range=None, max_elong=None,
     }
     if annotate:
         _annotate(a, model, mask, stars, out, annotate)
+    # Underscore keys are working data, not measurements: callers that publish
+    # this dict strip them. The mask is handed back so the plate solver can
+    # reuse it instead of paying for a second median filter over 3.7 Mpx.
     out["_stars"] = stars
+    out["_mask"] = mask
     return out
 
 
@@ -217,6 +221,6 @@ if __name__ == "__main__":
         i = sys.argv.index("--annotate")
         ann = sys.argv[i + 1] if len(sys.argv) > i + 1 else "annotated.png"
     res = count_stars(args[0], annotate=ann)
-    res.pop("_stars", None)
     for k, v in res.items():
-        print("%-20s %s" % (k, v))
+        if not k.startswith("_"):
+            print("%-20s %s" % (k, v))
