@@ -7,7 +7,7 @@ class PublicConfig():
 
         },
         "version": {
-            "date": "2026.8.8.2"
+            "date": "2026.8.8.3"
         },
 
         "logger": {
@@ -44,7 +44,12 @@ class PublicConfig():
             # detector that comes next needs labelled examples, and they can
             # only be collected before the fact.
             "capture_dir": "local/sky_frames",
-            "keep_frames": 400,             # ~4 days at 15 minutes
+            # ~4 days at the 5-minute cadence (288 frames/day, ~590 KB each,
+            # so about 680 MB). Raised from 400 when the cadence went 15 -> 5
+            # minutes; left at 400 it would have silently cut retention from
+            # four days to under a day and a half, starving the detector of
+            # exactly the labelled examples the archive exists to collect.
+            "keep_frames": 1152,
             # Credentials do NOT go here. They belong in config_private.py
             # under the separate top-level "sky camera auth" key, because
             # config.data() merges the two configs with a shallow

@@ -1,13 +1,18 @@
 @ECHO off
 REM Photographs the sky, counts stars if it is dark, pushes to the live panel.
-REM Scheduled every 15 minutes by Windows Task Scheduler ("IrisSkyMonitor").
+REM Scheduled every 5 minutes by Windows Task Scheduler ("IrisSkyMonitor"),
+REM deliberately offset ~2.5 minutes from IrisLiveSkymap so the two jobs do not
+REM run at once: each takes about a minute and the observatory PC is also
+REM running N.I.N.A.
 REM
 REM Hard 4-minute timeout, for the same reason live_skymap.bat has one: a run
 REM that hangs on a network call holds the log handle open and every later run
 REM then fails at the redirect before python starts. The scheduler's own
-REM ExecutionTimeLimit did not reap those, so the kill happens here. A normal
-REM run is well under a minute -- roughly 20s to pull a frame off the camera
-REM and 35s to count -- so 4 minutes is a hang, not a slow night.
+REM ExecutionTimeLimit did not reap those, so the kill happens here. 4 minutes
+REM and not 5: a run must be dead before the next trigger fires, or two live
+REM processes contend for the log and the whole failure repeats. A normal run
+REM is under a minute -- roughly 20s to pull a frame off the camera, 35s to
+REM count, a few more to verify the plate solution -- so 4 minutes is a hang.
 REM
 REM Single > rather than >>, so a stuck handle cannot silently block the run
 REM and the log cannot grow without bound. Exit code passed through: a camera
