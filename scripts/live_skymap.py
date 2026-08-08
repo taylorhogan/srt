@@ -64,6 +64,42 @@ def _star_cache(root: Path) -> np.ndarray:
     return bright_stars.catalogue(root)
 
 
+def _draw_camera_fov(ax):
+    """Outline what the all-sky camera can see, from its plate solution.
+
+    Drawn from the stored solution rather than a nominal field of view, so the
+    outline is where the camera actually looks: 4 degrees off zenith at a roll
+    nobody chose. Silently skipped if nothing has been solved yet.
+
+    The zenith sits INSIDE the frame, so the border winds a full turn in
+    azimuth. Left as raw angles that produces a line sweeping back across the
+    chart at the 360/0 seam, hence the unwrap.
+    """
+    try:
+        from sentry import plate_solve
+    except ImportError:
+        return
+    sol = plate_solve.load()
+    if sol is None:
+        return
+    w, h = 2560, 1440
+    n = 120
+    xs = np.concatenate([np.linspace(0, w, n), np.full(n, w),
+                         np.linspace(w, 0, n), np.zeros(n)])
+    ys = np.concatenate([np.zeros(n), np.linspace(0, h, n),
+                         np.full(n, h), np.linspace(h, 0, n)])
+    try:
+        alt, az = plate_solve.pixel_to_altaz(sol, xs, ys)
+    except Exception:
+        return
+    th = np.unwrap(np.radians(az))
+    r = 90.0 - alt
+    th = np.append(th, th[0])
+    r = np.append(r, r[0])
+    ax.plot(th, r, color=FG, lw=0.9, alpha=0.33, ls=(0, (5, 4)), zorder=3.5)
+    ax.fill(th, r, color=FG, alpha=0.035, zorder=1.5, linewidth=0)
+
+
 def _top_target(root: Path):
     """(name, ra_deg, dec_deg, good_hours) for the current best target, or None."""
     from iris_astronomy import astro_dso_visibility as adv
@@ -206,6 +242,8 @@ def main() -> None:
     for d in (60, 30):
         ax.plot(np.linspace(0, 2 * np.pi, 200), np.full(200, 90.0 - d),
                 color=DIM, lw=0.6, alpha=0.3, zorder=2)
+
+    _draw_camera_fov(ax)
 
     for nm, ara, adec in ANCHORS:
         c = SkyCoord(ra=ara * u.deg, dec=adec * u.deg).transform_to(frame)
