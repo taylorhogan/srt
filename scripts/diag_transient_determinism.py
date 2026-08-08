@@ -78,6 +78,15 @@ def main() -> None:
     _orig_sb = tr._robust_scale_bg
 
     def sb_spy(science, template, mask):
+        # Log the fit population size, not just the answer. _robust_scale_bg
+        # subsamples with np.random.default_rng(0).choice(xs.size, 200_000):
+        # the seed is fixed but the DRAW is a function of xs.size, so a coverage
+        # change of a few thousand pixels does not perturb the subsample, it
+        # replaces it (measured overlap: 0.33%). Without this line the bisection
+        # cannot tell that path apart from "the values shifted slightly", and
+        # they have very different fixes.
+        m = mask & np.isfinite(science) & np.isfinite(template)
+        print(f"SCALE n_fit={int(m.sum())}")
         s, b = _orig_sb(science, template, mask)
         print(f"SCALE s={s!r} b={b!r}")
         return s, b
