@@ -28,8 +28,34 @@ _GALAXY_OTYPES = {"G", "SyG", "Sy1", "Sy2", "rG", "GrG", "GiC", "GiG", "BCG", "A
 _NEBULA_OTYPES = {"PN", "HII", "SNR", "RNe", "GNe", "MoC", "SFR", "HH", "Cld", "DN", "PoC", "ISM"}
 
 
+def _queued_object_type(dso_name: str) -> Optional[str]:
+    """An object type recorded on the queued instruction, if there is one.
+
+    Positional targets are named by the requestor, not by a catalogue, so SIMBAD
+    cannot classify them: "bubble" and "gravwav" both come back "unknown", and
+    unknown means a broadband LRGB plan. On a planetary nebula that spends the
+    night on the wrong filters. An explicit obj_type on the instruction is the
+    escape hatch, and it is checked before the name lookup.
+    """
+    try:
+        from control import instructions
+        rec = instructions.get_instruction_by_dso(dso_name)
+    except Exception:
+        return None
+    if not rec:
+        return None
+    t = str(rec.get("obj_type", "")).strip().lower()
+    return t if t in ("galaxy", "nebula") else None
+
+
 def _classify_object_type(dso_name: str) -> str:
-    """Query SIMBAD for the object type. Returns 'galaxy', 'nebula', or 'unknown'."""
+    """Object type for the filter plan: 'galaxy', 'nebula', or 'unknown'.
+
+    An explicit type on the queued instruction wins over the name lookup.
+    """
+    queued = _queued_object_type(dso_name)
+    if queued:
+        return queued
     try:
         from astroquery.simbad import Simbad
         custom = Simbad()

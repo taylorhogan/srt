@@ -319,7 +319,7 @@ def set_priority_instruction_db(dso_name: str, priority: int) -> bool:
 
 
 def add_dso_object_instruction(dso_name, recipe, requestor, priority=5,
-                               ra_deg=None, dec_deg=None):
+                               ra_deg=None, dec_deg=None, obj_type=None):
     normalized = dso_name.lower().replace(" ", "")
     now = datetime.now()
     formatted_date = now.strftime("%Y-%m-%d")
@@ -342,6 +342,11 @@ def add_dso_object_instruction(dso_name, recipe, requestor, priority=5,
     if ra_deg is not None and dec_deg is not None:
         new_instruction["ra_deg"] = ra_deg
         new_instruction["dec_deg"] = dec_deg
+    # ...and an explicit type, because a requestor-chosen name has no catalogue
+    # entry to classify. Without this the sequence generator sees "unknown" and
+    # plans broadband LRGB, which on a narrowband target wastes the night.
+    if obj_type is not None:
+        new_instruction["obj_type"] = obj_type
     instructions.append(new_instruction)
     with open(_INSTRUCTIONS_PATH, 'w') as f:
         f.writelines(json.dumps(instructions, indent=4))
