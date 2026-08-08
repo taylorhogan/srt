@@ -95,6 +95,122 @@ def capture(out_path=None, timeout=15.0):
     return out_path
 
 
+def capture_burst(seconds=None, out_path=None, cfg=None):
+    """Record a few seconds of consecutive frames. Returns (path, n_frames).
+
+    Kept as the RAW H.264 elementary stream rather than decoded stills: 8
+    seconds is about 1.3 MB this way against roughly 71 MB as JPEGs, 55x
+    smaller for identical pixels, and it decodes back on demand. Storage is the
+    only reason bursts are affordable at all.
+
+    Why a burst is worth taking during weather: at 15 fps a star drifts 0.008 px
+    between adjacent frames, so anything that moves is not a star. Every frame
+    also holds an entirely fresh set of raindrops, which makes a single shower
+    thousands of independent drop samples even though it is only one weather
+    event. Three stills five minutes apart cannot show that.
+    """
+    import time
+    from scripts.probe_kasa_camera import (legacy_tls_session, _boundary_of,
+                                           _split_parts)
+    from requests.auth import HTTPBasicAuth
+
+    cfg = cfg or config.data()
+    cam = cfg.get("sky camera", {})
+    seconds = float(seconds if seconds is not None else cam.get("burst_seconds", 8.0))
+    host = cam.get("host")
+    user, pw = credentials(cfg)
+    if not host or not user or not pw:
+        return None, 0
+
+    if out_path is None:
+        root = Path(__file__).resolve().parents[1]
+        d = root / cam.get("burst_dir", "local/sky_bursts")
+        d.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        out_path = d / ("burst_" + stamp + ".h264")
+    out_path = Path(out_path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+
+    url = "https://%s:19443/https/stream/mixed?video=h264&audio=g711" % host
+    try:
+        sess = legacy_tls_session()
+        resp = sess.get(url, auth=HTTPBasicAuth(user, pw), verify=False,
+                        stream=True, timeout=(15, 12))
+        if resp.status_code != 200:
+            resp.close()
+            return None, 0
+        delim = b"--" + (_boundary_of(resp.headers.get("Content-Type", "")) or "").encode()
+        if delim == b"--":
+            resp.close()
+            return None, 0
+        buf = bytearray()
+        first = None
+        deadline = None
+        for chunk in resp.iter_content(chunk_size=64 * 1024):
+            if chunk:
+                if first is None:
+                    first = time.monotonic()
+                    deadline = first + seconds
+                buf.extend(chunk)
+            if deadline and time.monotonic() > deadline:
+                break
+            if len(buf) > 32 * 1024 * 1024:
+                break
+        resp.close()
+    except Exception as exc:
+        print("burst: capture raised " + type(exc).__name__ + ": " + str(exc)[:120])
+        return None, 0
+
+    video = bytearray()
+    nparts = 0
+    for headers, body in _split_parts(buf, delim):
+        if "h264" in headers.get("content-type", ""):
+            video.extend(body)
+            nparts += 1
+    if not video:
+        return None, 0
+    out_path.write_bytes(bytes(video))
+    return out_path, nparts
+
+
+def decode_burst(path, limit=None):
+    """Decode a stored burst back to grayscale frames. For offline analysis."""
+    import cv2
+    import numpy as np
+    cap = cv2.VideoCapture(str(path))
+    frames = []
+    while True:
+        ok, fr = cap.read()
+        if not ok:
+            break
+        frames.append(cv2.cvtColor(fr, cv2.COLOR_BGR2GRAY).astype(float))
+        if limit and len(frames) >= limit:
+            break
+    cap.release()
+    return frames
+
+
+def prune_bursts(keep=None, cfg=None):
+    """Rolling cap on stored bursts. They are small but not free."""
+    cfg = cfg or config.data()
+    cam = cfg.get("sky camera", {})
+    keep = int(keep if keep is not None else cam.get("keep_bursts", 500))
+    root = Path(__file__).resolve().parents[1]
+    d = root / cam.get("burst_dir", "local/sky_bursts")
+    if not d.is_dir() or keep <= 0:
+        return 0
+    files = sorted(d.glob("burst_*.h264"), key=lambda p: p.stat().st_mtime,
+                   reverse=True)
+    dropped = 0
+    for old in files[keep:]:
+        try:
+            old.unlink()
+            dropped += 1
+        except OSError:
+            pass
+    return dropped
+
+
 def prune(keep=None):
     """Hold the rolling frame archive to `keep` newest files."""
     cfg = config.data()

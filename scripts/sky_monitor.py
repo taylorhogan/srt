@@ -109,6 +109,22 @@ def main() -> int:
         print("sky_monitor: %d stars, purity %.0f%%, sun %.1f deg"
               % (res["stars"], 100 * res["purity"], sun_alt))
 
+    # Measured on every capture, day or night, because the daylight burst
+    # trigger has nothing else to compare against.
+    try:
+        status["frame_level_adu"] = round(_frame_level(frame), 1)
+    except Exception:
+        pass
+
+    # Before publishing: a burst is time-critical in a way the push is not. If
+    # rain is starting, the seconds spent uploading a JPEG are seconds of the
+    # onset going unrecorded, and the onset does not come round again.
+    if "--frame" not in sys.argv:
+        try:
+            _maybe_burst(status, config.data())
+        except Exception as exc:
+            print("burst step failed (%s)" % type(exc).__name__)
+
     _publish(status, frame)
 
     # Log first, then preserve, then prune -- in that order. The index is what
@@ -116,6 +132,7 @@ def main() -> int:
     # capture must be recorded before anything is allowed to delete it.
     try:
         sky_archive.append_index(status)
+        sky_camera.prune_bursts()
         ev = sky_archive.preserve_events()
         if ev.get("moved"):
             print("preserved %d frame(s) %s" % (ev["moved"], ev["by"]))
@@ -128,6 +145,52 @@ def main() -> int:
     if dropped:
         print("pruned %d old frames" % dropped)
     return 0
+
+
+def _frame_level(frame):
+    """Median level of the whole frame. Cheap, and available in daylight.
+
+    Deliberately not a sky brightness -- auto-exposure renormalises every frame,
+    so the absolute number means little. It exists only so consecutive captures
+    can be compared, which is the one daytime signal available when there are no
+    stars to count.
+    """
+    import numpy as np
+    from sentry import star_count
+    return float(np.median(star_count._load(frame)))
+
+
+def _maybe_burst(status, cfg):
+    """Pull consecutive frames when this capture looks like weather.
+
+    Three stills five minutes apart cannot describe a fifteen-minute shower, and
+    the camera can give 15 fps. Bursting only on suspicion keeps that free on
+    clear nights, and firing on the FIRST odd frame catches the onset -- the
+    minutes when rain is starting are the ones a safety trigger would need, and
+    exactly the ones a wet-hours-only filter throws away.
+
+    Night only. Daytime rain is not wanted -- the roof is shut so it carries no
+    safety information, and the camera behaves differently enough in daylight
+    that those frames would not transfer to a night-time detector.
+    """
+    cam = cfg.get("sky camera", {})
+    reasons = []
+    purity = status.get("purity")
+    if purity is not None and purity < float(cam.get("burst_purity_below", 0.85)):
+        reasons.append("purity %.2f" % purity)
+
+    if not reasons:
+        return
+    path, nparts = sky_camera.capture_burst(cfg=cfg)
+    status["burst_reason"] = "; ".join(reasons)
+    if path is None:
+        status["burst"] = None
+        print("burst wanted (%s) but capture failed" % status["burst_reason"])
+        return
+    status["burst"] = path.name
+    status["burst_parts"] = nparts
+    print("burst: %s (%d video parts, %.1f MB) because %s"
+          % (path.name, nparts, path.stat().st_size / 1e6, status["burst_reason"]))
 
 
 def _add_photometry(status, frame, res):

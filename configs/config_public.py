@@ -7,7 +7,7 @@ class PublicConfig():
 
         },
         "version": {
-            "date": "2026.8.8.6"
+            "date": "2026.8.8.7"
         },
 
         "logger": {
@@ -44,18 +44,43 @@ class PublicConfig():
             # detector that comes next needs labelled examples, and they can
             # only be collected before the fact.
             "capture_dir": "local/sky_frames",
-            # ~4 days at the 5-minute cadence (288 frames/day, ~590 KB each,
-            # so about 680 MB). Raised from 400 when the cadence went 15 -> 5
-            # minutes; left at 400 it would have silently cut retention from
-            # four days to under a day and a half, starving the detector of
-            # exactly the labelled examples the archive exists to collect.
-            "keep_frames": 1152,
+            # ~30 days at the 5-minute cadence (288 frames/day, ~590 KB each,
+            # so about 5 GB against 628 GB free). Deliberately generous: the
+            # auto-labelling below is a gridded weather model, and this site is
+            # on a hilltop where the model demonstrably misses local rain. A
+            # missed label means a genuine storm is never preserved and the
+            # pruner deletes it, so retention has to be long enough that a human
+            # can notice and rescue it. A month of slack is worth more than the
+            # disk it costs.
+            "keep_frames": 8640,
             # Frames that caught weather move to <capture_dir>/keep/ and are
             # exempt from the cap above -- see sentry/sky_archive.py for why a
             # flat cap is the wrong policy for a rare event. This is keep/'s own
             # ceiling, so a long wet spell cannot fill the disk unattended.
             # ~2.4 GB at 590 KB a frame.
             "keep_event_frames": 4000,
+
+            # --- event-triggered burst ------------------------------------
+            # Three stills five minutes apart cannot describe a fifteen-minute
+            # shower. The camera delivers 15.1 fps, so when something is
+            # happening we pull consecutive frames instead of waiting. Stored
+            # as the raw H.264 elementary stream: ~1.3 MB for 8 seconds against
+            # ~71 MB for the same frames as JPEGs.
+            "burst_dir": "local/sky_bursts",
+            "burst_seconds": 8.0,
+            "keep_bursts": 2000,            # ~2 GB; storage is not the constraint
+            # Night only, on the purity collapse. Proven: the 2026-08-07 rain
+            # frame came in at 0.45 purity against 0.99 on a clear one, so this
+            # fires on rain without needing the weather model to agree -- which
+            # matters at a site whose weather departs from the grid.
+            #
+            # There is deliberately NO daylight trigger. Daytime rain is not
+            # wanted: the roof is shut, so it carries no safety information, and
+            # the camera's gain and exposure behave so differently in daylight
+            # that daytime rain images would not transfer to a night-time
+            # detector anyway. Dropping it also removes the only trigger that
+            # had no evidence behind it.
+            "burst_purity_below": 0.85,
             # Credentials do NOT go here. They belong in config_private.py
             # under the separate top-level "sky camera auth" key, because
             # config.data() merges the two configs with a shallow
