@@ -7,7 +7,7 @@ class PublicConfig():
 
         },
         "version": {
-            "date": "2026.8.7.2"
+            "date": "2026.8.8.1"
         },
 
         "logger": {
@@ -30,6 +30,46 @@ class PublicConfig():
         "scratch": {
             "directory": "iris_astronomy/scratch",
             "latest_jpg": "latest_annotated.jpg"
+        },
+
+        # Kasa KC420WS all-sky camera, read locally over the 19443 stream --
+        # see scripts/probe_kasa_camera.py for why there is no RTSP or ONVIF.
+        # That probe's verdict drives the choice of metric here: the camera has
+        # no manual exposure, so auto-exposure renormalises every frame and
+        # absolute brightness does NOT track the sky. A star count is
+        # scale-invariant, so that is what sky_monitor records.
+        "sky camera": {
+            "host": "192.168.87.70",
+            # Rolling archive of raw frames. Kept because the cloud/rain/snow
+            # detector that comes next needs labelled examples, and they can
+            # only be collected before the fact.
+            "capture_dir": "local/sky_frames",
+            "keep_frames": 400,             # ~4 days at 15 minutes
+            # Credentials do NOT go here. They belong in config_private.py
+            # under the separate top-level "sky camera auth" key, because
+            # config.data() merges the two configs with a shallow
+            # dict.update(): a "sky camera" key in the private config would
+            # replace this whole section, silently taking the host and every
+            # threshold below with it. KASA_USERNAME / KASA_PASSWORD are
+            # honoured as a fallback so an interactive run needs no edit.
+
+            # --- star detector -------------------------------------------
+            # ADU above the local background. 12 was not guessed: it was set by
+            # running the detector on the negated residual, where every hit is
+            # by construction a false positive. On the 2026-08-08 02:32 frame
+            # that gave 185 real / 1 false (99.5% pure); 8 ADU gave 95.5% and
+            # 15 ADU gave 100% at the cost of a third of the stars.
+            "star_threshold_adu": 12.0,
+            "star_fwhm_px": (2.0, 9.0),
+            "star_max_elongation": 2.2,
+            # Foliage is masked on LEVEL, not texture. At night exposure the
+            # trees are too dim to be rough -- high-pass RMS is 2.6-3.4 over
+            # foliage against 1.5-2.5 over sky, which does not separate -- but
+            # they sit 10-22 ADU above a ~2 ADU sky. So the skyglow is fitted
+            # with a robust 2-D cubic and anything this far above the fit is
+            # masked. A texture mask tried first masked 57% of the frame,
+            # including the three brightest stars.
+            "foliage_resid_adu": 2.5,
         },
 
         "nina": {
