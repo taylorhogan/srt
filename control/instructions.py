@@ -353,6 +353,38 @@ def add_dso_object_instruction(dso_name, recipe, requestor, priority=5,
     return True
 
 
+def set_filter_plan_db(dso_name: str, plan) -> bool:
+    """Store (or with a falsy plan, remove) an explicit filter plan on a DSO.
+
+    plan is {filter_name: exposure_count}, e.g. {"O-III": 40, "Ha": 10}. The
+    sequence generator prefers it over its own split. Matches the first
+    non-completed instruction for the name.
+    """
+    normalized = _normalize_dso(dso_name)
+    with open(_INSTRUCTIONS_PATH, 'r') as f:
+        instructions = json.load(f)
+    for instruction in instructions:
+        if (_normalize_dso(instruction["dso"]) == normalized
+                and instruction["status"] != "completed"):
+            if plan:
+                instruction["filter_plan"] = dict(plan)
+            else:
+                instruction.pop("filter_plan", None)
+            with open(_INSTRUCTIONS_PATH, 'w') as f:
+                f.writelines(json.dumps(instructions, indent=4))
+            return True
+    return False
+
+
+def get_filter_plan(dso_name: str):
+    """The stored {filter: exposures} plan for a DSO, or None."""
+    record = get_instruction_by_dso(dso_name)
+    if not record:
+        return None
+    plan = record.get("filter_plan")
+    return dict(plan) if isinstance(plan, dict) and plan else None
+
+
 def get_instruction_by_dso(dso_name):
     """Return the instruction record matching dso_name (normalized), or None."""
     normalized = _normalize_dso(dso_name)

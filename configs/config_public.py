@@ -7,7 +7,7 @@ class PublicConfig():
 
         },
         "version": {
-            "date": "2026.8.9.1"
+            "date": "2026.8.9.2"
         },
 
         "logger": {
@@ -113,7 +113,19 @@ class PublicConfig():
             "sequence_output": "C:/Users/iriso/Documents/N.I.N.A/Sequences/full_for_tonight.json",
             "sequence_input": "C:/Users/iriso/Documents/N.I.N.A/Sequences/cdk_full_sequence.json",
             "sequence_input1": "/home/taylor/Documents/srt/nina_gen/nina_sequence_gen.py",
-            "arc_sec_per_pixel": 0.26
+            "arc_sec_per_pixel": 0.26,
+            # Filter wheel: name -> wheel position. Taken from the flats
+            # sequence, which is the one place these are known to be right --
+            # it produces correctly labelled flats for every filter.
+            #
+            # BOTH are written into a generated sequence. Setting only the name
+            # leaves the position pointing at whatever the template had, which
+            # is how a sequence silently images the wrong filter: the template's
+            # narrowband blocks sit at positions 1/2/3, which are R/G/B.
+            "filter_wheel": {
+                "L": 0, "R": 1, "G": 2, "B": 3,
+                "S-II": 4, "O-III": 5, "Ha": 6,
+            }
     },
 
         "camera safety": {

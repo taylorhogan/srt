@@ -1,3 +1,5 @@
+import itertools
+import json
 import asyncio
 from datetime import datetime, timedelta
 import logging
@@ -1161,6 +1163,97 @@ def prioritize_cmd(words: list[str], account: str) -> None:
         social_server.post_social_message(f"{dso_name} set to top priority")
     else:
         social_server.post_social_message(f"{dso_name} not found in waiting instructions")
+
+
+def filters_cmd(words: list[str], account: str) -> None:
+    """
+    Set an explicit filter plan for a DSO, used when its sequence is generated.
+
+    Usage: filters <dso> <FILTER>=<count> [<FILTER>=<count> ...]
+           filters <dso> clear      (fall back to the automatic split)
+           filters <dso>            (show the current plan)
+
+    e.g.   filters bubble O-III=40 Ha=10
+    """
+    cfg = config.data()
+    wheel = cfg.get("nina", {}).get("filter_wheel", {}) or {}
+    args = words[2:]
+    if not args:
+        social_server.post_social_message(
+            "Usage: filters <dso> <FILTER>=<count> ...  e.g. filters bubble O-III=40 Ha=10\n"
+            "Filters: " + ", ".join(wheel))
+        return
+
+    # A filter token is the one with "=", so everything before the first one is
+    # the name. That keeps two-word names like "m 31" working.
+    name_parts = list(itertools.takewhile(lambda w: "=" not in w, args))
+    rest = args[len(name_parts):]
+    if name_parts and name_parts[-1].lower() in ("clear", "none", "off"):
+        dso_name = " ".join(name_parts[:-1])
+        if not dso_name:
+            social_server.post_social_message("Usage: filters <dso> clear")
+            return
+        ok = instructions.set_filter_plan_db(dso_name, None)
+        social_server.post_social_message(
+            f"{dso_name}: filter plan cleared, back to the automatic split" if ok
+            else f"{dso_name} not found in waiting instructions")
+        return
+
+    dso_name = " ".join(name_parts)
+    if not dso_name:
+        social_server.post_social_message("Usage: filters <dso> <FILTER>=<count> ...")
+        return
+
+    if not rest:
+        plan = instructions.get_filter_plan(dso_name)
+        social_server.post_social_message(
+            f"{dso_name} filter plan: "
+            + (", ".join(f"{k}={v}" for k, v in plan.items()) if plan
+               else "none (automatic split by object type)"))
+        return
+
+    # How many filters this template can actually name. Block 0 of the sequence
+    # is a $ref whose filter cannot be overridden, so it is not simply 4.
+    limit = 3
+    try:
+        with open(cfg["nina"]["sequence_input"], encoding="utf-8-sig") as fh:
+            limit = nina_sequence_gen.max_explicit_filters(json.load(fh))
+    except Exception:
+        _logger.exception("Could not read the sequence template; assuming %d filters", limit)
+
+    plan: dict[str, int] = {}
+    for token in rest:
+        name, _, count = token.partition("=")
+        name = name.strip()
+        match = next((w for w in wheel if w.lower() == name.lower()), None)
+        if match is None:
+            social_server.post_social_message(
+                f"Unknown filter '{name}'. Known: " + ", ".join(wheel))
+            return
+        if not count.strip().isdigit() or int(count) <= 0:
+            social_server.post_social_message(
+                f"'{token}' needs a positive exposure count, e.g. {match}=40")
+            return
+        if match in plan:
+            social_server.post_social_message(f"{match} given twice")
+            return
+        plan[match] = int(count)
+
+    if len(plan) > limit:
+        social_server.post_social_message(
+            f"At most {limit} filters per night — the sequence template has "
+            f"{limit} blocks whose filter can be set. Got {len(plan)}.")
+        return
+
+    if not instructions.set_filter_plan_db(dso_name, plan):
+        social_server.post_social_message(f"{dso_name} not found in waiting instructions")
+        return
+
+    total = sum(plan.values())
+    social_server.post_social_message(
+        f"{dso_name} filter plan set: "
+        + ", ".join(f"{k}={v}" for k, v in plan.items())
+        + f" ({total} exposures). Used as-is when tonight's sequence is built.")
 
 
 def sequence_cmd(words: list[str], account: str) -> None:
@@ -2563,6 +2656,7 @@ def get_super_user_commands() -> dict[str, Callable]:
         "sequence": sequence_cmd,
         "mode": mode_cmd,
         "prioritize": prioritize_cmd,
+        "filters": filters_cmd,
         "doflats": doflats_cmd,
         "todo": todo_cmd,
         "active": active_cmd,

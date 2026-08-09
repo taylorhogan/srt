@@ -155,6 +155,18 @@ HELP: dict[str, dict] = {
         "usage": ["prioritize", "prioritize <dso>"],
         "examples": ["prioritize", "prioritize ngc 7331"],
     },
+    "filters": {
+        "category": "super",
+        "summary": "Set which filters a DSO is shot in, and how many exposures each.",
+        "usage": ["filters <dso>", "filters <dso> <FILTER>=<count> ...",
+                  "filters <dso> clear"],
+        "examples": ["filters bubble O-III=40 Ha=10", "filters bubble",
+                     "filters bubble clear"],
+        "notes": ["Counts are taken literally, not scaled to the hours available.",
+                  "Filters: L, R, G, B, S-II, O-III, Ha. Up to 3 per night.",
+                  "Without a plan the sequence splits by object type as before: "
+                  "nebulae equally across Ha/O-III/S-II, everything else L+RGB."],
+    },
     "doflats": {
         "category": "super",
         "summary": "Run a flat-frame capture sequence in the background.",

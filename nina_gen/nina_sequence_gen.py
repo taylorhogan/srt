@@ -100,8 +100,38 @@ def _get_exposure_time(se: dict) -> float:
     return 300.0
 
 
-def _update_smart_exposure(se: dict, iterations: int, filter_name: Optional[str] = None) -> None:
-    """Set LoopCondition iterations and optionally override the inline filter name."""
+def _filter_node(se: dict):
+    """The inline FilterInfo dict for a SmartExposure, or None if it is a $ref.
+
+    Block 0 of the template is a $ref, so its filter CANNOT be renamed -- an
+    attempt silently leaves it on L. Only blocks with an inline node are usable
+    for an explicit plan, which caps a plan at three filters on this template.
+    """
+    if isinstance(se, dict):
+        if "SwitchFilter" in str(se.get("$type", "")):
+            f = se.get("Filter")
+            return f if isinstance(f, dict) and "_name" in f else None
+        for v in se.values():
+            got = _filter_node(v)
+            if got is not None:
+                return got
+    elif isinstance(se, list):
+        for v in se:
+            got = _filter_node(v)
+            if got is not None:
+                return got
+    return None
+
+
+def _update_smart_exposure(se: dict, iterations: int, filter_name: Optional[str] = None,
+                           position: Optional[int] = None) -> None:
+    """Set LoopCondition iterations and optionally override the inline filter.
+
+    Writes the wheel POSITION as well as the name when one is given. The name
+    alone is not enough: the template's blocks carry positions 1/2/3, which are
+    R/G/B, so renaming a block to Ha while leaving its position would point the
+    wheel at red.
+    """
     for cond in se.get("Conditions", {}).get("$values", []):
         if "LoopCondition" in cond.get("$type", ""):
             cond["Iterations"] = max(0, iterations)
@@ -113,12 +143,53 @@ def _update_smart_exposure(se: dict, iterations: int, filter_name: Optional[str]
                 f = item.get("Filter", {})
                 if "_name" in f:          # inline FilterInfo only, skip $ref nodes
                     f["_name"] = filter_name
+                    if position is not None:
+                        f["_position"] = int(position)
 
 
-def _apply_filter_plan(sequence: Any, above_horizon_seconds: float, obj_type: str) -> dict[str, int]:
+def _wheel() -> dict:
+    from configs import config
+    return config.data().get("nina", {}).get("filter_wheel", {}) or {}
+
+
+def max_explicit_filters(sequence: Any) -> int:
+    """How many filters an explicit plan can name for this template."""
+    return sum(1 for se in _collect_smart_exposures(sequence)
+               if _filter_node(se) is not None)
+
+
+def _apply_explicit_plan(smart_exposures: list, plan: dict) -> dict[str, int]:
+    """Honour a user-set {filter: exposures} plan.
+
+    Counts are taken literally -- the user asked for that many frames, so this
+    does not scale them to the hours available the way the automatic split does.
+    Blocks that cannot be renamed, and any left over, are zeroed so nothing from
+    the template runs by accident.
+    """
+    wheel = _wheel()
+    usable = [se for se in smart_exposures if _filter_node(se) is not None]
+    for se in smart_exposures:
+        if se not in usable:
+            _update_smart_exposure(se, iterations=0)
+
+    applied: dict[str, int] = {}
+    for se, (name, count) in zip(usable, plan.items()):
+        _update_smart_exposure(se, iterations=int(count), filter_name=name,
+                               position=wheel.get(name))
+        applied[name] = int(count)
+    for se in usable[len(applied):]:
+        _update_smart_exposure(se, iterations=0)
+    return applied
+
+
+def _apply_filter_plan(sequence: Any, above_horizon_seconds: float, obj_type: str,
+                       explicit: Optional[dict] = None) -> dict[str, int]:
     """
     Compute per-filter iteration counts, patch all SmartExposure blocks in the
     sequence in-place, and return the plan as {filter_name: iterations}.
+
+    An explicit plan from the `filters` command wins outright; without one the
+    automatic split by object type applies as before.
     """
     actual_seconds = above_horizon_seconds * 0.8
     smart_exposures = _collect_smart_exposures(sequence)
@@ -127,6 +198,9 @@ def _apply_filter_plan(sequence: Any, above_horizon_seconds: float, obj_type: st
     if len(smart_exposures) < 4:
         return {}
 
+    if explicit:
+        return _apply_explicit_plan(smart_exposures, explicit)
+
     se_l, se_r, se_g, se_b = smart_exposures[:4]
     exp_l = _get_exposure_time(se_l)
     exp_r = _get_exposure_time(se_r)
@@ -134,17 +208,27 @@ def _apply_filter_plan(sequence: Any, above_horizon_seconds: float, obj_type: st
     exp_b = _get_exposure_time(se_b)
 
     if obj_type == "nebula":
-        # Divide equally across Ha, O (OIII), S (SII); no L frames
+        # Divide equally across Ha, O-III, S-II; no L frames.
+        #
+        # The names are the filter wheel's own -- "O-III" and "S-II", not "O"
+        # and "S" as this used before. The wheel has no filter called "O" or
+        # "S", and sh2-92 bears that out: 330 auto-sequenced frames, 137 Ha and
+        # 193 O-III, and not one S-II. The position is written alongside the
+        # name for the same reason (see _update_smart_exposure).
+        wheel = _wheel()
         each = actual_seconds / 3.0
         plan = {
-            "Ha": math.floor(each / exp_r),
-            "O":  math.floor(each / exp_g),
-            "S":  math.floor(each / exp_b),
+            "Ha":    math.floor(each / exp_r),
+            "O-III": math.floor(each / exp_g),
+            "S-II":  math.floor(each / exp_b),
         }
         _update_smart_exposure(se_l, iterations=0)
-        _update_smart_exposure(se_r, iterations=plan["Ha"], filter_name="Ha")
-        _update_smart_exposure(se_g, iterations=plan["O"],  filter_name="O")
-        _update_smart_exposure(se_b, iterations=plan["S"],  filter_name="S")
+        _update_smart_exposure(se_r, iterations=plan["Ha"], filter_name="Ha",
+                               position=wheel.get("Ha"))
+        _update_smart_exposure(se_g, iterations=plan["O-III"], filter_name="O-III",
+                               position=wheel.get("O-III"))
+        _update_smart_exposure(se_b, iterations=plan["S-II"], filter_name="S-II",
+                               position=wheel.get("S-II"))
         return plan
     else:
         # Galaxy / unknown: L = 50%, R+G+B = 50%/3 each
@@ -237,8 +321,21 @@ def generate_sequence(
 
     _walk_and_replace(sequence, dso_name, coords)
 
+    # An explicit plan set by the `filters` command applies even when the hours
+    # above horizon are unknown: the counts are absolute, not a share of the
+    # night, so there is nothing to scale them against.
+    explicit = None
+    try:
+        from control import instructions as _instr
+        explicit = _instr.get_filter_plan(dso_name)
+    except Exception:
+        explicit = None
+
     filter_plan: dict[str, int] = {}
-    if above_horizon_seconds is not None and above_horizon_seconds > 0:
+    if explicit:
+        filter_plan = _apply_filter_plan(sequence, above_horizon_seconds or 0.0,
+                                         "explicit", explicit=explicit)
+    elif above_horizon_seconds is not None and above_horizon_seconds > 0:
         obj_type = _classify_object_type(dso_name)
         filter_plan = _apply_filter_plan(sequence, above_horizon_seconds, obj_type)
 
