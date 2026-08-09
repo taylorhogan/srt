@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 import logging
 import os
 from pathlib import Path
+import subprocess
 import sys
 import time
 import warnings
@@ -495,11 +496,63 @@ def do_main():
         yesterday = (datetime.now() - timedelta(days=1)).date()
         imaging_start = sun(city.observer, date=yesterday)["sunset"]
 
-    _post_imaging_summary(imaging_start)
+    # Detached, so end.bat can return the moment the observatory is safe.
+    # Falls back to running it inline if the spawn fails: a missing summary is
+    # worse than a slow one.
+    if not _spawn_summary(imaging_start):
+        _post_imaging_summary(imaging_start)
     logger.info('End End Sequence')
+    # LAST, and it must stay last: this is the signal the flats phase waits on
+    # (super_user_commands "Imaging state is NONE - main phase complete"), and
+    # that phase's first act is to kill NINA. Setting it earlier would start
+    # flats while the shutdown is still running.
     super_user_commands.set_imaging_state(super_user_commands.ImagingState.NONE)
 
 
 
+def _spawn_summary(imaging_start: datetime) -> bool:
+    """Post the night's summary from a detached process. True if it was spawned.
+
+    The summary is reporting, not safety. By the time it runs the roof is shut,
+    the mount is parked and the dehumidifier is on -- but NINA blocks on
+    end.bat until this returns, and on 2026-08-09 that was 6 of the 10 minutes
+    end.py took. A NINA sitting for ten minutes with nothing visible happening
+    cannot be told apart from a hung one, and it was killed by hand for exactly
+    that reason. Detaching it drops the blocking part to roughly four minutes.
+
+    Safe to run alongside the flats that start moments later: _is_light()
+    requires a frame's parent directory to be named LIGHT, so the FLAT frames
+    being written at the same time cannot be counted as the night's data.
+    """
+    # logger is a local in do_main and _post_imaging_summary, never a module
+    # global -- referencing it as one raised NameError here, and because this
+    # call sits outside do_main's try blocks that crashed end.py *before*
+    # set_imaging_state(NONE), so flats never started while end.bat still
+    # exited 0.
+    logger = utils.set_logger()
+    flags = 0
+    if os.name == "nt":
+        # DETACHED_PROCESS so it survives end.py exiting and shows no console
+        # window; a new process group so a Ctrl-C to the parent cannot reach it.
+        flags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
+    try:
+        subprocess.Popen(
+            [sys.executable, os.path.abspath(__file__), "--summary-only",
+             imaging_start.isoformat()],
+            creationflags=flags, close_fds=True,
+            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL)
+        logger.info("Imaging summary spawned detached; end sequence returning")
+        return True
+    except Exception:
+        logger.exception("Could not spawn detached summary; posting inline")
+        return False
+
+
 if __name__ == "__main__":
-    do_main()
+    # end.bat passes %cd% as argv[1], which do_main ignores; only the explicit
+    # --summary-only flag selects the reporting-only path.
+    if len(sys.argv) > 2 and sys.argv[1] == "--summary-only":
+        _post_imaging_summary(datetime.fromisoformat(sys.argv[2]))
+    else:
+        do_main()
