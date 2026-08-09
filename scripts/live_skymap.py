@@ -64,13 +64,27 @@ def _star_cache(root: Path) -> np.ndarray:
     return bright_stars.catalogue(root)
 
 
-def _draw_sun_moon(ax, fig, frame, loc):
-    """Mark the sun and moon where they are, if they are up.
+# The five that are naked-eye objects. Uranus at ~5.7 is technically within the
+# chart's V<6 star limit but is not something anyone plans around, and Neptune
+# at ~7.8 is not visible at all -- listing them would add clutter, not
+# information. Colours are roughly the eye impression, so the chart can be read
+# without depending on the labels.
+PLANETS = [
+    ("Mercury", "#c8c2b4"), ("Venus", "#fff4d6"), ("Mars", "#ff7043"),
+    ("Jupiter", "#ffe0a3"), ("Saturn", "#e8d7a0"),
+]
 
-    Both are drawn only above about the horizon, so the chart does not claim a
-    body is somewhere it cannot be seen. The moon carries its illuminated
-    fraction, which is the part that matters for planning: it decides whether a
-    narrowband night is worth running.
+
+def _draw_solar_system(ax, fig, frame, loc):
+    """Mark the sun, moon and naked-eye planets, wherever they are up.
+
+    Drawn only above the horizon, so the chart never claims a body is somewhere
+    it cannot be seen. The moon carries its illuminated fraction, which is the
+    number that decides whether a narrowband night is worth running.
+
+    Worth knowing when reading this against the sky camera: the camera sees only
+    the upper half of the sky, and at this latitude the ecliptic runs low across
+    the south, so planets shown here are often outside the camera's field.
     """
     import astropy.units as u
     from astropy.coordinates import get_body
@@ -117,6 +131,27 @@ def _draw_sun_moon(ax, fig, frame, loc):
                    linewidths=1.4, zorder=8)
         _label(th, r, "Moon %.0f%%" % (100 * illum), "#e9ecf5")
         out.append("moon %.0f° %.0f%%" % (moon.alt.deg, 100 * illum))
+
+    for name, colour in PLANETS:
+        try:
+            b = get_body(name.lower(), now, loc).transform_to(frame)
+        except Exception:
+            continue
+        alt = float(b.alt.deg)
+        if alt <= 0:
+            continue
+        th, r = np.radians(float(b.az.deg)), 90.0 - alt
+        ax.scatter([th], [r], s=110, c=colour, edgecolors=BG, linewidths=0.8,
+                   zorder=7.5)
+        # Labelled only well clear of the rim: down at the horizon the labels
+        # pile into the compass points and each other, and a planet a couple of
+        # degrees up is not an observing prospect anyway.
+        if alt > 8:
+            ax.text(th, r - 4.5, name, color=colour, fontsize=7.5, ha="center",
+                    va="center", zorder=9,
+                    bbox=dict(boxstyle="round,pad=0.14", facecolor=BG,
+                              edgecolor="none", alpha=0.7))
+        out.append("%s %.0f°" % (name.lower(), alt))
     return out
 
 
@@ -300,7 +335,7 @@ def main() -> None:
                 color=DIM, lw=0.6, alpha=0.3, zorder=2)
 
     _draw_camera_fov(ax)
-    bodies = _draw_sun_moon(ax, fig, frame, loc)
+    bodies = _draw_solar_system(ax, fig, frame, loc)
 
     for nm, ara, adec in ANCHORS:
         c = SkyCoord(ra=ara * u.deg, dec=adec * u.deg).transform_to(frame)
