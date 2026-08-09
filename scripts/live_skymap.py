@@ -64,6 +64,62 @@ def _star_cache(root: Path) -> np.ndarray:
     return bright_stars.catalogue(root)
 
 
+def _draw_sun_moon(ax, fig, frame, loc):
+    """Mark the sun and moon where they are, if they are up.
+
+    Both are drawn only above about the horizon, so the chart does not claim a
+    body is somewhere it cannot be seen. The moon carries its illuminated
+    fraction, which is the part that matters for planning: it decides whether a
+    narrowband night is worth running.
+    """
+    import astropy.units as u
+    from astropy.coordinates import get_body
+
+
+    now = frame.obstime
+    out = []
+    try:
+        sun = get_body("sun", now, loc).transform_to(frame)
+        moon = get_body("moon", now, loc).transform_to(frame)
+        elong = get_body("sun", now, loc).separation(get_body("moon", now, loc)).deg
+    except Exception:
+        return out
+    illum = float((1 - np.cos(np.radians(elong))) / 2)
+
+    def _label(th, r, text, colour):
+        # Push the label towards the centre when the body is low, or it lands
+        # outside the r-limit and matplotlib clips it away.
+        dr = -7.0 if r > 78 else 7.0
+        ax.text(th, r + dr, text, color=colour, fontsize=8, ha="center",
+                va="center", zorder=10,
+                bbox=dict(boxstyle="round,pad=0.18", facecolor=BG,
+                          edgecolor="none", alpha=0.75))
+
+    if sun.alt.deg > -2:
+        th, r = np.radians(float(sun.az.deg)), 90.0 - float(sun.alt.deg)
+        ax.scatter([th], [r], s=760, c="#ffca3a", alpha=0.18, linewidths=0,
+                   zorder=7)                       # glow
+        ax.scatter([th], [r], s=300, c="#ffca3a", edgecolors="#ff9f1c",
+                   linewidths=1.2, zorder=8)
+        _label(th, r, "Sun", "#ffca3a")
+        out.append("sun %.0f°" % sun.alt.deg)
+
+    if moon.alt.deg > -2:
+        th, r = np.radians(float(moon.az.deg)), 90.0 - float(moon.alt.deg)
+        # Phase as fill brightness rather than a drawn crescent. A crescent has
+        # to be painted in the background colour, and the background here is
+        # sometimes sky and sometimes the brown tree wedge -- against the wrong
+        # one it reads as a smudge rather than a phase. Brightness is
+        # unambiguous over either, and the percentage removes all doubt.
+        lit = 0.16 + 0.84 * illum
+        face = (0.91 * lit, 0.93 * lit, 0.96 * lit)
+        ax.scatter([th], [r], s=300, c=[face], edgecolors="#e9ecf5",
+                   linewidths=1.4, zorder=8)
+        _label(th, r, "Moon %.0f%%" % (100 * illum), "#e9ecf5")
+        out.append("moon %.0f° %.0f%%" % (moon.alt.deg, 100 * illum))
+    return out
+
+
 def _draw_camera_fov(ax):
     """Outline what the all-sky camera can see, from its plate solution.
 
@@ -244,6 +300,7 @@ def main() -> None:
                 color=DIM, lw=0.6, alpha=0.3, zorder=2)
 
     _draw_camera_fov(ax)
+    bodies = _draw_sun_moon(ax, fig, frame, loc)
 
     for nm, ara, adec in ANCHORS:
         c = SkyCoord(ra=ara * u.deg, dec=adec * u.deg).transform_to(frame)
@@ -256,6 +313,8 @@ def main() -> None:
                 fontsize=7.5, ha="center", va="bottom", alpha=0.85, zorder=5)
 
     status = {"generated": datetime.now(timezone.utc).isoformat(timespec="seconds")}
+    if bodies:
+        status["bodies"] = ", ".join(bodies)
     if tgt:
         name, ra, dec, good_hours = tgt
         tc = SkyCoord(ra=ra * u.deg, dec=dec * u.deg).transform_to(frame)

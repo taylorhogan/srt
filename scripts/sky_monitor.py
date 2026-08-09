@@ -244,11 +244,14 @@ def _add_photometry(status, frame, res):
                 "plate solution no longer fits (%d matches, %.0f%% of "
                 "detections); re-solve" % (v["matches"], 100 * share))
             return
+        # Integer magnitude bins: the card shows this as a table, and half
+        # magnitudes make it twice as long without telling anyone more.
         lm = plate_solve.limiting_magnitude(sol, frame, when, res["_stars"],
-                                            res["_mask"])
+                                            res["_mask"], step=1.0)
         status["limiting_mag"] = lm["limiting_mag"]
         status["stars_expected"] = lm["stars_visible_area"]
         status["stars_matched"] = lm["stars_matched"]
+        status["completeness"] = lm["completeness"]
     except Exception as exc:            # never let photometry sink the capture
         status["note_solve"] = "photometry failed: %s" % type(exc).__name__
 

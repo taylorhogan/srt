@@ -147,6 +147,28 @@ def _update_smart_exposure(se: dict, iterations: int, filter_name: Optional[str]
                         f["_position"] = int(position)
 
 
+def describe_sequence(path) -> list:
+    """[(filter, iterations, exposure_seconds), ...] as actually written.
+
+    Read back from the generated file rather than from the plan dict, so what
+    gets reported is what N.I.N.A will run, not what we intended.
+    """
+    with open(path, encoding="utf-8-sig") as fh:
+        seq = json.load(fh)
+    rows = []
+    for se in _collect_smart_exposures(seq):
+        iterations = 0
+        for cond in se.get("Conditions", {}).get("$values", []):
+            if "LoopCondition" in cond.get("$type", ""):
+                iterations = int(cond.get("Iterations", 0) or 0)
+        if iterations <= 0:
+            continue
+        node = _filter_node(se)
+        rows.append((node["_name"] if node else "?", iterations,
+                     float(_get_exposure_time(se) or 0.0)))
+    return rows
+
+
 def _wheel() -> dict:
     from configs import config
     return config.data().get("nina", {}).get("filter_wheel", {}) or {}

@@ -324,21 +324,40 @@ def limiting_magnitude(sol, frame, when=None, dets=None, mask=None,
     d, _i = cKDTree(np.stack([dx, dy], 1)).query(np.stack([x, y], 1))
     found = visible & (d < tol_px)
 
-    table, lim = [], None
-    prev = None
-    for lo in np.arange(0.0, 6.0, step):
-        sel = visible & (vmag >= lo) & (vmag < lo + step)
+    def _bins(width):
+        """Bins CENTRED on multiples of width, so integer steps give integer
+        labels. Binning by [lo, lo+width) instead puts the centres on halves,
+        and rounding those for display collapses 3.5 and 4.5 onto the same
+        integer -- a table with two rows both labelled 4."""
+        rows = []
+        for centre in np.arange(0.0, 7.0, width):
+            sel = visible & (vmag >= centre - width / 2) & (vmag < centre + width / 2)
+            n = int(sel.sum())
+            if n < 4:                  # too few to mean anything
+                continue
+            hit = int((found & sel).sum())
+            rows.append({"vmag": round(float(centre), 2), "n": n, "found": hit,
+                         "fraction": round(hit / n, 3)})
+        return rows
+
+    # The 50% crossing is always measured on the original half-magnitude bins,
+    # whatever width the caller wants for display. Two reasons: deriving it from
+    # the display bins made the limiting magnitude a function of how the table
+    # is drawn (widening 0.5 -> 1.0 moved it 4.44 -> 4.06 with no change in the
+    # sky), and these edges are the ones every previously published value was
+    # computed on, so the nightly series stays comparable.
+    lim, prev = None, None
+    for lo in np.arange(0.0, 6.0, 0.5):
+        sel = visible & (vmag >= lo) & (vmag < lo + 0.5)
         n = int(sel.sum())
-        if n < 4:                      # too few to mean anything
+        if n < 4:
             continue
         frac = float((found & sel).sum()) / n
-        mid = lo + step / 2
-        table.append({"vmag": round(mid, 2), "n": n, "found": int((found & sel).sum()),
-                      "fraction": round(frac, 3)})
+        mid = lo + 0.25
         if lim is None and prev is not None and prev[1] >= 0.5 > frac:
-            # linear interpolation across the 50% crossing
             lim = prev[0] + (prev[1] - 0.5) / (prev[1] - frac) * (mid - prev[0])
         prev = (mid, frac)
+    table = _bins(step)
     return {"limiting_mag": round(float(lim), 2) if lim else None,
             "stars_visible_area": int(visible.sum()),
             "stars_matched": int(found.sum()),

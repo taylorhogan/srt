@@ -177,6 +177,10 @@ def message_handling(client, userdata, msg):
 # State helpers
 # ---------------------------------------------------------------------------
 
+# The DSO's rise time from the noon check, kept so the notification written at
+# sequence-generation time can quote it. Prefect tasks do not share locals.
+_LAST_BEST_START: dict = {}
+
 def set_state(state: State, dso=None, will_image_tonight=None):
     """Update the in-memory ``observatory_state`` dict and log the transition.
 
@@ -310,7 +314,48 @@ def _imaging_plan_message(dso_name: str, best_good_hours: float, best_start: dat
     )
 
 
-def _generate_nina_sequence(dso_name: str):
+def _push_imaging_plan(dso_name: str, good_hours: float, best_start, output_path):
+    """Push what will be imaged tonight, when, and in which filters.
+
+    Read back from the sequence that was just written, so the notification
+    describes what N.I.N.A will actually run rather than what was intended.
+    """
+    try:
+        rows = nina_sequence_gen.describe_sequence(output_path)
+    except Exception:
+        LOGGER.exception("Could not read back the generated sequence")
+        rows = []
+
+    lines = [f"Tonight: {dso_name}"]
+    try:
+        from zoneinfo import ZoneInfo
+        tz = ZoneInfo(CFG["location"]["timezone"])
+        sunset = weather.get_sunrise_sunset()[1]
+        lines.append("Sunset %s" % sunset.astimezone(tz).strftime("%H:%M"))
+        if best_start is not None:
+            start = best_start if getattr(best_start, "tzinfo", None) else best_start.replace(tzinfo=tz)
+            lines.append("Starts ~%s, %.1fh usable" % (start.astimezone(tz).strftime("%H:%M"), good_hours))
+        else:
+            lines.append("%.1fh usable" % good_hours)
+    except Exception:
+        lines.append("%.1fh usable" % good_hours)
+
+    if rows:
+        total = sum(n * e for _f, n, e in rows)
+        for filt, n, exp in rows:
+            lines.append("  %-6s %3d x %.0fs = %.1fh" % (filt, n, exp, n * exp / 3600.0))
+        lines.append("Total %.1fh over %d frames" % (total / 3600.0, sum(n for _f, n, _e in rows)))
+    else:
+        lines.append("  (no filter plan — template defaults)")
+
+    try:
+        pushover.push_message("\n".join(lines))
+    except Exception:
+        LOGGER.exception("Could not push the imaging plan")
+    social_server.post_social_message("\n".join(lines))
+
+
+def _generate_nina_sequence(dso_name: str, good_hours: float = 0.0):
     """Resolve DSO coordinates and write a N.I.N.A sequence file to disk.
 
     Resolves *dso_name* via ``instructions.resolve_target_by_name`` — stored
@@ -343,14 +388,20 @@ def _generate_nina_sequence(dso_name: str):
     dec_degrees = dso.coord.dec.deg
     template_path = Path(os.path.join(_PROJECT_ROOT, CFG["nina"]["sequence_input"]))
     output_path = Path(CFG["nina"]["sequence_output"])
-    nina_sequence_gen.generate_sequence(
+    # The hours the noon check judged usable are the budget the filter split
+    # divides. Without this the scheduler generated sequences with no filter
+    # plan at all and N.I.N.A ran whatever iteration counts the template
+    # happened to carry -- only the webchat `sequence` command ever passed it.
+    plan = nina_sequence_gen.generate_sequence(
         template_path=template_path,
         dso_name=dso_name,
         ra_hours=ra_hours,
         dec_degrees=dec_degrees,
         output_path=output_path,
+        above_horizon_seconds=(good_hours or 0) * 3600.0,
     )
-    LOGGER.info("Generated Nina sequence for %s", dso_name)
+    LOGGER.info("Generated Nina sequence for %s: %s", dso_name, plan)
+    return plan, output_path
 
 
 
@@ -477,9 +528,12 @@ def pre_sunset_check_task() -> tuple[str, int]:
 
 
 @task(name="generate-nina-sequence")
-def generate_sequence_task(dso_name: str):
-    """Resolve DSO coordinates and write the N.I.N.A sequence file to disk."""
-    _generate_nina_sequence(dso_name)
+def generate_sequence_task(dso_name: str, good_hours: float = 0.0, notify: bool = True):
+    """Write the N.I.N.A sequence, and say what tonight will actually be."""
+    got = _generate_nina_sequence(dso_name, good_hours)
+    if got and notify:
+        _plan, output_path = got
+        _push_imaging_plan(dso_name, good_hours, _LAST_BEST_START.get("t"), output_path)
 
 
 @task(name="run-imaging", timeout_seconds=9 * 60 * 60)
@@ -516,6 +570,13 @@ def nightly_cycle():
         LOGGER.info("Skipping tonight — not enough good hours (%d)", good_hours)
         return
 
+    # Generated at noon, not at sunset, so the night's plan is known and
+    # notified hours in advance -- long enough to change a priority or a filter
+    # plan and regenerate before anything moves.
+    _LAST_BEST_START["t"] = best_start
+    generate_sequence_task(best_name, good_hours)
+    noon_name = best_name
+
     wait_for_pre_sunset_task()
 
     best_name, good_hours = pre_sunset_check_task()
@@ -524,7 +585,14 @@ def nightly_cycle():
         LOGGER.info("Conditions degraded at sunset — skipping tonight")
         return
 
-    generate_sequence_task(best_name)
+    # The pre-sunset check re-runs the ranking and can land on a different
+    # target than noon did. The noon sequence would then point at the wrong
+    # object, so regenerate. Silent on the happy path: one notification a night.
+    if best_name != noon_name:
+        LOGGER.info("Target changed after noon (%s -> %s) — regenerating",
+                    noon_name, best_name)
+        generate_sequence_task(best_name, good_hours)
+
     imaging_task()
 
 
