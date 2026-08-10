@@ -354,6 +354,14 @@ def process_dso(
             if progress_cb:
                 progress_cb(f"reusing cached {tag} channels "
                             f"({', '.join(sorted(cached))}) — no re-stack")
+            # Binning lives on the stacking path below, which this branch skips.
+            # Without this, `reuse scale=2` returned a full-resolution image
+            # while the options line still said scale=2 -- the render and its
+            # own description disagreeing, which is the trap the WCS block
+            # further down already refuses to fall into.
+            if scale > 1:
+                cached = {c: stacker._downsample_mean(a, scale)
+                          for c, a in cached.items()}
             rgb = compose(cached, **compose_kw)
             out = {"recipe": recipe, "reused": True,
                    "channels": {c: c for c in cached}, "frames": {},
