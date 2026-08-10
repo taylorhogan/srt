@@ -40,7 +40,8 @@ if __package__ is None or __package__ == "":
 
 from configs import config
 from iris_astronomy import sun
-from sentry import plate_solve, sky_annotate, sky_archive, sky_camera, star_count
+from sentry import (plate_solve, rain_detect, sky_annotate, sky_archive,
+                    sky_camera, star_count)
 from scripts import live_push
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -115,6 +116,12 @@ def main() -> int:
         status["frame_level_adu"] = round(_frame_level(frame), 1)
     except Exception:
         pass
+
+    # Rain prediction/detection from adjacent video frames. Takes its own short
+    # burst because a single still cannot show motion, and motion is the whole
+    # signal. Night-gated and rate-limited inside rain_detect; never raises.
+    if "--frame" not in sys.argv:
+        rain_detect.step(status, frame)
 
     # Before publishing: a burst is time-critical in a way the push is not. If
     # rain is starting, the seconds spent uploading a JPEG are seconds of the

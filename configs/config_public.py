@@ -7,7 +7,7 @@ class PublicConfig():
 
         },
         "version": {
-            "date": "2026.8.10.4"
+            "date": "2026.8.10.5"
         },
 
         "logger": {
@@ -106,6 +106,32 @@ class PublicConfig():
             # masked. A texture mask tried first masked 57% of the frame,
             # including the three brightest stars.
             "foliage_resid_adu": 2.5,
+
+            # --- rain prediction / detection (sentry/rain_detect.py) --------
+            # Fraction of central-sky pixels changing between ADJACENT video
+            # frames. Measured on 7.5 days of the camera's own SD card:
+            # clear night 0.1-1.1%, rain 16-100%, daylight rain 3-7%.
+            #
+            # Two thresholds because onset is a ramp: 1% -> 10% took 26 and 38
+            # minutes on the two storms measured, which is what makes a
+            # prediction possible. Escalation past 10% is NOT gradual (10->30%
+            # took 26 min on one storm and 2 min on the other), so "detect"
+            # means already raining hard.
+            #
+            # 1% overlaps the clear-night range, so a single sample at 1% is
+            # worthless -- rain_persist consecutive samples is what makes the
+            # low threshold usable. At the 5-minute cadence 3 samples is 10
+            # minutes of agreement.
+            "rain_predict_pct": 1.0,
+            "rain_detect_pct": 10.0,
+            "rain_persist": 3,
+            # One prediction and one detection per 6 h. Deliberately separate
+            # limiters: a shared one would suppress the detection that confirms
+            # the prediction, which is the pair worth seeing.
+            "rain_alert_gap_s": 21600,
+            "rain_diff_adu": 12.0,
+            "rain_burst_seconds": 2.0,
+            "rain_min_frames": 4,
         },
 
         "nina": {
