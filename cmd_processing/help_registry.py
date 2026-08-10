@@ -248,6 +248,24 @@ HELP: dict[str, dict] = {
         "usage": ["drift", "drift <dso>", "drift *"],
         "examples": ["drift", "drift m31"],
     },
+    "skysolve": {
+        "category": "super",
+        "summary": "Re-solve the all-sky camera after it has been moved.",
+        "usage": ["skysolve", "skysolve check"],
+        "examples": ["skysolve", "skysolve check"],
+        "notes": ["Needs a clear night with real stars -- a blind solve has "
+                  "nothing to match against otherwise, and the frame is "
+                  "rejected if the negative-image control says it is cloud or "
+                  "rain.",
+                  "The camera is normally solved once and left alone. Run this "
+                  "when it has been physically disturbed: taken down, knocked, "
+                  "or refocused.",
+                  "Only saves if the new solve matches at least as many stars "
+                  "as the stored one, and keeps the old file alongside. "
+                  "`skysolve check` verifies and changes nothing.",
+                  "Fixes the compass headings on the published frame, the "
+                  "measured-region outline, and limiting magnitude."],
+    },
     "purge": {
         "category": "super",
         "summary": ("Delete superseded flat frames, keeping the newest set per "

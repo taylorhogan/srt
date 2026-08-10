@@ -2677,6 +2677,7 @@ def get_super_user_commands() -> dict[str, Callable]:
         "bad": bad_cmd,
         "dab": dab_cmd,
         "audio": audio_cmd,
+        "skysolve": skysolve_cmd,
     }
 
 
@@ -4561,6 +4562,142 @@ def _channel_products_note(info: dict) -> str:
         lines.append(f"  {len(jpgs)} channel JPEGs on the composite's scale: "
                      + ", ".join(p.name for p in jpgs))
     return ("\n" + "\n".join(lines)) if lines else ""
+
+
+
+def skysolve_cmd(words: list[str], account: str) -> None:
+    """Re-solve the all-sky camera's plate solution after it has been moved.
+
+    Usage:
+        skysolve            — capture a frame, blind-solve, save if it verifies
+        skysolve check      — verify the stored solution, change nothing
+
+    The camera is normally bolted down and solved once. When it is physically
+    disturbed -- taken down to read its memory card, knocked, refocused -- the
+    stored geometry stops describing it, and everything built on that geometry
+    goes with it: the compass headings drawn on the published frame, which
+    region of the frame the star statistics are measured in, and limiting
+    magnitude, which needs to know which catalogue stars should have been
+    visible.
+
+    Needs real darkness and real stars: a blind solve has nothing to match
+    against otherwise. Run it on a clear night.
+
+    Safe by construction. The new solution is only saved if it verifies better
+    than the stored one, and the old file is kept alongside it, because a bad
+    solve that silently replaced a good one would be worse than no solve at all.
+    """
+    jobs.spawn_process(_skysolve_run, args=(words,))
+
+
+def _skysolve_run(words: list[str]) -> None:
+    import shutil
+    from datetime import datetime, timezone
+
+    from iris_astronomy import sun
+    from sentry import plate_solve, sky_annotate, sky_camera, star_count
+
+    post = social_server.post_social_message
+    args = [w.lower() for w in words[1:]] if len(words) > 1 else []
+    check_only = "check" in args
+
+    post("Capturing a frame from the sky camera...")
+    frame = sky_camera.capture()
+    if frame is None:
+        post("Sky camera did not return a frame. Is it powered and on the network?")
+        return
+
+    when = plate_solve.frame_time(frame)
+    night, alt = sun.is_night(when)
+    if not night:
+        post("Sun is at %.1f deg -- too bright to solve. Run this when stars are "
+             "out (sun below -10 deg)." % alt)
+        return
+
+    res = star_count.count_stars(frame)
+    post("%d point sources, purity %.0f%%, sun %.1f deg."
+         % (res["stars"], 100 * res["purity"], alt))
+    if not res["trustworthy"]:
+        post("This frame is not trustworthy -- %d of %d detections are false by "
+             "the negative-image control, which is what cloud or rain looks like. "
+             "A solve from it would be matching noise. Try again on a clear night."
+             % (res["false_positives"], res["stars"]))
+        return
+    if res["stars"] < 25:
+        post("Only %d stars. A blind solve needs a decent field; wait for it to "
+             "get properly dark or for the sky to clear." % res["stars"])
+        return
+
+    old = plate_solve.load()
+    if old is not None:
+        v = plate_solve.verify(old, frame, when, res["_stars"])
+        share = v["matches"] / max(res["stars"], 1)
+        post("Stored solution on this frame: %d matches (%.0f%% of detections), "
+             "residual %s px." % (v["matches"], 100 * share, v["residual_px"]))
+        if check_only:
+            post("Looks like it still fits." if v["matches"] >= 6 and share >= 0.08
+                 else "That no longer fits -- run `skysolve` to re-solve.")
+            return
+    elif check_only:
+        post("No stored solution to check.")
+        return
+
+    post("Blind-solving. This takes a few minutes -- every pairing of the "
+         "brightest detections against the brightest catalogue stars.")
+    sol = plate_solve.solve(frame, when, res["_stars"])
+    if sol is None:
+        post("No solution found. Nothing was changed.")
+        return
+
+    named = plate_solve.named_identifications(sol, when, res["_stars"])
+    post("Solved: %d matches, residual %s px, axis alt %.1f deg az %.1f deg, "
+         "FOV %.0f deg diagonal."
+         % (sol["matches"], sol["residual_px"], sol["axis_alt_deg"],
+            sol["axis_az_deg"], sol["fov_diag_deg"]))
+
+    # The check that matters more than the residual: a correct solve names one
+    # contiguous patch of sky, a coincidence names stars scattered everywhere.
+    if named:
+        post("Named stars identified (%d): %s"
+             % (len(named), ", ".join("%s V=%.1f" % (n[0], n[1]) for n in named[:8])))
+    else:
+        post("WARNING: the solve named no catalogue stars. Treat it with suspicion.")
+
+    if old is not None:
+        oldv = plate_solve.verify(old, frame, when, res["_stars"])
+        if sol["matches"] < oldv["matches"]:
+            post("The new solve matches FEWER stars than the stored one (%d vs %d). "
+                 "Keeping the stored solution and changing nothing."
+                 % (sol["matches"], oldv["matches"]))
+            return
+        moved = abs(sol["axis_alt_deg"] - old.get("axis_alt_deg", sol["axis_alt_deg"]))
+        movedz = abs(sol["axis_az_deg"] - old.get("axis_az_deg", sol["axis_az_deg"]))
+        post("Axis moved %.2f deg in altitude, %.2f deg in azimuth from the stored "
+             "solution." % (moved, (movedz + 180) % 360 - 180 if movedz > 180 else movedz))
+        try:
+            root = Path(plate_solve._root())
+            src = root / plate_solve.SOLUTION
+            if src.exists():
+                stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+                bak = src.with_name(src.stem + "_" + stamp + ".json")
+                shutil.copy2(src, bak)
+                post("Previous solution kept as %s" % bak.name)
+        except Exception as exc:
+            post("Could not back up the old solution (%s) -- not saving."
+                 % type(exc).__name__)
+            return
+
+    plate_solve.save(sol)
+    post("Saved. Compass headings and the measured-region outline will be "
+         "correct on the next capture, and limiting magnitude resumes.")
+
+    try:
+        out = Path(plate_solve._root()) / "iris_astronomy" / "scratch" / "skysolve.jpg"
+        out.parent.mkdir(parents=True, exist_ok=True)
+        if sky_annotate.annotate(frame, out, sol) is not None:
+            post("Compass headings from the new solve", image=str(out))
+    except Exception:
+        pass
 
 
 def purge_cmd(words: list[str], account: str) -> None:
