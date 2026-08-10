@@ -100,6 +100,69 @@ def annotate(src, dst, sol=None, shape=None):
     if font is None:
         font = ImageFont.load_default()
 
+    # The region the star statistics are actually measured inside. Outside it is
+    # still sky and still photographed, but the lens does not deliver stars there
+    # at any brightness, so those catalogue stars are dropped from the
+    # completeness denominator rather than counted as misses.
+    #
+    # Not a plain circle, and drawing one was wrong: at r=800 in a 2560x1440
+    # frame the disc reaches y=-80 and y=1520, overshooting the picture top and
+    # bottom by 80 px. What is measured is the disc INTERSECTED with the frame --
+    # a disc with both caps sliced flat -- and an arc alone left the shape open
+    # exactly where it leaves the picture, which reads as though the strips above
+    # and below were excluded when they are counted. So the boundary is drawn
+    # wherever it runs: arc where the circle bounds the region, straight where
+    # the frame does.
+    #
+    # Faint on purpose. It is a note about the measurement, not a feature of the
+    # sky, and it must not compete with the picture.
+    r = plate_solve.MEASURED_RADIUS_PX
+    cx, cy = sol["cx"], sol["cy"]
+    ring = Image.new("RGBA", im.size, (0, 0, 0, 0))
+    rd = ImageDraw.Draw(ring)
+    INSET = 20.0            # must match the inframe cut in plate_solve
+    x0, y0, x1, y1 = INSET, INSET, w - INSET, h - INSET
+    ang = np.linspace(0, 2 * np.pi, 1441)
+    ax, ay = cx + r * np.cos(ang), cy + r * np.sin(ang)
+    inside = (ax >= x0) & (ax <= x1) & (ay >= y0) & (ay <= y1)
+    for i in range(len(ang) - 1):
+        if inside[i] and inside[i + 1]:
+            rd.line([ax[i], ay[i], ax[i + 1], ay[i + 1]],
+                    fill=(255, 255, 255, 70), width=3)
+    # Where the frame is the boundary rather than the circle: the chord the
+    # circle cuts across each edge it crosses.
+    for const, horiz in ((y0, True), (y1, True), (x0, False), (x1, False)):
+        d2 = r * r - (const - (cy if horiz else cx)) ** 2
+        if d2 <= 0:
+            continue
+        half = float(np.sqrt(d2))
+        c = cx if horiz else cy
+        lo, hi = max(c - half, x0 if horiz else y0), min(c + half, x1 if horiz else y1)
+        if hi <= lo:
+            continue
+        rd.line([lo, const, hi, const] if horiz else [const, lo, const, hi],
+                fill=(255, 255, 255, 70), width=3)
+    im = Image.alpha_composite(im.convert("RGBA"), ring).convert("RGB")
+    dr = ImageDraw.Draw(im)
+    small = None
+    for cand in ("arial.ttf", "seguisb.ttf", "arialbd.ttf"):
+        try:
+            small = ImageFont.truetype(cand, 26)
+            break
+        except OSError:
+            continue
+    if small is not None:
+        label = "star counts measured inside this outline"
+        # r is larger than half the frame height, so the outline is clipped top
+        # and bottom and "just below the arc" lands outside the picture. Clamp
+        # to the bottom edge rather than let the caption disappear.
+        lx = min(max(cx - 230, 20), w - 560)
+        ly = min(cy + r + 12, h - 62)
+        for ox in (-2, 0, 2):
+            for oy in (-2, 0, 2):
+                dr.text((lx + ox, ly + oy), label, fill=(0, 0, 0), font=small)
+        dr.text((lx, ly), label, fill=(210, 215, 225), font=small)
+
     for name, (x, y) in marks.items():
         v = np.array([x - zenith[0], y - zenith[1]])
         v = v / max(np.hypot(*v), 1e-6)

@@ -25,6 +25,7 @@ coincidence names stars scattered across unrelated constellations.
 Usage:
     python sentry/plate_solve.py <frame.jpg> [--save] [--report]
     python sentry/plate_solve.py <frame.jpg> --verify
+    python sentry/plate_solve.py <frame.jpg> --refine [--save]
 """
 import json
 import os
@@ -46,6 +47,16 @@ from iris_astronomy import bright_stars
 from sentry import star_count
 
 SOLUTION = "local/sky_solution.json"
+
+# Radius from the optical axis, in pixels, beyond which this lens stops
+# delivering a measurable star. Not a guess: completeness measured on
+# sky_20260810T042957Z runs 23-40% out to 800 px and then falls to EXACTLY zero
+# -- 127 visible catalogue stars beyond it, none matched, in all three outer
+# bands. Off-axis attenuation is what does it. V=2.20 at r=106 px peaks 125 ADU
+# above background; V=2.23 at r=1214 px peaks 26, well under the detection
+# threshold. Counting that region would measure the lens, not the sky, which is
+# the same reason foliage is excluded below.
+MEASURED_RADIUS_PX = 800.0
 
 # Bright named stars, for the human-readable check on a solution. RA/Dec J2000.
 NAMED = [
@@ -267,6 +278,91 @@ def solve(frame, when=None, dets=None, verbose=False):
     return sol
 
 
+def refine(sol, frame, when=None, dets=None, mask=None, tol_px=20.0,
+           min_matches=8, verbose=False):
+    """Nudge a stored solution back onto the stars, without a blind re-solve.
+
+    A camera that drifts -- a bracket settling, a mount creeping -- does not
+    break its fit, it displaces it: the same stars still match, but every one of
+    them sits the same few pixels off. Measured 2026-08-10, the stored solution
+    carried a stable +5.45 px offset in x across 3.5 hours of sky rotation, which
+    left the median residual at 5.7 px against an 8 px match tolerance. Re-fitting
+    the rotation from the pairs it already matches puts it back to ~1.3 px.
+
+    Rotation only. F, model and flip come from the blind solve and a drift does
+    not change any of them; letting F float here would re-open the collapse the
+    blind solve is caged against (see the note in solve). Returns an updated copy,
+    or the original unchanged if the fit does not actually improve -- a frame with
+    cloud or too few stars must not be allowed to move a good solution.
+    """
+    frame = Path(frame)
+    when = when or frame_time(frame)
+    if dets is None:
+        count = star_count.count_stars(frame)
+        dets = count["_stars"]
+        mask = count["_mask"] if mask is None else mask
+    if len(dets) < min_matches:
+        return sol
+    img = star_count._load(frame)
+    H, W = img.shape
+    dx = np.array([d["x"] for d in dets])
+    dy = np.array([d["y"] for d in dets])
+
+    alt, az, vmag, _ra, _dec = bright_stars.above_horizon(when)
+    world = unit_from_altaz(az, alt)
+    x, y, th = cam_to_pix(world @ np.asarray(sol["R"]).T, sol["cx"], sol["cy"],
+                          sol["F"], sol["model"], sol["flip"])
+    # Only stars the optics actually deliver, and only bright ones: a 20 px
+    # search window is wide enough to pair a faint star with the wrong
+    # neighbour, and a wrong pair drags the rotation it is supposed to fix.
+    r = np.hypot(x - sol["cx"], y - sol["cy"])
+    ok = ((x > 20) & (x < W - 20) & (y > 20) & (y < H - 20) & (th < 1.45)
+          & (r < MEASURED_RADIUS_PX) & (vmag < 5.0))
+    if mask is not None:
+        xi = np.clip(x.astype(int), 0, W - 1)
+        yi = np.clip(y.astype(int), 0, H - 1)
+        ok &= ~mask[yi, xi]
+    if ok.sum() < min_matches:
+        return sol
+
+    d, idx = cKDTree(np.stack([dx, dy], 1)).query(np.stack([x, y], 1))
+    pair = ok & (d < tol_px)
+    if pair.sum() < min_matches:
+        return sol
+
+    before = float(np.sqrt((d[pair] ** 2).mean()))
+    cam = pix_to_cam(dx[idx[pair]], dy[idx[pair]], sol["cx"], sol["cy"],
+                     sol["F"], sol["model"], sol["flip"])
+    try:
+        R_new = _kabsch(world[pair].T, cam.T)
+    except np.linalg.LinAlgError:
+        return sol
+
+    nx, ny, _nth = cam_to_pix(world @ R_new.T, sol["cx"], sol["cy"], sol["F"],
+                              sol["model"], sol["flip"])
+    after = float(np.sqrt((np.hypot(nx[pair] - dx[idx[pair]],
+                                    ny[pair] - dy[idx[pair]]) ** 2).mean()))
+    if verbose:
+        print("refine: %d pairs, RMS %.2f px -> %.2f px" % (pair.sum(), before, after))
+    if not after < before:
+        return sol
+
+    out = dict(sol)
+    out["R"] = np.asarray(R_new).tolist()
+    out["refined_from"] = frame.name
+    out["refined_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    out["refined_pairs"] = int(pair.sum())
+    out["refined_rms_before_px"] = round(before, 2)
+    out["refined_rms_after_px"] = round(after, 2)
+    out["refined_shift_px"] = [round(float(np.median(dx[idx[pair]] - x[pair])), 2),
+                               round(float(np.median(dy[idx[pair]] - y[pair])), 2)]
+    axis = np.asarray(R_new).T @ np.array([0.0, 0.0, 1.0])
+    out["axis_alt_deg"] = round(float(np.degrees(np.arcsin(np.clip(axis[2], -1, 1)))), 2)
+    out["axis_az_deg"] = round(float(np.degrees(np.arctan2(axis[0], axis[1])) % 360), 2)
+    out.update(verify(out, frame, when, dets))
+    return out
+
+
 def verify(sol, frame, when=None, dets=None, tol_px=8.0):
     """How well a stored solution still fits a frame. Cheap; safe on a timer."""
     frame = Path(frame)
@@ -293,13 +389,20 @@ def verify(sol, frame, when=None, dets=None, tol_px=8.0):
 # ------------------------------------------------------- limiting magnitude
 
 def limiting_magnitude(sol, frame, when=None, dets=None, mask=None,
-                       tol_px=8.0, step=0.5):
+                       tol_px=8.0, step=0.5, max_radius_px=None):
     """Completeness against V magnitude, and the 50% crossing.
 
     Stars landing on masked foliage are dropped from the DENOMINATOR, not
     counted as misses. Otherwise the reading would track how much of the frame
     is trees -- which never changes -- instead of how clear the sky is, which is
     the entire point.
+
+    Stars beyond MEASURED_RADIUS_PX are dropped for exactly the same reason: out
+    there the lens cannot deliver them at any brightness, so counting them
+    measures the optics rather than the sky. Leaving them in was why the table
+    read upside down -- 43% at magnitude 2 while magnitude 6 stars came through
+    -- because a bright star that happened to land near the edge was lost while a
+    faint one near the centre was found. Radius dominated, not brightness.
     """
     frame = Path(frame)
     when = when or frame_time(frame)
@@ -317,7 +420,10 @@ def limiting_magnitude(sol, frame, when=None, dets=None, mask=None,
     alt, az, vmag, _ra, _dec = bright_stars.above_horizon(when)
     x, y, th = cam_to_pix(unit_from_altaz(az, alt) @ np.asarray(sol["R"]).T,
                           sol["cx"], sol["cy"], sol["F"], sol["model"], sol["flip"])
-    inframe = (x > 20) & (x < W - 20) & (y > 20) & (y < H - 20) & (th < 1.45)
+    rmax = MEASURED_RADIUS_PX if max_radius_px is None else float(max_radius_px)
+    radius = np.hypot(x - sol["cx"], y - sol["cy"])
+    inframe = ((x > 20) & (x < W - 20) & (y > 20) & (y < H - 20) & (th < 1.45)
+               & (radius < rmax))
     xi = np.clip(x.astype(int), 0, W - 1)
     yi = np.clip(y.astype(int), 0, H - 1)
     visible = inframe & (~mask[yi, xi])
@@ -361,6 +467,7 @@ def limiting_magnitude(sol, frame, when=None, dets=None, mask=None,
     return {"limiting_mag": round(float(lim), 2) if lim else None,
             "stars_visible_area": int(visible.sum()),
             "stars_matched": int(found.sum()),
+            "measured_radius_px": rmax,
             "completeness": table}
 
 
@@ -423,6 +530,26 @@ def main(argv):
         v = verify(sol, frame, when, dets)
         print("stored solution: %d matches, residual %s px"
               % (v["matches"], v["residual_px"]))
+    elif "--refine" in argv:
+        sol = load()
+        if sol is None:
+            print("no stored solution to refine; solve once first")
+            return 1
+        new = refine(sol, frame, when, dets, mask, verbose=True)
+        if new is sol or "refined_at" not in new:
+            print("refinement did not improve the fit; solution left alone")
+            return 0
+        print("refined on %d pairs: RMS %.2f px -> %.2f px  (median shift %+.2f, %+.2f px)"
+              % (new["refined_pairs"], new["refined_rms_before_px"],
+                 new["refined_rms_after_px"], *new["refined_shift_px"]))
+        print("  axis alt %.2f deg, az %.2f deg | %d matches, residual %s px"
+              % (new["axis_alt_deg"], new["axis_az_deg"], new["matches"],
+                 new["residual_px"]))
+        sol = new
+        if "--save" in argv:
+            print("saved ->", save(sol))
+        else:
+            print("(not saved; pass --save to keep it)")
     else:
         sol = solve(frame, when, dets, verbose=True)
         if sol is None:

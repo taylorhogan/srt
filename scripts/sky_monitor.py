@@ -251,6 +251,10 @@ def _add_photometry(status, frame, res):
         status["limiting_mag"] = lm["limiting_mag"]
         status["stars_expected"] = lm["stars_visible_area"]
         status["stars_matched"] = lm["stars_matched"]
+        # Published so the picture and the table can be read together: the
+        # circle drawn on sky.jpg is this radius, and it is the area the counts
+        # beside it were measured in.
+        status["measured_radius_px"] = lm["measured_radius_px"]
         status["completeness"] = lm["completeness"]
     except Exception as exc:            # never let photometry sink the capture
         status["note_solve"] = "photometry failed: %s" % type(exc).__name__
