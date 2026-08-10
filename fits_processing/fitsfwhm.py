@@ -376,6 +376,11 @@ def save_fwhm(
                 parts.append(f'sky {sky_data["sky_mag_arcsec2"]:.2f} mag/arcsec²')
             elif sky_data.get("sky_adu_per_s") is not None:
                 parts.append(f'sky {sky_data["sky_adu_per_s"]:.4f} ADU/s')
+            elif sky_data.get("sky_below_pedestal"):
+                # Not a dark sky — a frame sitting under its own pedestal. Say so
+                # rather than drop the field, or the frame looks like one where
+                # sky simply was not measured.
+                parts.append("sky below pedestal")
         title = "  |  ".join(parts)
     else:
         title = (

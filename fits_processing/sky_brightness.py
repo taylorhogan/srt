@@ -200,6 +200,7 @@ def measure_sky(
             "sky_adu_per_s":         None,
             "sky_adu_per_s_arcsec2": None,
             "sky_mag_arcsec2":       None,
+            "sky_below_pedestal":    False,
             "sky_adu_raw":           float(sky_adu_raw),
             "pedestal_adu":          None,
             "pedestal_source":       "uncalibrated",
@@ -214,16 +215,24 @@ def measure_sky(
         }
 
     pedestal   = ped["pedestal_adu"]
-    # Sky can measure very slightly negative when the pedestal estimate is a
-    # touch high; clamp for the reported value but keep the signed one so a
-    # systematically negative result exposes a stale calibration.
+    # A frame whose background sits at or below the pedestal has not measured a
+    # dark sky — it has run out of measurement. The real sky here is only a few
+    # ADU on a ~153 ADU pedestal, so a 1% pedestal error swallows it whole, and
+    # this used to clamp the difference to zero and report "0.0000 ADU/s": a
+    # non-measurement wearing four decimal places. Report None instead, the same
+    # as the uncalibrated case, and keep the signed value so a run of them
+    # exposes a pedestal calibrated at the wrong temperature.
     sky_signed = sky_adu_raw - pedestal
-    sky_signal = max(sky_signed, 0.0)
+    below_pedestal = sky_signed <= 0.0
 
     # --- Derived metrics ---
-    sky_adu_per_s          = sky_signal / max(exptime, 1e-6)
     plate_scale_sq         = arcsec_per_pixel ** 2
-    sky_adu_per_s_arcsec2  = sky_adu_per_s / plate_scale_sq
+    if below_pedestal:
+        sky_signal = sky_adu_per_s = sky_adu_per_s_arcsec2 = None
+    else:
+        sky_signal             = sky_signed
+        sky_adu_per_s          = sky_signal / max(exptime, 1e-6)
+        sky_adu_per_s_arcsec2  = sky_adu_per_s / plate_scale_sq
 
     sky_e_per_s_arcsec2: Optional[float] = None
     sky_mag_arcsec2:     Optional[float] = None  # not computed — no calibrated zero point
@@ -235,10 +244,12 @@ def measure_sky(
     sky_gradient_ptp = float(np.ptp(valid))   if len(valid) else 0.0
 
     return {
-        "sky_adu":               float(sky_signal),
-        "sky_adu_per_s":         float(sky_adu_per_s),
-        "sky_adu_per_s_arcsec2": float(sky_adu_per_s_arcsec2),
+        "sky_adu":               None if sky_signal is None else float(sky_signal),
+        "sky_adu_per_s":         None if sky_adu_per_s is None else float(sky_adu_per_s),
+        "sky_adu_per_s_arcsec2": None if sky_adu_per_s_arcsec2 is None
+                                 else float(sky_adu_per_s_arcsec2),
         "sky_mag_arcsec2":       None,
+        "sky_below_pedestal":    bool(below_pedestal),
         "sky_adu_signed":        float(sky_signed),
         "sky_adu_raw":           float(sky_adu_raw),
         "pedestal_adu":          float(pedestal),
@@ -352,7 +363,12 @@ def save_sky_map(
     plt.setp(cb.ax.yaxis.get_ticklabels(), color="white")
 
     # Title
-    if sky_data.get("sky_adu_per_s") is None:
+    if sky_data.get("sky_below_pedestal"):
+        title_parts = [
+            f'Sky: below pedestal by {abs(sky_data["sky_adu_signed"]):.2f} ADU '
+            f'(raw {sky_data["sky_adu_raw"]:.1f}, pedestal {sky_data["pedestal_adu"]:.1f})'
+        ]
+    elif sky_data.get("sky_adu_per_s") is None:
         title_parts = [f'Sky: uncalibrated (raw {sky_data.get("sky_adu_raw", 0):.1f} ADU)']
     else:
         title_parts = [
@@ -470,7 +486,22 @@ def save_sky_heatmap(
 
 def sky_summary_text(sky_data: dict) -> str:
     """Format a sky_data dict into a short human-readable string."""
-    if sky_data.get("sky_adu_per_s") is None:
+    if sky_data.get("sky_below_pedestal"):
+        lines = [
+            f'Sky background: unmeasurable - the frame sits '
+            f'{abs(sky_data["sky_adu_signed"]):.2f} ADU *below* its pedestal '
+            f'(raw corner {sky_data["sky_adu_raw"]:.2f}, pedestal '
+            f'{sky_data["pedestal_adu"]:.2f})',
+            f'Pedestal: bias {sky_data["pedestal_bias_adu"]:.2f} + dark '
+            f'{sky_data["pedestal_dark_adu"]:.2f}, {sky_data["pedestal_source"]}',
+        ]
+        if sky_data.get("pedestal_extrapolated"):
+            lines.append(
+                f'  ! extrapolated {sky_data["pedestal_temp_delta_c"]:+.1f}°C from a '
+                f'{sky_data["pedestal_cal_temp_c"]:.0f}°C calibration - shoot BIAS/DARK '
+                f'at {sky_data["ccd_temp"]:.0f}°C before trusting this'
+            )
+    elif sky_data.get("sky_adu_per_s") is None:
         lines = [
             f'Sky background: uncalibrated '
             f'(raw corner {sky_data.get("sky_adu_raw", 0):.1f} ADU, no bias/dark '
