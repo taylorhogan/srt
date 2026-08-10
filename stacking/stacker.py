@@ -222,6 +222,9 @@ class CalibrationSet(NamedTuple):
     # Flats are per-filter, so this is filled in per channel by the caller
     # (see build_master_flat_npy) rather than by load_calibration_set.
     flat_npy: Optional[Path] = None
+    # Boolean map of defective pixels, derived from the master dark. See
+    # _hot_pixel_map for why subtracting the dark is not enough on its own.
+    hotmap_npy: Optional[Path] = None
 
 
 def _master_cache_path(paths: list[Path], tag: str) -> Path:
@@ -256,6 +259,54 @@ def _cached_master(paths: list[Path], tag: str, subtract: Optional[np.ndarray] =
         master = master - subtract
     tmp = out.with_suffix(".tmp.npy")
     np.save(tmp, master.astype(np.float32))
+    tmp.replace(out)
+    return out
+
+
+# A pixel is called defective when it sits this many robust sigma away from its
+# own neighbourhood in the master dark. 8 is deliberately conservative: the cost
+# of a false positive is one interpolated pixel, but the cost of a false
+# negative is a dotted trail across the whole stack.
+_HOT_PIXEL_SIGMA = 8.0
+
+
+def _hot_pixel_map(dark_npy: Path) -> Optional[Path]:
+    """Boolean map of defective pixels, from the master dark. Cached beside it.
+
+    Subtracting the dark does NOT deal with these. A hot pixel is not merely
+    offset, it is non-linear and noisy: its dark current does not scale with
+    exposure the way the master assumes, and it swings frame to frame far more
+    than a good pixel. Subtraction leaves a residual, and because the residual
+    sits at a fixed DETECTOR position while registration moves each frame onto
+    the sky, the stack smears it into a dotted trail along the drift track --
+    measured on bubble 2026-08-08, dozens of parallel arcs in a plain mean.
+
+    The combine's rejection does clear them from a normal stack, so this is not
+    load-bearing for the usual product. It earns its place elsewhere: anything
+    with weak or no rejection sees them plainly -- a plain mean, a single-frame
+    export, a two-frame difference -- and removing them at source also drops the
+    measured background noise 7.9% (bubble O-III, plain mean, 0.8688 -> 0.8006).
+    Better to fix the pixel than to depend on every downstream consumer
+    remembering to reject.
+
+    Flagged against a LOCAL median, not a global threshold: dark current varies
+    across the sensor and amp glow lifts whole corners, so a global cut brands
+    an entire region defective while missing an isolated hot pixel sitting in a
+    cool one.
+    """
+    out = dark_npy.with_name(dark_npy.stem + "_hotmap.npy")
+    if out.exists():
+        return out
+    dark = np.load(dark_npy).astype(np.float32)
+    resid = dark - _despike(dark)          # 3x3 median: what only this pixel has
+    sigma = 1.4826 * float(np.median(np.abs(resid - np.median(resid))))
+    if not np.isfinite(sigma) or sigma <= 0:
+        return None
+    mask = np.abs(resid) > _HOT_PIXEL_SIGMA * sigma
+    _logger.info("Hot-pixel map: %d of %d pixels (%.3f%%) flagged at %.1f sigma",
+                 int(mask.sum()), mask.size, 100.0 * mask.mean(), _HOT_PIXEL_SIGMA)
+    tmp = out.with_suffix(".tmp.npy")
+    np.save(tmp, mask)
     tmp.replace(out)
     return out
 
@@ -296,7 +347,8 @@ def load_calibration_set(
                 )
             dark_npy = _cached_master(chosen, f"dark{dark_exptime:g}", subtract=bias_arr)
     bias_arr = None
-    return CalibrationSet(bias_npy, dark_npy, dark_exptime)
+    hotmap_npy = _hot_pixel_map(dark_npy) if dark_npy is not None else None
+    return CalibrationSet(bias_npy, dark_npy, dark_exptime, hotmap_npy=hotmap_npy)
 
 
 def results_dir(dso_name: str) -> Path:
@@ -424,6 +476,15 @@ def _apply_calibration(frame: np.ndarray, cal: Optional[CalibrationSet],
         # mean 1 and floored away from zero at build time, so this needs no
         # guard and no temporary the size of the frame.
         frame /= np.load(cal.flat_npy, mmap_mode="r")
+    if cal.hotmap_npy is not None:
+        # Replace known-defective pixels with their own neighbourhood. Last,
+        # so the value substituted is a calibrated one. Only pixels the master
+        # dark already condemned are touched -- a star landing on one loses a
+        # single sample, against a dotted trail across the whole stack if it
+        # does not. See _hot_pixel_map.
+        mask = np.load(cal.hotmap_npy, mmap_mode="r")
+        if mask.shape == frame.shape:
+            frame[mask] = _despike(frame)[mask]
     return frame
 
 
