@@ -47,7 +47,7 @@ class N2NDataset(Dataset):
         self.frames: list[np.ndarray] = []
         for f in frames:
             sub, _ = denoiser.subtract_background(f)
-            norm, _, _ = denoiser.normalise(sub)
+            norm, _ = denoiser.normalise(sub)
             self.frames.append(norm)
 
         # Build (i, j) pairs restricted to within the same DSO group
@@ -178,7 +178,13 @@ def train(
     group_ids: Optional[list[str]] = None,
     epochs: int = 60,
     batch_size: int = 8,
-    lr: float = 1e-3,
+    # 1e-3 blew up even with clipping: a 30-epoch subset run spiked to train=175
+    # with a pre-clip grad norm of 488833 at epoch 5, then re-converged. At 3e-4
+    # the same run stayed at grad norm ~0.15 throughout. Measured end quality was
+    # a wash (corr 0.343 vs 0.319 against a 0.371 ceiling, one seed each), so
+    # this buys stability rather than accuracy — worth it, because the failure it
+    # avoids silently poisons the saved checkpoint rather than erroring.
+    lr: float = 3e-4,
     patch_size: int = 256,
     pairs_per_epoch: int = 2000,
     val_dsos: int = 2,
@@ -239,6 +245,28 @@ def train(
             pred = model(inp)
             loss = criterion(pred, tgt)
             loss.backward()
+            # Clip before stepping. Without this the first full run after
+            # BatchNorm was removed diverged at epoch 2 — train loss 0.20 ->
+            # 24834, val 0.19 -> 1438 — and never recovered, leaving the epoch-1
+            # weights as the saved "best".
+            #
+            # Measured over 250 batches at lr=1e-3 with no clipping, the total
+            # grad norm is heavy-tailed: median 0.2, p99 3.1, max 45.8 (221x the
+            # median), with 8% of batches above 1.0. That tail is enough for Adam
+            # to take a step the plain conv stack cannot absorb — BatchNorm used
+            # to renormalise activations between layers and hid it, and removing
+            # it (which the photometry requires, see _norm_layer) exposed it.
+            #
+            # Note the tail is NOT explained by bright stars in the patch:
+            # correlation between patch peak and grad norm measured -0.001, and
+            # the top-5% grad-norm batches had slightly *lower* peaks. The
+            # trigger is unidentified; clipping bounds the damage either way.
+            #
+            # Clipping is the fix rather than rescaling the input because
+            # normalise() has to stay bit-identical between training and
+            # inference — that has already drifted twice (c617047, c61cd26) and
+            # is what fix #2 of 91b43b9 repaired.
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             optimizer.step()
             train_loss += loss.item()
         train_loss /= len(train_loader)

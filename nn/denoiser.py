@@ -60,17 +60,57 @@ def subtract_background(frame: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     return frame - background, background
 
 
-def normalise(frame_sub: np.ndarray) -> tuple[np.ndarray, float, float]:
-    """Scale a background-subtracted frame to ~[0,1] by its 1st/99th percentile.
+def normalise(frame_sub: np.ndarray) -> tuple[np.ndarray, float]:
+    """asinh-compress a background-subtracted frame to a trainable range.
 
-    Returns (normalised, p1, scale) so the caller can invert it. Used by both
-    the training dataset and tiled inference — one definition, so the two
-    cannot drift apart again.
+    Returns (t, scale); invert with denormalise(). Used by both the training
+    dataset and tiled inference — one definition, so the two cannot drift
+    apart again.
+
+    This was a linear (x - p1) / (p99 - p1) scaling until 2026-08-12, and the
+    docstring claimed it produced ~[0,1]. It did not: 99% of pixels are sky, so
+    p99 - p1 spans the sky *noise*, and measured on real frames the output
+    reached 837 (m92) and 631 (ngc5907). Feeding that to a conv stack with no
+    normalisation layers (BatchNorm was removed in 91b43b9, correctly, because
+    the absolute output level carries the photometry) collapsed training onto
+    the trivial solution: the trained net emitted a constant, uncorrelated with
+    its input (corr -0.02), erasing every star. Its val loss, 0.2230, was the
+    constant-predictor baseline of 0.2263 — while a perfect denoiser scores
+    0.1276, so it captured ~1.5% of the 43.6% available.
+
+    A linear scale cannot fix that. The dynamic range here is ~4000:1, so any
+    single factor either overflows the stars (p99 -> max 837) or underflows the
+    sky into nothing (p100 -> sky sigma 0.0025). asinh compresses the bright end
+    while staying linear near zero, which is where the sky noise lives:
+    max ~9.4 with sky noise at 0.50.
+
+    It is *exactly* invertible (round-trip error 4e-7, float32 precision), so
+    the photometry is recoverable — which a stretch applied for looks would not
+    be. Note sinh grows exponentially, so network error at the bright end is
+    amplified on inversion; that is a measurable failure the step-4 gate exists
+    to catch, traded against a guaranteed one.
+
+    Scaling on the robust sky sigma rather than a percentile also makes fields
+    comparable: m92 and ngc5907 peak at 9.4 and 8.7 here, against 837 and 631
+    before. The old scaling was field-dependent by ~1.3x, the same class of
+    drift fix #2 of 91b43b9 repaired.
     """
-    p1 = float(np.percentile(frame_sub, 1))
-    p99 = float(np.percentile(frame_sub, 99))
-    scale = max(p99 - p1, 1.0)
-    return ((frame_sub - p1) / scale).astype(np.float32), p1, scale
+    # Subsampled: a sky-sigma estimate does not need all 61 Mpx, and the two
+    # full-frame medians this replaces cost ~2 s per frame across 204 frames.
+    s = frame_sub[::4, ::4]
+    sigma = 1.4826 * float(np.median(np.abs(s - float(np.median(s)))))
+    scale = max(sigma, 1e-3)
+    return np.arcsinh(frame_sub / scale).astype(np.float32), scale
+
+
+def denormalise(t: np.ndarray, scale: float) -> np.ndarray:
+    """Invert normalise(). Kept beside it so the pair cannot drift apart.
+
+    The inverse used to be open-coded at the end of denoise_frame(), which is
+    exactly the shape of bug that let training and inference diverge twice
+    before (c617047, c61cd26).
+    """
+    return (scale * np.sinh(t.astype(np.float64))).astype(np.float32)
 
 
 def denoise_frame(
@@ -100,7 +140,7 @@ def denoise_frame(
     # steps are the shared helpers above, which is what keeps training and
     # inference on the same footing.
     frame_sub, background = subtract_background(frame)
-    norm_frame, p1, scale = normalise(frame_sub)
+    norm_frame, scale = normalise(frame_sub)
 
     h, w = frame.shape
     step = tile_size - overlap
@@ -154,7 +194,7 @@ def denoise_frame(
     norm_output = (output / weight).astype(np.float32)
 
     # Denormalise and restore the background
-    return norm_output * scale + p1 + background
+    return denormalise(norm_output, scale) + background
 
 
 def collect_all_frames(
