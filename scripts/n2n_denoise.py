@@ -13,10 +13,10 @@ whose FITS FILTER header matches <filter> and EXPTIME rounds to <seconds>.
 The model local/models/n2n_{filter}_{seconds}s.pt must already exist
 (train with: python scripts/n2n_train.py <filter> <seconds>).
 
-After denoising, each frame is registered to the first frame of its session
+After denoising, each frame is registered to the first frame of its own DSO
 using SEP star centroid matching (same method as training prep).  This
-corrects intra-session dithering so the stacker only has to handle
-coarse cross-session pointing differences.
+corrects dithering within a target; cross-target pointing is left to the
+stacker, which registers properly rather than by a capped translation fit.
 
 Flags:
   --no-register  Skip registration; write denoised frames in their original
@@ -74,7 +74,6 @@ def main() -> None:
     compare     = "--compare"     in args
     do_register = "--no-register" not in args
     force       = "--force"       in args
-    args = [a for a in args if a.startswith("-") is False or a[1] != "-" or a in []]
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
 
     filter_name = args[0].strip()
@@ -91,6 +90,10 @@ def main() -> None:
         print(f"Error: no 'machine.{hostname}' entry in config_public.py")
         sys.exit(1)
 
+    if "subs_dir" not in machine_cfg:
+        print(f"Error: machine.{hostname} has no 'subs_dir' in config_public.py")
+        print("  N2N reads frames from subs_dir; only hosts that define it can run this.")
+        sys.exit(1)
     subs_dir = Path(machine_cfg["subs_dir"])
     if not subs_dir.exists():
         print(f"Error: subs_dir does not exist: {subs_dir}")
@@ -137,25 +140,37 @@ def main() -> None:
     n_dsos = len(set(d.name for _, d in all_frames))
     print(f"Found {len(all_frames)} {filter_name} {exptime_s}s frames across {n_dsos} DSO(s)")
 
-    # Pre-compute global reference stars from the very first raw frame.
-    # All frames — across every session — are registered to this single reference
-    # so both intra-session dithering and cross-session pointing differences are
-    # corrected before the frames reach the stacker.
-    global_ref_stars = None
-    global_ref_fp = all_frames[0][0]
+    # One reference per DSO, from that DSO's own first frame.
+    #
+    # This used to take a single global reference — the first frame of the first
+    # DSO — and register every frame of every target to it, on the reasoning that
+    # it would also absorb cross-session pointing. It cannot: _match_translation
+    # is a translation-only fit capped at max_dist=200 px, and two targets are
+    # degrees apart with star fields that have nothing in common. At ~50 stars
+    # over this sensor the mean separation is ~1100 px, so frames of every DSO
+    # but the first either found fewer than three matches and were silently left
+    # unregistered, or found three spurious ones and were shifted by a
+    # meaningless median — and nothing in the output told the two apart.
+    # Training was always per-group (nn/registration.py); inference now agrees.
+    ref_stars_by_dso: dict[str, np.ndarray] = {}
+    ref_fp_by_dso: dict[str, Path] = {}
     if do_register:
-        print(f"Computing global reference stars from {global_ref_fp.name}…")
-        with _fits.open(global_ref_fp) as hdul:
-            ref_raw = np.squeeze(hdul[0].data).astype(np.float32)
-        global_ref_stars = _reg._find_stars(ref_raw)
-        if len(global_ref_stars) < 3:
-            print("Warning: too few stars in global reference frame — registration disabled")
-            global_ref_stars = None
-        else:
-            print(f"Global reference: {len(global_ref_stars)} stars detected")
+        for fp, dso_dir in all_frames:
+            if dso_dir.name in ref_fp_by_dso:
+                continue
+            ref_fp_by_dso[dso_dir.name] = fp
+            with _fits.open(fp) as hdul:
+                ref_raw = np.squeeze(hdul[0].data).astype(np.float32)
+            stars = _reg._find_stars(ref_raw)
+            if len(stars) < 3:
+                print(f"Warning: too few stars in the reference for {dso_dir.name} "
+                      f"({fp.name}) — that DSO will not be registered")
+                continue
+            ref_stars_by_dso[dso_dir.name] = stars
+            print(f"  reference [{dso_dir.name}]: {len(stars)} stars from {fp.name}")
 
-    if do_register and global_ref_stars is not None:
-        print(f"Registration: ON  (global reference, max_dist=200 px)")
+    if do_register and ref_stars_by_dso:
+        print("Registration: ON  (per-DSO reference, max_dist=200 px)")
     else:
         print("Registration: OFF")
 
@@ -181,13 +196,15 @@ def main() -> None:
         denoised_arr = denoiser.denoise_frame(raw, model, device=device,
                                               tile_size=tile_size, overlap=overlap)
 
-        # Apply global registration shift (computed from raw, applied to denoised).
-        # Using raw for centroid detection avoids confusion from N2N star halos.
+        # Apply this DSO's registration shift (computed from raw, applied to the
+        # denoised array). Using raw for centroid detection avoids confusion from
+        # N2N star halos.
         shift_applied = False
-        if do_register and global_ref_stars is not None and fp != global_ref_fp:
+        ref_stars = ref_stars_by_dso.get(dso_dir.name)
+        if do_register and ref_stars is not None and fp != ref_fp_by_dso.get(dso_dir.name):
             src_stars = _reg._find_stars(raw)
             if len(src_stars) >= 3:
-                shift = _reg._match_translation(global_ref_stars, src_stars)
+                shift = _reg._match_translation(ref_stars, src_stars)
                 if shift is not None:
                     from scipy.ndimage import shift as nd_shift
                     fill = float(np.median(denoised_arr))

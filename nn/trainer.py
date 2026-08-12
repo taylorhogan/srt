@@ -16,6 +16,7 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, Dataset
 
+from nn import denoiser
 from nn.noise2noise_model import UNet
 
 
@@ -34,18 +35,20 @@ class N2NDataset(Dataset):
         patch_size: int = 256,
         pairs_per_epoch: int = 2000,
     ):
-        self.frames = frames
         self.patch_size = patch_size
         self.pairs_per_epoch = pairs_per_epoch
         self.rng = np.random.default_rng()
 
-        # Precompute per-frame stats so patch normalization matches inference
-        # (inference normalizes each frame globally, so training must too)
-        self.frame_stats: list[tuple[float, float]] = []
+        # Background-subtract and normalise exactly as inference does, using the
+        # same two helpers. Frames are stored already normalised, so a patch is
+        # just a crop — no per-patch arithmetic that could drift from the
+        # inference path. The background is discarded: the model only ever sees
+        # flat-sky, unit-scaled data, at train and at test alike.
+        self.frames: list[np.ndarray] = []
         for f in frames:
-            p1  = float(np.percentile(f, 1))
-            p99 = float(np.percentile(f, 99))
-            self.frame_stats.append((p1, max(p99 - p1, 1.0)))
+            sub, _ = denoiser.subtract_background(f)
+            norm, _, _ = denoiser.normalise(sub)
+            self.frames.append(norm)
 
         # Build (i, j) pairs restricted to within the same DSO group
         if group_ids is not None:
@@ -81,15 +84,10 @@ class N2NDataset(Dataset):
         else:
             y0 = int(self.rng.integers(0, h - ps))
             x0 = int(self.rng.integers(0, w - ps))
+        # Frames are already background-subtracted and normalised (see __init__),
+        # so the patch is a plain crop.
         pa = fa[y0:y0 + ps, x0:x0 + ps]
         pb = fb[y0:y0 + ps, x0:x0 + ps]
-
-        # Normalise each patch by its own frame's global stats — same scheme
-        # as inference so training and inference see identical value ranges
-        p1a, scale_a = self.frame_stats[i]
-        p1b, scale_b = self.frame_stats[j]
-        pa = (pa - p1a) / scale_a
-        pb = (pb - p1b) / scale_b
 
         # Augment: same random flip/rotation applied to both patches so they
         # stay aligned — 8 possible orientations (flips × 90° rotations)

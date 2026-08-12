@@ -55,6 +55,10 @@ def main() -> None:
         print(f"  Known hosts: {list(cfg.get('machine', {}).keys())}")
         sys.exit(1)
 
+    if "subs_dir" not in machine_cfg:
+        print(f"Error: machine.{hostname} has no 'subs_dir' in config_public.py")
+        print("  N2N reads frames from subs_dir; only hosts that define it can run this.")
+        sys.exit(1)
     subs_dir = Path(machine_cfg["subs_dir"])
     if not subs_dir.exists():
         print(f"Error: subs_dir does not exist: {subs_dir}")

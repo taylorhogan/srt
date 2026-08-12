@@ -42,6 +42,37 @@ def load_model(model_path: Path) -> nn.Module:
     return model
 
 
+def subtract_background(frame: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Return (frame - smooth sky background, background).
+
+    Shared by training and inference so both see the same kind of image. That
+    sharing is the point: inference started subtracting the background in
+    c617047 to kill tile seams, which silently undid c61cd26's alignment of the
+    two normalisation paths and left the model trained on frames that still had
+    the vignetting gradient in them. Measured on real frames the resulting
+    scale error runs 1.0-1.7x and varies by field, so the model was applied
+    off-distribution by an amount that changed from target to target.
+
+    sep.Background is a mesh of box medians interpolated to full resolution.
+    """
+    import sep
+    background = np.array(sep.Background(frame.astype(np.float64))).astype(np.float32)
+    return frame - background, background
+
+
+def normalise(frame_sub: np.ndarray) -> tuple[np.ndarray, float, float]:
+    """Scale a background-subtracted frame to ~[0,1] by its 1st/99th percentile.
+
+    Returns (normalised, p1, scale) so the caller can invert it. Used by both
+    the training dataset and tiled inference — one definition, so the two
+    cannot drift apart again.
+    """
+    p1 = float(np.percentile(frame_sub, 1))
+    p99 = float(np.percentile(frame_sub, 99))
+    scale = max(p99 - p1, 1.0)
+    return ((frame_sub - p1) / scale).astype(np.float32), p1, scale
+
+
 def denoise_frame(
     frame: np.ndarray,
     model: nn.Module,
@@ -64,20 +95,12 @@ def denoise_frame(
         device = best_device()
     model = model.to(device)
 
-    # Estimate and subtract smooth sky background so all tiles see a flat sky.
-    # sep.Background uses a mesh of box medians interpolated to full resolution;
-    # it handles vignetting gradients that would otherwise shift each tile's DC
-    # level and create visible seams after inference.
-    import sep
-    background = np.array(sep.Background(frame.astype(np.float64))).astype(np.float32)
-    frame_sub = frame - background
-
-    # Normalise the background-subtracted frame once — keeps all tiles on the
-    # same scale.
-    p1  = float(np.percentile(frame_sub, 1))
-    p99 = float(np.percentile(frame_sub, 99))
-    scale = max(p99 - p1, 1.0)
-    norm_frame = ((frame_sub - p1) / scale).astype(np.float32)
+    # Flatten the sky so every tile sees the same DC level (this is what killed
+    # the seam artefacts) and normalise once so all tiles share a scale. Both
+    # steps are the shared helpers above, which is what keeps training and
+    # inference on the same footing.
+    frame_sub, background = subtract_background(frame)
+    norm_frame, p1, scale = normalise(frame_sub)
 
     h, w = frame.shape
     step = tile_size - overlap
