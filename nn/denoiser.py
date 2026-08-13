@@ -42,6 +42,23 @@ def load_model(model_path: Path) -> nn.Module:
     return model
 
 
+# Multiple of the robust sky sigma used as the asinh scale. Larger values push
+# the bright end toward asinh's linear regime, which reduces how badly sinh
+# amplifies network error on inversion (the amplification is cosh(t)) — at the
+# cost of shrinking the sky noise the network has to work on. Measured on m92:
+#
+#   mult   max t   sky noise   amplification at max t
+#      1    9.43      0.5007                    6235x
+#     10    7.13      0.0540                     624x
+#    100    4.83      0.0054                      62x
+#
+# A single module-level constant because training and inference MUST agree on
+# it; every other way of expressing this has drifted at least once already
+# (c617047, c61cd26). It is stamped into the checkpoint by trainer.train() and
+# checked on load.
+ASINH_SIGMA_MULT = 1.0
+
+
 def subtract_background(frame: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """Return (frame - smooth sky background, background).
 
@@ -99,7 +116,7 @@ def normalise(frame_sub: np.ndarray) -> tuple[np.ndarray, float]:
     # full-frame medians this replaces cost ~2 s per frame across 204 frames.
     s = frame_sub[::4, ::4]
     sigma = 1.4826 * float(np.median(np.abs(s - float(np.median(s)))))
-    scale = max(sigma, 1e-3)
+    scale = max(sigma * ASINH_SIGMA_MULT, 1e-3)
     return np.arcsinh(frame_sub / scale).astype(np.float32), scale
 
 

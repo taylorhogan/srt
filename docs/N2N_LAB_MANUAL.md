@@ -217,6 +217,52 @@ Net effect of asinh: **relocated the damage rather than removing it.** The
 linear model erased everything uniformly; this one erases bright sources while
 partially preserving faint ones. Both fail the gate.
 
+### 9. Clamping the asinh scale — helps 4x, does not reach the gate
+
+The amplification `sinh` applies to network error on inversion is `cosh(t)`, so
+a larger asinh scale (bright end nearer asinh's linear regime) should reduce it.
+Measured on m92, the scale only ever trades one end against the other:
+
+| mult | max t | sky noise in t | amplification at max t |
+| --- | --- | --- | --- |
+| 1 | 9.43 | 0.5007 | 6235x |
+| 10 | 7.13 | 0.0540 | 624x |
+| 100 | 4.83 | 0.0054 | 62x |
+
+Reaching the linear regime (`t < 0.5`, amplification < 1.13) needs a scale ~2x
+the peak signal, which puts sky noise at ~8e-5 — unresolvable. So the analytic
+answer is that scale alone cannot fix it. Tested anyway, because a larger scale
+might shrink the network's error faster than 62x amplification hurts.
+
+Three 25-epoch models, same seed and frames, each denoising the same 2048^2 crop
+of held-out m92 (62 sources, raw rms 11.072), scored on aperture flux:
+
+| mult | rms | brightest | mid | faint |
+| --- | --- | --- | --- | --- |
+| raw | 11.072 | 1.0000 | 1.0000 | 1.0000 |
+| 1 | 2.768 | 0.0426 | 0.0240 | 1.2470 |
+| **10** | 3.012 | **0.1735** | **0.1055** | **1.0068** |
+| 50 | 2.572 | 0.0339 | 0.0325 | 0.9785 |
+
+**Not monotonic.** mult=10 is an optimum; mult=50 regresses to worse than
+mult=1 on the bright bins. Too small a scale and `cosh` destroys the bright end;
+too large and sky noise falls to ~0.011 in t units, the network cannot resolve
+what it is denoising, and its relative error grows faster than the reduced
+amplification saves.
+
+Worth 4x on bright and mid, and it fixes a second failure mode visible at
+mult=1: the faint bin reads **1.2470**, i.e. faint sources come out 25%
+*brighter* than raw — the denoiser adding flux, not just removing it. At mult=10
+that is 1.0068.
+
+But 0.17 against a required 0.97 is not a path to passing. Scored on flux rather
+than loss or correlation deliberately: both of those looked acceptable at mult=1
+while the photometry was being destroyed.
+
+`ASINH_SIGMA_MULT` is kept in `nn/denoiser.py` as a single module constant, since
+training and inference must agree on it and every other way of expressing that
+has drifted at least once (c617047, c61cd26).
+
 ---
 
 ## Standing conclusions
@@ -236,9 +282,13 @@ partially preserving faint ones. Both fail the gate.
 
 ## Open questions
 
-- **Bright-end inversion.** The live problem. Candidates: predict a *residual*
-  rather than the image, so the network never has to reproduce a large absolute
-  value; or clamp the asinh scale so bright pixels stay in the linear regime.
+- **Bright-end inversion.** The live problem. Clamping the asinh scale was tried
+  (step 9): worth 4x, capped at 0.17 against a required 0.97, and non-monotonic.
+  The remaining candidate is predicting a **residual** — output = input +
+  f(input) — so the large absolute value passes through from the input and the
+  network only supplies a small correction. That removes the amplification
+  rather than shrinking it, because the bright value never has to be
+  reconstructed by the network at all.
 - **Epoch count.** `best` has landed at epoch 45, then 64, of 130 on successive
   runs, and a 30-epoch subset run beat the full 130-epoch run on the same
   held-out target (60.3% vs 53.5%). The back half looks actively harmful. Not a
