@@ -47,6 +47,23 @@ from scripts import live_push
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def _last_good_captured():
+    """ISO time of the newest frame that actually published, or None.
+
+    Read from the index rather than the capture directory: a frame can exist on
+    disk without ever having reached the web host, and the point of this value
+    is to describe the picture the site is currently serving.
+    """
+    try:
+        rows = sky_archive.read_index()
+    except Exception:                 # a failure report must not itself fail
+        return None
+    for row in reversed(rows or []):
+        if row.get("captured"):
+            return row["captured"]
+    return None
+
+
 def main() -> int:
     now = datetime.now(timezone.utc)
     status = {"generated": now.isoformat(timespec="seconds")}
@@ -63,6 +80,17 @@ def main() -> int:
         frame = sky_camera.capture()
     if frame is None:
         status.update(camera="unavailable", night=None, stars=None)
+        # _publish only overwrites sky.jpg when there IS a new frame, so the
+        # last good photograph is still sitting on the web host. Carry its
+        # capture time so the page can go on showing it, honestly aged, rather
+        # than removing the sky view outright. This camera misses roughly one
+        # run in five, and a bare "unavailable" turned every one of those into a
+        # blank panel for anyone who loaded the page inside that 5-minute
+        # window -- a dropped frame is not the same event as a dead camera, and
+        # only the second one is worth hiding the sky for.
+        last = _last_good_captured()
+        if last:
+            status["last_good_captured"] = last
         _publish(status, None)
         # Log the failure as well as publishing it. Returning here without a
         # row is what made local/sky_log.jsonl survivorship-filtered: it could

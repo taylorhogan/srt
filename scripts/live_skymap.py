@@ -20,7 +20,7 @@ import os
 import subprocess
 import sys
 import warnings
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 warnings.filterwarnings("ignore")
@@ -348,6 +348,37 @@ def main() -> None:
                 fontsize=7.5, ha="center", va="bottom", alpha=0.85, zorder=5)
 
     status = {"generated": datetime.now(timezone.utc).isoformat(timespec="seconds")}
+
+    # Publish the boot INSTANT, not an elapsed count. The page subtracts it
+    # itself, so the figure stays right between the 5-minute pushes instead of
+    # sitting frozen at whatever it was when this ran. It is safe to let the
+    # browser extrapolate only because the same status carries `generated`:
+    # once that goes stale the page stops rendering uptime altogether, which is
+    # the whole point -- an elapsed count extrapolated from a dead feed climbs
+    # forever and reports a machine that is off as having the best uptime yet.
+    #
+    # kernel32 rather than psutil: psutil is listed in requirements.txt but is
+    # NOT installed in .venv, so the obvious version of this silently published
+    # nothing. ctypes is stdlib and cannot go missing the same way. No
+    # subprocess fallback either -- this script runs under live_skymap.bat's
+    # 4-minute kill, where an extra process spawn is a hang waiting to happen
+    # (see f07477a).
+    #
+    # GetTickCount64 excludes time spent asleep, which is the honest reading
+    # for "up": the observatory PC does not sleep, and if it ever did, the
+    # hours it was unavailable should not be counted as uptime. restype must be
+    # set -- ctypes defaults to a 32-bit signed int, which wraps to negative
+    # after 24.8 days and would report a boot in the future.
+    try:
+        import ctypes
+        _tick = ctypes.windll.kernel32.GetTickCount64
+        _tick.restype = ctypes.c_ulonglong
+        up_s = _tick() / 1000.0
+        status["boot"] = (datetime.now(timezone.utc)
+                          - timedelta(seconds=up_s)).isoformat(timespec="seconds")
+    except Exception:
+        pass
+
     if bodies:
         status["bodies"] = ", ".join(bodies)
     if tgt:

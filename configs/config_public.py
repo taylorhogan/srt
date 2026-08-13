@@ -7,7 +7,7 @@ class PublicConfig():
 
         },
         "version": {
-            "date": "2026.8.13.5"
+            "date": "2026.8.13.6"
         },
 
         "logger": {
@@ -39,7 +39,16 @@ class PublicConfig():
         # absolute brightness does NOT track the sky. A star count is
         # scale-invariant, so that is what sky_monitor records.
         "sky camera": {
-            "host": "192.168.87.70",
+            # DHCP-reserved to MAC BC-07-1D-29-97-0D. The reservation is what
+            # makes this line safe to hardcode: on 2026-08-13 the camera
+            # rebooted, DHCP moved it off 192.168.87.70, and the feed went dark
+            # for half an hour reporting "camera unavailable" -- which reads as
+            # a dead camera, not a changed address. If that happens again do
+            # NOT hunt for it by grabbing frames off every camera on the LAN;
+            # most of them are indoor. Run
+            # hardware_control.kasa_utils.make_discovery_map() and match on
+            # MODEL: the sky camera is the only KC420WS, the rest are KC410S.
+            "host": "192.168.87.52",
             # Rolling archive of raw frames. Kept because the cloud/rain/snow
             # detector that comes next needs labelled examples, and they can
             # only be collected before the fact.

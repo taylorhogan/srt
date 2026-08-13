@@ -20,8 +20,8 @@ script leads with that and only then tries the protocol that fits.
 
 Usage:
     python probe_kasa_camera.py                        # find and classify all
-    python probe_kasa_camera.py --host 192.168.87.70   # probe one
-    python probe_kasa_camera.py --host 192.168.87.70 --snapshot sky.jpg
+    python probe_kasa_camera.py --host 192.168.87.52   # probe one
+    python probe_kasa_camera.py --host 192.168.87.52 --snapshot sky.jpg
 
 Credentials:
     --username/--password  TP-Link cloud account. Legacy KC cameras use this
