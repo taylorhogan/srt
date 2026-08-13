@@ -17,6 +17,14 @@ REM
 REM Single > rather than >>, so a stuck handle cannot silently block the run
 REM and the log cannot grow without bound. Exit code passed through: a camera
 REM that did not answer must show up as a failed run, not a silent success.
+REM
+REM `$null = $p.Handle` is load-bearing and must not be tidied away. Without it
+REM Start-Process -PassThru (no -Wait) never caches the process handle, so
+REM $p.ExitCode reads back EMPTY, `exit $p.ExitCode` becomes `exit $null`, and
+REM every python-level failure is reported to Task Scheduler as success --
+REM which is exactly what the line above promises does not happen. Measured
+REM 2026-08-13: a child exiting 1 made this .bat report 0, so the camera being
+REM unavailable at 08:39 was logged as a clean run.
 cd /d C:\Users\iriso\Documents\development\srt
 set PYTHONIOENCODING=utf-8
 REM Same cache the main process uses (see start_srt.bat). Without it astropy
@@ -25,7 +33,7 @@ REM sun-altitude call re-downloads IERS tables over the network on EVERY run
 REM and warns its way through the log before falling back to the bundled table.
 SET ASTROPY_CACHE_DIR=C:\Users\iriso\Documents\development\srt\local\astropy_cache
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-  "$p = Start-Process -FilePath '.venv\Scripts\python.exe' -ArgumentList 'scripts\sky_monitor.py' -RedirectStandardOutput 'local\sky_monitor.log' -RedirectStandardError 'local\sky_monitor.err' -NoNewWindow -PassThru;" ^
+  "$p = Start-Process -FilePath '.venv\Scripts\python.exe' -ArgumentList 'scripts\sky_monitor.py' -RedirectStandardOutput 'local\sky_monitor.log' -RedirectStandardError 'local\sky_monitor.err' -NoNewWindow -PassThru; $null = $p.Handle;" ^
   "if (-not $p.WaitForExit(240000)) { $p.Kill(); Write-Output 'TIMEOUT: killed after 240s'; exit 2 }" ^
   "exit $p.ExitCode"
 EXIT /b %ERRORLEVEL%

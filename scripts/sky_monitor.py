@@ -64,6 +64,16 @@ def main() -> int:
     if frame is None:
         status.update(camera="unavailable", night=None, stars=None)
         _publish(status, None)
+        # Log the failure as well as publishing it. Returning here without a
+        # row is what made local/sky_log.jsonl survivorship-filtered: it could
+        # only ever contain successes, so on 2026-08-13 it read 132/132 "ok"
+        # while the site was serving camera:unavailable, and camera reliability
+        # was not measurable from it at all. The row carries no `captured` and
+        # no `trustworthy`, so preserve_events ignores it.
+        try:
+            sky_archive.append_index(status)
+        except Exception as exc:      # recording a failure must not sink the run
+            print("index append failed (%s)" % type(exc).__name__)
         print("sky_monitor: camera unavailable")
         return 1
 

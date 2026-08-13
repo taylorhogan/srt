@@ -52,7 +52,13 @@ def _cam(cfg=None):
 
 
 def append_index(status, root=None):
-    """One line per capture. Tiny, and it is also the night's time series."""
+    """One line per capture ATTEMPT. Tiny, and also the night's time series.
+
+    Attempt, not success: a run whose camera did not answer appends a row with
+    camera="unavailable" and no `captured`. Without those rows the file cannot
+    answer how often the camera works, which is the question it looks like it
+    answers.
+    """
     p = (Path(root) if root else _root()) / INDEX
     p.parent.mkdir(parents=True, exist_ok=True)
     row = {k: v for k, v in status.items() if not k.startswith("_")}

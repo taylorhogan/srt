@@ -23,10 +23,17 @@ REM timeout otherwise leaves no trace at all except a task exit code, and
 REM local\live_skymap.log is overwritten by the next run within 5 minutes.
 REM Task Scheduler reports the `exit 2` below as 0x80070002 / 2147942402
 REM (HRESULT_FROM_WIN32(2)), which reads like "file not found" but is not.
+REM
+REM `$null = $p.Handle` is load-bearing and must not be tidied away. Without it
+REM Start-Process -PassThru (no -Wait) never caches the process handle, so
+REM $p.ExitCode reads back EMPTY and `exit $p.ExitCode` becomes `exit $null`.
+REM That reported every python-level failure as success -- the same "45 minutes
+REM of doing nothing all reported success" bug named above, re-created by a
+REM different mechanism, and it meant only the 240s kill was ever visible.
 cd /d C:\Users\iriso\Documents\development\srt
 set PYTHONIOENCODING=utf-8
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-  "$p = Start-Process -FilePath '.venv\Scripts\python.exe' -ArgumentList 'scripts\live_skymap.py' -RedirectStandardOutput 'local\live_skymap.log' -RedirectStandardError 'local\live_skymap.err' -NoNewWindow -PassThru;" ^
+  "$p = Start-Process -FilePath '.venv\Scripts\python.exe' -ArgumentList 'scripts\live_skymap.py' -RedirectStandardOutput 'local\live_skymap.log' -RedirectStandardError 'local\live_skymap.err' -NoNewWindow -PassThru; $null = $p.Handle;" ^
   "if (-not $p.WaitForExit(240000)) { $p.Kill(); $m = (Get-Date -Format s) + ' TIMEOUT: killed after 240s'; Write-Output $m; Add-Content -Path 'local\live_skymap_timeouts.log' -Value $m; exit 2 }" ^
   "exit $p.ExitCode"
 EXIT /b %ERRORLEVEL%
