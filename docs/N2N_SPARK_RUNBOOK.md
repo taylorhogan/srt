@@ -148,11 +148,18 @@ survives stacking untouched.
 Sources are detected on the **raw** stack only — detecting separately would
 compare different star lists and hide a source the denoiser erased.
 
-Any bin below ~0.97 is a systematic brightness error. The predicted failure is
-specific and faint-end only: the training loss is L1, whose optimum is the
-conditional *median*, and for a source near the detection limit the posterior
-mass sits at background — so an L1-trained net is structurally inclined to erase
-faint sources while leaving bright ones alone.
+Any bin below ~0.97 is a systematic brightness error. Faint-end suppression is
+the failure that actually shows up: measured 0.81 in the very-faint bin on
+held-out m92 with the best configuration to date, against 0.97+ in every
+brighter bin.
+
+This was long attributed to L1's optimum being the conditional *median*, which
+for a source near the detection limit sits at background. **That explanation was
+tested on 2026-08-13 and is wrong.** Switching to L2, whose optimum is the
+conditional mean, made the very-faint bin *worse* (0.7227 vs 0.8104) and pulled
+three passing bins under the gate. Flux loss tracks how hard the model smooths —
+L2 smooths harder (rms 0.188 vs 0.240) and loses more everywhere — not the
+median-vs-mean property. See `N2N_LAB_MANUAL.md` step 13.
 
 The instrument was checked against synthetic ground truth: unbiased input reads
 0.9996–1.0016 in every bin; 20% faint suppression reads bright 0.9999, mid

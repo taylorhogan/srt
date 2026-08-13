@@ -367,6 +367,52 @@ Also suspicious: 7.47x further noise reduction on a stack already 56 frames deep
 (rms 1.52 -> 0.20). That is aggressive smoothing, and the erased faint sources
 are its visible cost.
 
+### 13. L2 refutes the faint-end explanation; 60 epochs beats 130
+
+Two results from one A/B on split-half stacks, same seed and split, scored on
+held-out m92's full stack.
+
+**Epochs.** L1 at 60 epochs beats the 130-epoch run on every bin:
+
+| bin | 130 ep | 60 ep | gate |
+| --- | --- | --- | --- |
+| brightest | 0.9646 | **0.9735** | pass |
+| mid | 0.9570 | **0.9735** | pass |
+| faint | 0.9918 | **0.9946** | pass |
+| very faint | 0.7278 | **0.8104** | fail |
+
+Three of four bins pass. Consistent with `best` landing at epoch 45, 64, 67 and
+56 across four runs — the back half of a 130-epoch run has never helped and here
+measurably hurts. **Set epochs to ~60.**
+
+**L2 is worse everywhere, and that refutes the standing explanation.**
+
+| loss | rms | brightest | mid | faint | very faint |
+| --- | --- | --- | --- | --- | --- |
+| L1 | 0.2396 | 0.9735 | 0.9735 | 0.9946 | 0.8104 |
+| L2 | 0.1878 | 0.9010 | 0.8516 | 0.8647 | 0.7227 |
+
+The faint-end suppression has been attributed throughout — in the runbook, from
+before this investigation — to L1 optimising the conditional *median*, which for
+a source near the detection limit sits at background. If that were the mechanism,
+L2's conditional mean should have relieved it. It made it worse, and dragged
+three passing bins below the gate with it.
+
+What the rms column shows instead: L2 smooths *harder* (0.1878 vs 0.2396),
+because squared error punishes large residuals and pushes toward smoother output.
+**Flux loss tracks smoothing aggressiveness, not the median-vs-mean property of
+the loss.** The L1-median story is not supported by measurement and should not be
+repeated.
+
+The likelier explanation is less convenient: a source at 1-3 sigma in the stack
+is nearly indistinguishable from noise pixel by pixel, and any denoiser tuned to
+remove structure at the noise scale suppresses it. N2N can in principle separate
+them — the source is consistent across both halves, the noise is not — but with
+4 training pairs it does not learn to. That makes it a data/capacity limit, not
+a loss-function bug, and more frames or more targets is the lever.
+
+**Best configuration found: L1, ~60 epochs, split-half stacks, residual=linear.**
+
 ---
 
 ## Standing conclusions

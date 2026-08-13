@@ -301,6 +301,14 @@ def train(
     patch_size: int = 256,
     pairs_per_epoch: int = 2000,
     val_dsos: int = 2,
+    # "l1" or "l2". L1's optimum is the conditional median, and for a source
+    # near the detection limit the posterior mass sits at background — so the
+    # median sits at background and the net erases marginal sources. Measured on
+    # the split-half-stack model, the very faint bin lost 27% of its flux on
+    # held-out m92 (n=4948) while every brighter bin was within 4% of unity.
+    # L2's optimum is the conditional mean, which does not collapse to
+    # background that way, and is what the N2N paper uses for Gaussian noise.
+    loss: str = "l1",
     progress_cb: Callable[[str], None] = print,
 ) -> dict:
     """Train a Noise2Noise U-Net and save the best checkpoint.
@@ -331,7 +339,7 @@ def train(
     model = UNet().to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
-    criterion = nn.L1Loss()
+    criterion = nn.MSELoss() if loss.lower() in ("l2", "mse") else nn.L1Loss()
 
     best_val_loss = float("inf")
     model_path.parent.mkdir(parents=True, exist_ok=True)
