@@ -327,6 +327,46 @@ still being lost, at 15% rather than 99.8%. This is 25 epochs on 40 frames,
 evaluated on a dense globular by a model trained on three sparse extragalactic
 fields; a full run should do better, which is an expectation and not a result.
 
+### 12. Split-half stacks — the distribution gap closes, the faint end fails
+
+Built (`nn/stacks.py`, `scripts/n2n_train_stacks.py`): register each DSO's subs,
+partition into two **disjoint** halves, combine each. The pair is two noisy views
+of the same scene with a stack's noise character, so inference on the full stack
+is in distribution. Disjointness is load-bearing — overlapping halves share noise
+realisations and the network could cut its loss by reproducing that shared noise.
+
+204 frames -> 12 half-stacks over 6 DSOs (depths 4 to 28 per half; the
+`min_frames_per_dso=6` floor let abell2218 through at 4 and should be raised).
+Held out m13 + m92, trained on 4 pairs, best val at epoch 56 of 130.
+
+Denoising the **full** stack, flux against the raw full stack:
+
+| dso | role | rms raw | rms den | brightest | mid | faint | very faint |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| ngc5907 | trained on | 3.2205 | 1.9932 | 0.6547 (n=4) | 0.9933 | 0.9852 | 0.8906 |
+| m92 | held out | 1.5246 | 0.2041 | 0.9646 | 0.9570 | 0.9918 | 0.7278 |
+
+Against the sub-based model on the same held-out m92 (0.7734 / 0.5712 / 0.9854):
+brightest 0.77 -> 0.96, mid 0.57 -> 0.96.
+
+**The generalisation gap is gone.** The held-out target now scores *better* on
+the bright bins than the trained-on one, which says the sub-based run's train/val
+chasm was the sub-vs-stack distribution mismatch, not overfitting.
+
+**The failure moved to the faint end.** `very faint` is 0.7278 on m92 (n=4948)
+and 0.8906 on ngc5907 (n=7511) — a 27% flux loss on the faintest sources,
+measured on thousands of them.
+
+This is the failure the runbook predicted at the outset and that nothing until
+now was clean enough to expose: **L1's optimum is the conditional median**, and
+for a source near the detection limit the posterior mass sits at background, so
+the median sits at background too. Every earlier configuration failed so badly at
+the bright end that faint-end suppression was invisible underneath it.
+
+Also suspicious: 7.47x further noise reduction on a stack already 56 frames deep
+(rms 1.52 -> 0.20). That is aggressive smoothing, and the erased faint sources
+are its visible cost.
+
 ---
 
 ## Standing conclusions
