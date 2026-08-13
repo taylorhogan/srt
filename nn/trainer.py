@@ -35,11 +35,20 @@ class N2NDataset(Dataset):
         patch_size: int = 256,
         pairs_per_epoch: int = 2000,
         source_bias: float = 0.7,
+        seed: Optional[int] = None,
     ):
         self.patch_size = patch_size
         self.pairs_per_epoch = pairs_per_epoch
         self.source_bias = float(np.clip(source_bias, 0.0, 1.0))
-        self.rng = np.random.default_rng()
+        # Seedable because this was the dominant source of run-to-run variance
+        # and it silently invalidated two A/B results. Unseeded, patch selection
+        # is drawn from OS entropy, which torch.manual_seed() does not touch, so
+        # two "identical" runs differed 5.8x on brightest-bin flux (0.0426 vs
+        # 0.2490) — larger than the effects being measured. Default stays None
+        # (fresh entropy) for real training; experiments must pass a seed.
+        self.rng = np.random.default_rng(seed)
+        self._seed = seed
+        self._rng_pid: Optional[int] = None
 
         # Background-subtract and normalise exactly as inference does, using the
         # same two helpers. Frames are stored already normalised, so a patch is
@@ -158,7 +167,27 @@ class N2NDataset(Dataset):
     def __len__(self) -> int:
         return self.pairs_per_epoch
 
+    def _worker_rng(self) -> None:
+        """Give each DataLoader worker its own stream, once.
+
+        The dataset is copied into every worker *with its RNG state*, and
+        __getitem__ ignores the sample index and draws a fresh random pair, so
+        without this every worker generates the identical patch sequence and an
+        epoch is num_workers copies of the same data. Re-seeded per worker on
+        first access, detected by pid so the parent process is unaffected.
+        """
+        pid = os.getpid()
+        if self._rng_pid == pid:
+            return
+        info = torch.utils.data.get_worker_info()
+        wid = info.id if info is not None else 0
+        self.rng = np.random.default_rng(
+            None if self._seed is None else self._seed + 7919 * (wid + 1)
+        )
+        self._rng_pid = pid
+
     def __getitem__(self, _idx: int) -> tuple[torch.Tensor, torch.Tensor]:
+        self._worker_rng()
         pair_idx = self.rng.integers(len(self._valid_pairs))
         i, j = self._valid_pairs[pair_idx]
         fa, fb = self.frames[i], self.frames[j]

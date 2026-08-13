@@ -263,6 +263,70 @@ while the photometry was being destroyed.
 training and inference must agree on it and every other way of expressing that
 has drifted at least once (c617047, c61cd26).
 
+### 10. Measurement variance — two earlier A/B results retracted
+
+`N2NDataset` seeded its RNG with `np.random.default_rng()` — unseeded, so patch
+selection came from OS entropy and `torch.manual_seed()` never touched it. Two
+runs of an identical configuration differed **5.8x** on brightest-bin flux
+(0.0426 vs 0.2490).
+
+Retracted: the mult=10 "optimum, worth 4x" of step 9, and the +4.1% for
+source-biased sampling in step 7. Both effects are inside this noise floor.
+
+Surviving, because they are far outside it or involve no training at all: the
+collapse (-0.0158) vs a working net; the registration bug (measured by phase
+correlation directly); and bright-end destruction, which lands between 0.002 and
+0.43 across every configuration and seed against a required 0.97.
+
+A second bug in the same place: with `num_workers=2` the dataset is copied to
+each worker *with its RNG state*, and `__getitem__` ignores the sample index, so
+every worker generated the identical patch sequence — each epoch was
+num_workers copies of the same data. Every run in this investigation, including
+both 130-epoch ones, saw half the intended patch diversity. Fixed with a
+per-worker reseed keyed on pid.
+
+`N2NDataset(seed=...)` is now available and experiments must pass one.
+
+### 11. Linear-space correction — the first thing that worked
+
+The correction has to be applied in **linear** units, not asinh. Predicting
+`asinh(sinh(t) + g)` puts the correction in units of sky sigma *after* the
+compression, so the ADU error is `sigma * dg` with no exponential factor. The
+same correction magnitude of 3 moves a 4949-sigma star by 0.06% while moving the
+sky by a full 3 sigma — the asymmetry the task needs.
+
+This is what step 8's "asinh residual" got wrong: adding the correction *before*
+the sinh leaves `cosh(t)` sensitivity fully intact, and it measured worse than
+direct (0.0645 vs 0.2490).
+
+Two seeds, 25 epochs, trained on abell2151/ngc5907/ngc5033 (40 frames),
+evaluated on held-out m92:
+
+| config | rms | brightest | mid | faint |
+| --- | --- | --- | --- | --- |
+| raw | 11.072 | 1.0000 | 1.0000 | 1.0000 |
+| direct seed0 | 2.711 | 0.1425 | 0.0209 | 2.5547 |
+| **linear seed0** | 2.702 | **0.9168** | **0.8220** | **0.9874** |
+| direct seed1 | 2.840 | 0.4320 | 0.3646 | 8.0481 |
+| **linear seed1** | 2.697 | **0.9171** | **0.8486** | **0.9873** |
+
+Brightest 6.4x better, mid 39x better, faint back from 2.55 (sources emerging
+155% too bright) to 0.987. **Noise reduction is undiminished** — rms 2.70
+against raw 11.07, 4.1x, matching the direct arms — so this is not preserving
+flux by declining to denoise.
+
+The seed agreement is the strongest evidence for the mechanism: linear arms
+match to 0.03% on brightest while direct arms swing 3x. Predicted by the theory
+— under direct prediction every bright pixel is reconstructed through a
+cosh(t)~6000 gain, so seed-to-seed differences are amplified into wild flux
+errors; under linear correction the bright value passes through deterministically
+and only a bounded correction is learned.
+
+**Not a passed gate.** Mid sits at 0.82-0.85 against the required 0.97. Flux is
+still being lost, at 15% rather than 99.8%. This is 25 epochs on 40 frames,
+evaluated on a dense globular by a model trained on three sparse extragalactic
+fields; a full run should do better, which is an expectation and not a result.
+
 ---
 
 ## Standing conclusions
@@ -282,13 +346,15 @@ has drifted at least once (c617047, c61cd26).
 
 ## Open questions
 
-- **Bright-end inversion.** The live problem. Clamping the asinh scale was tried
-  (step 9): worth 4x, capped at 0.17 against a required 0.97, and non-monotonic.
-  The remaining candidate is predicting a **residual** — output = input +
-  f(input) — so the large absolute value passes through from the input and the
-  network only supplies a small correction. That removes the amplification
-  rather than shrinking it, because the bright value never has to be
-  reconstructed by the network at all.
+- **Bright-end inversion — largely solved** by the linear-space correction
+  (step 11), `UNet(residual="linear")`, now the default. Brightest 0.917, mid
+  0.82-0.85, faint 0.987, reproducible across seeds. Not yet at the gate's 0.97.
+- **Next:** a full 204-frame run with `residual="linear"`, then the real
+  `n2n_evaluate.py` gate. The subset result is a ranking of approaches, not a
+  substitute for it.
+- **Mid bin** is now the worst bin (0.82-0.85) where it used to be the best-hidden
+  failure. Unclear yet whether more data fixes it or whether it needs its own
+  explanation.
 - **Epoch count.** `best` has landed at epoch 45, then 64, of 130 on successive
   runs, and a 30-epoch subset run beat the full 130-epoch run on the same
   held-out target (60.3% vs 53.5%). The back half looks actively harmful. Not a

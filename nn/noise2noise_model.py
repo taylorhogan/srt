@@ -52,10 +52,50 @@ class _ConvBlock(nn.Module):
 
 
 class UNet(nn.Module):
+    """4-level U-Net. `residual` selects what the head's output means.
+
+    Input and output are both in asinh space, t = asinh(x / sigma_sky), and
+    inference inverts with x = sigma * sinh(t). That inversion is the whole
+    problem: d(x)/d(t) = cosh(t), which reaches ~6200 at the bright end of a
+    real frame, so any error in t at a bright star is amplified by that factor
+    in ADU. Measured, the brightest flux bin came out at 0.0023 of raw.
+
+    Three modes, in the order they were tried (docs/N2N_LAB_MANUAL.md):
+
+    "none"    head output IS the prediction. The original. Bright-end error is
+              amplified by cosh(t) with nothing opposing it.
+
+    "asinh"   prediction is t + f(t). Tried on the reasoning that a value which
+              passes through is never reconstructed, so nothing amplifies.
+              That reasoning is wrong and this measured *worse* than "none"
+              (brightest 0.0645 vs 0.2490): the correction is added before the
+              sinh, so sensitivity is still cosh(t). f = -2 at a bright star is
+              already sinh(7)/sinh(9) = 0.27.
+
+    "linear"  prediction is asinh(sinh(t) + g), i.e. the correction g is added
+              in *linear* units of sky sigma, not in asinh space. Default.
+
+    Why "linear" is different in kind rather than degree: the ADU error is
+    sigma * dg, with no exponential factor anywhere, so it cannot be amplified.
+    A bright star at 5000 sigma is moved 0.06% by a correction as large as
+    g = 3, while the same g is a 3-sigma change to the sky — which is the
+    asymmetry the task actually needs. sinh(t) recovers the linear frame from
+    the network's own input exactly, so this needs no change to the dataset,
+    and the loss stays in asinh space where it is not dominated by bright
+    pixels.
+
+    The head is zero-initialised in both residual modes, so training starts
+    from exact identity: at step 0 the frame passes through untouched and
+    photometry is preserved by construction.
+    """
+
     def __init__(self, features: tuple[int, ...] = (32, 64, 128, 256),
-                 norm: str = "none"):
+                 norm: str = "none", residual: str = "linear"):
         super().__init__()
+        if residual not in ("none", "asinh", "linear"):
+            raise ValueError(f"residual must be none/asinh/linear, got {residual!r}")
         self.norm = norm
+        self.residual = residual
         self.encoders = nn.ModuleList()
         self.pools = nn.ModuleList()
         in_ch = 1
@@ -76,8 +116,12 @@ class UNet(nn.Module):
             in_ch = f
 
         self.head = nn.Conv2d(features[0], 1, 1)
+        if residual != "none":
+            nn.init.zeros_(self.head.weight)
+            nn.init.zeros_(self.head.bias)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        identity = x
         skips = []
         for enc, pool in zip(self.encoders, self.pools):
             x = enc(x)
@@ -94,4 +138,11 @@ class UNet(nn.Module):
             x = torch.cat([skip, x], dim=1)
             x = dec(x)
 
-        return self.head(x)
+        out = self.head(x)
+        if self.residual == "asinh":
+            return identity + out
+        if self.residual == "linear":
+            # Correction applied in linear sky-sigma units, then returned to
+            # asinh space so the loss sees the same units as the target.
+            return torch.asinh(torch.sinh(identity) + out)
+        return out
