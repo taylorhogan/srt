@@ -22,13 +22,19 @@ Sanity check that matters more than the residual: the named stars should come
 out as neighbours. A correct solve names one contiguous patch of sky. A
 coincidence names stars scattered across unrelated constellations.
 
+Every camera gets its own stored solution and its own measured radius, selected
+by ``--profile``: the geometry below is a property of one lens bolted in one
+place, and there is more than one camera looking up here.
+
 Usage:
     python sentry/plate_solve.py <frame.jpg> [--save] [--report]
     python sentry/plate_solve.py <frame.jpg> --verify
     python sentry/plate_solve.py <frame.jpg> --refine [--save]
+    python sentry/plate_solve.py <frame.fits> --profile "allsky camera" --save
 """
 import json
 import os
+import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -46,9 +52,10 @@ if __package__ is None or __package__ == "":
 from iris_astronomy import bright_stars
 from sentry import star_count
 
+DEFAULT_PROFILE = star_count.DEFAULT_PROFILE
 SOLUTION = "local/sky_solution.json"
 
-# Radius from the optical axis, in pixels, beyond which this lens stops
+# Radius from the optical axis, in pixels, beyond which THE KASA lens stops
 # delivering a measurable star. Not a guess: completeness measured on
 # sky_20260810T042957Z runs 23-40% out to 800 px and then falls to EXACTLY zero
 # -- 127 visible catalogue stars beyond it, none matched, in all three outer
@@ -56,7 +63,36 @@ SOLUTION = "local/sky_solution.json"
 # above background; V=2.23 at r=1214 px peaks 26, well under the detection
 # threshold. Counting that region would measure the lens, not the sky, which is
 # the same reason foliage is excluded below.
+#
+# Measured on one lens, so it transfers to no other: a second camera must have
+# its own measured with scripts/measure_allsky_radius.py before its limiting
+# magnitude means anything. Profiles override it with "measured_radius_px".
 MEASURED_RADIUS_PX = 800.0
+
+
+def _profile_cfg(profile):
+    from configs import config
+    return config.data().get(profile, {})
+
+
+def measured_radius(profile=DEFAULT_PROFILE):
+    """Radius this camera's optics actually deliver stars within, in pixels.
+
+    ``None`` means it has not been measured yet, and the caller must fall back
+    to the whole frame rather than borrow another lens's number.
+    """
+    if profile == DEFAULT_PROFILE:
+        return MEASURED_RADIUS_PX
+    r = _profile_cfg(profile).get("measured_radius_px")
+    return float(r) if r else None
+
+
+def solution_file(profile=DEFAULT_PROFILE):
+    """Where this camera's stored solution lives. One file per camera."""
+    if profile == DEFAULT_PROFILE:
+        return SOLUTION
+    name = _profile_cfg(profile).get("solution_file")
+    return name or ("local/" + profile.replace(" ", "_") + "_solution.json")
 
 # Bright named stars, for the human-readable check on a solution. RA/Dec J2000.
 NAMED = [
@@ -157,15 +193,27 @@ def altaz_to_pixel(sol, alt_deg, az_deg):
 
 # ------------------------------------------------------------------- solve
 
+STAMP_RE = re.compile(r"(\d{8})T(\d{6})Z")
+
+
 def frame_time(path):
-    """UTC instant a captured frame belongs to, from its name or its mtime."""
+    """UTC instant a captured frame belongs to, from its name or its mtime.
+
+    The name is preferred because mtime is when the file was last WRITTEN: a
+    frame that has been copied or reprocessed carries the time of the copy, and
+    an all-sky frame dated an hour wrong puts every catalogue star 15 degrees
+    from where the solver looks for it.
+
+    Matched anywhere in the stem rather than only after a ``sky_`` prefix, so
+    the second camera's frames date the same way this one's do.
+    """
     p = Path(path)
-    stem = p.stem
-    if stem.startswith("sky_") and len(stem) >= 20:
-        s = stem[4:]
+    m = STAMP_RE.search(p.stem)
+    if m:
+        d, t = m.group(1), m.group(2)
         try:
-            return datetime(int(s[0:4]), int(s[4:6]), int(s[6:8]), int(s[9:11]),
-                            int(s[11:13]), int(s[13:15]), tzinfo=timezone.utc)
+            return datetime(int(d[0:4]), int(d[4:6]), int(d[6:8]), int(t[0:2]),
+                            int(t[2:4]), int(t[4:6]), tzinfo=timezone.utc)
         except ValueError:
             pass
     return datetime.fromtimestamp(p.stat().st_mtime, timezone.utc)
@@ -179,7 +227,7 @@ def _scorer(dx, dy, shape):
     return ndimage.distance_transform_edt(occ)
 
 
-def solve(frame, when=None, dets=None, verbose=False):
+def solve(frame, when=None, dets=None, verbose=False, profile=DEFAULT_PROFILE):
     """Blind solve. Returns a solution dict, or None if nothing verified."""
     frame = Path(frame)
     when = when or frame_time(frame)
@@ -188,7 +236,7 @@ def solve(frame, when=None, dets=None, verbose=False):
     cx, cy = W / 2.0, H / 2.0
 
     if dets is None:
-        dets = star_count.count_stars(frame)["_stars"]
+        dets = star_count.count_stars(frame, profile=profile)["_stars"]
     dets = sorted(dets, key=lambda s: -s["peak"])
     dx = np.array([d["x"] for d in dets])
     dy = np.array([d["y"] for d in dets])
@@ -267,9 +315,9 @@ def solve(frame, when=None, dets=None, verbose=False):
 
     sol = {"R": np.asarray(Rf).tolist(), "F": float(Ff), "model": model,
            "flip": bool(flip), "cx": cx, "cy": cy,
-           "solved_from": frame.name,
+           "profile": profile, "solved_from": frame.name,
            "solved_at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
-    sol.update(verify(sol, frame, when, dets))
+    sol.update(verify(sol, frame, when, dets, profile=profile))
     axis = np.asarray(Rf).T @ np.array([0.0, 0.0, 1.0])
     sol["axis_alt_deg"] = round(float(np.degrees(np.arcsin(np.clip(axis[2], -1, 1)))), 2)
     sol["axis_az_deg"] = round(float(np.degrees(np.arctan2(axis[0], axis[1])) % 360), 2)
@@ -279,7 +327,7 @@ def solve(frame, when=None, dets=None, verbose=False):
 
 
 def refine(sol, frame, when=None, dets=None, mask=None, tol_px=20.0,
-           min_matches=8, verbose=False):
+           min_matches=8, verbose=False, profile=None):
     """Nudge a stored solution back onto the stars, without a blind re-solve.
 
     A camera that drifts -- a bracket settling, a mount creeping -- does not
@@ -297,8 +345,11 @@ def refine(sol, frame, when=None, dets=None, mask=None, tol_px=20.0,
     """
     frame = Path(frame)
     when = when or frame_time(frame)
+    # A stored solution knows which camera it describes, so callers holding one
+    # never have to remember the profile alongside it.
+    profile = profile or sol.get("profile", DEFAULT_PROFILE)
     if dets is None:
-        count = star_count.count_stars(frame)
+        count = star_count.count_stars(frame, profile=profile)
         dets = count["_stars"]
         mask = count["_mask"] if mask is None else mask
     if len(dets) < min_matches:
@@ -316,8 +367,9 @@ def refine(sol, frame, when=None, dets=None, mask=None, tol_px=20.0,
     # search window is wide enough to pair a faint star with the wrong
     # neighbour, and a wrong pair drags the rotation it is supposed to fix.
     r = np.hypot(x - sol["cx"], y - sol["cy"])
+    rmax = measured_radius(profile)
     ok = ((x > 20) & (x < W - 20) & (y > 20) & (y < H - 20) & (th < 1.45)
-          & (r < MEASURED_RADIUS_PX) & (vmag < 5.0))
+          & (r < (rmax if rmax else np.inf)) & (vmag < 5.0))
     if mask is not None:
         xi = np.clip(x.astype(int), 0, W - 1)
         yi = np.clip(y.astype(int), 0, H - 1)
@@ -359,16 +411,17 @@ def refine(sol, frame, when=None, dets=None, mask=None, tol_px=20.0,
     axis = np.asarray(R_new).T @ np.array([0.0, 0.0, 1.0])
     out["axis_alt_deg"] = round(float(np.degrees(np.arcsin(np.clip(axis[2], -1, 1)))), 2)
     out["axis_az_deg"] = round(float(np.degrees(np.arctan2(axis[0], axis[1])) % 360), 2)
-    out.update(verify(out, frame, when, dets))
+    out.update(verify(out, frame, when, dets, profile=profile))
     return out
 
 
-def verify(sol, frame, when=None, dets=None, tol_px=8.0):
+def verify(sol, frame, when=None, dets=None, tol_px=8.0, profile=None):
     """How well a stored solution still fits a frame. Cheap; safe on a timer."""
     frame = Path(frame)
     when = when or frame_time(frame)
+    profile = profile or sol.get("profile", DEFAULT_PROFILE)
     if dets is None:
-        dets = star_count.count_stars(frame)["_stars"]
+        dets = star_count.count_stars(frame, profile=profile)["_stars"]
     dx = np.array([d["x"] for d in dets])
     dy = np.array([d["y"] for d in dets])
     if len(dx) == 0:
@@ -389,7 +442,7 @@ def verify(sol, frame, when=None, dets=None, tol_px=8.0):
 # ------------------------------------------------------- limiting magnitude
 
 def limiting_magnitude(sol, frame, when=None, dets=None, mask=None,
-                       tol_px=8.0, step=0.5, max_radius_px=None):
+                       tol_px=8.0, step=0.5, max_radius_px=None, profile=None):
     """Completeness against V magnitude, and the 50% crossing.
 
     Stars landing on masked foliage are dropped from the DENOMINATOR, not
@@ -406,10 +459,11 @@ def limiting_magnitude(sol, frame, when=None, dets=None, mask=None,
     """
     frame = Path(frame)
     when = when or frame_time(frame)
+    profile = profile or sol.get("profile", DEFAULT_PROFILE)
     img = star_count._load(frame)
     H, W = img.shape
     if dets is None or mask is None:
-        res = star_count.count_stars(frame)
+        res = star_count.count_stars(frame, profile=profile)
         dets = dets or res["_stars"]
         mask = res["_mask"] if mask is None else mask
     dx = np.array([d["x"] for d in dets])
@@ -420,10 +474,13 @@ def limiting_magnitude(sol, frame, when=None, dets=None, mask=None,
     alt, az, vmag, _ra, _dec = bright_stars.above_horizon(when)
     x, y, th = cam_to_pix(unit_from_altaz(az, alt) @ np.asarray(sol["R"]).T,
                           sol["cx"], sol["cy"], sol["F"], sol["model"], sol["flip"])
-    rmax = MEASURED_RADIUS_PX if max_radius_px is None else float(max_radius_px)
+    # No measured radius yet means the whole frame is used. Borrowing another
+    # lens's number would silently discard real sky or keep unusable corners,
+    # and either way the completeness table would describe the wrong optics.
+    rmax = measured_radius(profile) if max_radius_px is None else float(max_radius_px)
     radius = np.hypot(x - sol["cx"], y - sol["cy"])
     inframe = ((x > 20) & (x < W - 20) & (y > 20) & (y < H - 20) & (th < 1.45)
-               & (radius < rmax))
+               & (radius < (rmax if rmax else np.inf)))
     xi = np.clip(x.astype(int), 0, W - 1)
     yi = np.clip(y.astype(int), 0, H - 1)
     visible = inframe & (~mask[yi, xi])
@@ -473,21 +530,27 @@ def limiting_magnitude(sol, frame, when=None, dets=None, mask=None,
 
 # ---------------------------------------------------------------- storage
 
-def save(sol, root=None):
-    p = (Path(root) if root else _root()) / SOLUTION
+def save(sol, root=None, profile=None):
+    profile = profile or sol.get("profile", DEFAULT_PROFILE)
+    sol = dict(sol, profile=profile)
+    p = (Path(root) if root else _root()) / solution_file(profile)
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(json.dumps(sol, indent=1))
     return p
 
 
-def load(root=None):
-    p = (Path(root) if root else _root()) / SOLUTION
+def load(root=None, profile=DEFAULT_PROFILE):
+    p = (Path(root) if root else _root()) / solution_file(profile)
     if not p.exists():
         return None
     try:
-        return json.loads(p.read_text())
+        sol = json.loads(p.read_text())
     except (ValueError, OSError):
         return None
+    # Solutions stored before profiles existed carry no name; they are all the
+    # Kasa camera's, which is what the default resolves to anyway.
+    sol.setdefault("profile", profile)
+    return sol
 
 
 def named_identifications(sol, when, dets, tol_px=8.0):
@@ -510,32 +573,34 @@ def named_identifications(sol, when, dets, tol_px=8.0):
 
 
 def main(argv):
+    argv = list(argv)
+    profile = star_count.pop_arg(argv, "--profile", DEFAULT_PROFILE)
     args = [a for a in argv if not a.startswith("--")]
     if not args:
         print(__doc__)
         return 2
     frame = Path(args[0])
     when = frame_time(frame)
-    res = star_count.count_stars(frame)
+    res = star_count.count_stars(frame, profile=profile)
     dets, mask = res["_stars"], res["_mask"]
-    print("frame %s at %s: %d detections, purity %.3f"
+    print("frame %s at %s: %d detections, purity %.3f  [%s]"
           % (frame.name, when.isoformat(timespec="seconds"), res["stars"],
-             res["purity"]))
+             res["purity"], profile))
 
     if "--verify" in argv:
-        sol = load()
+        sol = load(profile=profile)
         if sol is None:
-            print("no stored solution")
+            print("no stored solution for %r" % profile)
             return 1
-        v = verify(sol, frame, when, dets)
+        v = verify(sol, frame, when, dets, profile=profile)
         print("stored solution: %d matches, residual %s px"
               % (v["matches"], v["residual_px"]))
     elif "--refine" in argv:
-        sol = load()
+        sol = load(profile=profile)
         if sol is None:
-            print("no stored solution to refine; solve once first")
+            print("no stored solution for %r to refine; solve once first" % profile)
             return 1
-        new = refine(sol, frame, when, dets, mask, verbose=True)
+        new = refine(sol, frame, when, dets, mask, verbose=True, profile=profile)
         if new is sol or "refined_at" not in new:
             print("refinement did not improve the fit; solution left alone")
             return 0
@@ -547,11 +612,11 @@ def main(argv):
                  new["residual_px"]))
         sol = new
         if "--save" in argv:
-            print("saved ->", save(sol))
+            print("saved ->", save(sol, profile=profile))
         else:
             print("(not saved; pass --save to keep it)")
     else:
-        sol = solve(frame, when, dets, verbose=True)
+        sol = solve(frame, when, dets, verbose=True, profile=profile)
         if sol is None:
             print("no solution found")
             return 1
@@ -561,10 +626,14 @@ def main(argv):
               % (sol["axis_alt_deg"], sol["axis_az_deg"], sol["fov_diag_deg"],
                  sol["deg_per_px"]))
         if "--save" in argv:
-            print("saved ->", save(sol))
+            print("saved ->", save(sol, profile=profile))
 
     if "--report" in argv:
-        lm = limiting_magnitude(sol, frame, when, dets, mask)
+        lm = limiting_magnitude(sol, frame, when, dets, mask, profile=profile)
+        if measured_radius(profile) is None:
+            print("\n(no measured radius for %r yet -- completeness below is over "
+                  "the WHOLE frame, so it mixes the sky with the lens's own "
+                  "falloff)" % profile)
         print("\nlimiting magnitude: %s  (%d of %d unmasked catalogue stars found)"
               % (lm["limiting_mag"], lm["stars_matched"], lm["stars_visible_area"]))
         print("  Vmag   n  found  frac")

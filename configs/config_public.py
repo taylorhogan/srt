@@ -7,7 +7,7 @@ class PublicConfig():
 
         },
         "version": {
-            "date": "2026.8.13.4"
+            "date": "2026.8.13.5"
         },
 
         "logger": {
@@ -150,6 +150,89 @@ class PublicConfig():
             "rain_diff_adu": 12.0,
             "rain_burst_seconds": 2.0,
             "rain_min_frames": 4,
+        },
+
+        # The ZWO ASI120MC-S fisheye on iris-pc -- the "all-sky camera". A
+        # separate instrument from the "sky camera" above, which is the Kasa
+        # KC420WS bolted outside, and it must not inherit any of that camera's
+        # numbers: different sensor, different lens, different bit depth, and
+        # every threshold up there was measured on 8-bit auto-exposed JPEGs.
+        #
+        # It lives UNDER THE ROOF and sees sky only while the roof is open,
+        # which is why its published panel has to be gated rather than always
+        # present.
+        "allsky camera": {
+            # Shipped with N.I.N.A rather than installed separately, so this is
+            # the copy that is known to match the driver actually talking to
+            # the camera.
+            "sdk": r"C:\Program Files\N.I.N.A. - Nighttime Imaging 'N' Astronomy"
+                   r"\External\x64\ASI\ASICamera2.dll",
+            # Substring, not an index. The ASI432MM enumerates first, so index 0
+            # is the wrong camera.
+            "camera_match": "120",
+
+            "capture_dir": "local/allsky_frames",
+            "dark_dir": "local/allsky_darks",
+            "settings_file": "local/allsky_settings.json",
+            "solution_file": "local/allsky_solution.json",
+            "keep_frames": 2000,
+
+            # Nothing is burnt into these frames -- that is a Kasa habit. Left
+            # unset this would inherit that camera's timestamp and watermark
+            # bands and blank 130 rows of real sky.
+            "overlay_boxes": [],
+
+            # --- star detector -------------------------------------------
+            # PLACEHOLDERS on a 16-bit scale, pending a night frame. Set them
+            # with `python sentry/star_count.py <frame.fits> --profile
+            # "allsky camera" --sweep`, which prints the negative-image control
+            # beside each threshold so the choice is measured rather than
+            # guessed -- the same way the Kasa's 12 ADU was arrived at.
+            "star_threshold_adu": 300.0,
+            "foliage_resid_adu": 200.0,
+            # Wider at the low end than the Kasa's 2.0. This sensor is small and
+            # the lens is short, so a well-focused star lands in very few
+            # pixels; the Kasa's floor would reject the sharpest stars in the
+            # frame. See star_min_pixels for what that costs.
+            "star_fwhm_px": (1.2, 8.0),
+            # Below the default 6, which is what keeps single-pixel hot pixels
+            # out of the Kasa's count. This sensor runs uncooled, so the master
+            # dark (sentry/asi_allsky.py --dark) is what removes them here
+            # instead. Without a dark on disk, capture() says so loudly.
+            "star_min_pixels": 4,
+            "star_max_elongation": 2.2,
+
+            # --- auto-exposure sweep --------------------------------------
+            # The objective is the star count itself: each rung is measured with
+            # the detector that will publish the number, so the setting that
+            # wins is the one that actually shows the most sky. Exposure is
+            # capped at 30s because that is where trailing starts to matter --
+            # at roughly 7 arcmin/px a star crosses a pixel in about 28s.
+            "sweep_exposures_s": (1.0, 2.0, 4.0, 8.0, 15.0, 30.0),
+            "sweep_gains": (50, 100),
+            # Percent of the frame at full scale a rung may carry. Clipping does
+            # not just lose the bright stars, it flattens them into the
+            # background so they stop being detections at all.
+            "clip_limit_pct": 0.5,
+
+            # --- roof gate (scripts/allsky_monitor.py) ---------------------
+            # Nothing from this camera is published as sky unless the roof is
+            # known open, because with it shut the camera photographs the roof's
+            # own underside and the detector returns hundreds of "stars" off the
+            # texture. The primary evidence is the plate solution landing
+            # catalogue stars on detections, which a closed roof cannot fake;
+            # the safety camera is the fallback for daylight and cloud, when
+            # there are no stars to appeal to.
+            "roof_check_vision": True,
+            # A vision read costs a Kasa discovery sweep plus an exposure ladder
+            # on the indoor webcam, so verdicts are cached -- except "open",
+            # which is always taken fresh. See _vision_roof for why.
+            "roof_vision_cache_s": 900,
+
+            # measured_radius_px is deliberately absent until it has been
+            # measured on this lens. The Kasa's 800 px describes a different
+            # optic entirely, and a borrowed radius would make the completeness
+            # table a statement about the wrong camera.
         },
 
         "nina": {

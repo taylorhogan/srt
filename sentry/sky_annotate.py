@@ -77,15 +77,21 @@ def compass_positions(sol, shape, margin=90):
     return out, zenith
 
 
-def annotate(src, dst, sol=None, shape=None):
+def annotate(src, dst, sol=None, shape=None, profile=None):
     """Write an annotated copy of src to dst. Returns dst, or None if it can't."""
     from PIL import Image, ImageDraw, ImageFont
-    sol = sol or plate_solve.load()
+    profile = profile or plate_solve.DEFAULT_PROFILE
+    sol = sol or plate_solve.load(profile=profile)
     if sol is None:
         return None
     im = Image.open(str(src)).convert("RGB")
     w, h = im.size
-    marks, zenith = compass_positions(sol, (h, w))
+    # Everything below was sized by eye on the 2560-wide Kasa frame. The all-sky
+    # camera is half that, so fixed pixel sizes would put a compass letter across
+    # an eighth of the picture. Scaled, the annotation looks the same size on
+    # both -- which is what "sized by eye" meant in the first place.
+    k = w / 2560.0
+    marks, zenith = compass_positions(sol, (h, w), margin=max(20, int(90 * k)))
     if not marks:
         return None
 
@@ -93,7 +99,7 @@ def annotate(src, dst, sol=None, shape=None):
     font = None
     for cand in ("arialbd.ttf", "arial.ttf", "seguisb.ttf"):
         try:
-            font = ImageFont.truetype(cand, 58)
+            font = ImageFont.truetype(cand, max(18, int(58 * k)))
             break
         except OSError:
             continue
@@ -116,52 +122,58 @@ def annotate(src, dst, sol=None, shape=None):
     #
     # Faint on purpose. It is a note about the measurement, not a feature of the
     # sky, and it must not compete with the picture.
-    r = plate_solve.MEASURED_RADIUS_PX
+    #
+    # Skipped entirely for a camera whose radius has not been measured yet:
+    # there is no measured region to outline, and drawing one at a borrowed
+    # radius would label an area the counts were not taken in.
+    r = plate_solve.measured_radius(profile)
     cx, cy = sol["cx"], sol["cy"]
-    ring = Image.new("RGBA", im.size, (0, 0, 0, 0))
-    rd = ImageDraw.Draw(ring)
-    INSET = 20.0            # must match the inframe cut in plate_solve
-    x0, y0, x1, y1 = INSET, INSET, w - INSET, h - INSET
-    ang = np.linspace(0, 2 * np.pi, 1441)
-    ax, ay = cx + r * np.cos(ang), cy + r * np.sin(ang)
-    inside = (ax >= x0) & (ax <= x1) & (ay >= y0) & (ay <= y1)
-    for i in range(len(ang) - 1):
-        if inside[i] and inside[i + 1]:
-            rd.line([ax[i], ay[i], ax[i + 1], ay[i + 1]],
+    if r:
+        ring = Image.new("RGBA", im.size, (0, 0, 0, 0))
+        rd = ImageDraw.Draw(ring)
+        INSET = 20.0            # must match the inframe cut in plate_solve
+        x0, y0, x1, y1 = INSET, INSET, w - INSET, h - INSET
+        ang = np.linspace(0, 2 * np.pi, 1441)
+        ax, ay = cx + r * np.cos(ang), cy + r * np.sin(ang)
+        inside = (ax >= x0) & (ax <= x1) & (ay >= y0) & (ay <= y1)
+        for i in range(len(ang) - 1):
+            if inside[i] and inside[i + 1]:
+                rd.line([ax[i], ay[i], ax[i + 1], ay[i + 1]],
+                        fill=(255, 255, 255, 70), width=3)
+        # Where the frame is the boundary rather than the circle: the chord the
+        # circle cuts across each edge it crosses.
+        for const, horiz in ((y0, True), (y1, True), (x0, False), (x1, False)):
+            d2 = r * r - (const - (cy if horiz else cx)) ** 2
+            if d2 <= 0:
+                continue
+            half = float(np.sqrt(d2))
+            c = cx if horiz else cy
+            lo = max(c - half, x0 if horiz else y0)
+            hi = min(c + half, x1 if horiz else y1)
+            if hi <= lo:
+                continue
+            rd.line([lo, const, hi, const] if horiz else [const, lo, const, hi],
                     fill=(255, 255, 255, 70), width=3)
-    # Where the frame is the boundary rather than the circle: the chord the
-    # circle cuts across each edge it crosses.
-    for const, horiz in ((y0, True), (y1, True), (x0, False), (x1, False)):
-        d2 = r * r - (const - (cy if horiz else cx)) ** 2
-        if d2 <= 0:
-            continue
-        half = float(np.sqrt(d2))
-        c = cx if horiz else cy
-        lo, hi = max(c - half, x0 if horiz else y0), min(c + half, x1 if horiz else y1)
-        if hi <= lo:
-            continue
-        rd.line([lo, const, hi, const] if horiz else [const, lo, const, hi],
-                fill=(255, 255, 255, 70), width=3)
-    im = Image.alpha_composite(im.convert("RGBA"), ring).convert("RGB")
-    dr = ImageDraw.Draw(im)
-    small = None
-    for cand in ("arial.ttf", "seguisb.ttf", "arialbd.ttf"):
-        try:
-            small = ImageFont.truetype(cand, 26)
-            break
-        except OSError:
-            continue
-    if small is not None:
-        label = "star counts measured inside this outline"
-        # r is larger than half the frame height, so the outline is clipped top
-        # and bottom and "just below the arc" lands outside the picture. Clamp
-        # to the bottom edge rather than let the caption disappear.
-        lx = min(max(cx - 230, 20), w - 560)
-        ly = min(cy + r + 12, h - 62)
-        for ox in (-2, 0, 2):
-            for oy in (-2, 0, 2):
-                dr.text((lx + ox, ly + oy), label, fill=(0, 0, 0), font=small)
-        dr.text((lx, ly), label, fill=(210, 215, 225), font=small)
+        im = Image.alpha_composite(im.convert("RGBA"), ring).convert("RGB")
+        dr = ImageDraw.Draw(im)
+        small = None
+        for cand in ("arial.ttf", "seguisb.ttf", "arialbd.ttf"):
+            try:
+                small = ImageFont.truetype(cand, max(11, int(26 * k)))
+                break
+            except OSError:
+                continue
+        if small is not None:
+            label = "star counts measured inside this outline"
+            # r is larger than half the frame height, so the outline is clipped
+            # top and bottom and "just below the arc" lands outside the picture.
+            # Clamp to the bottom edge rather than let the caption disappear.
+            lx = min(max(cx - 230 * k, 20), w - 560 * k)
+            ly = min(cy + r + 12, h - 62 * k)
+            for ox in (-2, 0, 2):
+                for oy in (-2, 0, 2):
+                    dr.text((lx + ox, ly + oy), label, fill=(0, 0, 0), font=small)
+            dr.text((lx, ly), label, fill=(210, 215, 225), font=small)
 
     for name, (x, y) in marks.items():
         v = np.array([x - zenith[0], y - zenith[1]])
@@ -169,10 +181,10 @@ def annotate(src, dst, sol=None, shape=None):
         # A short tick pointing outward along the bearing, then the letter
         # inboard of it, so the glyph never runs off the edge.
         tip = (x, y)
-        tail = (x - v[0] * 46, y - v[1] * 46)
-        dr.line([tail, tip], fill=(255, 210, 60), width=5)
-        tw, th = 30, 34
-        lx, ly = x - v[0] * 96, y - v[1] * 96
+        tail = (x - v[0] * 46 * k, y - v[1] * 46 * k)
+        dr.line([tail, tip], fill=(255, 210, 60), width=max(2, int(5 * k)))
+        tw, th = 30 * k, 34 * k
+        lx, ly = x - v[0] * 96 * k, y - v[1] * 96 * k
         # Outline first so the letter stays readable over a bright cloud.
         for ox in (-3, 0, 3):
             for oy in (-3, 0, 3):

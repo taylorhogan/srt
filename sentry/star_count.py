@@ -25,7 +25,12 @@ Two things had to be got right, and both were got wrong first:
 The returned false_positives is worth logging: it is a live check that the
 threshold still means what it meant, and it climbs when the frame goes strange.
 
+Everything tunable is read from a named config profile, so a second camera gets
+its own thresholds instead of inheriting numbers measured on this one. The
+default profile is the Kasa camera the detector was written for.
+
 Usage:  python sentry/star_count.py frame.jpg [--annotate out.png] [--sweep]
+                                              [--profile NAME]
 """
 import os
 import sys
@@ -38,14 +43,47 @@ if __package__ is None or __package__ == "":
     if project_root not in sys.path:
         sys.path.insert(0, project_root)
 
-# Bands the camera burns into every frame; never sky.
+DEFAULT_PROFILE = "sky camera"
+
+# Bands the Kasa camera burns into every frame; never sky. Other cameras burn in
+# nothing, so this is a property of that camera rather than of the detector --
+# a profile overrides it with "overlay_boxes", and an empty list means the whole
+# frame is real pixels.
 TIMESTAMP_BOX = (slice(0, 130), slice(0, 900))
 WATERMARK_BOX = (slice(0, 130), slice(2000, None))
+DEFAULT_BOXES = (TIMESTAMP_BOX, WATERMARK_BOX)
+
+
+def _boxes(spec):
+    """Config ``[[[y0, y1], [x0, x1]], ...]`` as slices. None keeps the Kasa bands."""
+    if spec is None:
+        return DEFAULT_BOXES
+    return tuple((slice(y0, y1), slice(x0, x1)) for (y0, y1), (x0, x1) in spec)
+
+
+def _sky_y0(boxes):
+    """First row that can be sky: below any overlay band along the top edge.
+
+    Only bands that start at row 0 count. A box floating in the middle of the
+    frame excludes its own pixels but says nothing about where sky begins, and
+    treating it as a top margin would throw away everything above it.
+    """
+    return max([b[0].stop or 0 for b in boxes if not b[0].start], default=0)
 
 
 def _load(image):
+    """A frame as a 2-D float array, from an array, a FITS file or a picture.
+
+    FITS is here because the ASI all-sky camera stores its 16-bit frames that
+    way: a JPEG would throw away the depth the faint end of the completeness
+    table is measured in.
+    """
     if isinstance(image, np.ndarray):
         return image.astype(float)
+    if str(image).lower().endswith((".fits", ".fit", ".fts")):
+        from astropy.io import fits
+        with fits.open(str(image)) as hdul:
+            return np.asarray(hdul[0].data, dtype=float)
     from PIL import Image
     return np.array(Image.open(str(image)).convert("L")).astype(float)
 
@@ -56,7 +94,7 @@ def _design(x, y, w, h):
                      x ** 3, x * x * y, x * y * y, y ** 3], 1)
 
 
-def skyglow_fit(a, step=8):
+def skyglow_fit(a, step=8, boxes=DEFAULT_BOXES):
     """Robust 2-D cubic fit to the sky background. Returns (model, residual_sigma).
 
     Iterated with an asymmetric clip: anything well ABOVE the current fit is
@@ -69,37 +107,49 @@ def skyglow_fit(a, step=8):
     xs, ys, zs = (xx[::step, ::step].ravel(), yy[::step, ::step].ravel(),
                   lvl[::step, ::step].ravel())
     A = _design(xs, ys, w, h)
-    ok = ys >= TIMESTAMP_BOX[0].stop            # the burnt-in text is not sky
+    y0 = _sky_y0(boxes)                         # burnt-in text is not sky
+    ok = ys >= y0
     sigma = 1.0
     coef = None
     for _ in range(6):
         coef, *_ = np.linalg.lstsq(A[ok], zs[ok], rcond=None)
         r = zs - A @ coef
         sigma = 1.4826 * np.median(np.abs(r[ok] - np.median(r[ok]))) or 1.0
-        ok = (r < 2.0 * sigma) & (r > -5.0 * sigma) & (ys >= TIMESTAMP_BOX[0].stop)
+        ok = (r < 2.0 * sigma) & (r > -5.0 * sigma) & (ys >= y0)
     model = (_design(xx.ravel(), yy.ravel(), w, h) @ coef).reshape(h, w)
     return model, lvl, float(sigma)
 
 
-def foliage_mask(a, resid_adu=2.5):
+def foliage_mask(a, resid_adu=2.5, boxes=DEFAULT_BOXES):
     """True where the frame is trees, burnt-in overlay, or otherwise not sky."""
-    model, lvl, sigma = skyglow_fit(a)
+    model, lvl, sigma = skyglow_fit(a, boxes=boxes)
     m = (lvl - model) > max(resid_adu, 3.0 * sigma)
     m = ndimage.binary_closing(m, np.ones((25, 25)))
     m = ndimage.binary_opening(m, np.ones((17, 17)))
     m = ndimage.binary_dilation(m, np.ones((21, 21)))
-    m[TIMESTAMP_BOX] = True
-    m[WATERMARK_BOX] = True
+    for b in boxes:
+        m[b] = True
     return m, model, sigma
 
 
-def _detect(resid, mask, threshold, fwhm_range, max_elong):
+def _detect(resid, mask, threshold, fwhm_range, max_elong, min_px=6):
+    """Point sources above threshold. *min_px* is the smallest blob allowed.
+
+    That floor is the only thing standing between the count and the sensor's hot
+    pixels, which are single-pixel spikes far brighter than any star. It is a
+    profile setting because it trades directly against how well the camera
+    samples a star: at 6 px the Kasa keeps its stars and loses every hot pixel,
+    but a sharply focused lens on a small sensor puts a star into fewer pixels
+    than that, and the same floor would then reject the sky along with the
+    spikes. Lowering it means the hot pixels have to be removed some other way
+    -- which is what the all-sky camera's master dark is for.
+    """
     lo, hi = fwhm_range
     lab, _ = ndimage.label((resid > threshold) & (~mask), structure=np.ones((3, 3)))
     found = []
     for i, sl in enumerate(ndimage.find_objects(lab), 1):
         ys, xs = np.where(lab[sl] == i)
-        if len(ys) < 6:
+        if len(ys) < min_px:
             continue
         Y, X = ys + sl[0].start, xs + sl[1].start
         w = resid[Y, X]
@@ -116,10 +166,14 @@ def _detect(resid, mask, threshold, fwhm_range, max_elong):
 
 
 def count_stars(image, threshold=None, fwhm_range=None, max_elong=None,
-                foliage_resid=None, annotate=None):
-    """Count star-like point sources. Returns a dict of the measurement."""
+                foliage_resid=None, annotate=None, profile=DEFAULT_PROFILE):
+    """Count star-like point sources. Returns a dict of the measurement.
+
+    *profile* names the config section the thresholds come from, so each camera
+    is measured against its own tuning rather than the one this was written for.
+    """
     from configs import config
-    cam = config.data().get("sky camera", {})
+    cam = config.data().get(profile, {})
     threshold = float(threshold if threshold is not None
                       else cam.get("star_threshold_adu", 12.0))
     fwhm_range = tuple(fwhm_range if fwhm_range is not None
@@ -128,17 +182,19 @@ def count_stars(image, threshold=None, fwhm_range=None, max_elong=None,
                       else cam.get("star_max_elongation", 2.2))
     foliage_resid = float(foliage_resid if foliage_resid is not None
                           else cam.get("foliage_resid_adu", 2.5))
+    boxes = _boxes(cam.get("overlay_boxes"))
+    min_px = int(cam.get("star_min_pixels", 6))
 
     a = _load(image)
-    mask, model, glow_sigma = foliage_mask(a, foliage_resid)
+    mask, model, glow_sigma = foliage_mask(a, foliage_resid, boxes)
     resid = a - ndimage.median_filter(a, 25)
     open_sky = ~mask
     noise = float(1.4826 * np.median(np.abs(resid[open_sky]))) or 1.0
 
-    stars = _detect(resid, mask, threshold, fwhm_range, max_elong)
+    stars = _detect(resid, mask, threshold, fwhm_range, max_elong, min_px)
     # Same detector on the negated residual: every hit there is a false
     # positive, so this is a live purity measurement rather than an assumption.
-    false_pos = len(_detect(-resid, mask, threshold, fwhm_range, max_elong))
+    false_pos = len(_detect(-resid, mask, threshold, fwhm_range, max_elong, min_px))
 
     # Purity is the whole reason the negative control is computed every frame
     # rather than once at tuning time. On a clear frame it sits at ~99%. On the
@@ -195,32 +251,69 @@ def _annotate(a, model, mask, stars, meta, path):
     rgb.save(str(path))
 
 
-def sweep(image):
-    """Threshold vs purity, the way the default was chosen. For re-tuning."""
+def sweep(image, profile=DEFAULT_PROFILE, thresholds=None):
+    """Threshold vs purity, the way the default was chosen. For re-tuning.
+
+    This is how a new camera's threshold gets set: the negative-image control
+    makes the false column a measurement rather than a guess, so the threshold
+    can be read off the purity a given camera actually achieves.
+    """
+    from configs import config
+    cam = config.data().get(profile, {})
+    fwhm_range = tuple(cam.get("star_fwhm_px", (2.0, 9.0)))
+    max_elong = float(cam.get("star_max_elongation", 2.2))
+    boxes = _boxes(cam.get("overlay_boxes"))
+    min_px = int(cam.get("star_min_pixels", 6))
     a = _load(image)
-    mask, _model, _s = foliage_mask(a)
+    mask, _model, _s = foliage_mask(a, float(cam.get("foliage_resid_adu", 2.5)),
+                                    boxes)
     resid = a - ndimage.median_filter(a, 25)
-    print(" thr(ADU)   stars   false   purity")
-    for t in (8, 10, 12, 15, 20, 30, 50):
-        p = len(_detect(resid, mask, t, (2.0, 9.0), 2.2))
-        q = len(_detect(-resid, mask, t, (2.0, 9.0), 2.2))
-        print("   %5d   %5d   %5d   %5.1f%%"
-              % (t, p, q, 100.0 * (p - q) / max(p, 1)))
+    noise = float(1.4826 * np.median(np.abs(resid[~mask]))) or 1.0
+    if thresholds is None:
+        # Scaled off the frame's own noise, so this is usable on a 16-bit camera
+        # whose ADU are nothing like the 8-bit ladder the Kasa was tuned on.
+        thresholds = [round(k * noise, 1) for k in (2, 3, 4, 5, 6, 8, 12, 20)]
+    print("noise %.2f ADU in the unmasked frame" % noise)
+    print(" thr(ADU)  sigma   stars   false   purity")
+    for t in thresholds:
+        p = len(_detect(resid, mask, t, fwhm_range, max_elong, min_px))
+        q = len(_detect(-resid, mask, t, fwhm_range, max_elong, min_px))
+        print("  %7.1f  %5.1f   %5d   %5d   %5.1f%%"
+              % (t, t / noise, p, q, 100.0 * (p - q) / max(p, 1)))
+
+
+def pop_arg(argv, flag, default=None):
+    """Value of ``--flag``, REMOVED from argv along with the flag.
+
+    Removing it is the point: what is left is the positional arguments. Reading
+    the value in place and then filtering on a leading ``--`` leaves the value
+    itself sitting in the positional list, so ``--profile "allsky camera"``
+    would be taken for the frame to measure.
+    """
+    if flag not in argv:
+        return default
+    i = argv.index(flag)
+    val = argv[i + 1] if len(argv) > i + 1 else None
+    if val is None or val.startswith("--"):
+        del argv[i:i + 1]
+        return default
+    del argv[i:i + 2]
+    return val
 
 
 if __name__ == "__main__":
-    args = [x for x in sys.argv[1:] if not x.startswith("--")]
+    argv = list(sys.argv[1:])
+    prof = pop_arg(argv, "--profile", DEFAULT_PROFILE)
+    ann = (pop_arg(argv, "--annotate", "annotated.png")
+           if "--annotate" in argv else None)
+    args = [x for x in argv if not x.startswith("--")]
     if not args:
         print(__doc__)
         sys.exit(2)
-    if "--sweep" in sys.argv:
-        sweep(args[0])
+    if "--sweep" in argv:
+        sweep(args[0], prof)
         sys.exit(0)
-    ann = None
-    if "--annotate" in sys.argv:
-        i = sys.argv.index("--annotate")
-        ann = sys.argv[i + 1] if len(sys.argv) > i + 1 else "annotated.png"
-    res = count_stars(args[0], annotate=ann)
+    res = count_stars(args[0], annotate=ann, profile=prof)
     for k, v in res.items():
         if not k.startswith("_"):
             print("%-20s %s" % (k, v))
