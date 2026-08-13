@@ -60,7 +60,13 @@ def get_weather_by_hour(lat: float, lon: float, hours: int) -> tuple[list, list,
     local_humidity: list = []
 
     try:
-        response = requests.get(forecast_url, params=params)
+        # Timeout is not optional here. Without one this call inherits the
+        # Windows dead-TCP ceiling, ~240 s, and it is on the critical path of
+        # the 5-minute live skymap push: on the night of 2026-08-12 five runs
+        # stalled at exactly 240.3 s against a 57.5 s mean and pushed nothing,
+        # leaving 10-minute holes in the live chart. The other two Open-Meteo
+        # calls in this file already pass timeout=10.
+        response = requests.get(forecast_url, params=params, timeout=10)
         response.raise_for_status()
         data = response.json()
 

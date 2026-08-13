@@ -127,8 +127,26 @@ class PublicConfig():
             "rain_persist": 3,
             # One prediction and one detection per 6 h. Deliberately separate
             # limiters: a shared one would suppress the detection that confirms
-            # the prediction, which is the pair worth seeing.
+            # the prediction, which is the pair worth seeing. The separation is
+            # ASYMMETRIC -- a detection also stamps the prediction limiter,
+            # because heavy rain satisfies the predict condition too and the
+            # next sample would otherwise downgrade a storm in progress to
+            # "rain likely soon" (observed 2026-08-13 00:45, five minutes after
+            # a 99.3% detection).
             "rain_alert_gap_s": 21600,
+            # How long the sky may go unmeasured without breaking a run. A
+            # dropout is missing evidence, not evidence of a dry sky, but a long
+            # outage means the samples either side of it are not consecutive and
+            # must not be counted as a ramp.
+            #
+            # This governs cadence jitter as well as dropouts, and the jitter is
+            # what sets the floor: across 281 night intervals the nominal 5 min
+            # spacing is 5.3 min at p95 but reaches 19.4 min at the tail, and
+            # one of those long intervals falls INSIDE the 2026-08-13 storm
+            # (00:25 -> 00:40). A 900 s value was tried first and pushed that
+            # storm's detection 10 minutes late. 1200 s clears every observed
+            # interval and still tolerates three consecutive camera failures.
+            "rain_gap_tolerance_s": 1200,
             "rain_diff_adu": 12.0,
             "rain_burst_seconds": 2.0,
             "rain_min_frames": 4,

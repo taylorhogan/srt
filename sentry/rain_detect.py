@@ -38,7 +38,9 @@ moving.
 the clear-night range, so one sample at 1% is worthless. Requiring N consecutive
 samples is what makes a low threshold usable: on the 2026-08-05 storm it
 correctly ignored an isolated 14.9% spike and several 2-3% blips that all
-reverted immediately.
+reverted immediately. A sample the camera failed to deliver is not a sample:
+it neither joins nor breaks the run unless the outage runs past
+`rain_gap_tolerance_s`, because a dead camera says nothing about the sky.
 
 **Two thresholds, because onset is a ramp not a step.** Measured on two storms,
 1% -> 10% took 26 and 38 minutes, which is the whole reason a prediction is
@@ -78,6 +80,7 @@ DEFAULTS = {
     "rain_detect_pct": 10.0,     # 3x this = raining hard
     "rain_persist": 3,           # consecutive samples required
     "rain_alert_gap_s": 6 * 3600,
+    "rain_gap_tolerance_s": 1200,  # a gap shorter than this does not break a run
     "rain_diff_adu": 12.0,       # per-pixel change that counts as "moved"
     "rain_burst_seconds": 2.0,   # only needs a handful of adjacent frames
     "rain_min_frames": 4,
@@ -189,6 +192,21 @@ def _run_over(samples, thr, n):
     return all(s["moving_pct"] > thr for s in samples[-n:])
 
 
+def _consecutive_tail(samples, gap_s):
+    """Drop everything before the last break in cadence.
+
+    "Consecutive" has to mean consecutive in TIME, not merely adjacent in the
+    list. Once a dropout is allowed to leave the run standing, two samples that
+    sit side by side in the list can be an hour apart, and three of those are
+    not evidence of a ramp.
+    """
+    cut = 0
+    for i in range(1, len(samples)):
+        if samples[i]["t"] - samples[i - 1]["t"] > gap_s:
+            cut = i
+    return samples[cut:]
+
+
 def _allowed(last, now, gap):
     """Has the rate-limit window expired? A falsy `last` means never alerted.
 
@@ -214,15 +232,24 @@ def evaluate(moving_pct, night, sun_alt, now=None, cfg=None, state=None):
 
     # A daylight sample is not evidence either way. Drop the run rather than
     # let a day reading sit in the history and break a night sequence later.
-    if not night or moving_pct is None:
+    if not night:
         st["samples"] = []
+        return st, None
+
+    # A camera that returned no frames has told us nothing about the sky, so it
+    # must not read as "no rain". Hold the run untouched and let the spacing
+    # rule below decide whether it survives once a real sample arrives: a brief
+    # hiccup keeps the ramp, a long outage breaks it. Clearing here instead --
+    # as this did until 2026-08-13 -- means any dropout during an onset silently
+    # discards the evidence the prediction is built from.
+    if moving_pct is None:
         return st, None
 
     st["samples"].append({"t": now, "moving_pct": float(moving_pct)})
     # A gap means the run is broken -- 3 samples spanning last night and this
     # one are not 3 consecutive samples.
-    keep = [s for s in st["samples"] if now - s["t"] <= 3 * 3600]
-    st["samples"] = keep[-12:]
+    st["samples"] = _consecutive_tail(
+        st["samples"], float(t["rain_gap_tolerance_s"]))[-12:]
 
     gap = t["rain_alert_gap_s"]
     n = int(t["rain_persist"])
@@ -231,6 +258,14 @@ def evaluate(moving_pct, night, sun_alt, now=None, cfg=None, state=None):
             and _allowed(st.get("last_detect"), now, gap)):
         alert = "detect"
         st["last_detect"] = now
+        # Stamp the prediction limiter too. Rain hard enough to detect always
+        # satisfies the predict condition as well, so the next sample would
+        # otherwise fall through to the elif and announce "rain likely within
+        # ~25-40 min" while it is already pouring -- which is what happened at
+        # 00:45 on 2026-08-13, five minutes after a 99.3% detect. The stamping
+        # is deliberately ONE WAY: a prediction does not suppress the detection
+        # that confirms it.
+        st["last_predict"] = now
     elif (_run_over(st["samples"], t["rain_predict_pct"], n)
             and _allowed(st.get("last_predict"), now, gap)):
         alert = "predict"
