@@ -364,6 +364,45 @@ fields; a full run should do better, which is an expectation and not a result.
 - **Source-bias**, unconfirmed across seeds.
 - **The gradient tail trigger** from step 1, still unidentified.
 
+## Design alternative: denoise stacks, not subs
+
+Raised 2026-08-13 and not yet tried. The current chain denoises every sub and
+then stacks. The alternative is to leave subs alone and denoise the **stacked**
+image, training on **split-half stacks** — split a target's subs in two, stack
+each half independently, and use that pair as the N2N training pair.
+
+Why it is better posed than what is built:
+
+- **The pair is legitimate.** Two half-stacks are two noisy views of the same
+  scene, which is exactly what N2N requires, and they carry the noise character
+  of a stack rather than of a sub. Inference on the full stack is then
+  in-distribution.
+- **It removes the failure mode the whole gate is built around.** Per-frame
+  denoising puts every frame through the same network with the same learned
+  prior, so any error is identical across frames; independent noise averages
+  down as sqrt(N) but a shared bias survives stacking untouched. Denoising once,
+  after stacking, cannot launder a bias into an apparently-converging curve.
+- **It is ~200x cheaper at inference.** 330 tiles instead of 204 x 330, and the
+  stack is the artefact that actually gets published.
+- **It matches what the denoiser is permitted to be.** Denoised output is a
+  display product; the display product *is* the stack.
+
+What it gives up: the "buy frames" claim — that denoising subs reaches a given
+SNR from fewer of them. That claim only means anything if the denoiser runs
+before stacking. It is also the claim least likely to survive the gate, for the
+shared-bias reason above.
+
+What it costs: far less training data. One pair per target per filter instead of
+thousands of patch pairs across 204 frames, though full-resolution stacks yield
+many patches each and recover some of that.
+
+Note the current model must **not** simply be pointed at a stack. It is trained
+on single-frame noise (sky sigma ~10 ADU); a 56-frame stack is ~1.3 ADU and,
+after registration and interpolation, spatially correlated rather than per-pixel
+independent. `normalise()` divides by the frame's own sky sigma so the
+amplitude would be handled, but the correlation structure would not, and that is
+what the learned prior is tuned to.
+
 ## Cost, measured on the Spark
 
 | step | wall |
