@@ -34,9 +34,11 @@ class N2NDataset(Dataset):
         group_ids: Optional[list[str]] = None,
         patch_size: int = 256,
         pairs_per_epoch: int = 2000,
+        source_bias: float = 0.7,
     ):
         self.patch_size = patch_size
         self.pairs_per_epoch = pairs_per_epoch
+        self.source_bias = float(np.clip(source_bias, 0.0, 1.0))
         self.rng = np.random.default_rng()
 
         # Background-subtract and normalise exactly as inference does, using the
@@ -70,6 +72,89 @@ class N2NDataset(Dataset):
             n = len(frames)
             self._valid_pairs = [(i, j) for i in range(n) for j in range(i + 1, n)]
 
+        # Where the sources are, per frame, for biased patch sampling.
+        self._cdf: list[Optional[np.ndarray]] = [self._source_cdf(f) for f in self.frames]
+
+    _BLOCK = 32          # downsample factor for the source map
+
+    def _source_cdf(self, frame: np.ndarray) -> "Optional[np.ndarray]":
+        """Flat CDF over candidate patch origins, weighted by source content.
+
+        Uniform cropping is the obvious choice and the wrong one here. These
+        fields are overwhelmingly sky — on a sparse target well over 90% of
+        uniformly drawn 256 px patches contain almost nothing but background,
+        and background is the one thing the network already predicts perfectly
+        by emitting a constant. That is capacity and gradient spent confirming
+        the trivial solution, which is the same attractor the net collapsed into
+        outright before the 2026-08-12 fixes.
+
+        Scoring is a per-block *count of significant pixels*, not a block max.
+        The max is the intuitive choice and does not work: over a 32x32 block
+        the maximum of pure sky already sits near 3.2 sigma by extreme-value
+        statistics, so every block scores high on noise alone and real sources
+        do not stand out. Measured, block-max sampling was indistinguishable
+        from uniform (0.010% vs 0.011% source pixels per patch). Counting
+        pixels above a sky-relative threshold separates them properly.
+
+        Returns None when the frame is too small to crop, so __getitem__ falls
+        back to the uniform path.
+        """
+        ps, d = self.patch_size, self._BLOCK
+        h, w = frame.shape
+        if h <= ps or w <= ps:
+            return None
+
+        H, W = h // d, w // d
+        if H < 2 or W < 2:
+            return None
+
+        # Sky level from a subsample; the threshold is relative to this frame's
+        # own sky so a bright target does not simply outweigh a faint one.
+        s = frame[::8, ::8]
+        med = float(np.median(s))
+        sig = 1.4826 * float(np.median(np.abs(s - med))) or 1e-3
+        mask = (frame[:H * d, :W * d] > med + 5.0 * sig)
+        excess = mask.reshape(H, d, W, d).sum(axis=(1, 3)).astype(np.float64)
+
+        # Box sum over the patch footprint via an integral image.
+        pb = max(1, ps // d)
+        ii = np.zeros((H + 1, W + 1), dtype=np.float64)
+        ii[1:, 1:] = np.cumsum(np.cumsum(excess, axis=0), axis=1)
+        oh, ow = H - pb + 1, W - pb + 1
+        if oh < 1 or ow < 1:
+            return None
+        box = (ii[pb:pb + oh, pb:pb + ow] - ii[0:oh, pb:pb + ow]
+               - ii[pb:pb + oh, 0:ow] + ii[0:oh, 0:ow])
+
+        wts = box.ravel()
+        total = wts.sum()
+        if not np.isfinite(total) or total <= 0:
+            return None
+        return np.cumsum(wts / total)
+
+    def _sample_origin(self, frame_idx: int, h: int, w: int) -> tuple[int, int]:
+        """Top-left corner of a patch: source-biased with probability
+        source_bias, uniform otherwise.
+
+        The uniform share is not a hedge — the denoiser has to handle blank sky
+        too, and training only on crowded regions would shift the sky level it
+        learns.
+        """
+        ps = self.patch_size
+        cdf = self._cdf[frame_idx]
+        if cdf is None or self.rng.random() >= self.source_bias:
+            return (int(self.rng.integers(0, h - ps)),
+                    int(self.rng.integers(0, w - ps)))
+        d, pb = self._BLOCK, max(1, self.patch_size // self._BLOCK)
+        ow = (w // d) - pb + 1
+        k = int(np.searchsorted(cdf, self.rng.random()))
+        k = min(k, cdf.size - 1)
+        by, bx = divmod(k, ow)
+        # Jitter within the block so origins are not quantised to the grid.
+        y0 = min(max(by * d + int(self.rng.integers(0, d)), 0), h - ps)
+        x0 = min(max(bx * d + int(self.rng.integers(0, d)), 0), w - ps)
+        return y0, x0
+
     def __len__(self) -> int:
         return self.pairs_per_epoch
 
@@ -82,8 +167,7 @@ class N2NDataset(Dataset):
         if h <= ps or w <= ps:
             y0, x0 = 0, 0
         else:
-            y0 = int(self.rng.integers(0, h - ps))
-            x0 = int(self.rng.integers(0, w - ps))
+            y0, x0 = self._sample_origin(i, h, w)
         # Frames are already background-subtracted and normalised (see __init__),
         # so the patch is a plain crop.
         pa = fa[y0:y0 + ps, x0:x0 + ps]

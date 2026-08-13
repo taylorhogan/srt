@@ -8,6 +8,12 @@ machine.
 Paths on the Spark: repo `/home/taylor/Documents/srt`, frames
 `/home/taylor/Desktop/Targets`.
 
+This file is the **procedure**. `N2N_LAB_MANUAL.md` is the **evidence** — what
+was tried, what it measured, and why the denoiser is in the state it is. Read
+that one before concluding anything from a run here; as of 2026-08-13 the
+denoiser destroys 99.8% of bright-star flux and is not usable for science or
+display.
+
 The 06:00 cron (`scripts/spark_morning_search.bsh`) does the rsync from the
 observatory and then the transit search. **N2N is not wired into it** — this is
 a manual chain.
