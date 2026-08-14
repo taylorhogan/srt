@@ -2,7 +2,7 @@
 """Train a Noise2Noise model on split-half STACKS rather than on subs.
 
 Usage:
-    python scripts/n2n_train_stacks.py <filter> <seconds>
+    python scripts/n2n_train_stacks.py <filter> <seconds> [--seed N]
 
 The sub-based chain (n2n_train.py) denoises every frame and then stacks. This
 trains on pairs of disjoint half-stacks instead, so the model is applied once to
@@ -35,14 +35,31 @@ def stack_model_path(filter_name: str, exptime_s: int) -> Path:
 
 
 def main() -> int:
-    if len(sys.argv) < 3:
-        print("Usage: python scripts/n2n_train_stacks.py <filter> <seconds>")
+    argv = sys.argv[1:]
+    # --seed makes a run reproducible. Without it the result cannot be
+    # recovered: on 2026-08-14 an unseeded run drew a model with val 0.7152
+    # (checkpointed at epoch 7) where a seeded experiment on the same data and
+    # config had reached 0.6957, and there was no way to get the better draw
+    # back. Patch selection dominates that variance and comes from OS entropy
+    # unless N2NDataset is given a seed — torch.manual_seed() does not touch it.
+    seed = None
+    if "--seed" in argv:
+        i = argv.index("--seed")
+        try:
+            seed = int(argv[i + 1])
+        except (IndexError, ValueError):
+            print("Error: --seed needs an integer")
+            return 1
+        del argv[i:i + 2]
+
+    if len(argv) < 2:
+        print("Usage: python scripts/n2n_train_stacks.py <filter> <seconds> [--seed N]")
         return 1
-    filter_name = sys.argv[1].strip()
+    filter_name = argv[0].strip()
     try:
-        exptime_s = int(sys.argv[2])
+        exptime_s = int(argv[1])
     except ValueError:
-        print(f"Error: seconds must be an integer, got '{sys.argv[2]}'")
+        print(f"Error: seconds must be an integer, got '{argv[1]}'")
         return 1
 
     cfg = config.data()
@@ -66,7 +83,9 @@ def main() -> int:
         return 1
 
     print("Building split-half stacks…")
-    st, groups = stacks.build_half_stacks(frames, dso_names, progress_cb=print)
+    st, groups = stacks.build_half_stacks(frames, dso_names,
+                                          seed=0 if seed is None else seed,
+                                          progress_cb=print)
     del frames                       # ~50 GB; the stacks are all that is needed
     n_dso = len(set(groups))
     print(f"{len(st)} stacks across {n_dso} DSOs")
@@ -92,6 +111,7 @@ def main() -> int:
         patch_size=patch_size,
         pairs_per_epoch=pairs_per_ep,
         val_dsos=1,
+        seed=seed,
         progress_cb=print,
     )
     return 0

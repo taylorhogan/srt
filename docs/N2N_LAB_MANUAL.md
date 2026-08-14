@@ -413,6 +413,76 @@ a loss-function bug, and more frames or more targets is the lever.
 
 **Best configuration found: L1, ~60 epochs, split-half stacks, residual=linear.**
 
+### 14. Injection-recovery: the suppression is pervasive, not faint-end
+
+"very faint = 0.81" was a bin median. Injecting 810 synthetic PSFs (FWHM 6 px)
+across nine amplitudes into the held-out m92 full stack turns it into a curve.
+
+Scored as the *incremental* response `D(S+I) - D(S)` against the true injected
+signal in the same aperture — denoising is non-linear, so that difference is the
+response to the added source alone, with host, sky and any underlying star
+cancelled by construction. Measuring flux at injection sites directly would
+confound all three.
+
+Arm 2 is a **coincidence filter**, the non-learned baseline this investigation
+lacked: keep a pixel only where both independent half-stacks exceed
+`k*sigma_half`, else set to background. Note the test is `min(A,B)`, not
+`|A-B|` — a real source contributes equally to both halves so it *cancels* in
+the difference, leaving pure noise; thresholding the difference selects on noise
+alone and carries no information about whether a source is present.
+
+| aperture SNR | N2N | coinc k=1.0 | k=1.5 | k=2.0 |
+| --- | --- | --- | --- | --- |
+| 2.85 | **0.53** | 0.21 | 0.07 | 0.00 |
+| 5.71 | **0.55** | 0.35 | 0.14 | 0.06 |
+| 8.56 | **0.57** | 0.47 | 0.29 | 0.13 |
+| 14.27 | 0.60 | **0.69** | 0.54 | 0.39 |
+| 22.83 | 0.66 | **0.83** | 0.74 | 0.64 |
+| 57.09 | 0.77 | **0.93** | 0.90 | 0.86 |
+| 114.17 | 0.84 | **0.97** | 0.96 | 0.94 |
+
+**Neither reaches the gate in this range.** The network never does at all; the
+coincidence filter only at SNR 114, where the raw stack was already fine.
+
+They **cross over at SNR ~10**: the network wins below it, the filter above.
+That is the hard-decision penalty — at low per-pixel SNR each half independently
+falls below threshold by chance and the AND discards real sources. At k=1.0 the
+filter keeps only **7.56% of pixels**; the rest are zeroed. The network's bias is
+also flatter (0.53-0.84 over a 40x SNR span, against 0.21-0.97), and a flatter
+response is easier to characterise and calibrate than one that couples strongly
+to brightness.
+
+**Reconciled with the photometry bins**, which appeared to disagree (brightest
+0.9735 against 0.84 at SNR 114). They measure almost disjoint regimes:
+
+| bin | n | median aperture SNR |
+| --- | --- | --- |
+| brightest | 13 | 81,672 |
+| mid | 87 | 12,858 |
+| faint | 236 | 1,933 |
+| very faint | 4,947 | **22.2** |
+
+Only `very faint` overlaps the injection range, and there the two agree (0.66
+injected at SNR 22.8 against 0.73 measured). So both are valid: recovery rises
+smoothly with SNR and reaches 0.97 only around SNR 1e3-1e4. **80% of real
+detected sources sit inside the injected range**, where recovery is 0.53-0.84 —
+the reassuring bins described the other 20%.
+
+Caveat: this used an unseeded draw that checkpointed at **epoch 7** with val
+0.7152, worse than the 0.6957 of the best measured configuration, so the network
+arm is pessimistic by an unknown amount. Which is why:
+
+### 15. Training is now reproducible
+
+`n2n_train_stacks.py --seed N`, plumbed through `trainer.train(seed=)` to both
+datasets, the half-stack partition, and torch. With `cudnn.deterministic` two
+runs of the same seed are now bitwise identical (verified: same weights, same
+val loss); without the cuDNN flags a seeded run still drifted ~4e-5 from
+algorithm selection and atomics.
+
+Before this, a run could not reproduce its own result, and the good draw above
+was unrecoverable.
+
 ---
 
 ## Standing conclusions

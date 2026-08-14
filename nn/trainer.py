@@ -309,12 +309,28 @@ def train(
     # L2's optimum is the conditional mean, which does not collapse to
     # background that way, and is what the N2N paper uses for Gaussian noise.
     loss: str = "l1",
+    # Set for a reproducible run. Seeds torch and both datasets; without it
+    # patch selection comes from OS entropy and two runs of the same config can
+    # differ more than the effects being measured (5.8x on brightest-bin flux,
+    # measured 2026-08-13).
+    seed: Optional[int] = None,
     progress_cb: Callable[[str], None] = print,
 ) -> dict:
     """Train a Noise2Noise U-Net and save the best checkpoint.
 
     Returns a summary dict with final_loss, epochs, n_frames.
     """
+    if seed is not None:
+        torch.manual_seed(seed)
+        np.random.seed(seed)
+        # cuDNN picks algorithms by benchmarking, and some use atomics, so
+        # without these two a seeded run still varies at the 1e-5 level. That
+        # residual is negligible against the effects being measured (patch
+        # selection, the dominant term, swung results 5.8x) but pinning it costs
+        # nothing here and removes a source of confusion.
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
+        progress_cb(f"[{filter_name}] seeded with {seed} — run is reproducible")
     device = "cuda" if torch.cuda.is_available() else "cpu"
     progress_cb(f"[{filter_name}] Training on {len(frames)} frames — device: {device}")
 
@@ -325,13 +341,16 @@ def train(
     tr_frames, tr_groups, va_frames, va_groups = _holdout_frames(
         frames, group_ids, val_frac=0.2, progress_cb=progress_cb, min_val_groups=val_dsos
     )
-    train_ds = N2NDataset(tr_frames, group_ids=tr_groups, patch_size=patch_size, pairs_per_epoch=pairs_per_epoch)
+    train_ds = N2NDataset(tr_frames, group_ids=tr_groups, patch_size=patch_size,
+                          pairs_per_epoch=pairs_per_epoch, seed=seed)
     train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, num_workers=2, pin_memory=(device == "cuda"))
 
     val_loader = None
     if va_frames:
         val_pairs = max(batch_size, int(0.2 * pairs_per_epoch))
-        val_ds = N2NDataset(va_frames, group_ids=va_groups, patch_size=patch_size, pairs_per_epoch=val_pairs)
+        val_ds = N2NDataset(va_frames, group_ids=va_groups, patch_size=patch_size,
+                            pairs_per_epoch=val_pairs,
+                            seed=None if seed is None else seed + 1)
         val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False, num_workers=2, pin_memory=(device == "cuda"))
     else:
         progress_cb(f"[{filter_name}] No held-out validation set possible — checkpointing on train loss")
