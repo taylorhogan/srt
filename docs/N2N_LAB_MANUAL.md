@@ -539,6 +539,58 @@ star field. Results from step 16 onward are therefore not comparable to earlier
 ones; m13 entering training is a competing explanation for any improvement on
 m92.
 
+### 17. Pooled L+R+G+B — also worse, and the obvious explanation is wrong
+
+The argument for pooling: data thinness limits this, L+R+G+B at 300 s is 807
+frames against R's 204, `normalise()` removes the sky-brightness differences
+before the network sees anything, and what remains (PSF, noise correlation, star
+profiles) comes from optics and sensor and is shared. Unlike quartering it adds
+*scenes* at the same stack depth, so it avoids what sank step 16.
+
+Built with `build_split_stacks_streaming` — 807 frames is ~200 GB against 121 GB
+of RAM, so groups are loaded, registered, stacked and freed one at a time.
+Group key is `(dso, filter)`, never bare dso: an L stack and an R stack of one
+target are different scenes photometrically, and pairing them is the same class
+of error as the misregistration bug. 36 stacks, 18 pairs, 18 groups. m92 excluded
+**in every filter** via `--exclude`, because a group-level holdout would have
+held out `m92|R` while training on `m92|L` and `m92|B` — the same field.
+
+Against the R-only baseline on held-out m92, identical stack, sources and
+injection sites:
+
+| | R-only | pooled | delta |
+| --- | --- | --- | --- |
+| brightest | 0.9817 | 0.9808 | -0.001 |
+| mid | 0.9534 | 0.9424 | -0.011 |
+| faint | 0.9365 | 0.8757 | **-0.061** |
+| very faint | 0.7480 | 0.7060 | **-0.042** |
+| inj SNR 5.7 | 1.069 | 0.832 | **-0.237** |
+| inj SNR 114 | 0.941 | 0.722 | **-0.219** |
+| rms after | 0.2332 | 0.1410 | smooths far harder |
+
+**Worse on every measurement.** 5x the training pairs, at matched depth, and it
+lost.
+
+**The mechanism is unidentified, and the obvious candidate is refuted.** The
+natural explanation is that chromatic focus gives each filter a different PSF, so
+one shared prior cannot fit them all. Measured from `frame_stats.json`, median
+FWHM is L 2.507", R 2.343", G 2.463", B 2.559" — a 2-9% spread, well inside each
+filter's own 16-84 range of roughly 2.0-2.9". Broadband PSF differences cannot
+account for it. (Narrowband does differ: Ha 1.92", O-III 1.96".)
+
+What can be said: the pooled model smooths much harder, and in every experiment
+here heavier smoothing has come with worse flux recovery. That is a correlation
+across L2, quarters and pooling, not a demonstrated cause.
+
+Keep per-filter models. `scripts/n2n_train_pooled.py` stays for re-running it.
+
+### Standing tally of what has been tried against the 2026-08-13 baseline
+
+L1 / 60 epochs / split-half stacks / residual=linear has now survived three
+attempts to improve it — L2 (step 13), quarter splits (step 16) and pooled LRGB
+(step 17). All three measured worse. Two of the three also refuted the mechanism
+proposed for them beforehand.
+
 ---
 
 ## Standing conclusions

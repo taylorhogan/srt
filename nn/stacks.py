@@ -136,6 +136,118 @@ def build_split_stacks(
     return out_frames, out_groups
 
 
+def index_frames(
+    subs_dir: "Path",
+    filters: list[str],
+    exptime_s: int,
+) -> "dict[tuple[str, str], list[Path]]":
+    """Map (dso, filter) -> LIGHT frame paths, reading headers only.
+
+    Pixel data is never touched, so this costs seconds where loading would cost
+    ~200 GB across L+R+G+B.
+    """
+    from astropy.io import fits as _fits
+
+    want = {f.strip() for f in filters}
+    out: dict[tuple[str, str], list[Path]] = {}
+    for fp in sorted(Path(subs_dir).rglob("*.fits")):
+        if fp.parent.name.upper() != "LIGHT":
+            continue
+        try:
+            hdr = _fits.getheader(fp)
+            filt = str(hdr.get("FILTER", "")).strip()
+            if filt not in want:
+                continue
+            if round(float(hdr.get("EXPTIME", 0))) != exptime_s:
+                continue
+        except Exception:
+            continue
+        try:
+            dso = fp.relative_to(subs_dir).parts[0].lower().replace(" ", "")
+        except ValueError:
+            dso = fp.parent.parent.name.lower().replace(" ", "")
+        out.setdefault((dso, filt), []).append(fp)
+    return out
+
+
+def build_split_stacks_streaming(
+    subs_dir: "Path",
+    filters: list[str],
+    exptime_s: int,
+    min_frames_per_split: int = 6,
+    max_splits: int = 2,
+    seed: int = 0,
+    progress_cb: Callable[[str], None] = print,
+) -> tuple[list[np.ndarray], list[str]]:
+    """Split stacks pooled across filters, loading one group at a time.
+
+    **The group key is (dso, filter), not dso.** Pairing an L stack with an R
+    stack of the same target would be pairing two different scenes — a star's
+    relative brightness changes with passband, and nebulosity present in Ha is
+    absent in R — which is the same class of error as the misregistration bug
+    that collapsed the sub-based training: pairs that are not two views of one
+    scene drive the network toward predicting the average.
+
+    Pooling is worth doing because `normalise()` divides by each frame's own
+    robust sky sigma, so the large sky-brightness differences between L and B
+    are gone before the network sees anything. What remains — PSF shape, noise
+    correlation, star profiles — is set by optics and sensor, which are shared.
+    The model learns the instrument, not the passband. It also adds scenes at
+    the *same* stack depth, unlike quartering, which added pairs by making the
+    stacks shallower and measured worse for it (step 16).
+
+    Narrowband is deliberately not pooled by default: its sky is far darker, so
+    the noise regime shifts from sky-dominated toward read/dark-dominated — a
+    change in noise character that normalisation cannot reconcile — and its
+    content is extended nebulosity rather than point sources.
+    """
+    from astropy.io import fits as _fits
+
+    idx = index_frames(subs_dir, filters, exptime_s)
+    rng = np.random.default_rng(seed)
+    out_frames: list[np.ndarray] = []
+    out_groups: list[str] = []
+    total_pairs = 0
+
+    for (dso, filt) in sorted(idx):
+        paths = idx[(dso, filt)]
+        n_splits = min(max_splits, len(paths) // min_frames_per_split)
+        if n_splits < 2:
+            progress_cb(f"  [{dso}|{filt}] {len(paths)} frames — skipped")
+            continue
+
+        group = []
+        for p in paths:
+            try:
+                with _fits.open(p) as hdul:
+                    d = np.squeeze(hdul[0].data).astype(np.float32)
+                if d.ndim == 2:
+                    group.append(d)
+            except Exception:
+                pass
+        if len(group) < 2 * min_frames_per_split:
+            progress_cb(f"  [{dso}|{filt}] only {len(group)} readable — skipped")
+            continue
+
+        group = registration.register_frames(
+            group, [dso] * len(group), progress_cb=lambda m: None
+        )
+        order = rng.permutation(len(group))
+        per = len(order) // n_splits
+        for k in range(n_splits):
+            out_frames.append(_combine([group[i] for i in order[k * per:(k + 1) * per]]))
+            out_groups.append(f"{dso}|{filt}")
+        del group
+        pairs = n_splits * (n_splits - 1) // 2
+        total_pairs += pairs
+        progress_cb(f"  [{dso}|{filt}] {len(paths)} frames -> {n_splits} stacks "
+                    f"of {per} ({pairs} pairs)")
+
+    progress_cb(f"  total {len(out_frames)} stacks, {total_pairs} pairs, "
+                f"{len(set(out_groups))} (dso,filter) groups")
+    return out_frames, out_groups
+
+
 # Kept so older callers and the lab manual's step 12 still resolve.
 def build_half_stacks(frames, dso_names, min_frames_per_dso=6, seed=0,
                       progress_cb=print):
