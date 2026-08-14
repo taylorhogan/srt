@@ -59,22 +59,38 @@ def _combine(frames: list[np.ndarray]) -> np.ndarray:
     return (acc / len(frames)).astype(np.float32)
 
 
-def build_half_stacks(
+def build_split_stacks(
     frames: list[np.ndarray],
     dso_names: list[str],
-    min_frames_per_dso: int = 6,
+    min_frames_per_split: int = 6,
+    max_splits: int = 4,
     seed: int = 0,
     progress_cb: Callable[[str], None] = print,
 ) -> tuple[list[np.ndarray], list[str]]:
-    """Return (stacks, group_ids) — two disjoint half-stacks per usable DSO.
+    """Return (stacks, group_ids) — N disjoint sub-stacks per usable DSO.
 
-    Output is ordered so each DSO's two stacks are adjacent, and group_ids
-    repeats the DSO name for both. Feed straight to N2NDataset, whose
-    within-group pairing then yields exactly the half-stack pairs.
+    Output is ordered so a DSO's stacks are adjacent and group_ids repeats the
+    DSO name across them. Feed straight to N2NDataset, whose within-group
+    pairing then yields every pair among that DSO's splits — C(N,2) of them, so
+    4 splits give 6 pairs where 2 give 1.
 
-    A DSO needs min_frames_per_dso subs to contribute: below that each half is
-    too thin for its stack to resemble the full stack the model will be applied
-    to.
+    **The split count is adaptive**, `frames // min_frames_per_split` clamped to
+    [2, max_splits]. Data thinness is the binding constraint here — 4 training
+    pairs, with validation bottoming out by epoch 7 — but a fixed split count
+    trades that against the opposite problem: quarter-stacks of a shallow target
+    are too noisy to resemble the full stack inference is applied to. Scaling
+    per DSO takes the extra pairs from the deep targets without forcing the
+    shallow ones below usable depth, and keeps every DSO in play, which matters
+    because scene diversity is what the sub-based run lacked most.
+
+    A DSO needs `2 * min_frames_per_split` subs to contribute at all. That floor
+    also excludes the 9-frame abell2218, whose 4-frame halves sat far off the
+    distribution the model is applied to.
+
+    Splits are disjoint by construction. Overlapping ones would share noise
+    realisations, the pair would no longer be independent, and the network could
+    reduce its loss by reproducing the shared noise — the failure N2N exists to
+    avoid.
     """
     by_dso: dict[str, list[int]] = {}
     for i, d in enumerate(dso_names):
@@ -83,31 +99,48 @@ def build_half_stacks(
     rng = np.random.default_rng(seed)
     out_frames: list[np.ndarray] = []
     out_groups: list[str] = []
+    total_pairs = 0
 
     for dso in sorted(by_dso):
         idxs = by_dso[dso]
-        if len(idxs) < min_frames_per_dso:
-            progress_cb(f"  [{dso}] {len(idxs)} frames — skipped (need {min_frames_per_dso})")
+        n_splits = min(max_splits, len(idxs) // min_frames_per_split)
+        if n_splits < 2:
+            progress_cb(f"  [{dso}] {len(idxs)} frames — skipped "
+                        f"(need {2 * min_frames_per_split})")
             continue
 
         group = [frames[i] for i in idxs]
-        # Register within the DSO first: the two halves must land on the same
-        # pixels or the pair is two views of *different* scenes, which is the
-        # bug that collapsed the sub-based training (see the lab manual).
+        # Register within the DSO first: the splits must land on the same pixels
+        # or a pair is two views of *different* scenes, which is the bug that
+        # collapsed the sub-based training (see the lab manual).
         group = registration.register_frames(
             group, [dso] * len(group), progress_cb=lambda m: None
         )
 
         order = rng.permutation(len(group))
-        half = len(order) // 2
-        a = [group[i] for i in order[:half]]
-        b = [group[i] for i in order[half:2 * half]]   # drop the odd frame
+        per = len(order) // n_splits          # equal depth; remainder dropped
+        for k in range(n_splits):
+            chunk = [group[i] for i in order[k * per:(k + 1) * per]]
+            out_frames.append(_combine(chunk))
+            out_groups.append(dso)
+        pairs = n_splits * (n_splits - 1) // 2
+        total_pairs += pairs
+        progress_cb(f"  [{dso}] {len(idxs)} frames -> {n_splits} stacks of {per} "
+                    f"({pairs} pairs)")
 
-        out_frames += [_combine(a), _combine(b)]
-        out_groups += [dso, dso]
-        progress_cb(f"  [{dso}] {len(idxs)} frames -> 2 half-stacks of {len(a)}")
-
+    progress_cb(f"  total {len(out_frames)} stacks, {total_pairs} pairs")
     return out_frames, out_groups
+
+
+# Kept so older callers and the lab manual's step 12 still resolve.
+def build_half_stacks(frames, dso_names, min_frames_per_dso=6, seed=0,
+                      progress_cb=print):
+    """Two disjoint half-stacks per DSO — the original 2-way split."""
+    return build_split_stacks(
+        frames, dso_names,
+        min_frames_per_split=max(1, min_frames_per_dso // 2),
+        max_splits=2, seed=seed, progress_cb=progress_cb,
+    )
 
 
 def build_full_stack(

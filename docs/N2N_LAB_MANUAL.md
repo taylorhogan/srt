@@ -483,6 +483,62 @@ algorithm selection and atomics.
 Before this, a run could not reproduce its own result, and the good draw above
 was unrecoverable.
 
+### 16. Quarter splits — more pairs, worse model. Depth match beats pair count.
+
+Data thinness looked like the binding constraint (4 pairs, val bottoming out at
+epoch 7), so `build_split_stacks` gained an adaptive split count: `frames // 6`
+clamped to [2, max_splits]. Adaptive rather than fixed so deep targets give more
+pairs without pushing shallow ones below usable depth.
+
+At max_splits=4 that is 18 stacks and **24 pairs** against 10 and 5 — training
+pairs go from 3 to 15. Both arms seeded 0, same DSOs, same held-out m92,
+everything else identical.
+
+| | splits=2 | splits=4 | delta |
+| --- | --- | --- | --- |
+| brightest | 0.9817 | 0.9901 | +0.008 |
+| mid | 0.9534 | 0.9761 | +0.023 |
+| faint | 0.9365 | 0.9305 | -0.006 |
+| very faint | 0.7480 | 0.7776 | +0.030 |
+| inj SNR 2.9 | 0.6645 | 0.5027 | **-0.162** |
+| inj SNR 5.7 | 1.0690 | 0.5552 | **-0.514** |
+| inj SNR 22.8 | 1.0844 | 0.6995 | **-0.385** |
+| inj SNR 114 | 0.9407 | 0.7453 | **-0.195** |
+
+**Real-source photometry barely moved; the incremental response collapsed.**
+Quarters suppress added flux by 25-45% where the baseline sits near unity.
+
+Best explanation: quarter-stacks are sqrt(2) noisier than the full stack the
+model is applied to, so they teach shrinkage calibrated for noisier data, which
+over-shrinks at inference. **Matching training depth to inference depth beat
+multiplying pairs 5x.** `max_splits` is back to 2; the parameter stays so the
+experiment can be repeated.
+
+Two cautions. The baseline's **over-recovery** — 1.07-1.13 at mid SNR, i.e. it
+*adds* 8-13% flux to an injected source, non-monotonically — is itself a bias,
+is harder to calibrate than steady suppression, and is NOT explained by the
+depth story. And these are single seeds with checkpoints at different epochs
+(47 vs 27), so magnitudes are soft.
+
+Verified before believing any of it: the difference image's pedestal in blank
+regions is +0.00002 ADU, contributing 0.00 ADU to an 8 px aperture, so the
+above-unity recovery is real and not an aperture artefact.
+
+**Structural finding, and the one worth carrying forward:** real-source
+photometry and injected-source response are *different measurements*, and a
+model can look fine on the first while being badly biased on the second. The
+transient search measures a new source appearing — that is the injection
+response, not the bins.
+
+### Note on the holdout change
+
+Dropping abell2218 (9 frames, below the new depth floor) left 5 DSOs, and the
+seeded split then holds out **m92 only** — so **m13 is now in training**. Every
+earlier result held out both globulars, meaning the model had never seen a dense
+star field. Results from step 16 onward are therefore not comparable to earlier
+ones; m13 entering training is a competing explanation for any improvement on
+m92.
+
 ---
 
 ## Standing conclusions

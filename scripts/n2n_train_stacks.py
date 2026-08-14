@@ -52,8 +52,27 @@ def main() -> int:
             return 1
         del argv[i:i + 2]
 
+    # How many disjoint sub-stacks per DSO. 4 gives six pairs per target against
+    # 2's one, and was tried as the cheap answer to data thinness. It measured
+    # worse: real-source photometry barely moved (+0.03 at best) while the
+    # response to an *injected* source collapsed, 1.07 -> 0.56 at SNR 5.7.
+    # Quarter-stacks are sqrt(2) noisier than the full stack the model is
+    # applied to, so they teach shrinkage calibrated for noisier data, and that
+    # over-suppresses at inference. Depth match beat pair count. See
+    # docs/N2N_LAB_MANUAL.md step 16.
+    max_splits = 2
+    if "--splits" in argv:
+        i = argv.index("--splits")
+        try:
+            max_splits = int(argv[i + 1])
+        except (IndexError, ValueError):
+            print("Error: --splits needs an integer")
+            return 1
+        del argv[i:i + 2]
+
     if len(argv) < 2:
-        print("Usage: python scripts/n2n_train_stacks.py <filter> <seconds> [--seed N]")
+        print("Usage: python scripts/n2n_train_stacks.py <filter> <seconds> "
+              "[--seed N] [--splits N]")
         return 1
     filter_name = argv[0].strip()
     try:
@@ -82,10 +101,11 @@ def main() -> int:
     if not frames:
         return 1
 
-    print("Building split-half stacks…")
-    st, groups = stacks.build_half_stacks(frames, dso_names,
-                                          seed=0 if seed is None else seed,
-                                          progress_cb=print)
+    print(f"Building split stacks (max {max_splits} per DSO)…")
+    st, groups = stacks.build_split_stacks(frames, dso_names,
+                                           max_splits=max_splits,
+                                           seed=0 if seed is None else seed,
+                                           progress_cb=print)
     del frames                       # ~50 GB; the stacks are all that is needed
     n_dso = len(set(groups))
     print(f"{len(st)} stacks across {n_dso} DSOs")
