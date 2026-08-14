@@ -63,7 +63,11 @@ def build_split_stacks(
     frames: list[np.ndarray],
     dso_names: list[str],
     min_frames_per_split: int = 6,
-    max_splits: int = 4,
+    # 2, not 4. Quartering gives 5x the training pairs and measured worse: the
+    # response to an injected source fell from 1.07 to 0.56 at SNR 5.7, because
+    # quarter-stacks are sqrt(2) noisier than the full stack inference runs on
+    # and so teach over-aggressive shrinkage. Depth match beat pair count.
+    max_splits: int = 2,
     seed: int = 0,
     progress_cb: Callable[[str], None] = print,
 ) -> tuple[list[np.ndarray], list[str]]:
