@@ -1,18 +1,33 @@
 #!/usr/bin/env python3
 """Read Kasa device state through TP-Link's cloud, because the LAN cannot.
 
-The plugs are the problem the LAN path cannot solve. HS103/HS300 units speak
-KLAP, and a KLAP discovery reply carries only metadata — device_id, model, mac,
-owner — with **no alias**. `kasa_utils.make_discovery_map()` builds its
-{alias: ip} table from exactly that reply, so every plug collapses into a single
-`None` key and a lookup for "Telescope mount" finds nothing. Worse, they also
-refuse TCP 9999 (the old unauthenticated port) and reject the account
-credentials locally, so there is no LAN route to their state at all.
+A FALLBACK, not the primary route. Read `kasa_utils.make_discovery_map()` first;
+this exists for when that cannot answer.
 
-The cloud has all of it. The same account returns 29 devices with real aliases
-and relay states, including `Telescope mount`, which is the exact string the roof
-gate looks for. This is the route the phone app uses, and it works from this
-machine today.
+The failure it was written for, on 2026-08-14: every HS103/HS300 answered
+discovery with KLAP metadata only — device_id, model, mac, owner — carrying **no
+alias**. `make_discovery_map()` builds its {alias: ip} table from exactly that
+reply, so every plug collapsed into a single `None` key and a lookup for
+"Telescope mount" found nothing, which the roof gate then reported as "the mount
+is powered on".
+
+**The cause was a setting, not the hardware.** TP-Link's *"allow third-party apps
+to control"* toggle had been turned off by a firmware update, which disables the
+legacy unauthenticated protocol on port 9999 — the one whose reply carries the
+alias. Turning it back on in the Kasa app restored all of it: 19-20 aliases
+resolve, `Telescope mount` and `Roof motor` every run, and `kasa_check` answers
+in 0.0s. No credentials and no DHCP reservations are needed, which is the whole
+point of addressing these devices by name.
+
+Do not conclude from an unreachable plug that the LAN route is gone. Check that
+toggle first, and check port 9999 directly (`{"system":{"get_sysinfo":{}}}` under
+the XOR cipher) before reaching for anything else — during the 2026-08-14
+debugging that port appeared to refuse connections while the devices were busy
+with failed KLAP auth attempts, which is not the same as it being closed.
+
+The cloud still earns its place for the case the toggle cannot fix: the account
+returns every device with real aliases and relay states, so a plug that has lost
+local access can still be read.
 
 This matters because a failed *read* was being reported as a measured *state*:
 the roof gate said "the telescope mount is powered on" when it had actually

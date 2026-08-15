@@ -354,22 +354,33 @@ def _mount_power_blocked_reason(dev_map: dict | None = None) -> str | None:
     path. Either way this fails safe: an unreadable mount refuses just as a
     powered one does.
 
-    Read over the CLOUD first, because the LAN cannot answer this at all. The
-    mount is on an HS103, which speaks KLAP; a KLAP discovery reply carries no
-    alias, so ``make_discovery_map()`` never builds a "Telescope mount" key and
-    ``kasa_check`` returns falsy for a key it never found. That falsy was
-    previously reported as "the telescope mount is powered on" — a *failed read*
-    presented as a *measured state*, which on 2026-08-14 sent a night's
-    debugging at the mount when the fault was in the lookup.
+    The LAN answers this in 0.0s and needs no credentials, so it goes FIRST. The
+    cloud is only consulted when the local lookup cannot resolve the plug: an
+    internet round trip has no business in the path of a decision about whether
+    the roof may move.
 
-    So the two outcomes are now reported differently. "Powered on" means the
-    relay was actually read as on. Anything else says it could not be confirmed,
-    and names which route failed. Both still refuse.
-
-    The LAN check is kept as a fallback rather than deleted: it is the only route
-    that works if this outlet is ever moved to one of the HS200-class devices,
-    which still answer unauthenticated on the old protocol.
+    A missing key is NOT "powered on". On 2026-08-14 every plug vanished from
+    ``make_discovery_map()`` — TP-Link's "allow third-party apps to control"
+    toggle had been turned off by a firmware update, disabling the legacy
+    protocol whose discovery reply is the only one carrying an alias — and
+    ``kasa_check`` returned falsy for a key it never found. That falsy was
+    reported as "the telescope mount is powered on", sending a night's debugging
+    at the mount when the fault was in the lookup. So the two outcomes are
+    reported differently now: "powered on" means the relay was actually read as
+    on; anything else says it could not be confirmed. Both still refuse.
     """
+    try:
+        if dev_map is None:
+            dev_map = asyncio.run(ku.make_discovery_map())
+        if "Telescope mount" in dev_map:
+            mount_off = asyncio.run(
+                ku.kasa_check(dev_map, {"Telescope mount": "isoff"}))
+            return None if mount_off else "the telescope mount is powered on"
+    except Exception as exc:
+        _logger.warning("roof gate: LAN mount check failed: %s", exc)
+
+    # Local lookup could not resolve the plug. Fall back to the cloud rather than
+    # refusing outright, but say so if that fails too.
     try:
         state = kasa_cloud.is_on("Telescope mount")
     except Exception as exc:                     # never let a read crash the gate
@@ -378,19 +389,11 @@ def _mount_power_blocked_reason(dev_map: dict | None = None) -> str | None:
     if state is True:
         return "the telescope mount is powered on"
     if state is False:
-        return None
-
-    try:
-        if dev_map is None:
-            dev_map = asyncio.run(ku.make_discovery_map())
-        mount_off = asyncio.run(ku.kasa_check(dev_map, {"Telescope mount": "isoff"}))
-    except Exception as exc:
-        _logger.warning("roof gate: mount power check failed: %s", exc)
-        return f"could not confirm the telescope mount is powered off ({exc})"
-    if mount_off:
+        _logger.warning("roof gate: mount read fell back to the cloud — check the "
+                        "'allow third-party apps to control' setting on the plug")
         return None
     return ("could not confirm the telescope mount is powered off "
-            "(cloud unreadable, and no 'Telescope mount' on the LAN)")
+            "(not on the LAN, and the cloud could not be read)")
 
 
 def _imaging_blocked_reason() -> str | None:
