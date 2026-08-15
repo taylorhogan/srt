@@ -10,33 +10,71 @@ kept**. Most of this document is negative results. That is the point.
 
 ---
 
-## Current state — 2026-08-13
+## Current state — 2026-08-14
 
-**The denoiser does not work, and must not be used for anything.** Not science,
-not display.
+**Usable as a display product. Not a science product. Specifically not for the
+transient search.**
 
-Measured on held-out m92, R 300s, frame
-`2026-06-15_22-56-52_R_773_300.00s_0051.fits`, with the checkpoint trained
-2026-08-12 (epoch 64 of 130):
+Best configuration, and the one to reproduce:
 
-| quantity | raw | denoised | verdict |
-| --- | --- | --- | --- |
-| background RMS | 10.007 | 2.388 | 4.19x lower — the one genuine improvement |
-| flux, brightest bin (n=24) | — | **0.0023** | 99.8% of flux destroyed |
-| flux, mid bin (n=57) | — | **0.0117** | 98.8% destroyed |
-| flux, faint bin (n=138) | — | **0.5468** | 45% destroyed |
+```bash
+python scripts/n2n_train_stacks.py R 300 --seed 0     # ~30 min on the Spark
+# L1 · 60 epochs · split-half stacks · residual="linear" · lr 3e-4
+# -> local/models/n2n_stack_R_300s.pt   (kept as ..._s2.pt)
+```
 
-The gate's failure threshold is 0.97. This is not a marginal miss.
+It is applied **once to a finished stack**, not to every sub.
 
-Visually the full frame looks *better* — smooth background, cluster legible. A
-300 px crop on the brightest star shows it has been erased outright and replaced
-with a mottled patch. There is also a visible checkerboard texture from the
-tiled-inference overlap blend, and in faint regions sharp point-like artefacts
-survive while real PSFs are removed, which is backwards.
+Two measurements, because they answer different questions and a model can pass
+one while failing the other. Both on held-out m92, R 300 s, 56 subs.
+
+**Existing sources** — aperture flux, denoised stack ÷ raw stack:
+
+| bin | n | median SNR | ratio | gate 0.97 |
+| --- | --- | --- | --- | --- |
+| brightest | 13 | 81,672 | 0.9817 | pass |
+| mid | 87 | 12,858 | 0.9534 | fail, marginally |
+| faint | 236 | 1,933 | 0.9365 | fail |
+| very faint | 4,947 | 22 | 0.7480 | fail |
+
+**A newly appearing source** — injected PSFs, incremental response:
+
+| aperture SNR | recovered |
+| --- | --- |
+| 2.9 | 0.66 |
+| 5.7 | **1.07** |
+| 14.3 | **1.13** |
+| 22.8 | 1.08 |
+| 114.2 | 0.94 |
+
+Background RMS 1.52 -> 0.23, a 6.5x reduction.
+
+**Read those together.** Flux of *existing* sources is preserved to 2-6% down to
+SNR ~2000 and then degrades to -25% at the detection limit. The response to an
+*added* source is non-monotonic and crosses unity — it under-recovers the
+faintest by a third and **over**-recovers mid-SNR sources by 8-13%. A transient
+search measures exactly that second quantity, which is why the denoiser is barred
+from it: a source that appears would be measured 13% too bright at some
+brightnesses and 34% too faint at others, with no single correction.
+
+The 80/20 framing that matters: **80% of real detected sources sit below SNR
+114**, in the range the injection curve covers. The reassuring bright-bin numbers
+describe the other 20%.
+
+### What is fixed, and what is not
+
+Fixed, and each of these was a real bug that produced entirely plausible output:
+destructive registration (the root cause), `normalise()` overflowing its stated
+range, the correction being applied in asinh instead of linear space, an unseeded
+RNG, and duplicated DataLoader worker streams. Bright-star flux went from
+**0.0023 to 0.98** over 2026-08-12/13.
+
+Not fixed: the faint end, and the over-recovery at mid SNR. Neither has an
+identified mechanism.
 
 **Do not judge this denoiser by a downsampled full-frame view.** That view has
-looked plausible at every single stage of this investigation, including when the
-network was emitting a constant.
+looked plausible at every stage of this investigation, including when the network
+was emitting a constant uncorrelated with its input.
 
 ---
 
@@ -610,32 +648,48 @@ proposed for them beforehand.
 
 ## Open questions
 
-- **Bright-end inversion — largely solved** by the linear-space correction
-  (step 11), `UNet(residual="linear")`, now the default. Brightest 0.917, mid
-  0.82-0.85, faint 0.987, reproducible across seeds. Not yet at the gate's 0.97.
-- **Next:** a full 204-frame run with `residual="linear"`, then the real
-  `n2n_evaluate.py` gate. The subset result is a ranking of approaches, not a
-  substitute for it.
-- **Mid bin** is now the worst bin (0.82-0.85) where it used to be the best-hidden
-  failure. Unclear yet whether more data fixes it or whether it needs its own
-  explanation.
-- **Epoch count.** `best` has landed at epoch 45, then 64, of 130 on successive
-  runs, and a 30-epoch subset run beat the full 130-epoch run on the same
-  held-out target (60.3% vs 53.5%). The back half looks actively harmful. Not a
-  clean comparison — different training sets.
-- **Tiling artefact.** Visible checkerboard from the overlap blend, not yet
-  investigated.
-- **Source-bias**, unconfirmed across seeds.
-- **The gradient tail trigger** from step 1, still unidentified.
+Resolved and closed: the bright-end inversion (step 11, linear-space
+correction), the epoch count (step 13, now 60), reproducibility (step 15), and
+whether N2N suits this data at all (step 3, yes).
 
-## Design alternative: denoise stacks, not subs
+Still open, roughly in order of what would be worth knowing:
 
-Raised 2026-08-13 and not yet tried. The current chain denoises every sub and
-then stacks. The alternative is to leave subs alone and denoise the **stacked**
-image, training on **split-half stacks** — split a target's subs in two, stack
-each half independently, and use that pair as the N2N training pair.
+- **The faint end, 0.75 at the detection limit.** Three attempts to move it have
+  failed — L2 (13), quarter splits (16), pooled LRGB (17). No identified
+  mechanism. The L1-median story that stood for months was tested and is wrong.
+- **Over-recovery at mid SNR.** The current model *adds* 8-13% flux to an
+  injected source at SNR 5-23, non-monotonically, crossing unity. Unexplained,
+  and it is the property that most directly disqualifies the denoiser from the
+  transient search. Verified not to be an aperture or pedestal artefact
+  (step 16).
+- **Why heavier smoothing tracks worse recovery.** L2, quarters and pooling all
+  smoothed harder and all recovered less flux (rms 0.14-0.19 against the
+  baseline's 0.23-0.24). Consistent across three independent interventions, but
+  correlation only — never tested as a cause, and smoothing strength has never
+  been varied directly as the single variable. This is the most promising
+  untested lead.
+- **What actually limits this.** Data thinness was the standing hypothesis and
+  it now looks wrong: two separate 5x increases in training pairs (quarters,
+  pooling) both made it worse. Whatever the constraint is, it is not simply pair
+  count.
+- **Tiling artefact.** Checkerboard from the overlap blend, seen on the sub-based
+  model, never checked on the stack model.
+- **Source-bias** (step 7), unconfirmed across seeds and inside the noise floor.
+- **The gradient-tail trigger** from step 1, still unidentified.
+- **Validation leakage in the pooled path.** The holdout is group-level
+  (`dso|filter`), so it can hold out `abell2151|L` while training on
+  `abell2151|B`. It does not affect any reported m92 number — those used
+  `--exclude` — but it makes pooled val optimistic.
 
-Why it is better posed than what is built:
+## Design note: why stacks and not subs
+
+Raised 2026-08-13, **implemented and adopted the same day** (step 12,
+`nn/stacks.py`). This section records the reasoning; the measurements are in the
+chronology. The original chain denoised every sub and then stacked; the current
+one leaves subs alone and denoises the **stacked** image, training on split-half
+stacks.
+
+Why it is better posed than what came before:
 
 - **The pair is legitimate.** Two half-stacks are two noisy views of the same
   scene, which is exactly what N2N requires, and they carry the noise character
@@ -656,25 +710,50 @@ SNR from fewer of them. That claim only means anything if the denoiser runs
 before stacking. It is also the claim least likely to survive the gate, for the
 shared-bias reason above.
 
-What it costs: far less training data. One pair per target per filter instead of
-thousands of patch pairs across 204 frames, though full-resolution stacks yield
-many patches each and recover some of that.
+What it appeared to cost: far less training data — one pair per target per
+filter instead of thousands of patch pairs across 204 frames. That worry has
+since been tested twice and did not hold up. Quartering the stacks (16) and
+pooling four filters (17) each multiplied training pairs ~5x and each measured
+*worse*, so pair count is not what limits this. Full-resolution stacks also
+yield many patches per pair, which recovers more than the pair count suggests.
 
-Note the current model must **not** simply be pointed at a stack. It is trained
-on single-frame noise (sky sigma ~10 ADU); a 56-frame stack is ~1.3 ADU and,
-after registration and interpolation, spatially correlated rather than per-pixel
-independent. `normalise()` divides by the frame's own sky sigma so the
-amplitude would be handled, but the correlation structure would not, and that is
-what the learned prior is tuned to.
+**The sub-based and stack-based models are not interchangeable**, which is why
+they have separate checkpoint names (`n2n_R_300s.pt` vs `n2n_stack_R_300s.pt`).
+A sub-trained model is fitted to single-frame noise, sky sigma ~10 ADU; a
+56-frame stack is ~1.5 ADU and, after registration and interpolation, spatially
+correlated rather than per-pixel independent. `normalise()` would rescale the
+amplitude but not the correlation structure, and the correlation structure is
+what the learned prior is tuned to. Pointing one at the other's data is exactly
+the class of silent mismatch this pipeline has hit twice.
 
 ## Cost, measured on the Spark
+
+Current path — **stacks**, R 300 s, 204 frames:
+
+| step | wall |
+| --- | --- |
+| scan + register + build half-stacks | ~10 min |
+| train, 60 epochs | ~31 min (31 s/epoch) |
+| denoise one full stack | ~35 s |
+| injection test (`n2n_injection_test.py`) | ~8 min |
+| model comparison (`n2n_compare_models.py`) | ~5 min |
+
+Pooled L+R+G+B is ~50 min to build (807 frames) and streams group-by-group;
+loading it whole would need ~200 GB against 121 GB of RAM.
+
+Superseded — the **sub-based** path, kept for reference:
 
 | step | wall |
 | --- | --- |
 | scan + registration + dataset build | ~20-25 min |
 | train, 130 epochs | ~75 min (35 s/epoch) |
 | denoise 204 frames | ~50 min (14.6 s/frame) |
-| evaluate, 56-frame target | ~5-6 h (FWHM-bound) |
+| `n2n_evaluate.py`, 56-frame target | ~5-6 h (FWHM-bound) |
 
-Peak RSS during training ~99 GB of 121 GB. Do not run a stack or transit search
-alongside it.
+That 5-6 h gate is FWHM-bound and measures two things, only one of which still
+applies: its convergence curve tests whether denoising *bought frames*, which is
+meaningless once the denoiser runs after stacking. The photometry half is the
+live gate and is what `n2n_compare_models.py` measures in ~5 min.
+
+Peak RSS ~99 GB of 121 GB on the sub-based path, ~64 GB while building stacks.
+Do not run a stack or transit search alongside either.
