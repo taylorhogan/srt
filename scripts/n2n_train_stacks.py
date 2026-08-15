@@ -94,19 +94,16 @@ def main() -> int:
     patch_size = int(nn_cfg.get("patch_size", 256))
     pairs_per_ep = int(nn_cfg.get("pairs_per_epoch", 2000))
 
-    print(f"Scanning {subs_dir} for '{filter_name}' {exptime_s}s LIGHT frames…")
+    print(f"Building split stacks from {subs_dir} "
+          f"('{filter_name}' {exptime_s}s, max {max_splits} per DSO)…")
     t0 = time.time()
-    frames, dso_names = denoiser.collect_all_frames(subs_dir, filter_name, exptime_s)
-    print(f"Found {len(frames)} frames in {time.time() - t0:.1f}s")
-    if not frames:
-        return 1
-
-    print(f"Building split stacks (max {max_splits} per DSO)…")
-    st, groups = stacks.build_split_stacks(frames, dso_names,
-                                           max_splits=max_splits,
-                                           seed=0 if seed is None else seed,
-                                           progress_cb=print)
-    del frames                       # ~50 GB; the stacks are all that is needed
+    st, groups = stacks.build_split_stacks(
+        subs_dir, [filter_name], exptime_s,
+        max_splits=max_splits,
+        seed=0 if seed is None else seed,
+        progress_cb=print,
+    )
+    print(f"built in {time.time() - t0:.0f}s")
     n_dso = len(set(groups))
     print(f"{len(st)} stacks across {n_dso} DSOs")
     if n_dso < 3:

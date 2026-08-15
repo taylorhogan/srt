@@ -99,20 +99,12 @@ def main() -> int:
 
     print(f"Pooling filters {filters} at {exptime_s}s from {subs_dir}")
     t0 = time.time()
-    # Streaming: L+R+G+B at 300 s is ~800 frames, ~200 GB if held at once
-    # against 121 GB of RAM, so groups are loaded and reduced one at a time.
-    st, groups = stacks.build_split_stacks_streaming(
+    st, groups = stacks.build_split_stacks(
         subs_dir, filters, exptime_s,
+        exclude_dsos=exclude,
         seed=0 if seed is None else seed, progress_cb=print,
     )
     print(f"built in {time.time() - t0:.0f}s")
-
-    if exclude:
-        keep = [i for i, g in enumerate(groups) if g.split("|")[0] not in exclude]
-        dropped = sorted({groups[i] for i in range(len(groups)) if i not in set(keep)})
-        st = [st[i] for i in keep]
-        groups = [groups[i] for i in keep]
-        print(f"excluded {sorted(exclude)} entirely — dropped {dropped}")
 
     n_groups = len(set(groups))
     if n_groups < 3:

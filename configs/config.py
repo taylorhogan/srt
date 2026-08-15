@@ -13,6 +13,13 @@ from configs.config_public import PublicConfig
 # on the current host. Maps the machine-entry key -> (section, key) it replaces.
 _MACHINE_OVERRIDES = {
     "image_dir": ("nina", "image_dir"),
+    # Calibration lives at a C: path on the observatory PC and a mirrored Linux
+    # path on the Spark. Without these three, calibration_paths_from_config
+    # resolves to nothing off-Windows and every stack taken there is silently
+    # uncalibrated — no error, just hot pixels and dark structure left in.
+    "bias_dir": ("calibration", "bias_dir"),
+    "dark_dir": ("calibration", "dark_dir"),
+    "flat_root": ("calibration", "flat_root"),
 }
 
 

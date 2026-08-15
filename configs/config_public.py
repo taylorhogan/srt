@@ -7,7 +7,7 @@ class PublicConfig():
 
         },
         "version": {
-            "date": "2026.8.15.6"
+            "date": "2026.8.15.7"
         },
 
         "logger": {
@@ -563,6 +563,15 @@ class PublicConfig():
             "spark-3129": {
                 "subs_dir": "/home/taylor/Desktop/Targets",
                 "image_dir": "/home/taylor/Desktop/Targets",
+                # The rsync from the observatory mirrors cdk17/<date>/ intact,
+                # so the same BIAS/DARK/FLAT sets are here under a Linux path.
+                # Without this the shared "calibration" block names C: paths,
+                # calibration_paths_from_config finds nothing, and every stack
+                # taken on the Spark is silently uncalibrated — which is what
+                # happened to all the N2N stacks up to 2026-08-15.
+                "bias_dir": "/home/taylor/Desktop/Targets/cdk17/2026-07-25/BIAS",
+                "dark_dir": "/home/taylor/Desktop/Targets/cdk17/2026-07-25/DARK",
+                "flat_root": "/home/taylor/Desktop/Targets/cdk17",
             },
         },
 
