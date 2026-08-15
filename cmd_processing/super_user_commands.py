@@ -19,6 +19,7 @@ if __package__ is None or __package__ == "":
 
 from configs import config
 from control import instructions
+from hardware_control import kasa_cloud
 from hardware_control import kasa_utils as ku
 from hardware_control import sonos_utils
 from hardware_control import utl_shelly
@@ -350,10 +351,35 @@ def _mount_power_blocked_reason(dev_map: dict | None = None) -> str | None:
     or None when the mount is confirmed off.
 
     A powered mount may be tracking, putting the scope in the roof's travel
-    path. Probes the Kasa ``{"Telescope mount": "isoff"}`` state, running its
-    own discovery when *dev_map* is None; if the state can't be confirmed we
-    fail safe (refuse).
+    path. Either way this fails safe: an unreadable mount refuses just as a
+    powered one does.
+
+    Read over the CLOUD first, because the LAN cannot answer this at all. The
+    mount is on an HS103, which speaks KLAP; a KLAP discovery reply carries no
+    alias, so ``make_discovery_map()`` never builds a "Telescope mount" key and
+    ``kasa_check`` returns falsy for a key it never found. That falsy was
+    previously reported as "the telescope mount is powered on" — a *failed read*
+    presented as a *measured state*, which on 2026-08-14 sent a night's
+    debugging at the mount when the fault was in the lookup.
+
+    So the two outcomes are now reported differently. "Powered on" means the
+    relay was actually read as on. Anything else says it could not be confirmed,
+    and names which route failed. Both still refuse.
+
+    The LAN check is kept as a fallback rather than deleted: it is the only route
+    that works if this outlet is ever moved to one of the HS200-class devices,
+    which still answer unauthenticated on the old protocol.
     """
+    try:
+        state = kasa_cloud.is_on("Telescope mount")
+    except Exception as exc:                     # never let a read crash the gate
+        _logger.warning("roof gate: cloud mount read failed: %s", exc)
+        state = None
+    if state is True:
+        return "the telescope mount is powered on"
+    if state is False:
+        return None
+
     try:
         if dev_map is None:
             dev_map = asyncio.run(ku.make_discovery_map())
@@ -361,9 +387,10 @@ def _mount_power_blocked_reason(dev_map: dict | None = None) -> str | None:
     except Exception as exc:
         _logger.warning("roof gate: mount power check failed: %s", exc)
         return f"could not confirm the telescope mount is powered off ({exc})"
-    if not mount_off:
-        return "the telescope mount is powered on"
-    return None
+    if mount_off:
+        return None
+    return ("could not confirm the telescope mount is powered off "
+            "(cloud unreadable, and no 'Telescope mount' on the LAN)")
 
 
 def _imaging_blocked_reason() -> str | None:
