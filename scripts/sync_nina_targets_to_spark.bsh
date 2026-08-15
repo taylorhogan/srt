@@ -14,7 +14,13 @@
 SOURCE="iriso@100.95.7.19:/cygdrive/c/Users/iriso/Documents/N.I.N.A/Targets"
 DESTINATION="/home/taylor/Desktop"
 
-rsync -avz --ignore-existing \
+# --update (not --ignore-existing): Iris/<dso>/ processed outputs (stack_*,
+# process_*, channels_*) are overwritten in place under the same filename on
+# every reprocess. --ignore-existing skips them just because a stale local
+# copy already exists by that name, silently dropping reprocessed results.
+# --update instead compares mtimes and re-pulls when the remote is newer,
+# while still skipping unchanged LIGHT/FLAT capture frames (unique names).
+rsync -avz --update \
     --rsync-path="C:/Users/iriso/Documents/cwrsync_6.4.7_x64_free/bin/rsync" \
     "$SOURCE" \
     "$DESTINATION"

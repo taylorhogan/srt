@@ -17,14 +17,29 @@
 #
 # Cron (run at 6am daily) — add via `crontab -e`:
 #   0 6 * * * /Users/taylorhogan/Documents/srt/scripts/sync_sentry_library.bsh
+#
+# Logs to /tmp/sentry_sync.log (self-redirected below) instead of relying on
+# cron's mail — cron's PATH is /usr/bin:/bin only, so it runs Apple's stock
+# openrsync (reports as "2.6.9 compatible") rather than the Homebrew rsync
+# used interactively. That stock rsync errors out on `SRC1 SRC2 DEST` with
+# two remote sources in one invocation ("syntax or usage error", code 1) —
+# hence the two separate calls below, one source per invocation.
 
 SRT_ROOT="/cygdrive/c/Users/iriso/Documents/development/srt/sentry"
 DESTINATION="/Users/taylorhogan/Desktop/iris_sentry"
+LOG="/tmp/sentry_sync.log"
+
+exec >>"$LOG" 2>&1
+echo "=== $(/bin/date) ==="
 
 mkdir -p "$DESTINATION"
 
-rsync -avz --ignore-existing \
-    --rsync-path="C:/Users/iriso/Documents/cwrsync_6.4.7_x64_free/bin/rsync" \
-    "iriso@100.95.7.19:$SRT_ROOT/roof_audio" \
-    "iriso@100.95.7.19:$SRT_ROOT/roof_signatures" \
-    "$DESTINATION/"
+RSYNC="/opt/homebrew/bin/rsync"
+[ -x "$RSYNC" ] || RSYNC="rsync"
+
+for dir in roof_audio roof_signatures; do
+    "$RSYNC" -avz --ignore-existing \
+        --rsync-path="C:/Users/iriso/Documents/cwrsync_6.4.7_x64_free/bin/rsync" \
+        "iriso@100.95.7.19:$SRT_ROOT/$dir" \
+        "$DESTINATION/"
+done
