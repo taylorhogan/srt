@@ -417,6 +417,62 @@ def _imaging_blocked_reason() -> str | None:
     return None
 
 
+# Kasa devices this run will command, split by what a missing one costs.
+#
+# REQUIRED are the ones whose silent absence changes what the hardware does:
+# the mount cannot be powered for the run or cut at the end of it, the roof
+# motor cannot be energised, and the inside light cannot be turned off before
+# flats. ADVISORY are lights -- a missing one is a nuisance, not a hazard, and
+# some (Deck lights, Iris landscape lights) are routinely unplugged or offline,
+# so requiring them would block every run.
+KASA_REQUIRED = ("Telescope mount", "Roof motor", "Iris inside light")
+KASA_ADVISORY = ("Driveway lights", "Iris door light", "Grill Lights",
+                 "Main landscape lights", "Iris landscape lights", "Deck lights")
+
+
+def _kasa_preflight_reason(dev_map: dict | None = None) -> str | None:
+    """Why the Kasa devices are not ready for a run, or None if they are.
+
+    Every plug command in this system goes through ``kasa_do``, which resolves a
+    NAME to an IP through ``make_discovery_map()``. That lookup catches only
+    ``KeyError`` and prints; callers then log success on the next line
+    regardless. So a device missing from the map is not an error anyone sees --
+    it is a command that silently does nothing.
+
+    On 2026-08-14 every plug went missing at once (TP-Link's "allow third-party
+    apps to control" toggle turned off by a firmware update, which disables the
+    legacy protocol whose discovery reply carries the alias). The run proceeded,
+    the NINA prelude "powered the mount on" in the log without doing so, and the
+    operator had to switch it on by hand. The end-of-night sequence would have
+    failed the same way, leaving the roof open.
+
+    Checking here converts that into a refusal before the roof moves, naming the
+    devices, which is the difference between a five-second fix and a lost night.
+    """
+    try:
+        if dev_map is None:
+            dev_map = asyncio.run(ku.make_discovery_map())
+    except Exception as exc:
+        _logger.warning("kasa preflight: discovery failed: %s", exc)
+        return "Kasa discovery failed (%s)" % exc
+
+    missing = [n for n in KASA_REQUIRED if n not in dev_map]
+    absent = [n for n in KASA_ADVISORY if n not in dev_map]
+    if absent:
+        # Said once, not raised: these do not endanger anything.
+        social_server.post_social_message(
+            "Kasa: %d light(s) not answering discovery (%s) — imaging continues"
+            % (len(absent), ", ".join(absent)))
+    if not missing:
+        _logger.info("kasa preflight: %d devices resolved, all required present",
+                     len([k for k in dev_map if k]))
+        return None
+    return ("Kasa devices missing from discovery: %s. Every command to them "
+            "would silently do nothing. Check 'allow third-party apps to "
+            "control' is ON for these plugs in the Kasa app."
+            % ", ".join(missing))
+
+
 def _roof_move_blocked_reason(imaging_run: bool = False, dev_map: dict | None = None) -> str | None:
     """Return why the roof must not MOVE right now, or None if movement may proceed.
 
@@ -2901,6 +2957,22 @@ def doit_cmd(words: list[str], account: str) -> None:
     # ------------------------------------------------------------------ #
     if not is_safe():
         pushover.push_message("not safe 2, stopping")
+        return
+
+    # ------------------------------------------------------------------ #
+    # Safety gate 3: every plug this run commands must resolve by NAME.    #
+    # A device missing from discovery is not an error any caller sees --   #
+    # kasa_do swallows the KeyError and the caller logs success anyway --  #
+    # so without this the run proceeds and simply fails to power the       #
+    # mount, energise the roof motor, or shut itself down at dawn.         #
+    # Deliberately BEFORE open_roof: refusing costs a night, discovering   #
+    # it at the end costs a night AND leaves the roof open.                #
+    # ------------------------------------------------------------------ #
+    kasa_problem = _kasa_preflight_reason()
+    if kasa_problem:
+        _logger.warning("imaging refused: %s", kasa_problem)
+        social_server.post_social_message("Not imaging — " + kasa_problem)
+        pushover.push_message("Not imaging: " + kasa_problem)
         return
 
     # Fully gated open: open_roof re-checks safe!, requires the mount off
