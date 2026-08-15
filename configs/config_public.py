@@ -7,7 +7,7 @@ class PublicConfig():
 
         },
         "version": {
-            "date": "2026.8.14.8"
+            "date": "2026.8.15.1"
         },
 
         "logger": {
@@ -197,8 +197,23 @@ class PublicConfig():
             # "allsky camera" --sweep`, which prints the negative-image control
             # beside each threshold so the choice is measured rather than
             # guessed -- the same way the Kasa's 12 ADU was arrived at.
-            "star_threshold_adu": 300.0,
-            "foliage_resid_adu": 200.0,
+            "star_threshold_adu": 5594.0,
+            "foliage_resid_adu": 1400.0,
+            # PROVISIONAL. Completeness against radius, measured 2026-08-15, was
+            # flat at 22-32% out to 600 px and softened past it, with no cliff --
+            # unlike the Kasa, which read 23-40% to 800 px and then exactly zero.
+            # 600 is where this one starts to degrade, not where it stops
+            # delivering.
+            #
+            # Do not trust the number: it was measured through an 8s/gain-100
+            # frame, i.e. the overexposed setting sweep_gains below was still
+            # choosing, so the sky sat at 24% of full scale and buried the stars.
+            # Cloud was blamed at the time and that was WRONG -- the Kasa was
+            # reading limiting magnitude 5.28 on a black sky the same minute. The
+            # centre bin (0-100 px) came in at 32%, which radius cannot explain
+            # and overexposure can. Re-measure at gain 0, where the centre should
+            # approach 100% and a real edge should appear.
+            "measured_radius_px": 600.0,
             # Wider at the low end than the Kasa's 2.0. This sensor is small and
             # the lens is short, so a well-focused star lands in very few
             # pixels; the Kasa's floor would reject the sharpest stars in the
@@ -218,7 +233,14 @@ class PublicConfig():
             # capped at 30s because that is where trailing starts to matter --
             # at roughly 7 arcmin/px a star crosses a pixel in about 28s.
             "sweep_exposures_s": (1.0, 2.0, 4.0, 8.0, 15.0, 30.0),
-            "sweep_gains": (50, 100),
+            # 100 is this camera's MAXIMUM, and the old (50, 100) could not find
+            # anything better because it never looked lower. Measured 2026-08-15
+            # with a per-frame 5-sigma cut: gain 0/30s gave 2077 stars over a 976
+            # ADU background against gain 100/30s giving 1308 over 19587 -- 20x the
+            # sky for 37% fewer stars, worse purity (0.930 vs 0.959) and fatter
+            # stars. Max gain also shrinks full well, which is why the published
+            # frames looked washed out.
+            "sweep_gains": (0, 25, 50),
             # Percent of the frame at full scale a rung may carry. Clipping does
             # not just lose the bright stars, it flattens them into the
             # background so they stop being detections at all.
