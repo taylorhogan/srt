@@ -385,7 +385,14 @@ def main() -> None:
         name, ra, dec, good_hours = tgt
         tc = SkyCoord(ra=ra * u.deg, dec=dec * u.deg).transform_to(frame)
         talt, taz = float(tc.alt.deg), float(tc.az.deg)
-        tree_alt = float(np.interp(taz % 360.0, np.array(haz) % 360.0, np.array(hal)))
+        # haz is ALREADY normalised and sorted, with a wrap point appended as
+        # haz[0] + 360. Do NOT take % 360 of it again: that folds the wrap point
+        # back to 0, leaving [.. 343, 355, 0], which is not increasing. np.interp
+        # does not check, and silently returned the profile's MAXIMUM (82.8 deg)
+        # for every azimuth -- so every target below 82.8 deg read "behind the
+        # trees" while the chart, which draws from the unmodified array, showed
+        # it sitting in clear sky.
+        tree_alt = float(np.interp(taz % 360.0, np.array(haz), np.array(hal)))
         if talt <= 0:
             state = "below the horizon"
         elif talt < tree_alt:
