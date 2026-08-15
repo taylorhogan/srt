@@ -7,7 +7,7 @@ class PublicConfig():
 
         },
         "version": {
-            "date": "2026.8.15.8"
+            "date": "2026.8.15.9"
         },
 
         "logger": {
@@ -197,8 +197,23 @@ class PublicConfig():
             # "allsky camera" --sweep`, which prints the negative-image control
             # beside each threshold so the choice is measured rather than
             # guessed -- the same way the Kasa's 12 ADU was arrived at.
+            # This camera's GAIN is a free parameter the auto-exposure sweep
+            # searches, so its cut cannot be a fixed number of ADU: gain scales
+            # star, sky and read noise together, a fixed cut means something
+            # different at every gain, and "most detections" then climbs the
+            # gain axis whether or not anything was seen better. 5 sigma is
+            # where the negative-image control put it when measured at gain 100
+            # (5594 ADU against 1119 ADU of noise, 1896 stars at 99.6% purity),
+            # so this is the same decision expressed in units that travel.
+            "star_threshold_sigma": 5.0,
+            # Superseded by the sigma cut above and kept only as the record of
+            # that measurement. Ignored while star_threshold_sigma is set.
             "star_threshold_adu": 5594.0,
-            "foliage_resid_adu": 1400.0,
+            # Zero on purpose. foliage_mask floors its cut at 3x the skyglow
+            # fit's own sigma, so leaving this at 0 lets that floor govern and
+            # the mask scales with gain like everything else. The 1400 that was
+            # here is ~22 sigma at gain 0 and would have masked nothing at all.
+            "foliage_resid_adu": 0.0,
             # PROVISIONAL. Completeness against radius, measured 2026-08-15, was
             # flat at 22-32% out to 600 px and softened past it, with no cliff --
             # unlike the Kasa, which read 23-40% to 800 px and then exactly zero.

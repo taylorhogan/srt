@@ -174,8 +174,11 @@ def count_stars(image, threshold=None, fwhm_range=None, max_elong=None,
     """
     from configs import config
     cam = config.data().get(profile, {})
-    threshold = float(threshold if threshold is not None
-                      else cam.get("star_threshold_adu", 12.0))
+    # Resolved AFTER the noise is measured when the profile asks for a sigma
+    # cut -- see below. None here means "decide once noise is known".
+    thr_sigma = None if threshold is not None else cam.get("star_threshold_sigma")
+    threshold = (float(threshold) if threshold is not None
+                 else (None if thr_sigma else float(cam.get("star_threshold_adu", 12.0))))
     fwhm_range = tuple(fwhm_range if fwhm_range is not None
                        else cam.get("star_fwhm_px", (2.0, 9.0)))
     max_elong = float(max_elong if max_elong is not None
@@ -191,6 +194,35 @@ def count_stars(image, threshold=None, fwhm_range=None, max_elong=None,
     open_sky = ~mask
     noise = float(1.4826 * np.median(np.abs(resid[open_sky]))) or 1.0
 
+    # A threshold fixed in ADU cannot compare frames taken at different GAIN.
+    # Gain amplifies star, sky and read noise together, so a fixed cut is a
+    # strict one at low gain and a permissive one at high gain, and any
+    # objective that counts detections will climb the gain axis regardless of
+    # whether anything was actually seen better. That is exactly how the all-sky
+    # auto-exposure sweep came to choose the camera's maximum gain -- the worst
+    # of six settings measured -- on 2026-08-15, and why the same detector
+    # reported 2 stars at gain 0 where a fair cut finds 2077.
+    #
+    # OPT-IN, per profile, and deliberately not the default. The Kasa's 12 ADU
+    # was set by the negative-image control precisely because a plain 5-sigma
+    # cut returned 347 "stars" there, mostly noise (see the module docstring).
+    # That camera has no manual exposure, so its gain never moves and it has
+    # nothing to gain from this; the ASI does.
+    if threshold is None:
+        # A degenerate frame -- blank, or a failed capture -- has no measurable
+        # noise, and `noise` above then falls back to 1.0. Scaling that gives a
+        # cut of a few ADU, which turns the detector loose on nothing: measured
+        # on two such frames, 14 "stars" against 16 false positives. A fixed ADU
+        # threshold was harmless there; this one is not, so fall back to it.
+        if noise <= 1.0:
+            threshold = float(cam.get("star_threshold_adu", 12.0))
+            degenerate = True
+        else:
+            threshold = float(thr_sigma) * noise
+            degenerate = False
+    else:
+        degenerate = False
+
     stars = _detect(resid, mask, threshold, fwhm_range, max_elong, min_px)
     # Same detector on the negated residual: every hit there is a false
     # positive, so this is a live purity measurement rather than an assumption.
@@ -204,7 +236,11 @@ def count_stars(image, threshold=None, fwhm_range=None, max_elong=None,
     # unqualified would have reported the rainiest frame of the night as the
     # clearest sky of the week, so a low-purity frame is marked untrustworthy
     # and its count must not be read as a sky-condition measurement.
-    purity = (len(stars) - false_pos) / max(len(stars), 1)
+    # Clamped at zero. When the negative control finds MORE hits than the frame
+    # itself -- which happens on a degenerate frame, measured at 14 real against
+    # 16 false -- the raw ratio goes negative, and a negative purity is a
+    # nonsense figure to log and publish. Zero says the same thing honestly.
+    purity = max(0.0, (len(stars) - false_pos) / max(len(stars), 1))
     out = {
         "stars": len(stars),
         "false_positives": false_pos,
@@ -219,6 +255,13 @@ def count_stars(image, threshold=None, fwhm_range=None, max_elong=None,
                           if stars else None,
         "brightest_peak_adu": round(max((s["peak"] for s in stars), default=0.0), 1),
     }
+    if degenerate:
+        # Said out loud rather than left to be inferred from a low purity: the
+        # frame carried no measurable noise, so the sigma cut could not be
+        # formed and nothing here is a reading of the sky.
+        out["trustworthy"] = False
+        out["note_frame"] = ("no measurable noise in this frame -- capture "
+                             "likely failed; fell back to the fixed ADU cut")
     if annotate:
         _annotate(a, model, mask, stars, out, annotate)
     # Underscore keys are working data, not measurements: callers that publish
