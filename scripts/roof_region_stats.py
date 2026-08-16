@@ -81,7 +81,7 @@ REFERENCE_META = "local/roof_region_reference.json"
 FIDUCIAL_BAND = ((250, 1000), (1750, 2450))
 PATCH_PX = 160
 SEARCH_PX = 260
-N_PATCHES = 6
+N_PATCHES = 10
 
 # One patch is not enough. A single auto-picked patch reported shifts up to
 # 176 px WITHIN one recording, during which the camera never moved, and still
@@ -90,8 +90,20 @@ N_PATCHES = 6
 # only when they agree, because independent false matches do not agree.
 MIN_MATCH_SCORE = 0.50
 MAX_PATCH_SPREAD_PX = 40    # disagreement between patches => unknown
-MIN_PATCHES_AGREE = 4
 MAX_SHIFT_PX = 250          # beyond this the aperture box leaves its subject
+
+# Agreement is a PROPORTION of the patches that matched, plus an absolute
+# floor -- not a fixed count. With 6 patches and a fixed 4 required there was
+# no slack: on the 11:50 frame exactly 4 passed scoring, one of those was a
+# confident false match (+147/-224 px at score 0.774), so only 3 agreed and a
+# frame whose camera had demonstrably NOT moved was refused. Two of the six
+# had failed on score only because the light differed from the reference.
+#
+# More patches for redundancy, and a majority rule so one false match cannot
+# veto a clear consensus. The absolute floor still stops a lucky pair of
+# agreeing patches from certifying anything on their own.
+AGREE_FRACTION = 0.6
+MIN_PATCHES_AGREE = 3       # absolute floor, whatever the proportion says
 
 # Half-second bins louder than this multiple of the run's own median are the
 # roof moving. The floor is rms 3-5 and a move peaks near 1000-1800, so this is
@@ -120,7 +132,7 @@ def make_reference(frame_path, position=None):
     # Pick the most distinctive spot automatically rather than hardcoding a
     # corner: a hand-picked patch on plain planking matches everywhere.
     corners = cv2.goodFeaturesToTrack(band, maxCorners=N_PATCHES * 3,
-                                      qualityLevel=0.01, minDistance=140,
+                                      qualityLevel=0.01, minDistance=110,
                                       blockSize=9)
     if corners is None:
         raise SystemExit("no distinctive feature in the fiducial band")
@@ -184,7 +196,8 @@ def register(img_grey, meta, templates):
     agree = [v for v in votes
              if abs(v[0] - mx) <= MAX_PATCH_SPREAD_PX
              and abs(v[1] - my) <= MAX_PATCH_SPREAD_PX]
-    if len(agree) < MIN_PATCHES_AGREE:
+    needed = max(MIN_PATCHES_AGREE, int(np.ceil(AGREE_FRACTION * len(votes))))
+    if len(agree) < needed:
         return None
     return (int(round(np.median([v[0] for v in agree]))),
             int(round(np.median([v[1] for v in agree]))),

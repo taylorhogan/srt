@@ -219,10 +219,17 @@ _MIN_ROOF_VOTES = 1
 _MIN_PARKED_VOTES = 3
 
 # How far ahead the winning roof state must be before an ambiguous ladder is
-# resolved instead of refused. 0.15 sits mid-plateau: 0.00-0.20 all score
-# identically on the labelled corpus, so nothing here is balanced on an edge.
+# resolved instead of refused.
+#
+# This was 0.15, chosen as mid-plateau on 18 ladders where 0.00-0.20 all scored
+# alike. A 19th ladder — a genuinely open roof at 11:50, held out because it did
+# not exist yet — then landed at a lead of 0.147 and was refused. It was not a
+# wrong answer, but it was the answer the whole change exists to produce, and it
+# showed the plateau's upper edge is between 0.12 and 0.15, not 0.20.
+#
+# 0.10 is mid-plateau on 19: 0.00-0.12 all give 15 correct, 0 unknown, 0 wrong.
 # Set to a large number to restore the old refuse-on-any-conflict behaviour.
-_ROOF_TIEBREAK_MARGIN = 0.15
+_ROOF_TIEBREAK_MARGIN = 0.10
 
 
 def _match_score(match, accuracy):

@@ -324,6 +324,38 @@ need backgrounds that differ. Neither is a code change alone.
 Also disproved along the way: "the phantom only appears in blown-out frames."
 The exp −11 phantom appeared at **14.3%** clip.
 
+## The first held-out sample falsified the margin
+
+11:50, roof manually opened, judged three ways. Worth recording because two of
+the three were wrong and the corpus above did not predict it.
+
+| judge | verdict | correct |
+|-------|---------|---------|
+| incumbent, live | ambiguous | no |
+| competitive logic at margin 0.15 | UNKNOWN | no |
+| Iris cam metrics | open (green excess +1.79) | yes |
+| Iris cam registration guard | refused | — |
+
+The tie-break failed **by 0.003**. Open genuinely scored better (+0.333 against
+closed's +0.187) but led by 0.147 against a required 0.15. Re-measured across
+all 19 ladders, margins 0.00–0.12 give 15 correct / 0 unknown / **0 wrong**
+while 0.15 gives 14 — so the plateau's upper edge is between 0.12 and 0.15, not
+the 0.20 that 18 ladders suggested. Margin is now **0.10**.
+
+This is retuning after a failed prediction, on evidence of one sample. The new
+value is better supported than the old, and 19 ladders is still a small corpus.
+Expect it to move again.
+
+**The Iris cam guard was also wrong, in the opposite direction.** It refused a
+frame whose camera had demonstrably not moved. Exactly four patches passed
+scoring — the minimum — and one of those was a confident false match
+(+147/−224 px at score 0.774), leaving three in agreement against a fixed
+requirement of four. The agreement test worked; the arithmetic around it had no
+slack. Now 8–10 patches with a majority rule (60% of matched patches, floor of
+3). Verified: the refused frame certifies at −6/−1 px, injected shifts of +40
+and +120 px are still recovered to within the same −6 baseline, and +300 px is
+refused rather than mis-reported because it exceeds the search window.
+
 ## What this does NOT fix
 
 Four ladders still fail, all `NOT-parked`, all in the 10:28–10:34 high-sun
