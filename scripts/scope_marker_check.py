@@ -1,0 +1,154 @@
+"""
+scope_marker_check.py
+Decide whether the scope is parked, from an ArUco marker on the OTA.
+
+This replaces the correlation approach in scope_parked_probe.py, which asked
+how much the scope AREA of the image resembles a stored parked frame. That
+works, but it conflates pose with illumination badly enough to need a library
+of references per lighting condition, and even then leaves 0.234 of margin
+between parked and moved.
+
+A marker removes the problem rather than tuning around it:
+
+  * Detection is binary. The dictionary's error correction means foliage,
+    planking or the flat panel cannot accidentally BE marker id 0 -- which is
+    exactly the failure the old greyscale template matcher had, where a tree
+    scored 0.63 against a real marker's 0.65.
+  * It binarises, so it does not care about colour, exposure or the day/night
+    IR switch. No reference library.
+  * It returns four corners, so the answer has UNITS: how many pixels off park,
+    not a correlation coefficient needing calibration.
+
+Measured 2026-08-16 with the scope stationary: corner positions repeat to
+sd 0.12 px over four captures. Any real slew moves them by orders more.
+
+    python scope_marker_check.py --set-parked     # with the scope parked
+    python scope_marker_check.py                  # check
+"""
+import argparse
+import json
+import os
+import sys
+from datetime import datetime
+
+if __package__ is None or __package__ == "":
+    project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+    if project_root not in sys.path:
+        sys.path.insert(0, project_root)
+
+import cv2
+import numpy as np
+
+from configs import config
+from scripts.probe_kasa_camera import probe_kc_stream
+from sentry.sky_camera import credentials
+
+HOST = "192.168.87.65"
+PARKED_PATH = "local/scope_marker_parked.json"
+LOG_PATH = "local/scope_marker_log.jsonl"
+
+DICT = cv2.aruco.DICT_4X4_50
+
+# Corner displacement allowed before the scope is not parked. The noise floor
+# is 0.12 px, so this is not a sensitivity limit -- it is slack for the marker
+# being re-taped, for thermal settling, and for however precisely the mount's
+# own park repeats, which is the number tonight's software park will supply.
+# Deliberately generous until that is measured: a gate that refuses a correctly
+# parked scope costs a night, and this is still ~150x the noise.
+TOLERANCE_PX = 20.0
+
+
+def detector():
+    return cv2.aruco.ArucoDetector(cv2.aruco.getPredefinedDictionary(DICT),
+                                   cv2.aruco.DetectorParameters())
+
+
+def grab(path):
+    user, pw = credentials(config.data())
+    if not probe_kc_stream(HOST, user, pw, snapshot_path=path, timeout=15):
+        return None
+    return cv2.imread(path)
+
+
+def find_markers(img):
+    """{id: 4x2 corner array} for every marker in the frame."""
+    grey = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    corners, ids, _ = detector().detectMarkers(grey)
+    if ids is None:
+        return {}
+    return {int(i): c[0] for c, i in zip(corners, ids.ravel())}
+
+
+def compare(found, parked):
+    """(verdict, detail). Verdict is 'parked', 'MOVED' or 'unknown'."""
+    missing = [i for i in parked if i not in found]
+    if missing:
+        # A marker that cannot be seen is not evidence that the scope moved --
+        # it could be occluded, or the camera could be off. Unknown, not MOVED:
+        # the caller refuses either way, but the two need different fixes.
+        return "unknown", {"missing_ids": missing, "found_ids": sorted(found)}
+    worst = 0.0
+    per_id = {}
+    for i, ref in parked.items():
+        d = np.linalg.norm(np.array(found[i]) - np.array(ref), axis=1)
+        per_id[i] = {"max_px": float(d.max()), "mean_px": float(d.mean())}
+        worst = max(worst, float(d.max()))
+    return ("parked" if worst <= TOLERANCE_PX else "MOVED",
+            {"worst_corner_px": worst, "per_id": per_id})
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--set-parked", action="store_true",
+                    help="record the current marker corners as the parked pose")
+    ap.add_argument("--label", default="check")
+    args = ap.parse_args()
+
+    img = grab("local/scope_marker_%s.jpg" % args.label)
+    if img is None:
+        print("no frame from the camera -- verdict unknown")
+        return 2
+    found = find_markers(img)
+    print("markers detected: %s" % (sorted(found) or "NONE"))
+
+    if args.set_parked:
+        if not found:
+            print("no marker visible; cannot record a parked pose")
+            return 1
+        data = {"when": datetime.now().astimezone().isoformat(timespec="seconds"),
+                "tolerance_px": TOLERANCE_PX,
+                "markers": {str(i): np.asarray(c).tolist() for i, c in found.items()}}
+        with open(PARKED_PATH, "w") as fh:
+            json.dump(data, fh, indent=2)
+        for i, c in found.items():
+            c = np.asarray(c)
+            print("  id %d centre (%.1f, %.1f)" % (i, c[:, 0].mean(), c[:, 1].mean()))
+        print("recorded parked pose -> %s" % PARKED_PATH)
+        return 0
+
+    if not os.path.exists(PARKED_PATH):
+        print("no parked pose recorded; run --set-parked with the scope parked")
+        return 1
+    stored = json.load(open(PARKED_PATH))
+    parked = {int(k): np.array(v) for k, v in stored["markers"].items()}
+    verdict, detail = compare(found, parked)
+
+    print("\nverdict: %s" % verdict)
+    if verdict == "unknown":
+        print("  markers missing: %s" % detail["missing_ids"])
+    else:
+        print("  worst corner displacement: %.1f px  (tolerance %.0f)"
+              % (detail["worst_corner_px"], TOLERANCE_PX))
+        for i, d in sorted(detail["per_id"].items()):
+            print("    id %d  max %.1f px  mean %.1f px" % (i, d["max_px"], d["mean_px"]))
+
+    with open(LOG_PATH, "a") as fh:
+        fh.write(json.dumps({"label": args.label, "verdict": verdict,
+                             "when": datetime.now().astimezone().isoformat(timespec="seconds"),
+                             **{k: v for k, v in detail.items() if k != "per_id"}}) + "\n")
+    return 0 if verdict == "parked" else 3
+
+
+if __name__ == "__main__":
+    sys.exit(main())
