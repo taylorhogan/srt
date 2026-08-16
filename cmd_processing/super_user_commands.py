@@ -531,8 +531,36 @@ def _roof_cancel_point(msg: str, imaging_run: bool = False) -> None:
         raise jobs.Cancelled()
 
 
-def _roof_confirm_wait(seconds: float, imaging_run: bool) -> None:
+# Bumped under _roof_lock immediately before every relay fire. A confirm loop
+# captures it on entry and stands down if it changes, because a verdict about
+# the roof position from before somebody else moved the roof is worse than no
+# verdict — it would post a stale state and keep retrying against it.
+_roof_move_seq = 0
+
+
+class _RoofMoveSuperseded(Exception):
+    """Another roof move started while this confirm loop was running."""
+
+
+def _bump_move_seq() -> int:
+    """Claim a move number. Call under _roof_lock, just before the relay."""
+    global _roof_move_seq
+    _roof_move_seq += 1
+    return _roof_move_seq
+
+
+def _check_not_superseded(move_seq: int | None) -> None:
+    if move_seq is not None and _roof_move_seq != move_seq:
+        raise _RoofMoveSuperseded()
+
+
+def _roof_confirm_wait(seconds: float, imaging_run: bool,
+                       move_seq: int | None = None) -> None:
     """Post-move confirm-loop sleep that wakes ~1×/s to honour a roof!! cancel.
+
+    Also wakes to notice a newer roof move. Waiting the full five minutes
+    before discovering the roof moved under us would leave the confirm loop
+    reporting on a position that no longer exists.
 
     Never used while the roof is travelling — toggle_roof owns that window
     (stall watchdog + motor power-off must always run to completion).
@@ -543,6 +571,7 @@ def _roof_confirm_wait(seconds: float, imaging_run: bool) -> None:
     deadline = time.monotonic() + seconds
     while True:
         _roof_cancel_point(_ROOF_CANCEL_AFTER_FIRE_MSG)
+        _check_not_superseded(move_seq)
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             return
@@ -552,7 +581,8 @@ def _roof_confirm_wait(seconds: float, imaging_run: bool) -> None:
 _MAX_ROOF_CHECKS = 5
 
 
-def confirm_roof_state(target: str, imaging_run: bool = False) -> bool:
+def confirm_roof_state(target: str, imaging_run: bool = False,
+                       move_seq: int | None = None) -> bool:
     """Wait for vision to confirm the roof reached *target* ("open"/"closed").
 
     Shared by :func:`open_roof`, :func:`close_roof` and the end-of-night
@@ -571,21 +601,29 @@ def confirm_roof_state(target: str, imaging_run: bool = False) -> bool:
     """
     closing = target == "closed"
     word = "close" if closing else "open"
-    _roof_confirm_wait(30, imaging_run)
-    for attempt in range(_MAX_ROOF_CHECKS):
-        _roof_cancel_point(_ROOF_CANCEL_AFTER_FIRE_MSG, imaging_run)
-        parked, closed, is_open, mod_date = get_status_with_lights()
-        reached = closed if closing else (is_open and parked)
-        if reached:
-            return True
-        if attempt < _MAX_ROOF_CHECKS - 1:
-            msg = (
-                f"Roof {word} not confirmed (attempt {attempt + 1}/{_MAX_ROOF_CHECKS})"
-                f"{_vision_fail_reason(target)}, waiting 5 min"
-            )
-            social_server.post_social_message(msg)
-            _logger.warning(msg)
-            _roof_confirm_wait(5 * 60, imaging_run)
+    try:
+        _roof_confirm_wait(30, imaging_run, move_seq)
+        for attempt in range(_MAX_ROOF_CHECKS):
+            _roof_cancel_point(_ROOF_CANCEL_AFTER_FIRE_MSG, imaging_run)
+            _check_not_superseded(move_seq)
+            parked, closed, is_open, mod_date = get_status_with_lights()
+            reached = closed if closing else (is_open and parked)
+            if reached:
+                return True
+            if attempt < _MAX_ROOF_CHECKS - 1:
+                msg = (
+                    f"Roof {word} not confirmed (attempt {attempt + 1}/{_MAX_ROOF_CHECKS})"
+                    f"{_vision_fail_reason(target)}, waiting 5 min"
+                )
+                social_server.post_social_message(msg)
+                _logger.warning(msg)
+                _roof_confirm_wait(5 * 60, imaging_run, move_seq)
+    except _RoofMoveSuperseded:
+        msg = (f"Roof {word} confirmation abandoned — another roof command "
+               f"moved the roof; use roof!! status for the current position")
+        social_server.post_social_message(msg)
+        _logger.warning(msg)
+        return False
     social_server.post_social_message(
         f"Roof could not be confirmed {target} after {_MAX_ROOF_CHECKS} attempts, stopping"
     )
@@ -607,7 +645,10 @@ def open_roof(force: bool = False, imaging_run: bool = False) -> bool:
        imaging state at entry), observatory marked safe via ``safe!``, and
        mount powered off.
     3. ``_roof_lock``, non-blocking — refuses if another roof command is
-       running; held through the confirm loop so movements can never overlap.
+       running. Held across the gates and the relay fire, then RELEASED before
+       the confirm loop: movements still cannot overlap, but a later close is
+       no longer blocked by this move's verification. The confirm loop stands
+       down on its own if another move starts (see ``_roof_move_seq``).
     4. Vision precondition: scope parked AND roof closed. *force* waives ONLY
        this step, never gates 1–3.
 
@@ -631,6 +672,7 @@ def open_roof(force: bool = False, imaging_run: bool = False) -> bool:
     if not _roof_lock.acquire(blocking=False):
         social_server.post_social_message("Roof will not open: another roof command is already running")
         return False
+    holding = True
     try:
         _roof_cancel_point("Roof open cancelled — the roof was not moved", imaging_run)
         if not force:
@@ -650,13 +692,23 @@ def open_roof(force: bool = False, imaging_run: bool = False) -> bool:
         # be stopped (toggle_roof owns the travel window uninterrupted).
         _roof_cancel_point("Roof open cancelled — the roof was not moved", imaging_run)
         announce_roof_movement("The roof will be opening in one minute")
+        my_seq = _bump_move_seq()
         toggle_roof(dev_map, capture_direction="open")
         if force:
             social_server.post_social_message("Roof open relay fired (forced, unverified)")
             return True
-        return confirm_roof_state("open", imaging_run)
-    finally:
+        # The roof has stopped moving; confirmation is advisory from here, so
+        # the lock goes back NOW. Holding it across the confirm loop meant an
+        # unconfirmable roof blocked every later roof command for up to 25
+        # minutes (5 attempts x 5 min) -- measured 2026-08-16, when `roof!!
+        # close` was refused outright and only ran after the stuck job was
+        # cancelled. A roof that cannot be VERIFIED must still be CLOSEABLE.
         _roof_lock.release()
+        holding = False
+        return confirm_roof_state("open", imaging_run, my_seq)
+    finally:
+        if holding:
+            _roof_lock.release()
 
 
 def close_roof(force: bool = False, imaging_run: bool = False) -> bool:
@@ -692,6 +744,7 @@ def close_roof(force: bool = False, imaging_run: bool = False) -> bool:
     if not _roof_lock.acquire(blocking=False):
         social_server.post_social_message("Roof will not close: another roof command is already running")
         return False
+    holding = True
     try:
         _roof_cancel_point("Roof close cancelled — the roof was not moved", imaging_run)
         if not force:
@@ -709,13 +762,23 @@ def close_roof(force: bool = False, imaging_run: bool = False) -> bool:
         # be stopped (toggle_roof owns the travel window uninterrupted).
         _roof_cancel_point("Roof close cancelled — the roof was not moved", imaging_run)
         announce_roof_movement("The roof will be closing in one minute")
+        my_seq = _bump_move_seq()
         toggle_roof(dev_map, capture_direction="close")
         if force:
             social_server.post_social_message("Roof close relay fired (forced, unverified)")
             return True
-        return confirm_roof_state("closed", imaging_run)
-    finally:
+        # The roof has stopped moving; confirmation is advisory from here, so
+        # the lock goes back NOW. Holding it across the confirm loop meant an
+        # unconfirmable roof blocked every later roof command for up to 25
+        # minutes (5 attempts x 5 min) -- measured 2026-08-16, when `roof!!
+        # close` was refused outright and only ran after the stuck job was
+        # cancelled. A roof that cannot be VERIFIED must still be CLOSEABLE.
         _roof_lock.release()
+        holding = False
+        return confirm_roof_state("closed", imaging_run, my_seq)
+    finally:
+        if holding:
+            _roof_lock.release()
 
 
 def roof_cmd(words: list[str], account: str) -> None:
