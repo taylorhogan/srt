@@ -35,7 +35,18 @@ from scripts.roof_region_stats import _reference, register
 from sentry.sky_camera import credentials
 
 HOST = "192.168.87.65"
-REF_PATH = "local/scope_parked_reference.jpg"
+REF_PATH = "local/scope_parked_reference.jpg"     # legacy single reference
+REF_DIR = "local/parked_refs"
+
+# "Parked" is one POSE under many lightings, not one appearance. A single
+# reference conflates the two: measured 2026-08-16, a parked scope in bad light
+# scored 0.699 while a genuinely MOVED scope in good light scored 0.609 -- 0.09
+# of margin, which is not a safety gate. Scoring against a library of parked
+# frames and taking the best match separates pose from illumination, because a
+# moved scope matches NONE of them. Same eight frames: margin 0.090 -> 0.234.
+#
+# So add references as conditions appear -- roof open and shut, day, dusk,
+# night IR, lights on. Each one raises the parked floor; none can lower it.
 LOG_PATH = "local/scope_parked_log.jsonl"
 
 # Where the scope lives in frame. Deliberately excludes two things: the roof
@@ -50,6 +61,22 @@ def grab(path):
     if not probe_kc_stream(HOST, user, pw, snapshot_path=path, timeout=15):
         raise SystemExit("no frame from the camera")
     return cv2.imread(path)
+
+
+def load_library():
+    """{name: image} of every parked reference, newest naming wins."""
+    out = {}
+    if os.path.isdir(REF_DIR):
+        for f in sorted(os.listdir(REF_DIR)):
+            if f.lower().endswith((".jpg", ".png")):
+                img = cv2.imread(os.path.join(REF_DIR, f))
+                if img is not None:
+                    out[os.path.splitext(f)[0]] = img
+    if not out and os.path.exists(REF_PATH):
+        img = cv2.imread(REF_PATH)
+        if img is not None:
+            out["legacy"] = img
+    return out
 
 
 def scope_score(img, ref_img, meta, templates):
@@ -83,7 +110,8 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--set-reference", action="store_true",
-                    help="adopt the current frame as PARKED (scope at the flat panel)")
+                    help="ADD the current frame to the parked library (use --label "
+                         "to name the condition, e.g. night-ir, roof-shut)")
     ap.add_argument("--label", default="probe")
     ap.add_argument("--parked", choices=["yes", "no"], default=None,
                     help="ground truth for this capture, if known")
@@ -95,17 +123,30 @@ def main():
                          "--set-reference first")
 
     if args.set_reference:
-        img = grab(REF_PATH)
-        print("parked reference set from the current frame -> %s" % REF_PATH)
-        print("scope box y=%s x=%s" % (SCOPE_BOX[0], SCOPE_BOX[1]))
+        os.makedirs(REF_DIR, exist_ok=True)
+        path = os.path.join(REF_DIR, "%s.jpg" % args.label)
+        grab(path)
+        print("added parked reference %r -> %s" % (args.label, path))
+        print("library now holds %d reference(s): %s"
+              % (len(load_library()), ", ".join(sorted(load_library()))))
         return 0
 
-    if not os.path.exists(REF_PATH):
-        raise SystemExit("no parked reference yet; run --set-reference with the "
-                         "scope parked")
-    parked_ref = cv2.imread(REF_PATH)
+    library = load_library()
+    if not library:
+        raise SystemExit("no parked references yet; run --set-reference with "
+                         "the scope parked")
     img = grab("local/scope_probe_%s.jpg" % args.label)
-    score, shift = scope_score(img, parked_ref, meta, templates)
+    per_ref = {}
+    score, shift = None, None
+    for name, ref_img in library.items():
+        sc, sh = scope_score(img, ref_img, meta, templates)
+        if sc is None:
+            shift = None
+            break
+        per_ref[name] = sc
+        shift = sh
+        if score is None or sc > score:
+            score = sc
 
     print("\nlabel            : %s" % args.label)
     if score is None:
@@ -114,11 +155,14 @@ def main():
         print("  scope, moving it breaks the framing check as well.")
     else:
         print("registration     : dx=%+d dy=%+d" % shift)
-        print("scope match      : %.4f   (1.000 = identical to parked)" % score)
+        for name in sorted(per_ref, key=lambda k: -per_ref[k]):
+            print("  vs %-22s %.4f" % (name, per_ref[name]))
+        print("scope match      : %.4f   (best of %d references)"
+              % (score, len(per_ref)))
     if args.parked:
         print("ground truth     : parked=%s" % args.parked)
 
-    row = {"label": args.label, "when": datetime.now().astimezone().isoformat(timespec="seconds"),
+    row = {"label": args.label, "per_ref": per_ref, "when": datetime.now().astimezone().isoformat(timespec="seconds"),
            "score": score, "shift": shift, "truth": args.parked}
     os.makedirs(os.path.dirname(LOG_PATH), exist_ok=True)
     with open(LOG_PATH, "a") as fh:
