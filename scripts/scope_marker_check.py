@@ -10,10 +10,12 @@ between parked and moved.
 
 A marker removes the problem rather than tuning around it:
 
-  * Detection is binary. The dictionary's error correction means foliage,
-    planking or the flat panel cannot accidentally BE marker id 0 -- which is
-    exactly the failure the old greyscale template matcher had, where a tree
-    scored 0.63 against a real marker's 0.65.
+  * Detection is binary and far harder to fool than correlation, though NOT
+    impossible: 4X4_50 produced a spurious id 17 on a real frame here (see
+    DICTS below). It is harmless because only ids recorded in the parked pose
+    are compared, but "foliage cannot be a marker" would be an overstatement.
+    Contrast the greyscale template matcher, where a tree scored 0.63 against
+    a real marker's 0.65 and there was no id to disagree about.
   * It binarises, so it does not care about colour, exposure or the day/night
     IR switch. No reference library.
   * It returns four corners, so the answer has UNITS: how many pixels off park,
@@ -47,7 +49,26 @@ HOST = "192.168.87.65"
 PARKED_PATH = "local/scope_marker_parked.json"
 LOG_PATH = "local/scope_marker_log.jsonl"
 
-DICT = cv2.aruco.DICT_4X4_50
+# The dictionary is recorded in the parked file, so changing this default
+# cannot silently stop detecting a marker that is already mounted.
+#
+# 4X4_50 is the WEAKEST choice and it showed: on 2026-08-16 it reported a
+# spurious id 17 -- a 42 px phantom up in the ceiling -- in one frame out of
+# four. 16 bits over 50 ids leaves little Hamming distance, so "the error
+# correction makes false positives impossible" was an overstatement. The
+# phantom was harmless here because only ids present in the parked reference
+# are compared, but a stronger dictionary removes the question. 6X6_250 and
+# APRILTAG_36h11 produced zero false positives on the same frames.
+#
+# Detection is not the constraint: 4X4 still resolved at 30 px, and a 6X6 at
+# the mounted marker's ~88 px still gives ~11 px per module.
+DICTS = {
+    "4X4_50": cv2.aruco.DICT_4X4_50,
+    "5X5_100": cv2.aruco.DICT_5X5_100,
+    "6X6_250": cv2.aruco.DICT_6X6_250,
+    "APRILTAG_36h11": cv2.aruco.DICT_APRILTAG_36h11,
+}
+DEFAULT_DICT = "4X4_50"     # what is physically mounted today
 
 # Corner displacement allowed before the scope is not parked. The noise floor
 # is 0.12 px, so this is not a sensitivity limit -- it is slack for the marker
@@ -58,8 +79,8 @@ DICT = cv2.aruco.DICT_4X4_50
 TOLERANCE_PX = 20.0
 
 
-def detector():
-    return cv2.aruco.ArucoDetector(cv2.aruco.getPredefinedDictionary(DICT),
+def detector(name=DEFAULT_DICT):
+    return cv2.aruco.ArucoDetector(cv2.aruco.getPredefinedDictionary(DICTS[name]),
                                    cv2.aruco.DetectorParameters())
 
 
@@ -70,10 +91,10 @@ def grab(path):
     return cv2.imread(path)
 
 
-def find_markers(img):
+def find_markers(img, dict_name=DEFAULT_DICT):
     """{id: 4x2 corner array} for every marker in the frame."""
     grey = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    corners, ids, _ = detector().detectMarkers(grey)
+    corners, ids, _ = detector(dict_name).detectMarkers(grey)
     if ids is None:
         return {}
     return {int(i): c[0] for c, i in zip(corners, ids.ravel())}
@@ -103,13 +124,21 @@ def main():
     ap.add_argument("--set-parked", action="store_true",
                     help="record the current marker corners as the parked pose")
     ap.add_argument("--label", default="check")
+    ap.add_argument("--dict", default=None, choices=sorted(DICTS),
+                    help="marker dictionary; defaults to the one recorded in "
+                         "the parked file, else %s" % DEFAULT_DICT)
     args = ap.parse_args()
 
     img = grab("local/scope_marker_%s.jpg" % args.label)
     if img is None:
         print("no frame from the camera -- verdict unknown")
         return 2
-    found = find_markers(img)
+    dict_name = args.dict
+    if dict_name is None and os.path.exists(PARKED_PATH):
+        dict_name = json.load(open(PARKED_PATH)).get("dict", DEFAULT_DICT)
+    dict_name = dict_name or DEFAULT_DICT
+    found = find_markers(img, dict_name)
+    print("dictionary: %s" % dict_name)
     print("markers detected: %s" % (sorted(found) or "NONE"))
 
     if args.set_parked:
@@ -117,7 +146,7 @@ def main():
             print("no marker visible; cannot record a parked pose")
             return 1
         data = {"when": datetime.now().astimezone().isoformat(timespec="seconds"),
-                "tolerance_px": TOLERANCE_PX,
+                "tolerance_px": TOLERANCE_PX, "dict": dict_name,
                 "markers": {str(i): np.asarray(c).tolist() for i, c in found.items()}}
         with open(PARKED_PATH, "w") as fh:
             json.dump(data, fh, indent=2)
