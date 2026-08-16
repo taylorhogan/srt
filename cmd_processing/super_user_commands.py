@@ -968,8 +968,17 @@ def _emergency_stop_sequence() -> None:
             try:
                 if dev_map is None:
                     dev_map = asyncio.run(ku.make_discovery_map())
-                asyncio.run(ku.kasa_do(dev_map, {"Telescope mount": 'off'}))
-                _logger.info("emergency: mount power confirmed off")
+                if asyncio.run(ku.kasa_do(dev_map,
+                                          {"Telescope mount": 'off'})).get("Telescope mount"):
+                    _logger.info("emergency: mount power confirmed off")
+                else:
+                    # "confirmed" was previously logged whether or not anything
+                    # happened. On an emergency path that is the worst possible
+                    # place for a reassuring log line that is not evidence.
+                    _logger.error("emergency: mount power-off NOT CONFIRMED -- "
+                                  "the mount may still be live")
+                    pushover.push_message(
+                        "EMERGENCY: could not confirm mount power off", priority=2)
             except Exception:
                 _logger.exception("emergency: mount power-off backstop failed")
             # LAST: blinds the vision camera (powered through the Pegasus box).
@@ -3142,15 +3151,25 @@ def do_flats() -> None:
     social_server.post_social_message("Starting flats sequence")
 
     dev_map = asyncio.run(ku.make_discovery_map())
-    asyncio.run(ku.kasa_do(dev_map, {"Telescope mount": 'on'}))
-    _logger.info("Mount powered on")
+    # The result is CHECKED. This line used to log "Mount powered on"
+    # unconditionally, so on 2026-08-16 it recorded success while the switch had
+    # not moved, and the operator had to power the mount by hand. A log that
+    # cannot fail is not evidence.
+    if asyncio.run(ku.kasa_do(dev_map, {"Telescope mount": 'on'})).get("Telescope mount"):
+        _logger.info("Mount powered on (verified)")
+    else:
+        _logger.error("Mount power-on FAILED -- flats will run with no mount power")
+        social_server.post_social_message(
+            "Flats: could not power the mount on — switch it on in the Kasa app")
 
     # Flats must be dark — force the inside light off before capturing, regardless
     # of what the End Sequence left it at (a failed shutdown step can leave it on
     # and contaminate the flats).
     try:
-        asyncio.run(ku.kasa_do(dev_map, {"Iris inside light": 'off'}))
-        _logger.info("Inside light forced off before flats")
+        if asyncio.run(ku.kasa_do(dev_map, {"Iris inside light": 'off'})).get("Iris inside light"):
+            _logger.info("Inside light forced off before flats")
+        else:
+            _logger.error("Inside light NOT confirmed off -- flats may be contaminated")
     except Exception:
         _logger.exception("Failed to force inside light off before flats")
 
@@ -3205,8 +3224,17 @@ def do_flats() -> None:
             break
 
     _logger.info("Flats complete")
-    asyncio.run(ku.kasa_do(dev_map, {"Telescope mount": 'off'}))
-    _logger.info("Mount powered off")
+    # This is the call that threw at 03:14 on 2026-08-16, after logging nothing
+    # useful: the mount stayed powered for the rest of the night. Now it is
+    # checked and said out loud, because a mount left on is the thing that then
+    # blocks close_roof.
+    if asyncio.run(ku.kasa_do(dev_map, {"Telescope mount": 'off'})).get("Telescope mount"):
+        _logger.info("Mount powered off (verified)")
+    else:
+        _logger.error("Mount power-off FAILED after flats -- mount is still powered")
+        social_server.post_social_message(
+            "Flats done, but the mount could NOT be powered off — switch it off "
+            "in the Kasa app, or the roof cannot be closed")
     social_server.post_social_message("Flats sequence complete")
 
 

@@ -35,8 +35,13 @@ async def kasa_switch(device_name: str, state: int) -> None:
         sys.exit(1)
 
     action = "on" if state else "off"
-    await ku.kasa_do(dev_map, {device_name: action})
-    print(f"{device_name} turned {action}")
+    ok = (await ku.kasa_do(dev_map, {device_name: action})).get(device_name)
+    if ok:
+        print(f"{device_name} turned {action} (verified)")
+    else:
+        print(f"{device_name} was NOT switched {action} -- the relay does not "
+              f"read back in that state")
+        sys.exit(2)
 
 
 if __name__ == "__main__":

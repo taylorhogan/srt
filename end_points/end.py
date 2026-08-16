@@ -382,8 +382,20 @@ def do_main():
                     }
                 ))
                 logger.info("step 1")
-                asyncio.run(ku.kasa_do(dev_map, instructions))
-                logger.info("step 2")
+                # This is the step that powers the roof motor so the roof CAN
+                # close. If it fails silently the whole shutdown proceeds and the
+                # roof stays open, which is the one outcome this sequence exists
+                # to prevent -- so it is checked and named.
+                results = asyncio.run(ku.kasa_do(dev_map, instructions))
+                failed = [n for n, ok in results.items() if not ok]
+                if failed:
+                    logger.error("step 2: %d switch(es) FAILED: %s", len(failed),
+                                 ", ".join(failed))
+                    social_server.post_social_message(
+                        "End sequence: could not switch " + ", ".join(failed)
+                        + " — the roof may not close")
+                else:
+                    logger.info("step 2 (all %d verified)", len(results))
                 # make sure lights are on
                 time.sleep(60)
                 cfg = config.data()
@@ -431,8 +443,12 @@ def do_main():
                             }
                         ))
                         logger.info("step 5")
-                        asyncio.run(ku.kasa_do(dev_map, instructions))
-                        logger.info("step 6")
+                        r5 = asyncio.run(ku.kasa_do(dev_map, instructions))
+                        bad5 = [n for n, ok in r5.items() if not ok]
+                        if bad5:
+                            logger.error("step 6: FAILED: %s", ", ".join(bad5))
+                        else:
+                            logger.info("step 6 (all %d verified)", len(r5))
                     except Exception:
                         logger.exception("Failed to turn off inside light / roof motor")
                     # Turn on dehumidifier (best-effort; bounded + isolated so a
@@ -458,8 +474,13 @@ def do_main():
                     }
                 ))
                 logger.info("step 7")
-                asyncio.run(ku.kasa_do(dev_map, instructions))
-                logger.info("step 8")
+                r7 = asyncio.run(ku.kasa_do(dev_map, instructions))
+                bad7 = [n for n, ok in r7.items() if not ok]
+                if bad7:
+                    logger.error("step 8: FAILED: %s -- mount/roof power not "
+                                 "confirmed off", ", ".join(bad7))
+                else:
+                    logger.info("step 8 (all %d verified)", len(r7))
 
 
 

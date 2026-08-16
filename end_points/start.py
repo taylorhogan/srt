@@ -42,8 +42,13 @@ if __name__ == "__main__":
         }
     ))
 
-    asyncio.run(ku.kasa_do(dev_map, instructions))
-    logger.info('Turning off lights')
+    results = asyncio.run(ku.kasa_do(dev_map, instructions))
+    failed = [n for n, ok in results.items() if not ok]
+    if failed:
+        logger.error('Start sequence: %d of %d switches FAILED: %s',
+                     len(failed), len(results), ', '.join(failed))
+    else:
+        logger.info('Turning off lights (all %d verified)', len(results))
 
     utl_shelly.set_dehumidifier(False)
     logger.info('Turning off dehumidifier')
