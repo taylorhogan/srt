@@ -266,11 +266,18 @@ a real disable: the 19443 stream goes from HTTP 200 with 76 video and 84 audio
 parts to **HTTP 503 with no parts at all**. Video and microphone stop together.
 
 That is not only about the switch. Everything upstream is shared too — one
-network path, one plug, one firmware, one app toggle, one cloud account. Today
-the webcam is USB on the observatory PC and the roof microphone is a separate
-device on the same PC; those fail independently. Consolidating both onto the
-Kasa camera turns two independent channels into one, which is exactly what this
-document argues against: *two sensors that fail the same way are one sensor.*
+network path, one plug, one firmware, one app toggle, one cloud account.
+
+**An earlier version of this section claimed that consolidating onto the Kasa
+camera would turn two independent channels into one. That was wrong.** The roof
+microphone is part of the USB webcam, so the existing picture and sound already
+share a single USB connection and already fail together. Moving to the Kasa
+camera is not a loss of independence — if anything it is a gain, trading a USB
+bus on a PC for a network path and mains power.
+
+The independence argument therefore does not weigh against the Kasa camera. It
+still says the same thing about where the *second* channel must come from: not
+from that camera's own sound.
 
 This does not sink the idea — the margins measured above are far better than
 the marker matcher's, and the failure is at least **loud**: a 503 is an
@@ -393,6 +400,49 @@ Sensitivity, for calibration: translating the parked frame by 5 px scores
 0.888, 10 px 0.853, 20 px 0.790, 50 px 0.652. At ~23 px/degree the metric
 resolves a fraction of a degree, so it is not short of discrimination — the
 open question is entirely where the parked population actually sits.
+
+## Why parked never failed, and what that implies
+
+The failure rate tracks template AREA almost exactly:
+
+| marker | size | area | behaviour |
+|--------|------|------|-----------|
+| parked | 551x171 | 94,221 px² | never ambiguous |
+| closed | 215x110 | 23,650 px² | occasional phantom |
+| open | 94x132 | 12,408 px² | the one that breaks |
+
+The open marker is **7.6x smaller** than the parked one. A 94x132 patch of
+dark-on-bright is something backlit branches supply endlessly at every scale,
+which is exactly the phantom traced above. Nothing in the scene resembles a
+551x171 target.
+
+There is a second reason parked is easy, visible in any stored ladder frame:
+**the existing camera is mounted ON the scope**, looking up and forward. A
+small pose change swings the entire field of view, so "parked" is not a subtle
+measurement — the whole scene either matches or it does not. The Iris cam sees
+the scope side-on from across the room, where the same pose change moves a
+modest number of pixels. That is why the side-on parked score needed a
+reference library to reach 0.234 of margin while the old camera's parked check
+never needed anything.
+
+**The lesson is about fiducials, not cameras.** The reliable measurement is a
+large, purpose-built, high-contrast target. Two ways to get one:
+
+* **Move a camera to the scope-top position.** Inherits the sensitivity for
+  free. Costs: a pan/tilt camera on a moving mount adds a second uncontrolled
+  pose variable on top of the backlash in [[KASA_CAMERA_PTZ]], needs power and
+  network on a slewing platform with cable-wrap risk, and gives up the wide
+  interior view that produced the clean roof-region separation.
+* **Leave the camera fixed and put a large marker ON the scope**, facing the
+  Iris cam when parked. This is the old system's actual mechanism — a big
+  target — without relocating anything, and it can be in COLOUR, which the old
+  greyscale matcher could not use. The Iris cam already frames the OTA and fork
+  across most of its view, so there is room for a target far larger than
+  551x171 at 2560x1440.
+
+The second is cheaper to try and reversible. It also attacks the measured
+weakness directly: the side-on parked score is weak because there is nothing
+distinctive to match, not because the vantage is wrong.
 
 ## What this does NOT fix
 
