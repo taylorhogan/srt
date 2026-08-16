@@ -199,10 +199,55 @@ That is ~500x the noise floor, and the two directions have *different envelope
 shapes*: the open is an impulse that decays, the close is a slow ramp to an
 impact at the end. Direction looks inferable from sound alone.
 
-**What this does not show.** The existing camera got this same move right —
-`roof!! status` returned "Roof: open; scope: parked" correctly in the sunlit
-open-roof condition. The 2026-08-15 failure did not reproduce. So the argument
-for changing sensor is margin, not a camera that is currently broken.
+**On the first pair the existing camera got it right**, returning "Roof: open;
+scope: parked" correctly. That is no longer the whole picture — see below.
+
+## It reproduced, and it blocks the close
+
+Second pair, 2026-08-16 10:23, sun alt **+46.7°** against +17.3° in the
+morning. The existing camera could not confirm the roof it had *itself just
+opened*:
+
+```
+Roof open not confirmed (attempt 1/5) — open template: ambiguous
+(closed 2 rung(s), open 2 rung(s)) (conf 0.65, off by 44px), waiting 5 min
+```
+
+The same signature as 2026-08-15: a phantom closed match tens of pixels from
+where the marker belongs, cancelling a correct open vote. `iris.log` shows it is
+**recurrent**, not a one-off — 17:11, 17:18, 17:25, 19:46 and 19:53 on
+2026-08-15, then today. So the earlier note above understated it: this is not
+only about margin.
+
+At the same moment the Iris cam separated cleanly — green gap 5.59, sign
+separated, registration shift ~0 px.
+
+**The operational half is worse than the missed verdict.** `open_roof` holds
+`_roof_lock` across the whole confirm loop — five attempts, five minutes apart.
+An unconfirmable roof therefore blocks every later roof command for up to
+**25 minutes**. Measured today: `roof!! close` was refused with "another roof
+command is already running", and only ran after the stuck job was cancelled
+through `/api/jobs/<id>/cancel`. A roof that cannot be *verified* open is
+currently also a roof that cannot be *commanded* shut, which is the wrong way
+round — verification is advisory, closing is safety. Worth separating.
+
+## Watch the open side, not the gap
+
+Three runs so far:
+
+| time | sun alt | shut green excess | open green excess | gap |
+|------|---------|-------------------|-------------------|-----|
+| 07:40 | +17.3° | −6.09 … −3.76 | +2.18 … +2.76 | 5.94 |
+| 07:48 | +18.8° | −5.84 … −3.99 | +2.31 … +3.22 | 6.30 |
+| 10:23 | +46.7° | −6.03 … −5.20 | **+0.39** … +1.90 | 5.59 |
+
+The gap looks stable, and that is misleading. Sign separation depends on the
+**open** side staying above zero, and its margin fell from +2.18 to +0.39 as
+the sun rose — the gap held only because the shut side moved further negative
+to compensate. Direct sun on foliage and more blue sky in the aperture both
+push the open region away from green-dominant. If the trend continues at
+midday the sign test could fail while the gap still reads healthy, so track the
+open-side minimum, not just the gap.
 
 All of the above is **daylight only**. Green excess is worthless at night, when
 the camera switches to IR and returns a monochrome frame — expect the night

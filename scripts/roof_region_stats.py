@@ -332,6 +332,11 @@ def score(rec_dir, verbose=True):
         gap = min(r["green_excess"] for r in open_set) - \
               max(r["green_excess"] for r in shut_set)
         row["green_gap"] = round(gap, 2)
+        # Track the OPEN side's own margin above zero, not just the gap. On
+        # 2026-08-16 the gap held at ~5.6 while this fell from +2.18 to +0.39
+        # as the sun rose, because the shut side moved further negative to
+        # compensate. Sign separation depends on this number alone.
+        row["open_green_min"] = round(min(r["green_excess"] for r in open_set), 2)
         row["sign_separated"] = bool(
             min(r["green_excess"] for r in open_set) > 0 >
             max(r["green_excess"] for r in shut_set))
@@ -386,13 +391,15 @@ def summary():
         return
     rows = [json.loads(l) for l in open(LOG_PATH) if l.strip()]
     rows.sort(key=lambda r: r["started"])
-    print("%-19s %-6s %6s %6s %10s %9s %s"
-          % ("started", "dir", "sunalt", "sunaz", "green gap", "edge gap", "sign"))
-    print("-" * 74)
+    print("%-19s %-6s %6s %6s %10s %10s %9s %s"
+          % ("started", "dir", "sunalt", "sunaz", "green gap", "open min",
+             "edge gap", "sign"))
+    print("-" * 85)
     for r in rows:
-        print("%-19s %-6s %+6.1f %6.0f %10s %9s %s"
+        print("%-19s %-6s %+6.1f %6.0f %10s %10s %9s %s"
               % (r["started"][:19].replace("T", " "), r["direction"],
                  r["sun_alt_deg"], r["sun_az_deg"], r["green_gap"],
+                 r.get("open_green_min", "-"),
                  r["edge_gap"], r["sign_separated"]))
     gaps = [r["green_gap"] for r in rows if r.get("green_gap") is not None]
     if gaps:
@@ -400,6 +407,11 @@ def summary():
               % (len(gaps), min(gaps), max(gaps)))
         if min(gaps) <= 0:
             print("*** at least one run does NOT separate ***")
+    mins = [r["open_green_min"] for r in rows if r.get("open_green_min") is not None]
+    if mins:
+        print("open-side margin above zero: min %.2f, max %.2f%s"
+              % (min(mins), max(mins),
+                 "   *** approaching zero ***" if min(mins) < 0.5 else ""))
 
 
 def main():
