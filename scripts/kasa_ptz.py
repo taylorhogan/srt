@@ -13,7 +13,8 @@ Usage:
     python kasa_ptz.py move "Iris cam" left [steps] [speed]
     python kasa_ptz.py goto "Iris cam" -123 363
     python kasa_ptz.py stop "Iris cam"
-    python kasa_ptz.py on|off "Iris cam"   # the camera itself, not its plug
+    python kasa_ptz.py on|off "Iris cam"        # the camera, not its plug
+    python kasa_ptz.py daynight "Iris cam" day  # hold the IR-cut filter in
 
 The sky camera is refused by default -- see PROTECTED below.
 """
@@ -147,6 +148,44 @@ def set_enabled(dev, on):
     return enabled(dev)
 
 
+# Day/night mode, which drives the mechanical IR-cut filter. Measured: "day"
+# gives a colour frame (mean channel spread 31.6), "night" gives a monochrome
+# one (spread exactly 0.00, i.e. the filter is out and the sensor is seeing
+# near-IR). The illuminator is slaved to the same state on this camera family,
+# so forcing "day" is the way to stop it emitting IR into the enclosure during
+# an imaging run WITHOUT disabling the camera outright.
+#
+# Two consequences worth knowing before using this:
+#  * In "day" the camera is nearly blind in an unlit dome. That is survivable
+#    for safety checks only because they turn the observatory lights on anyway
+#    (see get_status_with_lights).
+#  * In "night" the frame is monochrome, so the green-excess roof metric in
+#    roof_region_stats.py is identically zero -- not merely degraded. Any
+#    night-time region test must either force "day" plus lights, or use a
+#    discriminator that survives monochrome.
+DAYNIGHT = "smartlife.cam.ipcamera.dayNight"
+DAYNIGHT_MODES = ("auto", "day", "night")
+
+
+def _daynight(dev, method, args):
+    res = kc._call("passthrough", {
+        "deviceId": dev["deviceId"],
+        "requestData": json.dumps({DAYNIGHT: {method: args}})})
+    return json.loads(res["responseData"]).get(DAYNIGHT, {}).get(method, {})
+
+
+def day_night(dev, mode=None):
+    """Read the day/night mode, or set it. Returns the mode now in force."""
+    if mode is not None:
+        if mode not in DAYNIGHT_MODES:
+            raise PTZError("mode must be one of %s" % (DAYNIGHT_MODES,))
+        _ok(_daynight(dev, "set_mode", {"value": mode}), "set_mode")
+    body = _daynight(dev, "get_mode", {})
+    if body.get("err_code") != 0:
+        raise PTZError("get_mode failed: %s" % json.dumps(body))
+    return body.get("value")
+
+
 def solve(delta, max_moves=5):
     """Shortest [(speed, sign)] whose step sizes sum to *delta*, or None.
 
@@ -268,6 +307,14 @@ def main(argv):
             where = "no pan/tilt (fixed camera)"
         print("%s  %s  camera %s"
               % (name, where, "ON" if enabled(dev) else "OFF"))
+        return 0
+    if action == "daynight":
+        want = rest[1] if len(rest) > 1 else None
+        now = day_night(dev, want)
+        print("%s day/night mode: %s" % (name, now))
+        if now == "day":
+            print("  IR-cut filter held IN: no IR emitted, but the camera is "
+                  "nearly blind in an unlit dome")
         return 0
     if action in ("on", "off"):
         # Deliberately NOT guarded by PROTECTED: this does not move anything,
