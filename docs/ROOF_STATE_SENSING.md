@@ -356,6 +356,44 @@ slack. Now 8–10 patches with a majority rule (60% of matched patches, floor of
 and +120 px are still recovered to within the same −6 baseline, and +300 px is
 refused rather than mis-reported because it exceeds the search window.
 
+## Parked, first measurements — and the trap in them
+
+2026-08-16, scope moved by hand to three poses with the roof open.
+`scripts/scope_parked_probe.py` scores normalised correlation of the scope
+region against a stored parked reference, after registration.
+
+| pose | score |
+|------|-------|
+| reference pose, simply re-photographed | 0.964–0.990 |
+| **parked again after actually moving it** | **0.841** |
+| moderate off-park (OTA swung off the panel) | 0.609 |
+| large off-park (pointed up) | 0.344 |
+
+**The first row is not the parked population.** Those three samples never moved
+the scope; they measure how repeatable the *camera and lighting* are, not how
+repeatably the mount parks. Treating them as bounds gave a floor of 0.96 and a
+threshold around 0.93 — which the very next genuine re-park, at 0.841, would
+have rejected. A safety gate tuned that way would refuse to move the roof for a
+correctly parked scope.
+
+So the usable margin is 0.841 against 0.609, not 0.96 against 0.61. Separated,
+but on ONE sample of the only thing that matters.
+
+Two caveats in opposite directions. This was a *manual* re-park; the real
+system parks through PWI4 with encoders, which should repeat far better, so
+0.841 is probably pessimistic. But every sample here was taken within fifteen
+minutes in one lighting condition, so the parked floor across a day and a night
+is unmeasured, and that can only push it down.
+
+**What would settle it:** several software park cycles (`mount_park()`), each
+scored, to get the real parked distribution — not more hand-placed poses. Until
+that exists there is no defensible threshold, and this must not gate anything.
+
+Sensitivity, for calibration: translating the parked frame by 5 px scores
+0.888, 10 px 0.853, 20 px 0.790, 50 px 0.652. At ~23 px/degree the metric
+resolves a fraction of a degree, so it is not short of discrimination — the
+open question is entirely where the parked population actually sits.
+
 ## What this does NOT fix
 
 Four ladders still fail, all `NOT-parked`, all in the 10:28–10:34 high-sun
