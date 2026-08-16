@@ -1,6 +1,12 @@
 """
 scope_marker_check.py
-Decide whether the scope is parked, from an ArUco marker on the OTA.
+Decide whether the scope is SAFE for the roof to close, from an ArUco marker
+on the OTA.
+
+Safe, not parked. Parked is one pose; safe is the region around it in which the
+roof can close without striking the scope, and that region is what a roof gate
+actually needs to know about. A scope 1.75 deg off park is not parked but is
+almost certainly safe, and refusing to close on that costs a night for nothing.
 
 This replaces the correlation approach in scope_parked_probe.py, which asked
 how much the scope AREA of the image resembles a stored parked frame. That
@@ -70,13 +76,25 @@ DICTS = {
 }
 DEFAULT_DICT = "4X4_50"     # what is physically mounted today
 
-# Corner displacement allowed before the scope is not parked. The noise floor
-# is 0.12 px, so this is not a sensitivity limit -- it is slack for the marker
-# being re-taped, for thermal settling, and for however precisely the mount's
-# own park repeats, which is the number tonight's software park will supply.
-# Deliberately generous until that is measured: a gate that refuses a correctly
-# parked scope costs a night, and this is still ~150x the noise.
-TOLERANCE_PX = 20.0
+# The question is NOT "is the scope parked" -- it is "can the roof close
+# without hitting the scope". Parked is one pose; SAFE is a region around it,
+# and the threshold belongs at the collision boundary, not at park precision.
+# Getting this backwards made the gate call a hand-park 1.75 deg off "MOVED",
+# which was the wrong answer to the wrong question: it was almost certainly
+# safe, just not exactly parked.
+#
+# Scale, measured 2026-08-16 by moving the scope a known ~5 degrees:
+#   23 px per degree     detector noise 0.12 px (0.005 deg)
+#   hand re-park          40 px  (1.75 deg)  -- operator considers this safe
+#   deliberately unsafe  565 px  (24.6 deg)  -- OTA against the roof rail
+#
+# So the boundary lies somewhere between 1.75 and 24.6 degrees and has NOT been
+# measured. 3 degrees is a placeholder chosen to accept a hand-park with margin
+# while staying far below the one known-unsafe pose. It is not derived from
+# clearance and must be replaced by a measured marginal-safe position.
+PX_PER_DEGREE = 23.0
+SAFE_DEGREES = 3.0
+TOLERANCE_PX = SAFE_DEGREES * PX_PER_DEGREE
 
 
 def detector(name=DEFAULT_DICT):
@@ -101,7 +119,7 @@ def find_markers(img, dict_name=DEFAULT_DICT):
 
 
 def compare(found, parked):
-    """(verdict, detail). Verdict is 'parked', 'MOVED' or 'unknown'."""
+    """(verdict, detail). Verdict is 'safe', 'UNSAFE' or 'unknown'."""
     missing = [i for i in parked if i not in found]
     if missing:
         # A marker that cannot be seen is not evidence that the scope moved --
@@ -114,7 +132,7 @@ def compare(found, parked):
         d = np.linalg.norm(np.array(found[i]) - np.array(ref), axis=1)
         per_id[i] = {"max_px": float(d.max()), "mean_px": float(d.mean())}
         worst = max(worst, float(d.max()))
-    return ("parked" if worst <= TOLERANCE_PX else "MOVED",
+    return ("safe" if worst <= TOLERANCE_PX else "UNSAFE",
             {"worst_corner_px": worst, "per_id": per_id})
 
 
@@ -167,8 +185,10 @@ def main():
     if verdict == "unknown":
         print("  markers missing: %s" % detail["missing_ids"])
     else:
-        print("  worst corner displacement: %.1f px  (tolerance %.0f)"
-              % (detail["worst_corner_px"], TOLERANCE_PX))
+        print("  worst corner displacement: %.1f px = %.2f deg  "
+              "(safe below %.0f px = %.1f deg)"
+              % (detail["worst_corner_px"], detail["worst_corner_px"] / PX_PER_DEGREE,
+                 TOLERANCE_PX, SAFE_DEGREES))
         for i, d in sorted(detail["per_id"].items()):
             print("    id %d  max %.1f px  mean %.1f px" % (i, d["max_px"], d["mean_px"]))
 
@@ -176,7 +196,7 @@ def main():
         fh.write(json.dumps({"label": args.label, "verdict": verdict,
                              "when": datetime.now().astimezone().isoformat(timespec="seconds"),
                              **{k: v for k, v in detail.items() if k != "per_id"}}) + "\n")
-    return 0 if verdict == "parked" else 3
+    return 0 if verdict == "safe" else 3
 
 
 if __name__ == "__main__":
