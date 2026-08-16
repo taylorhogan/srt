@@ -9,23 +9,42 @@ import cv2 as cv
 sys.path.insert(0, os.path.abspath("."))
 from sentry import vision_safety as vs
 
-# Ground truth: mine (08-04, plus the 08-03 open sets) merged with the labels
-# already recorded in scripts/ab_exposure_scorer.py.
+# Ground truth. The 08-03/08-04 labels this started with have rolled off the
+# disk -- exposure_capture_keep caps the directory at 30 -- so they are replaced
+# by the 2026-08-16 session, where the roof state is known from the commands
+# that were run and, independently, from the Iris cam recordings, which show
+# the aperture open continuously until 10:34:43.
+#
+# 10-35-43 and 10-36-25 are deliberately absent: a manual close happened in
+# that window and cannot be placed to the second. An unlabelled ladder is
+# reported but not scored.
 TRUTH = {
-    "2026-08-03_16-54-55": "closed",  # daylight, roof closed
-    "2026-08-03_16-57-08": "open",    # daylight, roof open
-    "2026-08-03_17-02-43": "open",    # open_roof retry loop, roof still open
-    "2026-08-03_18-15-14": "open",    # daylight, roof open
-    "2026-08-03_18-18-51": "open",    # daylight, roof open
-    "2026-08-03_20-58-30": "open",    # night, roof open
-    "2026-08-04_01-43-00": "closed",  # the misread: roof WAS closed
-    "2026-08-04_01-44-12": "closed",  # 72s later, read closed
+    "2026-08-16_01-58-26": "closed",  # end sequence close, night
+    "2026-08-16_01-59-35": "closed",
+    "2026-08-16_07-40-55": "closed",  # pre-open check, low sun
+    "2026-08-16_07-43-14": "open",    # post-open confirm
+    "2026-08-16_07-48-01": "open",    # pre-close check
+    "2026-08-16_07-49-17": "open",
+    "2026-08-16_07-51-27": "closed",  # post-close confirm
+    "2026-08-16_07-53-45": "closed",
+    "2026-08-16_10-24-16": "closed",  # pre-open check, sun 46 deg
+    "2026-08-16_10-26-28": "open",    # the ambiguous run begins here
+    "2026-08-16_10-27-07": "open",
+    "2026-08-16_10-27-45": "open",
+    "2026-08-16_10-28-19": "open",
+    "2026-08-16_10-28-57": "open",
+    "2026-08-16_10-29-36": "open",
+    "2026-08-16_10-33-24": "open",
+    "2026-08-16_10-34-02": "open",
+    "2026-08-16_10-34-40": "open",
 }
 
 root = Path("base_images/exposure_sets")
 fails = 0
 print(f"{'ladder':22} {'sun':>6}  vote                          verdict      truth")
 for d in sorted(root.iterdir()):
+    if not (d / "meta.json").exists():
+        continue
     meta = json.loads((d / "meta.json").read_text(encoding="utf-8"))
     rungs = []
     for entry in meta["frames"]:

@@ -284,6 +284,54 @@ class of fault that actually costs equipment. But it means:
   or on the network — so keep it in the agreement rule of item 3, and do not
   count the Kasa camera's picture and sound as the two independent signals.
 
+## Three candidate fixes, measured — only one survived
+
+Tested 2026-08-16 against 18 labelled ladders (12 open, 6 closed) spanning
+night to sun altitude 48°, replayed offline with no hardware. Ground truth from
+the commands run plus the Iris cam recordings.
+
+| variant | correct | unknown | NOT-parked | wrong |
+|---------|---------|---------|------------|-------|
+| baseline (shipped) | 10 | 4 | 4 | 0 |
+| clip guard ≤95% | 10 | 4 | 4 | 0 |
+| chroma check ≤0.05 | 5 | 9 | 4 | 0 |
+| **competitive scoring** | **14** | **0** | 4 | 0 |
+
+**Competitive scoring shipped.** Instead of letting either state veto the
+other, the two are scored against each other — `conf − error/accuracy` — and
+the winner must lead by `_ROOF_TIEBREAK_MARGIN`. Zero wrong verdicts at *every*
+margin from 0.00 to 0.60, with a flat plateau 0.00–0.20, so 0.15 is not tuned
+to an edge; above 0.30 it degrades back to the old behaviour.
+
+**The clip guard did nothing.** Plausible — seven of ten rungs were 100%
+clipped and formally eligible to vote — but on this corpus those rungs never
+carried the deciding vote anyway. Kept as a known latent hazard, not shipped:
+it adds a threshold without buying anything measurable.
+
+**The colour check made it worse, for an instructive reason.** The idea was
+that a yellow star on brown and a blue triangle on silver are trivially
+separable by hue, and the matcher throws colour away (`IMREAD_COLOR` then
+`cvtColor(BGR2GRAY)`). But the *templates* are nearly the same colour in
+aggregate: chromaticity `[0.378, 0.331]` closed vs `[0.357, 0.347]` open, 0.026
+apart — because each tile is mostly background, so it compares brown against
+silver, not star against triangle. The metric even ranks backwards: true closed
+matches scored 0.065–0.119 while phantoms scored 0.037–0.041.
+
+Colour is not useless here; the *aggregate* of a mostly-background tile is. A
+colour test would need to isolate marker pixels, or the physical markers would
+need backgrounds that differ. Neither is a code change alone.
+
+Also disproved along the way: "the phantom only appears in blown-out frames."
+The exp −11 phantom appeared at **14.3%** clip.
+
+## What this does NOT fix
+
+Four ladders still fail, all `NOT-parked`, all in the 10:28–10:34 high-sun
+window where only 2 of 10 rungs can establish parked at all. That is the
+*parked* detector, untouched by any of the above, and it is the more
+safety-critical of the two — a wrong "parked" is what drives the roof into the
+OTA. Sample it before trusting it.
+
 ## What not to do
 
 * **Do not tighten `accuracy` alone.** 50 px would separate tonight's phantom

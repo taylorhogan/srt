@@ -218,6 +218,23 @@ _MIN_ROOF_VOTES = 1
 # by 120-400px, never narrowly), and every ladder measured so far has 5 or more.
 _MIN_PARKED_VOTES = 3
 
+# How far ahead the winning roof state must be before an ambiguous ladder is
+# resolved instead of refused. 0.15 sits mid-plateau: 0.00-0.20 all score
+# identically on the labelled corpus, so nothing here is balanced on an edge.
+# Set to a large number to restore the old refuse-on-any-conflict behaviour.
+_ROOF_TIEBREAK_MARGIN = 0.15
+
+
+def _match_score(match, accuracy):
+    """Quality of one template match: confident AND close both count.
+
+    Confidence alone cannot separate a true match from a phantom — measured
+    2026-08-16, a phantom scored 0.63 against a true match's 0.65. Distance
+    does separate them (77px vs 44px), but only relative to the other
+    candidate, which is why this is a score to compare rather than a threshold.
+    """
+    return match["conf"] - abs(match["error"]) / accuracy
+
 
 def _evaluate_rung(frame, exposure=None):
     """Match all three markers against one exposure of the sweep."""
@@ -293,10 +310,41 @@ def _decide_from_rungs(rungs):
         closed = len(closed_rungs) >= _MIN_ROOF_VOTES and not open_rungs
         is_open = len(open_rungs) >= _MIN_ROOF_VOTES and not closed_rungs
         if closed_rungs and open_rungs:
-            _logger.warning(
-                "vision ROOF STATE AMBIGUOUS — %d rung(s) read closed and %d read open; "
-                "roof unknown", len(closed_rungs), len(open_rungs),
-            )
+            # Both states have votes. The unanimity rule calls this unknown,
+            # which is why a roof open in daylight goes unconfirmed: the closed
+            # marker is GONE once the roof opens, so its region fills with
+            # foliage against sky — dark-shape-on-bright-ground, the same
+            # greyscale signature as a blue triangle on silver. The matcher is
+            # handed an endless supply of near-matches for exactly the feature
+            # it hunts, and one of them vetoes any number of correct votes.
+            #
+            # So compare the two states against EACH OTHER instead of letting
+            # either veto. Score trades confidence against how far the match
+            # missed; the winner must lead by `margin` or it stays unknown.
+            # Measured on 18 labelled ladders: 10 correct -> 14, all four
+            # ambiguous cases resolved, zero wrong at ANY margin from 0.00 to
+            # 0.60, and a flat plateau from 0.00-0.20 so this is not tuned to
+            # an edge. Above 0.30 it degrades gracefully back to the old
+            # behaviour.
+            best_closed = max(_match_score(r["closed"], accuracy) for r in closed_rungs)
+            best_open = max(_match_score(r["open"], accuracy) for r in open_rungs)
+            lead = abs(best_closed - best_open)
+            if lead >= _ROOF_TIEBREAK_MARGIN:
+                closed = best_closed > best_open
+                is_open = not closed
+                _logger.warning(
+                    "vision roof ambiguous (%d closed / %d open) — resolved to %s "
+                    "on match quality (closed %.2f vs open %.2f, lead %.2f)",
+                    len(closed_rungs), len(open_rungs),
+                    "closed" if closed else "open", best_closed, best_open, lead,
+                )
+            else:
+                _logger.warning(
+                    "vision ROOF STATE AMBIGUOUS — %d rung(s) read closed and %d read open; "
+                    "neither leads by %.2f (closed %.2f vs open %.2f); roof unknown",
+                    len(closed_rungs), len(open_rungs), _ROOF_TIEBREAK_MARGIN,
+                    best_closed, best_open,
+                )
 
     # Representative rung per state: the winning rung when the state won,
     # otherwise the lit rung that came closest, so a refusal message quotes the
