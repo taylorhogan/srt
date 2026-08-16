@@ -13,6 +13,7 @@ Usage:
     python kasa_ptz.py move "Iris cam" left [steps] [speed]
     python kasa_ptz.py goto "Iris cam" -123 363
     python kasa_ptz.py stop "Iris cam"
+    python kasa_ptz.py on|off "Iris cam"   # the camera itself, not its plug
 
 The sky camera is refused by default -- see PROTECTED below.
 """
@@ -113,6 +114,37 @@ def step(dev, direction, speed=1):
 
 def stop(dev):
     return _ok(_call(dev, "set_stop", {}), "set_stop")
+
+
+# The camera's own enable, independent of the Kasa plug it is powered from.
+# Turning it off is a REAL disable, not a recording flag: the 19443 stream
+# answers 503 with no parts at all, so the video and the microphone both stop.
+# That matters for anything using this camera as a safety sensor -- see
+# docs/ROOF_STATE_SENSING.md. Check `enabled()` before trusting a verdict from
+# it, because a camera switched off in the Kasa app looks exactly like a camera
+# that is unreachable.
+SWITCH = "smartlife.cam.ipcamera.switch"
+
+
+def enabled(dev):
+    """True/False: is the camera itself switched on?"""
+    res = kc._call("passthrough", {
+        "deviceId": dev["deviceId"],
+        "requestData": json.dumps({SWITCH: {"get_is_enable": {}}})})
+    body = json.loads(res["responseData"]).get(SWITCH, {}).get("get_is_enable", {})
+    if body.get("err_code") != 0:
+        raise PTZError("get_is_enable failed: %s" % json.dumps(body))
+    return body.get("value") == "on"
+
+
+def set_enabled(dev, on):
+    res = kc._call("passthrough", {
+        "deviceId": dev["deviceId"],
+        "requestData": json.dumps(
+            {SWITCH: {"set_is_enable": {"value": "on" if on else "off"}}})})
+    body = json.loads(res["responseData"]).get(SWITCH, {}).get("set_is_enable", {})
+    _ok(body, "set_is_enable")
+    return enabled(dev)
 
 
 def solve(delta, max_moves=5):
@@ -227,8 +259,27 @@ def main(argv):
     dev = _device(name)
 
     if action == "pos":
-        print("%s  position %s  capability %s"
-              % (name, position(dev), capability(dev)))
+        # Not every KC camera has a motor: the KC420WS sky camera answers
+        # -10008 for the whole ptz module. Report what it does have rather
+        # than failing the command.
+        try:
+            where = "position %s  capability %s" % (position(dev), capability(dev))
+        except PTZError:
+            where = "no pan/tilt (fixed camera)"
+        print("%s  %s  camera %s"
+              % (name, where, "ON" if enabled(dev) else "OFF"))
+        return 0
+    if action in ("on", "off"):
+        # Deliberately NOT guarded by PROTECTED: this does not move anything,
+        # and being able to switch the sky camera back on without the app is
+        # worth more than the risk of switching it off.
+        was = enabled(dev)
+        now = set_enabled(dev, action == "on")
+        print("%s camera %s -> %s" % (name, "on" if was else "off",
+                                      "on" if now else "off"))
+        if not now:
+            print("  NOTE: the 19443 stream now answers 503 -- video AND "
+                  "microphone are both dead until this is switched back on")
         return 0
     if action == "stop":
         stop(dev)

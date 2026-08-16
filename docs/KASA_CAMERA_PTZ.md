@@ -136,10 +136,50 @@ so it separates key names from values not at all. There is no way to confirm
 `set_move`'s argument shape without a call that may move the camera — which is
 how the format was ultimately found.
 
-## Do not point the sky camera
+## The camera's own on/off, separate from its plug
 
-The KC420WS answers all of the above. Moving it would be a mistake that is not
-obviously recoverable.
+`smartlife.cam.ipcamera.switch`, and it is supported on **both** cameras:
+
+| method | argument | reply |
+|--------|----------|-------|
+| `get_is_enable` | `{}` | `{"value": "on"}` |
+| `set_is_enable` | `{"value": "on"｜"off"}` | `{"err_code": 0}` |
+
+The error text names the parameter outright — `-40800 "The parameter [value]
+format error."` — which is how the shape was found without guessing. The LED is
+the same shape under `smartlife.cam.ipcamera.led` / `set_status`.
+
+**"Off" is a real disable, not a recording flag.** Measured 2026-08-16:
+
+| camera_switch | the 19443 stream |
+|---------------|------------------|
+| on | HTTP 200, 76 video + 84 audio parts in 5 s |
+| off | **HTTP 503, 19 bytes, no parts at all** |
+
+So it stops the video **and the microphone together**. Anything treating this
+camera as a safety sensor has to check `get_is_enable` before trusting it,
+because a camera switched off in the Kasa app is indistinguishable from one
+that is unreachable — and both the picture and the sound go at once.
+
+## The sky camera has no motor at all
+
+Correcting an earlier claim here that the KC420WS "answers all of the above".
+That was inferred from the model being a pan/tilt product, not tested. It is
+wrong:
+
+```
+Sky camera (KC420WS)   ptz.get_position     -10008 Unsupported API call
+                       ptz.get_capability   -10008 Unsupported API call
+Iris cam   (KC410S)    ptz.get_position     {"x": -123, "y": 363}
+```
+
+The sky camera is fixed. Its plate solution therefore **cannot** be invalidated
+by a software pan, which removes the risk the rest of this document worries
+about. `PROTECTED` in `scripts/kasa_ptz.py` stays anyway: it costs nothing, and
+it is the wrong thing to remove on the strength of one probe.
+
+The switch above **is** supported on it, though, so the all-sky feed can still
+be killed remotely — that one is worth guarding.
 
 That camera carries a **plate solution** — blind-solved, 1.5 px residual, axis
 4° off zenith, 104° FOV, F=1617 px/rad — and everything derived from it: any

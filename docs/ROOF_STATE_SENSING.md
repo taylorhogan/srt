@@ -210,6 +210,35 @@ signature to be a dark aperture against a lit interior, which is a different
 discriminator that has not been sampled yet. Do not ship a region test until it
 has been measured after dark, and on an overcast day.
 
+## The camera and its microphone are ONE sensor, not two
+
+Measured 2026-08-16, and it bears directly on replacing both the safety webcam
+and the roof microphone with this one camera.
+
+The camera has its own enable, separate from the plug it is powered from
+(`smartlife.cam.ipcamera.switch`, see [[KASA_CAMERA_PTZ]]). Switching it off is
+a real disable: the 19443 stream goes from HTTP 200 with 76 video and 84 audio
+parts to **HTTP 503 with no parts at all**. Video and microphone stop together.
+
+That is not only about the switch. Everything upstream is shared too — one
+network path, one plug, one firmware, one app toggle, one cloud account. Today
+the webcam is USB on the observatory PC and the roof microphone is a separate
+device on the same PC; those fail independently. Consolidating both onto the
+Kasa camera turns two independent channels into one, which is exactly what this
+document argues against: *two sensors that fail the same way are one sensor.*
+
+This does not sink the idea — the margins measured above are far better than
+the marker matcher's, and the failure is at least **loud**: a 503 is an
+unmistakable "I cannot answer", not a confident wrong answer, which is the
+class of fault that actually costs equipment. But it means:
+
+* `get_is_enable` has to be checked before any verdict from this camera is
+  trusted, because switched-off and unreachable look identical.
+* The independent channel has to come from somewhere else. The Shelly 3EM
+  current signature already is one and fails on the supply, not on appearance
+  or on the network — so keep it in the agreement rule of item 3, and do not
+  count the Kasa camera's picture and sound as the two independent signals.
+
 ## What not to do
 
 * **Do not tighten `accuracy` alone.** 50 px would separate tonight's phantom
