@@ -157,8 +157,10 @@ def set_enabled(dev, on):
 #
 # Two consequences worth knowing before using this:
 #  * In "day" the camera is nearly blind in an unlit dome. That is survivable
-#    for safety checks only because they turn the observatory lights on anyway
-#    (see get_status_with_lights).
+#    for safety checks because they light the room first: take_snapshot() in
+#    sentry/inside_camera_server.py defaults to light=True, records the
+#    incoming state, turns the inside light on, and restores it afterwards.
+#    (Not get_status_with_lights, whose name suggests it and which does not.)
 #  * In "night" the frame is monochrome, so the green-excess roof metric in
 #    roof_region_stats.py is identically zero -- not merely degraded. Any
 #    night-time region test must either force "day" plus lights, or use a

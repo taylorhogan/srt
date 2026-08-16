@@ -19,6 +19,7 @@ Parts are timestamped as they arrive rather than after the fact, so the audio
 envelope and the frames share one clock and a sound can be tied to a picture.
 """
 import argparse
+import asyncio
 import csv
 import json
 import os
@@ -38,6 +39,7 @@ import urllib3
 from requests.auth import HTTPBasicAuth
 
 from configs import config
+from hardware_control import kasa_utils as ku
 from scripts.probe_kasa_camera import (legacy_tls_session, _boundary_of,
                                        _split_parts)
 from sentry.sky_camera import credentials
@@ -194,6 +196,8 @@ def main():
     ap.add_argument("--label", default="rec")
     ap.add_argument("--frame-every", type=float, default=5.0)
     ap.add_argument("--outdir", default="local/iriscam_rec")
+    ap.add_argument("--no-lights", action="store_true",
+                    help="do NOT switch the observatory light on for this run")
     args = ap.parse_args()
 
     user, pw = credentials(config.data())
@@ -221,10 +225,38 @@ def main():
         dev = kasa_ptz._device("Iris cam")
         meta["ptz_position"] = list(kasa_ptz.position(dev))
         meta["ptz_capability"] = list(kasa_ptz.capability(dev))
+        meta["daynight_mode"] = kasa_ptz.day_night(dev)
         print("  camera at %s" % (meta["ptz_position"],))
     except Exception as exc:
         meta["ptz_error"] = "%s: %s" % (type(exc).__name__, exc)
         print("  could not read camera position (%s)" % type(exc).__name__)
+    # Lights on for every test, so runs taken at different times of day are
+    # comparable and the camera is never asked to judge an unlit dome.
+    #
+    # This does NOT fight the vision path. take_snapshot() in
+    # sentry/inside_camera_server.py lights the room for its own ladder, but it
+    # records the incoming state first and restores that afterwards -- so with
+    # the light already on here, its restore leaves it on. Holding it on for
+    # the whole recording is what makes the frames before, during and after a
+    # move comparable; the vision confirm only lights a few seconds of it.
+    light_restored_to = None
+    if not args.no_lights:
+        try:
+            dev_map = asyncio.run(ku.make_discovery_map())
+            was_on = asyncio.run(ku.kasa_check(dev_map, {"Iris inside light": "ison"}))
+            light_restored_to = bool(was_on)
+            ok = asyncio.run(ku.kasa_do(dev_map, {"Iris inside light": "on"}))
+            meta["light_on"] = bool(ok.get("Iris inside light"))
+            meta["light_was_on"] = light_restored_to
+            if not meta["light_on"]:
+                print("  WARNING: the inside light did NOT verify on")
+            else:
+                print("  inside light on (was %s)" % ("on" if was_on else "off"))
+            time.sleep(4)          # let auto-exposure settle before recording
+        except Exception as exc:
+            meta["light_error"] = "%s: %s" % (type(exc).__name__, exc)
+            print("  could not switch the inside light (%s)" % type(exc).__name__)
+
     with open(os.path.join(out_dir, "meta.json"), "w") as fh:
         json.dump(meta, fh, indent=2)
 
@@ -288,6 +320,21 @@ def main():
         print("  %d stills" % len(frames))
         for t, path, mean in frames[:40]:
             print("    t=%6.1fs  mean %5.1f  %s" % (t, mean, os.path.basename(path)))
+
+    # Put the light back the way it was found. A lit dome is for the test, not
+    # a state to leave the observatory in -- and it is on the imaging path.
+    if light_restored_to is False:
+        try:
+            dev_map = asyncio.run(ku.make_discovery_map())
+            ok = asyncio.run(ku.kasa_do(dev_map, {"Iris inside light": "off"}))
+            if ok.get("Iris inside light"):
+                print("  inside light returned to off")
+            else:
+                print("  WARNING: inside light did NOT verify off -- it was off "
+                      "before this run and is still on")
+        except Exception as exc:
+            print("  WARNING: could not turn the inside light back off (%s)"
+                  % type(exc).__name__)
 
     print("\nstarted %s, %s" % (started.strftime("%H:%M:%S"), out_dir))
     return 0
