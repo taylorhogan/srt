@@ -152,6 +152,64 @@ Both facilities are cloud-only; the LAN exposes the stream and nothing else. The
 interface, the port map behind that claim, and the reason the sky camera must
 never be pointed are in [[KASA_CAMERA_PTZ]].
 
+## Measured on a real move, 2026-08-16
+
+A full open and close through `roof!!`, recorded on Iris cam. Both the picture
+and the microphone were captured off the one 19443 stream by
+`scripts/iriscam_record.py`, ~11 min after sunrise, sun on the building.
+
+**The region test separates cleanly.** Statistics over the aperture — the patch
+that is roof underside when shut and sky when open, `img[100:1400, 0:700]`:
+
+| metric | roof closed | roof open |
+|--------|-------------|-----------|
+| mean | 118–127 | 68–71 |
+| Canny edge density | 11.8–15.4 % | 22.9–25.9 % |
+| green excess `G−(B+R)/2` | −6.1 … −2.8 | **+2.2 … +3.3** |
+
+Twenty-four samples open, twenty closed, across two independent moves, and no
+overlap on any of the three. Green excess is the strongest because it **changes
+sign** — interior pine and foil insulation are red-dominant, foliage is
+green-dominant — so it is a zero crossing rather than a threshold on a
+magnitude, and auto-exposure renormalisation cannot move it. Compare the
+marker matcher, whose true matches scored 0.65–0.92 and whose phantom tree
+scored 0.63–0.73: overlapping.
+
+Note the mean moves the *wrong* way — the interior gets **darker** when the roof
+opens, because auto-exposure stops down for the new sky in frame. Brightness is
+usable here but only as a relative shift, which is the point made above about
+building on structure rather than level.
+
+**Two things that would confound a naive implementation.** The frame at t=150 s
+in the close recording reads mean 170, edge 3.5 % — that is the post-move vision
+confirm switching the interior lights on, and it looks like neither state. And
+the mid-travel frame (t=70 s, mean 81, green excess −0.74) sits between the two
+populations, exactly as it should. Any region test needs to treat "in motion"
+and "lights on" as their own outcomes rather than forcing a binary.
+
+**The microphone is better than expected.** Against a room floor of rms 3–5,
+peak 8–16:
+
+| | peak rms | peak sample | audible travel |
+|---|---|---|---|
+| open | 1846 | 29052 | 11.5 s |
+| close | 957 | 9852 | 11.5 s |
+
+That is ~500x the noise floor, and the two directions have *different envelope
+shapes*: the open is an impulse that decays, the close is a slow ramp to an
+impact at the end. Direction looks inferable from sound alone.
+
+**What this does not show.** The existing camera got this same move right —
+`roof!! status` returned "Roof: open; scope: parked" correctly in the sunlit
+open-roof condition. The 2026-08-15 failure did not reproduce. So the argument
+for changing sensor is margin, not a camera that is currently broken.
+
+All of the above is **daylight only**. Green excess is worthless at night, when
+the camera switches to IR and returns a monochrome frame — expect the night
+signature to be a dark aperture against a lit interior, which is a different
+discriminator that has not been sampled yet. Do not ship a region test until it
+has been measured after dark, and on an overcast day.
+
 ## What not to do
 
 * **Do not tighten `accuracy` alone.** 50 px would separate tonight's phantom
