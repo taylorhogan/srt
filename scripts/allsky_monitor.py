@@ -340,16 +340,55 @@ def _publish(status, frame):
     print("pushed", len(pairs), "file(s) to", live_push.HOST + ":" + live_push.DEST)
 
 
+def _decolumn(a):
+    """Remove the sensor's fixed per-column offset. COSMETIC, display only.
+
+    This camera has column fixed-pattern noise -- measured at ~16 ADU rms,
+    identical between consecutive frames (r = +0.957 over four), so it is the
+    sensor's readout and not the sky. It is a constant in ADU, so its prominence
+    is set entirely by how much signal sits on top of it: 0.25% of a 30s gain-100
+    frame, 2.4% at 30s gain 0, and 20% at 2s gain 0, where it dominates the
+    picture. That is why it was never noticed before -- ordinary all-sky
+    exposures bury it.
+
+    Subtracting each column's own median removes it without darks, calibration
+    frames or temperature matching, because the pattern is measured from the
+    frame itself. The broad horizontal trend is added back so the real sky
+    gradient survives. Measured on the 2s gain-0 frame: 15.0 -> 2.8 ADU, 81% gone.
+
+    NOT applied to the measurement path. star_count works on a median-filter
+    residual that already rejects this -- purity was 1.000 on that same 2s frame
+    with the banding at 20% of signal -- so there is nothing to fix there, and
+    changing what the detector sees to improve a picture would be the wrong
+    trade. The archived FITS and its sibling JPEG also stay untouched: they are
+    the raw record.
+    """
+    import numpy as np
+    from scipy import ndimage
+    colmed = np.median(a, axis=0)
+    broad = ndimage.uniform_filter1d(colmed, 101)
+    return a - (colmed - broad)[None, :]
+
+
 def _display_copy(frame, out_dir):
     """A viewable JPEG of the frame, with compass bearings if they are known."""
     frame = Path(frame)
     jpg = frame.with_suffix(".jpg")
-    if not jpg.exists():
-        try:
-            asi_allsky.save_jpeg(star_count._load(frame), jpg)
-        except Exception as exc:
-            print("allsky: could not render a JPEG (%s)" % type(exc).__name__)
-            return None
+    try:
+        # Rendered fresh from the FITS rather than reusing the archive JPEG, so
+        # the column correction lands on the published copy only.
+        jpg = out_dir / "allsky_display.jpg"
+        asi_allsky.save_jpeg(_decolumn(star_count._load(frame)), jpg)
+    except Exception as exc:
+        print("allsky: column correction failed (%s); using the plain frame"
+              % type(exc).__name__)
+        jpg = frame.with_suffix(".jpg")
+        if not jpg.exists():
+            try:
+                asi_allsky.save_jpeg(star_count._load(frame), jpg)
+            except Exception as exc2:
+                print("allsky: could not render a JPEG (%s)" % type(exc2).__name__)
+                return None
     shown = out_dir / "allsky_published.jpg"
     try:
         # Annotates a COPY. The stored frame stays clean, because it is training
