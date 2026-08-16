@@ -770,6 +770,29 @@ RENDER_LOG_NAME = "process_log.json"
 RENDER_LOG_MAX = 200
 
 
+def latest_sweep(out_dir: Path) -> Optional[dict]:
+    """The most recent sweep entry from the render log, or None.
+
+    Read back rather than re-derived from AUTO_SWEEP on purpose: a sweep that
+    pinned an axis (`auto black=55`) does not use the standard grid, and the
+    grid itself may change. The numbers printed on the sheet only mean anything
+    against the list that sheet was built from.
+    """
+    import json
+    path = out_dir / RENDER_LOG_NAME
+    try:
+        entries = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if isinstance(entries, dict):
+        entries = entries.get("entries", [])
+    sweeps = [e for e in entries
+              if isinstance(e, dict) and e.get("kind") == "sweep" and e.get("variants")]
+    if not sweeps:
+        return None
+    return max(sweeps, key=lambda e: str(e.get("time", "")))
+
+
 def record_render(out_dir: Path, entry: dict,
                   max_entries: int = RENDER_LOG_MAX) -> Optional[Path]:
     """Append one render to Iris/<dso>/process_log.json.

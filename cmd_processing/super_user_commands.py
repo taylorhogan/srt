@@ -2831,6 +2831,7 @@ def get_super_user_commands() -> dict[str, Callable]:
         "drift": drift_cmd,
         "stack": stack_cmd,
         "process": process_cmd,
+        "publish": publish_cmd,
         "purge": purge_cmd,
         "bad": bad_cmd,
         "dab": dab_cmd,
@@ -4891,6 +4892,155 @@ def _skysolve_run(words: list[str]) -> None:
             post("Compass headings from the new solve", image=str(out))
     except Exception:
         pass
+
+
+def publish_cmd(words: list[str], account: str) -> None:
+    """Render one sweep variant at full resolution and publish it.
+
+    Usage:
+        publish <dso> <id> [crop]
+
+    *id* is the number printed on a sweep panel by `process <dso> <recipe>
+    auto` — the whole point of that number is to be typed back here. *crop* is
+    how much of the frame to keep, centred: 0.75 or 75 both mean the central
+    75% of width and height. Omitted means the full frame.
+
+    Writes two files beside the target's other products:
+        publish_<dso>_<tag>_<id>[_crop##].png   full resolution, lossless
+        publish_<dso>_<tag>_<id>[_crop##].jpg   downscaled for sharing
+
+    The settings come from the sweep's own record in process_log.json rather
+    than being re-derived from AUTO_SWEEP. Re-deriving would silently drift the
+    moment that grid changed, and would be wrong for a sweep that pinned an
+    axis (`auto black=55`), where the grid is not the standard one. The log is
+    what the numbered sheet was actually built from.
+
+    The sweep renders binned 4x for speed, so this is a genuine re-render from
+    the cached channels at native resolution, not an upscale of a panel.
+    """
+    if not is_super_user(account):
+        social_server.post_social_message("publish is a super-user command")
+        return
+    # Imported here, as every other command in this module does: the stacking
+    # package pulls in astropy and scipy, and paying that at import time would
+    # slow every webchat start for a command that is rarely used.
+    from stacking import color_process, stacker
+
+    tokens = list(words[1:])
+    if not tokens:
+        social_server.post_social_message(
+            "Usage: publish <dso> <id> [crop]   e.g. `publish bubble 19 .75`")
+        return
+
+    # Parse from the RIGHT: a DSO name can be several words, and some contain
+    # digits (ngc7635, sh2-92), so taking numbers off the front would maul them.
+    def _num(tok):
+        try:
+            return float(tok)
+        except ValueError:
+            return None
+
+    trailing = []
+    while tokens and _num(tokens[-1]) is not None and len(trailing) < 2:
+        trailing.insert(0, _num(tokens.pop()))
+    if not trailing:
+        social_server.post_social_message(
+            "publish needs the panel number, e.g. `publish bubble 19 .75`")
+        return
+    panel_id = int(trailing[0])
+    crop = trailing[1] if len(trailing) > 1 else 1.0
+    # Accept 75 and 0.75 as the same thing; nobody should have to remember which.
+    if crop > 1.0:
+        crop /= 100.0
+    if not 0.0 < crop <= 1.0:
+        social_server.post_social_message(f"crop must be between 0 and 1 (got {crop})")
+        return
+    dso_arg = " ".join(tokens).strip()
+    if not dso_arg:
+        social_server.post_social_message(
+            "publish needs a DSO, e.g. `publish bubble 19 .75`")
+        return
+
+    cfg = config.data()
+    image_dir = Path(cfg["nina"]["image_dir"])
+    target = dso_arg.lower().replace(" ", "").replace("_", "")
+    candidates = [d for d in image_dir.iterdir() if d.is_dir()
+                  and target in d.name.lower().replace(" ", "").replace("_", "")]
+    if not candidates:
+        social_server.post_social_message(f"No image directory found for '{dso_arg}'")
+        return
+    dso_dir = max(candidates, key=lambda d: d.stat().st_mtime)
+    out_dir = stacker.results_dir(dso_dir.name)
+
+    entry = color_process.latest_sweep(out_dir)
+    if entry is None:
+        social_server.post_social_message(
+            f"{dso_dir.name}: no sweep on record — run "
+            f"`process {dso_dir.name} <recipe> auto` first, then publish a panel")
+        return
+    variants = entry.get("variants") or []
+    if not 1 <= panel_id <= len(variants):
+        social_server.post_social_message(
+            f"{dso_dir.name}: panel {panel_id} is not in the last sweep "
+            f"(1..{len(variants)}, run {entry.get('time', '?')})")
+        return
+    combo = variants[panel_id - 1]
+    tag = entry.get("tag") or entry.get("recipe")
+
+    cached = color_process.load_cached_channels(out_dir, dso_dir.name, tag)
+    if cached is None:
+        social_server.post_social_message(
+            f"{dso_dir.name} {tag}: cached channels are gone — re-run "
+            f"`process {dso_dir.name} {entry.get('recipe')}` to rebuild them")
+        return
+
+    shown = "  ".join(f"{k.replace('_pct', '').replace('softening', 'soft')}={v}"
+                      for k, v in sorted(combo.items()))
+    social_server.post_social_message(
+        f"{dso_dir.name} {tag}: publishing panel #{panel_id} ({shown})"
+        + (f", cropped to {crop:.0%}" if crop < 1.0 else " at full frame")
+        + " — rendering at native resolution…")
+
+    try:
+        rgb = color_process.compose(cached, **combo)
+    except Exception as exc:
+        _logger.exception("publish compose failed")
+        social_server.post_social_message(f"{dso_dir.name}: publish failed — {exc}")
+        return
+
+    if crop < 1.0:
+        h, w = rgb.shape[:2]
+        ch, cw = int(round(h * crop)), int(round(w * crop))
+        y0, x0 = (h - ch) // 2, (w - cw) // 2
+        rgb = rgb[y0:y0 + ch, x0:x0 + cw]
+
+    suffix = f"_crop{int(round(crop * 100))}" if crop < 1.0 else ""
+    stem = f"publish_{dso_dir.name}_{tag}_{panel_id}{suffix}"
+    png_path = out_dir / f"{stem}.png"
+    jpg_path = out_dir / f"{stem}.jpg"
+    try:
+        color_process.save_rgb(rgb, png_path)
+        color_process.save_rgb(rgb, jpg_path, max_px=color_process.CHANNEL_JPG_MAX_PX)
+    except Exception as exc:
+        _logger.exception("publish save failed")
+        social_server.post_social_message(f"{dso_dir.name}: could not save — {exc}")
+        return
+
+    color_process.record_render(out_dir, {
+        "time": datetime.now().astimezone().isoformat(timespec="seconds"),
+        "command": " ".join(words), "kind": "publish", "recipe": entry.get("recipe"),
+        "tag": tag, "panel": panel_id, "crop": crop, "settings": combo,
+        "file": jpg_path.name, "png": png_path.name,
+    })
+
+    h, w = rgb.shape[:2]
+    social_server.post_social_message(
+        f"{dso_dir.name} — {tag} panel #{panel_id} ({shown})\n"
+        f"  {w}x{h} px"
+        + (f", cropped to {crop:.0%} of the frame" if crop < 1.0 else ", full frame")
+        + f"\n  PNG: {png_path}  ({png_path.stat().st_size / 1e6:.1f} MB)"
+        + f"\n  JPG: {jpg_path}  ({jpg_path.stat().st_size / 1e6:.1f} MB)",
+        str(jpg_path))
 
 
 def purge_cmd(words: list[str], account: str) -> None:
