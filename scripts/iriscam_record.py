@@ -20,6 +20,7 @@ envelope and the frames share one clock and a sound can be tied to a picture.
 """
 import argparse
 import csv
+import json
 import os
 import sys
 import time
@@ -205,6 +206,27 @@ def main():
     os.makedirs(out_dir, exist_ok=True)
     print("recording %.0fs from %s -> %s" % (args.seconds, args.host, out_dir))
     started = datetime.now()
+
+    # Bank where the camera was pointing. A fixed pixel region only means
+    # anything for one pointing, and this camera pans and tilts -- so a
+    # recording that does not record its own position cannot be scored later.
+    # This is a coarse check only: the encoder does NOT pin the framing (frames
+    # at the identical reading have measured 121 px apart), which is why
+    # roof_region_stats.py registers every frame against a reference image as
+    # well. Best-effort; a cloud hiccup must not cost the recording.
+    meta = {"host": args.host, "started": started.astimezone().isoformat(
+        timespec="seconds"), "seconds": args.seconds, "label": args.label}
+    try:
+        from scripts import kasa_ptz
+        dev = kasa_ptz._device("Iris cam")
+        meta["ptz_position"] = list(kasa_ptz.position(dev))
+        meta["ptz_capability"] = list(kasa_ptz.capability(dev))
+        print("  camera at %s" % (meta["ptz_position"],))
+    except Exception as exc:
+        meta["ptz_error"] = "%s: %s" % (type(exc).__name__, exc)
+        print("  could not read camera position (%s)" % type(exc).__name__)
+    with open(os.path.join(out_dir, "meta.json"), "w") as fh:
+        json.dump(meta, fh, indent=2)
 
     buf, checkpoints, t0 = capture(args.host, user, pw, args.seconds)
     if not buf:

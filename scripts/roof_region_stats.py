@@ -56,12 +56,42 @@ iers.conf.auto_max_age = None
 
 LOG_PATH = "local/roof_region_log.jsonl"
 
-# The aperture: roof underside when shut, sky when open. Fixed pixel box, which
-# is only meaningful while the camera stays put -- Iris cam pans and tilts, so
-# a run whose position differs from CAL_POSITION is flagged, not silently
-# scored against the wrong patch of wall.
-REGION = (slice(100, 1400), slice(0, 700))
+# The aperture: roof underside when shut, sky when open.
+REGION_Y = (100, 1400)
+REGION_X = (0, 700)
 CAL_POSITION = (-123, 363)
+
+# The pixel box above is only meaningful if the camera is pointing where it was
+# when the box was chosen, and on this camera the encoder does NOT establish
+# that. Measured 2026-08-16: frames at the identical reading (-123, 363) sit up
+# to 121 px apart horizontally and 55-76 px vertically. Against a 700 px-wide
+# aperture that is 17% of the region, i.e. enough to score the wrong wall.
+#
+# So every frame is registered against a stored reference before it is scored,
+# by template-matching a patch of ceiling that does not change with roof state,
+# and the aperture box is shifted by the measured offset. A frame that will not
+# register is UNKNOWN, never a state.
+REFERENCE_PATH = "local/roof_region_reference.jpg"
+REFERENCE_META = "local/roof_region_reference.json"
+# Band the patches are drawn from: fixed ceiling planking on the far side of
+# the frame from the aperture, below the flat panel. The panel is excluded on
+# purpose -- it is bright, near the aperture, and its appearance changes
+# completely when the roof opens, so a patch on its edge matches badly exactly
+# when the answer matters.
+FIDUCIAL_BAND = ((250, 1000), (1750, 2450))
+PATCH_PX = 160
+SEARCH_PX = 260
+N_PATCHES = 6
+
+# One patch is not enough. A single auto-picked patch reported shifts up to
+# 176 px WITHIN one recording, during which the camera never moved, and still
+# scored 0.71 -- so the match score alone does not catch a false match. Several
+# patches are matched independently and the median is taken; they are trusted
+# only when they agree, because independent false matches do not agree.
+MIN_MATCH_SCORE = 0.50
+MAX_PATCH_SPREAD_PX = 40    # disagreement between patches => unknown
+MIN_PATCHES_AGREE = 4
+MAX_SHIFT_PX = 250          # beyond this the aperture box leaves its subject
 
 # Half-second bins louder than this multiple of the run's own median are the
 # roof moving. The floor is rms 3-5 and a move peaks near 1000-1800, so this is
@@ -80,15 +110,118 @@ def sun_position(when):
     return float(altaz.alt.deg), float(altaz.az.deg)
 
 
-def frame_metrics(path):
+def make_reference(frame_path, position=None):
+    """Adopt *frame_path* as the framing every later run is measured against."""
+    img = cv2.imread(frame_path, cv2.IMREAD_GRAYSCALE)
+    if img is None:
+        raise SystemExit("cannot read %s" % frame_path)
+    (y0, y1), (x0, x1) = FIDUCIAL_BAND
+    band = img[y0:y1, x0:x1]
+    # Pick the most distinctive spot automatically rather than hardcoding a
+    # corner: a hand-picked patch on plain planking matches everywhere.
+    corners = cv2.goodFeaturesToTrack(band, maxCorners=N_PATCHES * 3,
+                                      qualityLevel=0.01, minDistance=140,
+                                      blockSize=9)
+    if corners is None:
+        raise SystemExit("no distinctive feature in the fiducial band")
+    half = PATCH_PX // 2
+    anchors = []
+    for c in corners:
+        cx, cy = (int(v) for v in c[0])
+        ax, ay = x0 + cx - half, y0 + cy - half
+        # Keep the whole patch inside the band, so no patch can straddle the
+        # panel or the aperture.
+        if ax >= x0 and ay >= y0 and ax + PATCH_PX <= x1 and ay + PATCH_PX <= y1:
+            anchors.append([ax, ay])
+        if len(anchors) >= N_PATCHES:
+            break
+    if len(anchors) < MIN_PATCHES_AGREE:
+        raise SystemExit("only %d usable patches in the fiducial band"
+                         % len(anchors))
+    cv2.imwrite(REFERENCE_PATH, cv2.imread(frame_path))
+    meta = {"source": frame_path, "anchors": anchors,
+            "patch_px": PATCH_PX, "position": list(position or CAL_POSITION),
+            "created": datetime.now().astimezone().isoformat(timespec="seconds")}
+    with open(REFERENCE_META, "w") as fh:
+        json.dump(meta, fh, indent=2)
+    print("reference set from %s; %d patches at %s"
+          % (frame_path, len(anchors), anchors))
+    return meta
+
+
+def _reference():
+    if not (os.path.exists(REFERENCE_PATH) and os.path.exists(REFERENCE_META)):
+        return None, None, None
+    meta = json.load(open(REFERENCE_META))
+    ref = cv2.imread(REFERENCE_PATH, cv2.IMREAD_GRAYSCALE)
+    p = meta["patch_px"]
+    templates = [ref[ay:ay + p, ax:ax + p] for ax, ay in meta["anchors"]]
+    return ref, meta, templates
+
+
+def register(img_grey, meta, templates):
+    """(dx, dy, worst_score) by median over several patches, or None.
+
+    Returns None when the patches disagree. That is the whole point of using
+    more than one: a false match is confident but arbitrary, so independent
+    false matches scatter, while true matches all report the same offset.
+    """
+    p = meta["patch_px"]
+    votes = []
+    for (ax, ay), tpl in zip(meta["anchors"], templates):
+        sx, sy = max(0, ax - SEARCH_PX), max(0, ay - SEARCH_PX)
+        window = img_grey[sy:ay + p + SEARCH_PX, sx:ax + p + SEARCH_PX]
+        if window.shape[0] < p or window.shape[1] < p:
+            continue
+        res = cv2.matchTemplate(window, tpl, cv2.TM_CCOEFF_NORMED)
+        _, score, _, loc = cv2.minMaxLoc(res)
+        if score >= MIN_MATCH_SCORE:
+            votes.append((sx + loc[0] - ax, sy + loc[1] - ay, float(score)))
+    if len(votes) < MIN_PATCHES_AGREE:
+        return None
+    mx = float(np.median([v[0] for v in votes]))
+    my = float(np.median([v[1] for v in votes]))
+    agree = [v for v in votes
+             if abs(v[0] - mx) <= MAX_PATCH_SPREAD_PX
+             and abs(v[1] - my) <= MAX_PATCH_SPREAD_PX]
+    if len(agree) < MIN_PATCHES_AGREE:
+        return None
+    return (int(round(np.median([v[0] for v in agree]))),
+            int(round(np.median([v[1] for v in agree]))),
+            min(v[2] for v in agree))
+
+
+def frame_metrics(path, meta=None, templates=None):
     img = cv2.imread(path)
     if img is None:
         return None
-    roi = img[REGION[0], REGION[1]]
+    y0, y1 = REGION_Y
+    x0, x1 = REGION_X
+    shift = None
+    if meta is not None and templates:
+        shift = register(cv2.cvtColor(img, cv2.COLOR_BGR2GRAY), meta, templates)
+        if shift is None or shift[2] < MIN_MATCH_SCORE:
+            return {"unregistered": True, "match_score":
+                    None if shift is None else round(shift[2], 3)}
+        dx, dy, _ = shift
+        if abs(dx) > MAX_SHIFT_PX or abs(dy) > MAX_SHIFT_PX:
+            return {"unregistered": True, "shift": [dx, dy],
+                    "match_score": round(shift[2], 3)}
+        # Follow the camera: the aperture is wherever the fiducial says it is.
+        y0, y1, x0, x1 = y0 + dy, y1 + dy, x0 + dx, x1 + dx
+        h, w = img.shape[:2]
+        y0, y1 = max(0, y0), min(h, y1)
+        x0, x1 = max(0, x0), min(w, x1)
+    roi = img[y0:y1, x0:x1]
+    if roi.size == 0:
+        return {"unregistered": True, "match_score": None}
     grey = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
     edges = cv2.Canny(grey, 60, 160)
     b, g, r = (roi[:, :, i].astype(np.float64) for i in range(3))
     return {
+        "unregistered": False,
+        "shift": None if shift is None else [shift[0], shift[1]],
+        "match_score": None if shift is None else round(shift[2], 3),
         "mean": float(grey.mean()),
         "std": float(grey.std()),
         "edge_pct": float(100.0 * edges.mean() / 255.0),
@@ -123,16 +256,25 @@ def score(rec_dir, verbose=True):
         return None
     t_start, t_end = move
 
-    before, after, excluded = [], [], []
+    ref, meta, templates = _reference()
+    if meta is None:
+        print("  NO REFERENCE -- run --set-reference first; the aperture box is")
+        print("  only valid for one camera pointing and this camera moves.")
+        return None
+
+    before, after, excluded, unregistered = [], [], [], []
     for path in frames:
         m = re.search(r"frame_(\d+\.\d)s", path)
         if not m:
             continue
         t = float(m.group(1))
-        stats = frame_metrics(path)
+        stats = frame_metrics(path, meta, templates)
         if stats is None:
             continue
         stats["t_s"] = t
+        if stats.get("unregistered"):
+            unregistered.append(stats)
+            continue
         if t < t_start - 1.0:
             before.append(stats)
         elif t > t_end + SETTLE_S:
@@ -168,7 +310,15 @@ def score(rec_dir, verbose=True):
         "n_open": len(open_set),
         "n_shut": len(shut_set),
         "n_excluded": len(excluded),
+        "n_unregistered": len(unregistered),
     }
+    registered = [s for s in before + after + excluded if s.get("shift")]
+    if registered:
+        row["shift_x"] = [min(s["shift"][0] for s in registered),
+                          max(s["shift"][0] for s in registered)]
+        row["shift_y"] = [min(s["shift"][1] for s in registered),
+                          max(s["shift"][1] for s in registered)]
+        row["match_score_min"] = min(s["match_score"] for s in registered)
     for key in ("mean", "edge_pct", "green_excess"):
         row["open_" + key] = [round(v, 2) if v is not None else None
                               for v in agg(open_set, key)]
@@ -197,6 +347,12 @@ def score(rec_dir, verbose=True):
               % (label, direction, alt, az))
         print("    move heard t=%.1f..%.1fs; %d shut / %d open / %d excluded"
               % (t_start, t_end, len(shut_set), len(open_set), len(excluded)))
+        if registered:
+            print("    registration: shift x %s y %s, worst score %.3f"
+                  % (row["shift_x"], row["shift_y"], row["match_score_min"]))
+        if unregistered:
+            print("    *** %d frame(s) would NOT register -- excluded as unknown"
+                  % len(unregistered))
         for key in ("mean", "edge_pct", "green_excess"):
             print("    %-13s shut %-16s open %-16s"
                   % (key, row["shut_" + key], row["open_" + key]))
@@ -252,9 +408,15 @@ def main():
     ap.add_argument("recording", nargs="?")
     ap.add_argument("--all", action="store_true", help="score every recording")
     ap.add_argument("--summary", action="store_true", help="print the log only")
+    ap.add_argument("--set-reference", metavar="FRAME",
+                    help="adopt FRAME as the framing all runs are measured "
+                         "against (do this once, with the roof SHUT)")
     ap.add_argument("--root", default="local/iriscam_rec")
     args = ap.parse_args()
 
+    if args.set_reference:
+        make_reference(args.set_reference)
+        return 0
     if args.summary:
         summary()
         return 0
