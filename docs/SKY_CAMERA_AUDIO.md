@@ -60,6 +60,13 @@ Probed and ruled out, so it is not worth retrying:
 Two-way audio in the Kasa app therefore almost certainly goes via TP-Link's
 cloud. The local interface is a monitoring surface, not a control one.
 
+That was confirmed from the other direction on 2026-08-16: the camera's pan/tilt
+motor is not on the LAN either, but *is* reachable through the cloud passthrough
+`hardware_control/kasa_cloud.py` already speaks. See [[KASA_CAMERA_PTZ]], which
+also carries the full port map — the "only two ports are open" claim above was
+made against a six-port list, and a full 65535-port sweep finds 10443, 17443 and
+18443 as well.
+
 ## Note: the camera answers the legacy protocol over UDP, not TCP
 
 Unlike the plugs, TCP 9999 accepts a connection and then returns nothing. The

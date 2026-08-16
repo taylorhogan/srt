@@ -115,6 +115,43 @@ both correct last night: the **current signature** (Shelly 3EM channel 0) and th
 establish that a move happened and looked normal. What is missing is position at
 rest, which is what item 2 supplies.
 
+## The camera for item 1 is already installed
+
+`Iris cam` (KC410S at 192.168.87.65) hangs inside the observatory and frames the
+scope and the roof underside together, at **2560x1440** against the 1920x1080 of
+the DirectShow webcam `vision_safety` drives. On the morning after the failure
+above it returned a correctly exposed frame of that scene on the first attempt,
+with no exposure ladder at all.
+
+That is item 1's region test, pre-framed: the area that changes from wood
+planking to sky is the middle of this camera's field, at roughly twice the pixels
+and without the ten-rung sweep that manufactured the phantom.
+
+Two properties constrain how it can be used, and the second is the interesting
+one.
+
+**It auto-exposes**, like the outdoor Kasa. Absolute brightness is not comparable
+between frames, so the test has to be built on structure — texture, edge density,
+the geometry of the aperture — rather than a brightness threshold. Those survive
+renormalisation; a threshold does not.
+
+**It pans and tilts.** A camera that can move is a camera whose regions can
+quietly stop meaning what they meant, which is precisely the confident-wrong-
+answer failure this document is written against. Someone nudging it from the
+Kasa app would leave a roof test comparing the correct statistic over the wrong
+patch of wall, and nothing in the frame would announce that.
+
+The saving grace is that the motor reports a **number**: `get_position` returns
+`{x, y}`, so the reference frame is checkable. Store the position the regions
+were calibrated at, read it before trusting a verdict, and a camera that has been
+moved becomes *unknown* rather than *wrong* — the same argument as item 2, for
+free, on hardware already installed. It is worth building that check in from the
+start rather than discovering the need for it later.
+
+Both facilities are cloud-only; the LAN exposes the stream and nothing else. The
+interface, the port map behind that claim, and the reason the sky camera must
+never be pointed are in [[KASA_CAMERA_PTZ]].
+
 ## What not to do
 
 * **Do not tighten `accuracy` alone.** 50 px would separate tonight's phantom
