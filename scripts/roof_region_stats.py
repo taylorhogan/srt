@@ -78,7 +78,14 @@ REFERENCE_META = "local/roof_region_reference.json"
 # purpose -- it is bright, near the aperture, and its appearance changes
 # completely when the roof opens, so a patch on its edge matches badly exactly
 # when the answer matters.
-FIDUCIAL_BAND = ((250, 1000), (1750, 2450))
+# Top strip of ceiling. NOT the earlier (250-1000, 1750-2450) band: measured
+# 2026-08-16, four of the eight patches placed there landed on the TELESCOPE,
+# and because the white OTA is higher-contrast than plain planking they scored
+# BEST (0.62-0.80) while the three genuinely static patches scored 0.37-0.48
+# and were discarded. Slewing the scope dragged the median to +186 px, so the
+# "has the camera moved" check was actually measuring the scope. A fiducial
+# has to be somewhere the thing being measured can never reach.
+FIDUCIAL_BAND = ((40, 520), (1300, 2500))
 PATCH_PX = 160
 SEARCH_PX = 260
 N_PATCHES = 10
@@ -88,7 +95,15 @@ N_PATCHES = 10
 # scored 0.71 -- so the match score alone does not catch a false match. Several
 # patches are matched independently and the median is taken; they are trusted
 # only when they agree, because independent false matches do not agree.
-MIN_MATCH_SCORE = 0.50
+# Deliberately LOW. The high-contrast features in this scene -- the flat panel's
+# edges, the telescope itself -- are precisely the ones that move; plain ceiling
+# planking stays put but correlates weakly. Measured on a slewed frame: the five
+# patches scoring 0.29-0.44 ALL reported the correct shift, while three scoring
+# 0.51-0.86 were on the panel or the scope and reported garbage. A high
+# threshold therefore selects against the patches worth trusting. Admit weak
+# matches and let the agreement filter below discard the liars -- consensus is
+# the real test, score is only a sanity floor.
+MIN_MATCH_SCORE = 0.25
 MAX_PATCH_SPREAD_PX = 40    # disagreement between patches => unknown
 MAX_SHIFT_PX = 250          # beyond this the aperture box leaves its subject
 
