@@ -48,9 +48,15 @@ arm_width       = 25;
 arm_thick       = 6;
 arm_edge        = "y";        // which edge the arm sits on: "y" or "x"
 
-// Angle between the arm and the plate's normal. 0 keeps the original
-// perpendicular L-bracket; positive leans the arm back OVER the plate, which
-// swings the tag face toward whatever the arm is bolted away from.
+// The INCLUDED angle between the arm and the plate face, in degrees, exactly as
+// a protractor would read it. 90 is the original perpendicular L-bracket;
+// SMALLER closes the arm down over the plate; larger opens it away.
+//
+// Stated this way on purpose. The first version of this took a "tilt" offset
+// whose sign was a convention, the comment described that convention
+// backwards, and the default opened the angle to 115 degrees when the whole
+// point was to close it. An included angle cannot be got backwards: it is a
+// thing you can measure on the printed part.
 //
 // This exists because the marker only has to be readable when the scope is
 // PARKED. Detection failing in any other pose is free -- the gate returns
@@ -62,7 +68,7 @@ arm_edge        = "y";        // which edge the arm sits on: "y" or "x"
 // Measured 2026-08-17 with the arm perpendicular: the tag presented 74x42 px,
 // an aspect of 1.76, i.e. about 55 degrees oblique, leaving only 1.5x over the
 // degraded detection floor. Square-on it would present 74 px and 2.6x.
-arm_tilt        = 25;         // degrees
+arm_plate_angle = 65;         // degrees, included
 
 /* [Screw] */
 // M4 with deliberate slop. Nominal M4 is 4.0 and a standard clearance hole is
@@ -188,7 +194,7 @@ module arm_body() {
 // brace the arm, so they have to follow it or they would brace thin air.
 module tilted_arm() {
     translate([0, plate_size/2, plate_thick])
-        rotate([-arm_tilt, 0, 0])
+        rotate([90 - arm_plate_angle, 0, 0])
             translate([0, -plate_size/2, -plate_thick]) {
                 arm_body();
                 gussets();
@@ -237,11 +243,11 @@ else                 marker_plate();
 
 echo(str("plate ", plate_size, " mm (", plate_size/inch, " in) square, ",
          plate_thick, " mm thick"));
-echo(str("arm ", arm_height, " mm (", arm_height/inch, " in) long, tilted ",
-         arm_tilt, " deg from the plate normal"));
+echo(str("arm ", arm_height, " mm (", arm_height/inch, " in) long, at ",
+         arm_plate_angle, " deg to the plate face"));
 echo(str("opening ", hole_dia, " mm", slot_length > 0 ?
          str(" x ", slot_length, " mm slot") : " round hole",
          ", ", hole_from_top, " mm below the tip"));
-echo(str("arm tip reaches ", plate_thick + arm_height*cos(arm_tilt),
-         " mm above the tag face and ", arm_height*sin(arm_tilt),
-         " mm back over the plate"));
+echo(str("arm tip reaches ", plate_thick + arm_height*sin(arm_plate_angle),
+         " mm above the tag face and ", arm_height*cos(arm_plate_angle),
+         " mm horizontally (negative = out past the plate edge)"));
