@@ -69,6 +69,31 @@ def split_depths(n: int) -> tuple[int, int]:
     return train_per, val_per
 
 
+def _peak_offset(a: np.ndarray, b: np.ndarray, bin_: int = 4) -> tuple[int, int]:
+    """Integer (dy, dx) of b relative to a, by phase correlation on a binned copy.
+
+    Needed because the two test stacks come from two separate `stack_paths`
+    calls, and each registers its frames onto its *own* reference frame — so the
+    two finished stacks sit on different pixel grids. Measured on the
+    2026-08-17 bubble->sh2-92 run: Ha off by (-8, +8), O-III by (+36, 0).
+    """
+    from numpy.fft import fft2, ifft2
+
+    def prep(x: np.ndarray) -> np.ndarray:
+        h, w = (s // bin_ * bin_ for s in x.shape)
+        y = x[:h, :w].reshape(h // bin_, bin_, w // bin_, bin_).mean(axis=(1, 3))
+        return np.clip(y - np.median(y), 0, None)
+
+    A, B = prep(a), prep(b)
+    cc = np.abs(ifft2(fft2(A) * np.conj(fft2(B))))
+    iy, ix = (int(v) for v in np.unravel_index(int(np.argmax(cc)), cc.shape))
+    if iy > cc.shape[0] // 2:
+        iy -= cc.shape[0]
+    if ix > cc.shape[1] // 2:
+        ix -= cc.shape[1]
+    return iy * bin_, ix * bin_
+
+
 def collapse_check(raw: np.ndarray, other: np.ndarray,
                    denoised: np.ndarray) -> dict:
     """corr(input, output) against the ceiling set by two independent stacks.
@@ -86,25 +111,106 @@ def collapse_check(raw: np.ndarray, other: np.ndarray,
     which was 0.37 on abell2151 R 300s, not 0.9. Judge the run as a fraction of
     that. A naive ">0.9 is healthy" threshold failed a working model once
     already.
+
+    **The two stacks must be aligned before that correlation is taken.** They are
+    not aligned as they come out of the stacker (see `_peak_offset`), and an
+    unaligned corr reads misalignment as noise, which pushes the ceiling *down*
+    and the run's score up. Unaligned, the 2026-08-17 run scored O-III at 285%
+    of its ceiling — impossible, and the only reason the bug was caught. Aligned,
+    the same run read Ha 30% and O-III 77%.
+
+    `std_ratio` compares the denoised frame to the raw on ONE scale. Normalising
+    each independently divides each by its own sky sigma and forces the ratio to
+    ~1 no matter what the network did — that number was meaningless in the first
+    version of this function. Its ideal value is the ceiling, not 1: a perfect
+    denoiser returns the clean scene, whose std is exactly `ceiling` times the
+    noisy input's.
     """
     from nn import denoiser
 
+    def sub(a: np.ndarray) -> np.ndarray:
+        out, _ = denoiser.subtract_background(a.astype(np.float32))
+        return out
+
+    a_s, b_s, d_s = sub(raw), sub(other), sub(denoised)
+
+    dy, dx = _peak_offset(a_s, b_s)
+    h, w = a_s.shape
+    ya, yb = (0, -dy) if dy < 0 else (dy, 0)
+    xa, xb = (0, -dx) if dx < 0 else (dx, 0)
+    hh, ww = h - abs(dy), w - abs(dx)
+    a_c = np.ascontiguousarray(a_s[ya:ya + hh, xa:xa + ww])
+    b_c = np.ascontiguousarray(b_s[yb:yb + hh, xb:xb + ww])
+
     def norm(a: np.ndarray) -> np.ndarray:
-        sub, _ = denoiser.subtract_background(a.astype(np.float32))
-        out, _ = denoiser.normalise(sub)
+        out, _ = denoiser.normalise(a)
         return out.ravel()
 
-    a, b, d = norm(raw), norm(other), norm(denoised)
-    r_ab = float(np.corrcoef(a, b)[0, 1])
+    r_ab = float(np.corrcoef(norm(a_c), norm(b_c))[0, 1])
     ceiling = float(np.sqrt(max(r_ab, 0.0)))
-    corr = float(np.corrcoef(a, d)[0, 1])
+    corr = float(np.corrcoef(norm(a_s), norm(d_s))[0, 1])
+
+    a_n, scale = denoiser.normalise(a_s)
+    d_shared = np.arcsinh(d_s / (scale if scale else 1.0))
     return {
+        "stack_offset": [dy, dx],
         "corr_stacks": r_ab,
         "ceiling": ceiling,
         "corr_in_out": corr,
         "fraction_of_ceiling": corr / ceiling if ceiling > 0 else float("nan"),
-        "std_ratio": float(np.std(d) / max(np.std(a), 1e-12)),
+        "std_ratio": float(np.std(d_shared) / max(np.std(a_n), 1e-12)),
+        "std_ratio_ideal": ceiling,
     }
+
+
+def source_survival(raw: np.ndarray, denoised: np.ndarray,
+                    nsigma: float = 5.0, aperture: float = 3.0) -> dict:
+    """Do sources survive, and with how much of their flux?
+
+    The decisive test, and the one corr cannot answer: a net can score well on
+    correlation while erasing most of the stars.
+
+    Both images are thresholded at `nsigma` times the **raw** sky in ADU, never
+    each at its own. The denoised sky is 8-30x quieter, so a per-image threshold
+    sits far lower in ADU on the denoised frame and finds *more*, fainter sources
+    than the raw one — 203% and 382% on the 2026-08-17 run, with fluxes inflated
+    to match. That measures the threshold, not the network. Flux then comes from
+    fixed apertures at the raw frame's own positions, so both frames are summed
+    over identical pixels.
+    """
+    import sep
+
+    sep.set_extract_pixstack(5_000_000)
+    a = np.ascontiguousarray(raw.astype(np.float32))
+    d = np.ascontiguousarray(denoised.astype(np.float32))
+    bg_a, bg_d = sep.Background(a), sep.Background(d)
+    a_s, d_s = a - bg_a.back(), d - bg_d.back()
+    rms = float(bg_a.globalrms)
+    thresh = nsigma * rms
+
+    src_a = sep.extract(a_s, thresh, minarea=5)
+    src_d = sep.extract(d_s, thresh, minarea=5)
+
+    out = {
+        "sky_rms_raw": rms,
+        "sky_rms_denoised": float(bg_d.globalrms),
+        "threshold_adu": thresh,
+        "n_raw": int(len(src_a)),
+        "n_denoised": int(len(src_d)),
+        "source_survival": len(src_d) / max(len(src_a), 1),
+    }
+    if len(src_a):
+        f_a, _, _ = sep.sum_circle(a_s, src_a["x"], src_a["y"], aperture)
+        f_d, _, _ = sep.sum_circle(d_s, src_a["x"], src_a["y"], aperture)
+        keep = f_a > 0
+        if keep.any():
+            ratio = f_d[keep] / f_a[keep]
+            order = np.argsort(f_a[keep])
+            out["flux_retained_median"] = float(np.median(ratio))
+            out["flux_retained_quintiles"] = [
+                float(np.median(ratio[q])) for q in np.array_split(order, 5)
+            ]
+    return out
 
 
 def save_pair_pngs(raw: np.ndarray, denoised: np.ndarray, out_dir: Path,
@@ -284,11 +390,23 @@ def run_filter(filt: str, args, subs_dir: Path, out_dir: Path) -> dict:
     np.save(out_dir / f"{filt}_{args.test}_denoised.npy", den)
 
     chk = collapse_check(te_st[0], te_st[1], den)
+    log(f"  stacks offset by {chk['stack_offset']} px (aligned before the ceiling)")
     log(f"  corr(in,out) {chk['corr_in_out']:.4f} vs ceiling "
         f"{chk['ceiling']:.4f} = {100 * chk['fraction_of_ceiling']:.0f}% "
-        f"of ceiling | std ratio {chk['std_ratio']:.4f}")
+        f"of ceiling | std ratio {chk['std_ratio']:.4f} "
+        f"(ideal {chk['std_ratio_ideal']:.4f})")
     if chk["corr_in_out"] < 0.3 * chk["ceiling"]:
         log("  *** FAILS the collapse check — treat this checkpoint as dead ***")
+
+    srv = source_survival(te_st[0], den)
+    log(f"  sources at {srv['threshold_adu']:.3f} ADU (5 sigma of the RAW sky): "
+        f"{srv['n_denoised']} / {srv['n_raw']} survive "
+        f"({100 * srv['source_survival']:.0f}%)")
+    if "flux_retained_median" in srv:
+        q = " ".join(f"{v:.3f}" for v in srv["flux_retained_quintiles"])
+        log(f"  flux retained: median {srv['flux_retained_median']:.4f} | "
+            f"faint->bright {q}")
+    chk.update(srv)
 
     pngs = save_pair_pngs(te_st[0], den, out_dir, f"{args.test}_{safe}")
 
