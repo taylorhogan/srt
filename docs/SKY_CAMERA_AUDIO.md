@@ -94,7 +94,35 @@ The machinery already exists. `sentry/audio_classify.py` builds mel spectrograms
 and scores them by MSE against a labelled library, for roof movement. This is the
 same problem with a different microphone.
 
-The change is small: collect the `audio/g711u` parts alongside the video in
-`capture_burst()`, which already runs on rain suspicion, and write a WAV beside
-the `.h264`. That costs nothing extra on the wire — the bytes are already being
-received and dropped.
+**Done, 2026-08-17.** `capture_burst()` now keeps the `audio/g711u` parts and
+writes a WAV beside the `.h264`. It costs nothing extra on the wire — the bytes
+were already arriving and being dropped — and it is best-effort, so a burst
+that cannot write its audio still returns its video.
+
+## Why this had to happen before a daytime detector could exist
+
+The rain detector is blind in daylight: it works from pixel motion in a frame
+the sun washes out, so `moving_pct` is simply `none` above the horizon. Sound
+does not care about daylight, which makes the microphone the obvious way to
+close that gap.
+
+The obstacle is labels. A daytime detector needs a template of what rain SOUNDS
+like, and the only moments that can be labelled with confidence are the
+night-time events the vision detector already catches — which is exactly when
+`capture_burst()` runs. So every burst is now a labelled audio sample for a
+detector that does not exist yet.
+
+This could not be done retroactively. **313 bursts were already archived with
+the audio decoded out of the buffer and discarded**, including both real rain
+events (2026-08-13 and 2026-08-16/17). Those are gone. The template now waits
+on the next night-time rain.
+
+Baselines measured so far, for whatever eventually does the classifying:
+
+| condition | rms | peak |
+|-----------|-----|------|
+| still night, 05:30 | 5 | 88 |
+| quiet daylight, 2026-08-17 07:25 | 8.6 | 40 |
+
+Both are near silence against a full scale of 32767, which is the property that
+makes this promising: there is almost no floor for a signal to climb out of.

@@ -162,15 +162,60 @@ def capture_burst(seconds=None, out_path=None, cfg=None):
         return None, 0
 
     video = bytearray()
+    audio = bytearray()
     nparts = 0
     for headers, body in _split_parts(buf, delim):
-        if "h264" in headers.get("content-type", ""):
+        ctype = headers.get("content-type", "")
+        if "h264" in ctype:
             video.extend(body)
             nparts += 1
+        elif "g711" in ctype or "audio" in ctype:
+            audio.extend(body)
     if not video:
         return None, 0
     out_path.write_bytes(bytes(video))
+    _write_burst_audio(out_path, audio)
     return out_path, nparts
+
+
+def _write_burst_audio(out_path, audio):
+    """Save the G.711 the burst already received, as a WAV beside the video.
+
+    These bytes arrive on the same stream and were previously decoded out of
+    the buffer and discarded, so this costs nothing extra on the wire.
+
+    The reason to keep them: the vision detector is blind in daylight, because
+    it works from pixel motion in a frame the sun washes out. Sound does not
+    care about daylight. But a daytime detector needs a template of what rain
+    SOUNDS like, and the only moments we can label with confidence are the
+    night-time events vision already catches — which is exactly when this
+    function runs. Every burst is therefore a labelled audio sample for a
+    detector that does not exist yet, and there is no way to collect them
+    retroactively: 313 bursts are already archived with the audio thrown away.
+
+    Best-effort. A burst that fails to write its audio must still return its
+    video; the video is the thing something currently depends on.
+    """
+    if not audio:
+        return None
+    try:
+        import wave
+        import numpy as np
+        u = np.frombuffer(bytes(audio), dtype=np.uint8).astype(np.int32)
+        u = ~u & 0xFF
+        sign, exponent, mantissa = u & 0x80, (u >> 4) & 0x07, u & 0x0F
+        sample = (((mantissa << 3) + 0x84) << exponent) - 0x84
+        pcm = np.clip(np.where(sign, -sample, sample), -32768, 32767).astype(np.int16)
+        wav_path = Path(out_path).with_suffix(".wav")
+        with wave.open(str(wav_path), "wb") as w:
+            w.setnchannels(1)
+            w.setsampwidth(2)
+            w.setframerate(8000)          # G.711 is always 8 kHz mono
+            w.writeframes(pcm.tobytes())
+        return wav_path
+    except Exception as exc:
+        print("burst: audio not saved (" + type(exc).__name__ + ")")
+        return None
 
 
 def decode_burst(path, limit=None):
