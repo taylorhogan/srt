@@ -30,6 +30,26 @@ A marker removes the problem rather than tuning around it:
 Measured 2026-08-16 with the scope stationary: corner positions repeat to
 sd 0.12 px over four captures. Any real slew moves them by orders more.
 
+MOUNT IT FLAT AND RIGID. This is the failure mode that actually happens, and it
+happened here within 19 hours. A tag taped to the curved shroud read cleanly at
+13:41 and 13:51 on 2026-08-16 and was undetectable by 08:48 the next morning,
+the paper having buckled into a visible fold. The detector still FOUND the
+quadrilateral — a 145 px rejected candidate sat exactly on the marker — but the
+decode failed, because sampling the cell grid uses a planar homography and the
+surface was no longer planar. No relaxation of the detector parameters
+recovered it.
+
+Note what that rules out: the geometry had IMPROVED. It decoded at 89x136 px
+and roughly 49 degrees oblique, and failed at 145 px and closer to face-on. So
+size and viewing angle were not the constraint; flatness was. Angling the tag
+toward the camera is worth doing for margin, but it does not substitute for a
+rigid backing that stands proud of the shroud's curve instead of conforming to
+it.
+
+A tag that goes unreadable when the scope slews is fine, incidentally — the
+verdict becomes 'unknown' and the caller refuses, which is the safe direction.
+Optimise the mounting for the parked pose.
+
     python scope_marker_check.py --set-parked     # with the scope parked
     python scope_marker_check.py                  # check
 """
