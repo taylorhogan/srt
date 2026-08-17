@@ -200,9 +200,16 @@ module gussets() {
     for (sx = [-1, 1])
         translate([sx * (arm_width/2 - gusset_thick/2) - gusset_thick/2, 0, 0])
             rotate([90, 0, 90])
+                // The vertical edge runs to plate_size/2, the arm's OUTER
+                // face, so the gusset passes right through the arm. Ending it
+                // at the arm's inner face (plate_size/2 - arm_thick) looks
+                // correct and is not: the two solids then meet on a
+                // zero-thickness plane, CGAL reports them as disjoint, and the
+                // part slices as a floating arm plus two loose triangles.
+                // Caught by rendering, invisible to reading.
                 linear_extrude(height = gusset_thick)
-                    polygon([[plate_size/2 - arm_thick,      base],
-                             [plate_size/2 - arm_thick,      base + gusset_rise],
+                    polygon([[plate_size/2,                  base],
+                             [plate_size/2,                  base + gusset_rise],
                              [plate_size/2 - arm_thick - gusset_run, base]]);
 }
 
