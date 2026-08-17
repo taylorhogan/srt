@@ -81,10 +81,64 @@ def index_frames(
     return out
 
 
+def shared_reference_for(
+    paths: list[Path],
+    filter_name: str,
+    progress_cb: Callable[[str], None] = print,
+) -> Optional[tuple]:
+    """Control points + shape for ONE reference frame, shared across splits.
+
+    Without this each `stack_paths` call picks its own reference and the splits
+    of a training pair land on different pixel grids — measured 8 px and 36 px
+    apart on two stacks of the same target. That breaks N2N's premise that input
+    and target differ only in noise, and the loss-minimising response to it is to
+    delete point sources: the target holds background where the input holds a
+    star. Convolution cannot compensate, because astroalign fits rotation as well
+    as translation and a translation-invariant operator cannot undo a
+    position-dependent shift.
+
+    Reference is the sharpest frame when a `frame_stats.json` cache is available
+    (the same picker `color_process` uses), else the middle frame. Which one is
+    chosen only affects how many frames align; that it is the *same* one for
+    every split is what this function exists for.
+    """
+    from stacking import stacker
+
+    if not paths:
+        return None
+    ref_path = paths[len(paths) // 2]
+    try:
+        from cmd_processing.super_user_commands import _load_precomputed_fwhm_stars
+        arcsec = stacker._get_arcsec_per_pixel()
+        dso_dir = Path(paths[0]).parents[3]
+        pre = _load_precomputed_fwhm_stars(dso_dir, paths, arcsec)
+        if pre:
+            fwhm = {p: v[0] for p, v in pre.items()}
+            idx = stacker._reference_index_by_fwhm([fwhm.get(p, 0.0) for p in paths])
+            if idx is not None:
+                ref_path = paths[idx]
+    except Exception:
+        progress_cb("    no FWHM cache — using the middle frame as reference")
+
+    try:
+        cal = stacker.calibration_from_config(filter_name)
+        reference = stacker._load_calibrated(ref_path, cal)
+        pts = stacker._reference_control_points(stacker._despike(reference))
+        if pts is None:
+            progress_cb("    reference yielded no control points — per-split refs")
+            return None
+        progress_cb(f"    shared reference: {ref_path.name}")
+        return (pts, reference.shape)
+    except Exception:
+        progress_cb("    could not build a shared reference — per-split refs")
+        return None
+
+
 def stack_paths(
     paths: list[Path],
     filter_name: str,
     progress_cb: Callable[[str], None] = print,
+    shared_reference: Optional[tuple] = None,
 ) -> Optional[np.ndarray]:
     """Stack *paths* with the project stacker, calibrated where masters exist."""
     from stacking import stacker
@@ -97,6 +151,7 @@ def stack_paths(
     img, _meta = stacker.stack(
         list(paths),
         method=stacker.StackMethod.SIGMA_CLIP_FWHM,
+        shared_reference=shared_reference,
         bias_paths=bias or None,
         dark_paths=dark or None,
         flat_paths=flat or None,
@@ -161,10 +216,14 @@ def build_split_stacks(
 
         order = rng.permutation(len(paths))
         per = len(order) // n_splits
+        # One reference for every split of this group, so the pair the network
+        # trains on is the same scene on the same pixels.
+        ref = shared_reference_for(paths, filt, progress_cb=progress_cb)
         made = []
         for k in range(n_splits):
             chunk = [paths[i] for i in order[k * per:(k + 1) * per]]
-            img = stack_paths(chunk, filt, progress_cb=progress_cb)
+            img = stack_paths(chunk, filt, progress_cb=progress_cb,
+                              shared_reference=ref)
             if img is None:
                 break
             made.append(img)
@@ -197,9 +256,13 @@ def crop_to_common(frames: list[np.ndarray]) -> list[np.ndarray]:
     resize storage that is not resizable", which names nothing that would lead
     you here.
 
-    Cropping from the origin is right because the stacker's own trim is already
-    referenced to its registration origin; the discrepancy is a boundary, not
-    an offset, so this does not shift one stack against another.
+    This makes the shapes match and **nothing else**. An earlier version of this
+    docstring claimed "the discrepancy is a boundary, not an offset, so this does
+    not shift one stack against another" — that was wrong. Two stacks built from
+    their own references sit on different grids, measured 8 px and 36 px apart,
+    and cropping to a common shape does not align them. Alignment is
+    `shared_reference_for`'s job and has to happen at stack time; this function
+    runs afterwards and cannot recover it.
     """
     if not frames:
         return frames

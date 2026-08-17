@@ -288,12 +288,13 @@ def run_filter(filt: str, args, subs_dir: Path, out_dir: Path) -> dict:
     rng = np.random.default_rng(args.seed)
     prog = (lambda m: log(f"      {m}")) if args.verbose else (lambda m: None)
 
-    def stack_chunks(paths, order, per, count, offset=0):
+    def stack_chunks(paths, order, per, count, offset=0, ref=None):
         made = []
         for k in range(count):
             lo = offset + k * per
             chunk = [paths[i] for i in order[lo:lo + per]]
-            img = stacks.stack_paths(chunk, filt, progress_cb=prog)
+            img = stacks.stack_paths(chunk, filt, progress_cb=prog,
+                                     shared_reference=ref)
             if img is None:
                 return None
             made.append(img)
@@ -301,8 +302,9 @@ def run_filter(filt: str, args, subs_dir: Path, out_dir: Path) -> dict:
 
     t0 = time.time()
     o = rng.permutation(len(tr_paths))
-    tr_st = stack_chunks(tr_paths, o, train_per, 2)
-    va_st = stack_chunks(tr_paths, o, val_per, 2, offset=2 * train_per)
+    tr_ref = stacks.shared_reference_for(tr_paths, filt, progress_cb=lambda m: log(m))
+    tr_st = stack_chunks(tr_paths, o, train_per, 2, ref=tr_ref)
+    va_st = stack_chunks(tr_paths, o, val_per, 2, offset=2 * train_per, ref=tr_ref)
     if tr_st is None or va_st is None:
         log("  stacking failed — skipping filter")
         return {}
@@ -310,9 +312,20 @@ def run_filter(filt: str, args, subs_dir: Path, out_dir: Path) -> dict:
     va_st = stacks.crop_to_common(va_st)
     log(f"  {args.train} stacked [{time.time() - t0:.0f}s]")
 
+    # The pair the network trains on must be the same scene on the same pixels.
+    # A misaligned pair teaches the net to delete point sources, which is what
+    # produced 1.6% flux retention and negative bright stars on 2026-08-17.
+    dy, dx = _peak_offset(*(np.ascontiguousarray(s) for s in tr_st[:2]))
+    log(f"  training pair offset: dy={dy} dx={dx} px")
+    if max(abs(dy), abs(dx)) > args.max_offset:
+        log(f"  *** training pair misaligned by more than {args.max_offset} px — "
+            f"aborting this filter rather than training on it ***")
+        return {}
+
     t0 = time.time()
     o2 = rng.permutation(len(te_paths))
-    te_st = stack_chunks(te_paths, o2, train_per, 2)
+    te_ref = stacks.shared_reference_for(te_paths, filt, progress_cb=lambda m: log(m))
+    te_st = stack_chunks(te_paths, o2, train_per, 2, ref=te_ref)
     if te_st is None:
         log("  test stacking failed — skipping filter")
         return {}
@@ -344,7 +357,15 @@ def run_filter(filt: str, args, subs_dir: Path, out_dir: Path) -> dict:
     model = UNet(residual="linear").to(device)
     opt = torch.optim.Adam(model.parameters(), lr=3e-4)
     sch = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=args.epochs)
-    crit = nn.L1Loss()
+    # L2 by default, against trainer.train's "l1" default. L1's optimum is the
+    # conditional median, and for a source near the detection limit the posterior
+    # mass sits at background — so the median sits at background and the net
+    # erases marginal sources (measured: 27% of the faint bin). L2's optimum is
+    # the conditional mean, which does not collapse that way, and is what the N2N
+    # paper uses for Gaussian noise. Both narrowband runs before 2026-08-17
+    # hardcoded L1.
+    crit = nn.MSELoss() if args.loss == "l2" else nn.L1Loss()
+    log(f"  loss: {args.loss}")
 
     best, best_sd, best_ep = float("inf"), None, 0
     t0 = time.time()
@@ -435,6 +456,10 @@ def main() -> int:
                     help="cap subs per DSO — smoke tests only, not a result")
     ap.add_argument("--pairs", type=int, default=0,
                     help="override nn.pairs_per_epoch (smoke tests)")
+    ap.add_argument("--loss", choices=("l1", "l2"), default="l2")
+    ap.add_argument("--max-offset", type=int, default=2,
+                    help="abort a filter whose training pair is misaligned by "
+                         "more than this many px")
     args = ap.parse_args()
 
     args.train = args.train.lower().replace(" ", "")
