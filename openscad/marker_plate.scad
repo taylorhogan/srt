@@ -43,16 +43,44 @@ ribs_y          = 3;          // ribs running along Y
 diagonal_ribs   = true;       // adds torsional stiffness the grid alone lacks
 
 /* [Arm] */
-arm_height      = 2 * inch;   // above the plate's back face
+arm_height      = 3 * inch;   // measured along the arm, from the plate edge
 arm_width       = 25;
 arm_thick       = 6;
 arm_edge        = "y";        // which edge the arm sits on: "y" or "x"
 
+// Angle between the arm and the plate's normal. 0 keeps the original
+// perpendicular L-bracket; positive leans the arm back OVER the plate, which
+// swings the tag face toward whatever the arm is bolted away from.
+//
+// This exists because the marker only has to be readable when the scope is
+// PARKED. Detection failing in any other pose is free -- the gate returns
+// "unknown" and refuses, which is the same action as "unsafe". Detection
+// failing at park is the expensive one: it is a false negative on the only
+// verdict that lets hardware move, and it costs the night. So aim the tag at
+// the camera at park and let every other pose fall off the cliff.
+//
+// Measured 2026-08-17 with the arm perpendicular: the tag presented 74x42 px,
+// an aspect of 1.76, i.e. about 55 degrees oblique, leaving only 1.5x over the
+// degraded detection floor. Square-on it would present 74 px and 2.6x.
+arm_tilt        = 25;         // degrees
+
 /* [Screw] */
-hole_dia        = 5.4;        // M5 clearance; 4.4 for M4, 6.4 for M6
+// M4 with deliberate slop. Nominal M4 is 4.0 and a standard clearance hole is
+// 4.5, but printed holes come out undersize -- typically 0.1-0.4 mm depending
+// on the machine -- so 4.5 nominal can arrive as a 4.2 that fights the screw.
+// 5.0 leaves genuine play, which is wanted here: the plate is aimed by hand
+// once it is on the telescope, and a tight hole would resist that.
+// Use 4.5 for a close fit, 5.4 for M5, 6.8 for 1/4-20.
+hole_dia        = 5.0;
 hole_from_top   = 12;         // centre of the hole below the arm's tip
 counterbore_dia = 0;          // 0 = plain through hole
 counterbore_dep = 0;
+
+// A slot rather than a round hole, running along the arm. Two reasons: the
+// standoff distance becomes adjustable without reprinting, and a single screw
+// already lets the plate pivot, so between them the tag can be aimed at the
+// camera by hand once it is on the telescope. 0 gives a plain round hole.
+slot_length     = 14;
 
 /* [Gussets] */
 // The arm root is the only place this part can plausibly break: a long lever
@@ -127,20 +155,44 @@ module ribs() {
         }
 }
 
+// How far the arm is grown BELOW the plate before tilting. After rotation about
+// the plate's edge the root would otherwise swing clear of the plate and leave
+// the arm floating; this guarantees it always penetrates, and the surplus is
+// trimmed off the tag face at the end.
+root_extra = 25;
+
 module arm_body() {
-    base = plate_thick;                    // arm starts at the plate's back face
+    base = plate_thick;
     difference() {
-        translate([-arm_width/2, plate_size/2 - arm_thick, 0])
-            cube([arm_width, arm_thick, base + arm_height]);
-        // screw hole, through the arm's thickness
+        translate([-arm_width/2, plate_size/2 - arm_thick, -root_extra])
+            cube([arm_width, arm_thick, root_extra + base + arm_height]);
+        // Screw opening through the arm's thickness. A hull of two circles
+        // makes the slot; with slot_length 0 they coincide and it is a hole.
         translate([0, plate_size/2 + 0.01, base + arm_height - hole_from_top])
             rotate([90, 0, 0])
-                cylinder(d = hole_dia, h = arm_thick + 0.02);
+                hull() {
+                    translate([0, -slot_length/2, 0]) cylinder(d = hole_dia, h = arm_thick + 0.02);
+                    translate([0,  slot_length/2, 0]) cylinder(d = hole_dia, h = arm_thick + 0.02);
+                }
         if (counterbore_dia > 0)
             translate([0, plate_size/2 + 0.01, base + arm_height - hole_from_top])
                 rotate([90, 0, 0])
-                    cylinder(d = counterbore_dia, h = counterbore_dep + 0.01);
+                    hull() {
+                        translate([0, -slot_length/2, 0]) cylinder(d = counterbore_dia, h = counterbore_dep + 0.01);
+                        translate([0,  slot_length/2, 0]) cylinder(d = counterbore_dia, h = counterbore_dep + 0.01);
+                    }
     }
+}
+
+// Arm and gussets rotate together about the plate's outer edge: the gussets
+// brace the arm, so they have to follow it or they would brace thin air.
+module tilted_arm() {
+    translate([0, plate_size/2, plate_thick])
+        rotate([-arm_tilt, 0, 0])
+            translate([0, -plate_size/2, -plate_thick]) {
+                arm_body();
+                gussets();
+            }
 }
 
 module gussets() {
@@ -155,12 +207,19 @@ module gussets() {
 }
 
 module marker_plate() {
-    union() {
-        plate();
-        rim();
-        ribs();
-        arm_body();
-        gussets();
+    difference() {
+        union() {
+            plate();
+            rim();
+            ribs();
+            tilted_arm();
+        }
+        // Keep the tag face perfectly flat. The tilted arm's root is grown
+        // below the plate so it cannot float, and this removes the surplus --
+        // any bump on this face would sit under the tag and reintroduce
+        // exactly the non-planarity that killed the paper marker.
+        translate([-plate_size, -plate_size, -4 * root_extra])
+            cube([3 * plate_size, 3 * plate_size, 4 * root_extra]);
     }
 }
 
@@ -171,6 +230,11 @@ else                 marker_plate();
 
 echo(str("plate ", plate_size, " mm (", plate_size/inch, " in) square, ",
          plate_thick, " mm thick"));
-echo(str("arm ", arm_height, " mm (", arm_height/inch, " in) above the back face, ",
-         "hole ", hole_dia, " mm, ", hole_from_top, " mm below the tip"));
-echo(str("overall height ", plate_thick + arm_height, " mm"));
+echo(str("arm ", arm_height, " mm (", arm_height/inch, " in) long, tilted ",
+         arm_tilt, " deg from the plate normal"));
+echo(str("opening ", hole_dia, " mm", slot_length > 0 ?
+         str(" x ", slot_length, " mm slot") : " round hole",
+         ", ", hole_from_top, " mm below the tip"));
+echo(str("arm tip reaches ", plate_thick + arm_height*cos(arm_tilt),
+         " mm above the tag face and ", arm_height*sin(arm_tilt),
+         " mm back over the plate"));
