@@ -101,7 +101,11 @@ def stack_paths(
         dark_paths=dark or None,
         flat_paths=flat or None,
         register=True,
-        progress_cb=lambda m: None,
+        # Pass the caller's callback through rather than swallowing it. The
+        # stacker measures FWHM per frame, which dominates the wall time on a
+        # large set, and with progress suppressed a multi-hour build is
+        # indistinguishable from a hang.
+        progress_cb=lambda m: progress_cb(f"    {m}"),
     )
     return img
 
@@ -175,6 +179,30 @@ def build_split_stacks(
         progress_cb(f"  [{dso}|{filt}] {len(paths)} frames -> {n_splits} stacks "
                     f"of {per} ({pairs} pairs)")
 
+    out_frames = crop_to_common(out_frames)
     progress_cb(f"  total {len(out_frames)} stacks, {total_pairs} pairs, "
-                f"{len(set(out_groups))} groups")
+                f"{len(set(out_groups))} groups"
+                + (f", cropped to {out_frames[0].shape}" if out_frames else ""))
     return out_frames, out_groups
+
+
+def crop_to_common(frames: list[np.ndarray]) -> list[np.ndarray]:
+    """Crop every stack to the smallest common shape.
+
+    The stacker trims its output to the region all frames overlap after
+    registration, so two stacks of the same target can differ by a few pixels —
+    measured 6371x9570 against the sensor's 6388x9576. N2NDataset takes a pair
+    and crops the *same* coordinates from both, so a mismatch produces patches
+    of different shapes and the DataLoader dies in collate with "Trying to
+    resize storage that is not resizable", which names nothing that would lead
+    you here.
+
+    Cropping from the origin is right because the stacker's own trim is already
+    referenced to its registration origin; the discrepancy is a boundary, not
+    an offset, so this does not shift one stack against another.
+    """
+    if not frames:
+        return frames
+    h = min(f.shape[0] for f in frames)
+    w = min(f.shape[1] for f in frames)
+    return [f if f.shape == (h, w) else f[:h, :w] for f in frames]
