@@ -50,6 +50,12 @@ sky.jpg
 
 # Personal / non-project files
 *.scad
+# ...but observatory hardware IS project work, so openscad/ is tracked.
+!openscad/*.scad
+# Except the personal pieces, which live there for tidiness but must stay out
+# of a public repo. They were excluded deliberately; moving them into a tracked
+# directory must not quietly publish them.
+openscad/grace_*.scad
 
 # macOS
 .DS_Store
