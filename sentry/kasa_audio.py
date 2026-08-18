@@ -148,15 +148,47 @@ def record(direction, seconds=45, host=HOST, status="unlabeled"):
             "peak": int(np.abs(pcm).max())}
 
 
-# Roof moves are ~20 s and the mic sits in a quiet building, so the move is a
-# large sustained step above the floor rather than anything subtle. Measured
-# here: a still room runs rms ~4 against int16 full scale.
-MOVE_FACTOR = 8.0     # rms above floor x this counts as moving
+# A roof move is NOT a sustained step. Measured on the 2026-08-18 open, on both
+# microphones independently: a hard transient at the start, then a decay to the
+# noise floor within about twelve seconds -- while the motor stays powered for
+# another thirty-four. The travel is over long before the relay is released.
+#
+#   eMeet 44.1 kHz   t=0-11 s   13315 -> 997 rms, floor by t=12
+#   Kasa   8   kHz   t=0-12 s    1306 ->  10 rms, floor by t=13
+#
+# That agreement matters more than either number: it rules out the obvious
+# suspicion about a consumer IP camera, that its noise suppression was gating
+# the steady part away. There is no steady part to gate.
+#
+# 8.0 was set from a guess and cut the clip at 9 s, dropping the decay tail --
+# which is the part of the move most likely to sound wrong when a gear is not
+# engaging. 3.0 keeps the whole 12 s and still sits far above the ~1.0x ambient
+# wander measured either side of the move.
+# Two thresholds, not one, and the reason is a mistake worth recording. A flat
+# 3.0x with "take the longest run above it" picked up 190 s of low rumble later
+# in the same recording -- the mount slewing, most likely -- and preferred it to
+# the roof, because at a low threshold the longest run is no longer the loudest
+# event. A flat 8.0x found the roof but truncated its decay at 9 s.
+#
+# Neither is fixable by moving one number, because duration and amplitude are
+# selecting for different events. So: FIND the move by its peak (nothing else
+# in these recordings comes near 200x), then EXPAND outward while the signal
+# stays above a much lower bound. Standard hysteresis, and it gets both ends
+# right -- the roof is the loudest thing that happens, and its tail is the part
+# that matters for hearing a gear fail to engage.
+MOVE_FACTOR = 20.0    # peak must reach this x floor to count as a move at all
+EXTEND_FACTOR = 3.0   # expand around that peak while above this x floor
+# A roof move sounds for ~12 s. A door slam is under a second and can easily be
+# louder, so peak alone picks the slam and files a 1 s clip as the reference for
+# what a roof sounds like. Candidates are tried loudest-first and the first one
+# that lasts plausibly long wins.
+MIN_MOVE_S = 3.0
 BIN_S = 0.5
 PAD_S = 4.0           # kept either side, so the start-up clunk is not clipped
 
 
-def extract_move(pcm, bin_s=BIN_S, factor=MOVE_FACTOR, pad_s=PAD_S):
+def extract_move(pcm, bin_s=BIN_S, factor=MOVE_FACTOR,
+                 pad_s=PAD_S, extend_factor=EXTEND_FACTOR):
     """Find the roof move inside a long capture and return (clip, detail).
 
     Deliberately not "record for exactly the length of the move". Each capture
@@ -173,20 +205,37 @@ def extract_move(pcm, bin_s=BIN_S, factor=MOVE_FACTOR, pad_s=PAD_S):
     bins = pcm[:pcm.size // n * n].reshape(-1, n).astype(np.float64)
     rms = np.sqrt((bins ** 2).mean(axis=1))
     floor = float(np.median(rms)) or 1.0
-    loud = rms > floor * factor
-    if not loud.any():
-        return None, {"why": "nothing above %.1fx the floor" % factor,
+    lim = floor * extend_factor
+    order = np.argsort(rms)[::-1]
+    if rms[order[0]] < floor * factor:
+        return None, {"why": "loudest bin only %.1fx the floor, need %.1fx"
+                             % (rms[order[0]] / floor, factor),
                       "floor_rms": round(floor, 1),
-                      "peak_bin_rms": round(float(rms.max()), 1)}
+                      "peak_bin_rms": round(float(rms[order[0]]), 1)}
 
-    idx = np.flatnonzero(loud)
-    # Longest contiguous run, so a single door slam does not beat the roof.
-    runs, start = [], idx[0]
-    for a, b in zip(idx, idx[1:]):
-        if b != a + 1:
-            runs.append((start, a)); start = b
-    runs.append((start, idx[-1]))
-    lo, hi = max(runs, key=lambda r: r[1] - r[0])
+    # Loudest first, but a candidate has to last like a roof move. Walking out
+    # from the peak is what stops a long quiet rumble elsewhere winning; the
+    # duration test is what stops a short loud slam winning.
+    best = None
+    for peak in order:
+        if rms[peak] < floor * factor:
+            break
+        lo = hi = int(peak)
+        while lo > 0 and rms[lo - 1] > lim:
+            lo -= 1
+        while hi < len(rms) - 1 and rms[hi + 1] > lim:
+            hi += 1
+        if best is None:
+            best = (lo, hi, int(peak))          # fall back to the loudest
+        if (hi - lo + 1) * bin_s >= MIN_MOVE_S:
+            best = (lo, hi, int(peak))
+            break
+    lo, hi, peak = best
+    if (hi - lo + 1) * bin_s < MIN_MOVE_S:
+        return None, {"why": "loudest event lasts only %.1fs, need %.1fs"
+                             % ((hi - lo + 1) * bin_s, MIN_MOVE_S),
+                      "floor_rms": round(floor, 1),
+                      "peak_bin_rms": round(float(rms[peak]), 1)}
 
     pad = int(pad_s / bin_s)
     i0 = max(0, (lo - pad)) * n
@@ -194,6 +243,7 @@ def extract_move(pcm, bin_s=BIN_S, factor=MOVE_FACTOR, pad_s=PAD_S):
     detail = {"floor_rms": round(floor, 1),
               "move_rms": round(float(rms[lo:hi + 1].mean()), 1),
               "ratio": round(float(rms[lo:hi + 1].mean() / floor), 1),
+              "peak_ratio": round(float(rms[peak] / floor), 1),
               "move_s": round((hi - lo + 1) * bin_s, 1),
               "at_s": round(lo * bin_s, 1),
               # A move touching either end was probably cut off by the window.
