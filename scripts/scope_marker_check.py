@@ -94,7 +94,15 @@ DICTS = {
     "6X6_250": cv2.aruco.DICT_6X6_250,
     "APRILTAG_36h11": cv2.aruco.DICT_APRILTAG_36h11,
 }
-DEFAULT_DICT = "4X4_50"     # what is physically mounted today
+DEFAULT_DICT = "APRILTAG_36h11"   # what is physically mounted today
+#
+# Was 4X4_50, and stayed that way after the mounted tag changed -- which made
+# the checker silently blind: it detected nothing, said "unknown", and looked
+# like a camera problem rather than a stale constant. The parked reference
+# recorded alongside it was retired at the same time and for the same reason.
+# Changing only one of the two is worse than changing neither: the old
+# reference holds the corners of a DIFFERENT tag in a DIFFERENT place, so a
+# working detector compared against it would report a confident UNSAFE.
 
 # The question is NOT "is the scope parked" -- it is "can the roof close
 # without hitting the scope". Parked is one pose; SAFE is a region around it,
