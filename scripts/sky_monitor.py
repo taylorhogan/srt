@@ -64,6 +64,51 @@ def _last_good_captured():
     return None
 
 
+
+# --- dawn report ----------------------------------------------------------
+
+_REPORT_MARKER = "local/sky_transparency_last.txt"
+
+
+def _maybe_post_night_report():
+    """Once per morning, plot the night's transparency and post it.
+
+    Guarded by a marker file holding the date already reported, because this
+    function is reached on EVERY daylight run -- roughly 150 of them between
+    dawn and dusk -- and without the guard the observatory feed would receive
+    the same chart every five minutes all day.
+
+    Spawned detached and never awaited. The report reads the whole night's log
+    and recomputes catalogue positions for every sample, which takes longer than
+    the monitor's own work; running it inline would delay the sky push behind
+    reporting, and the push is the part something depends on.
+    """
+    import subprocess
+    from datetime import date
+    try:
+        marker = Path(_REPORT_MARKER)
+        today = date.today().isoformat()
+        if marker.exists() and marker.read_text().strip() == today:
+            return
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        # Written BEFORE the spawn, not after. If the report crashes it must
+        # not be retried every five minutes for the rest of the day; a missing
+        # chart is a nuisance, a chart posted 150 times is worse.
+        marker.write_text(today)
+        root = Path(__file__).resolve().parents[1]
+        flags = 0
+        if os.name == "nt":
+            flags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
+        subprocess.Popen([sys.executable,
+                          str(root / "scripts" / "sky_transparency_report.py")],
+                         cwd=str(root), creationflags=flags, close_fds=True,
+                         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL)
+        print("sky_monitor: spawned the night transparency report")
+    except Exception as exc:
+        print("sky_monitor: could not spawn night report (%s)" % type(exc).__name__)
+
+
 def main() -> int:
     now = datetime.now(timezone.utc)
     status = {"generated": now.isoformat(timespec="seconds")}
@@ -127,6 +172,12 @@ def main() -> int:
         status["stars"] = None
         status["note"] = "daylight"
         print("sky_monitor: sun at %.1f deg, not counting" % sun_alt)
+        # First daylight run of the morning: summarise the night that just
+        # ended. Hooked here rather than given its own scheduled task because
+        # this script already runs on a timer and already knows where the sun
+        # is, and a task on this machine needs an elevation prompt nobody is
+        # sitting in front of at dawn.
+        _maybe_post_night_report()
     else:
         ann = None
         if "--annotate" in sys.argv:
