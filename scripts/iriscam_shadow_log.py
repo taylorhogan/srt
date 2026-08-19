@@ -189,11 +189,18 @@ def sample(n):
            "aperture": metrics(img), "marker": marker(img),
            "mount": mount_state()}
 
+    # probe_kc_stream leaves the raw .h264 it decoded from beside the .jpg.
+    # Deleting only the jpg leaked 1029 h264 files (162 MB) in one night before
+    # this was caught -- the jpg count looked exactly right the whole time,
+    # which is why it went unnoticed. Both, or neither.
     if n % KEEP_EVERY:
-        with contextlib.suppress(OSError):
-            os.remove(path)
+        for junk in (path, os.path.splitext(path)[0] + ".h264"):
+            with contextlib.suppress(OSError):
+                os.remove(junk)
     else:
         row["frame"] = path
+        with contextlib.suppress(OSError):
+            os.remove(os.path.splitext(path)[0] + ".h264")   # keep the jpg only
     return row
 
 
