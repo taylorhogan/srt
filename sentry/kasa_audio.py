@@ -48,6 +48,7 @@ import contextlib
 import io
 import os
 import sys
+import threading
 import wave
 from datetime import datetime
 
@@ -64,6 +65,14 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from sentry import audio_classify
+
+
+def _log(msg):
+    """Log without importing the app logger at module import time."""
+    try:
+        audio_classify._logger.info(msg)
+    except Exception:                     # noqa: BLE001
+        print(msg)
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 KASA_AUDIO_ROOT = os.path.join(_HERE, "roof_audio_kasa")
@@ -271,6 +280,75 @@ def listen(direction, minutes=6.0, host=HOST, status="unlabeled"):
     return {"found": True, "direction": direction, "wav": base + ".wav",
             "spectrogram": base + ".png",
             "seconds": round(len(clip) / RATE, 1), **detail}
+
+
+# Long enough to hold the ~12 s of audible travel plus the lead-in before the
+# relay fires and a margin for a slow move. Nothing waits on this, so being
+# generous costs only a background thread.
+CAPTURE_S = 50
+
+
+def start_capture_async(direction=None, seconds=CAPTURE_S, host=HOST,
+                        on_done=None):
+    """Record the move on a daemon thread and file it. Returns immediately.
+
+    Fire-and-forget ON PURPOSE. The eMeet path can stop its sounddevice stream
+    the instant the motor cuts, so its finish step is free; this one cannot --
+    the camera hands over a fixed-length HTTP stream and there is no way to end
+    it early. A matching finish/join would therefore park the roof flow for
+    however much of the window remained, right at the point where the post-move
+    vision check runs. Nothing in the roof path may wait on a shadow library.
+
+    So the thread files its own result and the caller gets a handle it can
+    ignore. The cost is that the clip is not available to attach to the chat
+    message the eMeet capture posts. That is acceptable while this library is
+    being built and judged by nobody.
+
+    Never raises. A capture that fails must be indistinguishable, from the roof
+    flow's point of view, from one that was never started.
+    """
+    handle = {"direction": direction, "started": False, "thread": None}
+
+    def _run():
+        try:
+            pcm, _t = capture_pcm(seconds, host)
+            if pcm.size == 0:
+                _log("kasa roof audio: no audio arrived")
+                return
+            clip, detail = extract_move(pcm)
+            if clip is None:
+                _log("kasa roof audio: no move found (%s)" % detail.get("why"))
+                return
+            stamp = datetime.now().strftime("%Y%m%dT%H-%M-%S")
+            dest = os.path.join(KASA_AUDIO_ROOT, "unlabeled", direction or "unknown")
+            os.makedirs(dest, exist_ok=True)
+            base = os.path.join(dest, "%s_%s" % (stamp, direction or "unknown"))
+            with wave.open(base + ".wav", "wb") as w:
+                w.setnchannels(1); w.setsampwidth(2); w.setframerate(RATE)
+                w.writeframes(clip.tobytes())
+            generate_spectrogram(clip.astype(np.float32) / 32768.0, base + ".png")
+            verdict = classify(base + ".png", direction)
+            _log("kasa roof audio %s: %.1fs move, %.0fx floor, verdict %s (%s)"
+                 % (direction, detail["move_s"], detail["peak_ratio"],
+                    verdict["verdict"], verdict["note"] or verdict["best_match"]))
+            # Self-extend only once the library can actually judge, exactly as
+            # the eMeet path does. Until then everything waits in unlabeled/.
+            if verdict["verdict"] == "good":
+                promote_to_good({"direction": direction, "wav": base + ".wav",
+                                 "spectrogram": base + ".png"})
+            if on_done:
+                on_done(base, detail, verdict)
+        except Exception as e:            # noqa: BLE001 - shadow observer
+            _log("kasa roof audio capture failed: %r" % (e,))
+
+    try:
+        th = threading.Thread(target=_run, name="kasa-roof-audio", daemon=True)
+        th.start()
+        handle["started"] = True
+        handle["thread"] = th
+    except Exception as e:                # noqa: BLE001
+        _log("kasa roof audio thread failed to start: %r" % (e,))
+    return handle
 
 
 # The library helpers, bound to this tree. Same code, same self-tuning
