@@ -407,6 +407,10 @@ are its visible cost.
 
 ### 13. L2 refutes the faint-end explanation; 60 epochs beats 130
 
+> **The L2 half is superseded by step 18.** This A/B also ran on misaligned
+> pairs. L2 is now the default in both runner scripts and was part of the run
+> that took Ha from 0.016 to 1.11 flux retention. The 60-epoch result stands.
+
 Two results from one A/B on split-half stacks, same seed and split, scored on
 held-out m92's full stack.
 
@@ -579,6 +583,11 @@ m92.
 
 ### 17. Pooled L+R+G+B — also worse, and the obvious explanation is wrong
 
+> **Superseded by step 19.** This ran on training pairs that were 8-36 px
+> misaligned (step 18). Re-measured on the fixed pipeline, pooling *wins*. The
+> table below records what was measured at the time and is left intact; the
+> conclusion drawn from it is wrong.
+
 The argument for pooling: data thinness limits this, L+R+G+B at 300 s is 807
 frames against R's 204, `normalise()` removes the sky-brightness differences
 before the network sees anything, and what remains (PSF, noise correlation, star
@@ -622,20 +631,139 @@ across L2, quarters and pooling, not a demonstrated cause.
 
 Keep per-filter models. `scripts/n2n_train_pooled.py` stays for re-running it.
 
+### 18. The training pairs were never aligned — 0.016 to 1.11 flux
+
+Found 2026-08-17, and it is the largest single defect this pipeline has had.
+
+`build_split_stacks` calls `stack_paths` once per split, and `stacker.stack`
+picks its own reference frame unless given one. So **the two halves of every N2N
+training pair were registered onto different grids**. Measured on two stacks of
+sh2-92 built by that path: **(-8, +8) px** and **(+36, 0) px**, with the offset
+drifting from (20,-28) to (28,-32) across the field — rotation, not a pure shift.
+`stacker.stack` has taken `shared_reference` all along and says in its docstring
+what it is for; `color_process` passes it, `nn/stacks.py` did not.
+
+**How it surfaced.** Not from the pictures — from an impossible number. The
+collapse check scored O-III at **285% of its ceiling**, and nothing can correlate
+with its input better than a perfect denoiser does. The ceiling is
+`sqrt(corr(stack_a, stack_b))`, and it was being taken on those same unaligned
+stacks, so misalignment was read as noise and pushed the ceiling *down*. Both
+things were broken by one cause, and only the impossibility gave it away.
+
+**Why deleting stars is the loss-optimal response.** N2N assumes input and target
+differ only in noise. Offset them and the target holds background where the input
+holds a star, so erasing it lowers the loss. The network cannot compensate by
+shifting: astroalign fits rotation, making the error position-dependent, and
+convolution is translation-invariant by construction.
+
+**Why the stars came out black.** `residual="linear"` predicts
+`asinh(sinh(t) + g)`, so erasing a bright star needs `g ~= -sinh(t)` — thousands
+of sky sigma. Overshoot by a percent and the pixel lands well below background.
+That is why the **brightest** quintile was worst, at **-0.033** flux retained,
+while fainter ones stayed positive. No other hypothesis explained the inversion.
+
+Measured on sh2-92 (bubble-trained, depth-matched, same seed):
+
+| | broken | fixed | ideal |
+| --- | --- | --- | --- |
+| training pair offset | 8-36 px | 0 px | 0 |
+| Ha sources surviving | 13% | 104% | 100% |
+| Ha flux retained | 0.016 | 1.11 | 1.00 |
+| Ha corr vs ceiling | 30% | 76% | 100% |
+| Ha std ratio | 0.21 | 0.52 | 0.48 |
+| O-III sources | 64% | 100% | 100% |
+| O-III flux | 0.62 | 1.05 | 1.00 |
+| O-III std ratio | 0.46 | 0.478 | 0.476 |
+
+O-III was quietly damaged too — 64% of its sources, and nothing in the picture
+said so. Before the fix the two filters diverged wildly (Ha 30% of ceiling,
+O-III 77%); after it they agree. The gulf was never filter-specific, it was how
+far apart that run's two stacks happened to land, with one training pair and
+nothing to average against it.
+
+**Fixed** by `nn.stacks.shared_reference_for` — one reference per `(dso, filter)`,
+sharpest frame from `frame_stats.json` when cached, middle frame otherwise —
+threaded into every `stack_paths` call for the group. `scripts/n2n_holdout_run.py`
+then measures the residual offset and refuses to train past `--max-offset`
+(default 2 px), so it cannot recur silently.
+
+**Confound.** The loss moved L1 -> L2 in the same run, so the credit is not split.
+The registration fix is the one with a measured mechanism; a `--loss l1` rerun
+would separate them.
+
+**Two metrics were wrong as well**, both fixed in `collapse_check` /
+`source_survival`:
+
+- The ceiling must be taken on *aligned* stacks. Unaligned it read misalignment
+  as noise: on identical smoke-test data it rose **0.1926 -> 0.3182** once
+  aligned, and Ha's real ceiling went 0.3119 -> 0.4510.
+- Source survival needs **one absolute threshold taken from the raw sky**. Per
+  image, the denoised frame's own 5 sigma sits far lower in ADU because its sky is
+  8-30x quieter, so it "finds" *more* sources than the raw frame — 203% and 382%
+  measured — with fluxes inflated to match. That measures the threshold, not the
+  network.
+
+### 19. Pooling re-tested post-fix — it wins, overturning step 17
+
+`scripts/n2n_pool_ab.py`, 2026-08-19. One model trained on bubble Ha + O-III
+(2 groups, 2 pairs) against the per-filter models from the same seed and the same
+`split_depths`, so both arms stack exactly the same frames. The **test stacks are
+not rebuilt** — they are loaded from the per-filter run, so both arms are scored
+on byte-identical data. Pairs are still formed strictly within `(dso, filter)`;
+pooling shares weights, never pairs.
+
+| | per-filter | pooled | ideal |
+| --- | --- | --- | --- |
+| Ha corr / ceiling | 76% | **84%** | 100% |
+| Ha sources | 104% | **99%** | 100% |
+| Ha flux retained | 1.109 | **1.055** | 1.000 |
+| Ha std ratio | 0.516 | **0.498** | 0.476 |
+| O-III corr / ceiling | 75% | **82%** | 100% |
+| O-III sources | 100% | 102% | 100% |
+| O-III flux retained | 1.048 | 1.070 | 1.000 |
+| O-III std ratio | 0.478 | 0.486 | 0.476 |
+
+Ha improves on all four. O-III gains 7 points of correlation and drifts ~2% on
+the rest. The headline is correlation, +8 and +7 points on identical test data —
+the largest gain since the fix itself — and Ha's flux excess **halving from 11%
+to 5.5%**.
+
+`pairs_per_epoch` stayed at 2000 across both arms, so the pooled model got half
+the sampling per pair and won anyway.
+
+Note this contradicts the standing note in `scripts/n2n_train_pooled.py` that
+narrowband should not be pooled because Ha/O-III sky is far darker and shifts the
+regime from sky-dominated toward read/dark-dominated. Ha and O-III pool fine.
+Whether narrowband pools with *broadband* is still untested, and is now the
+obvious next experiment: it would give far more than 2 pairs.
+
 ### Standing tally of what has been tried against the 2026-08-13 baseline
 
-L1 / 60 epochs / split-half stacks / residual=linear has now survived three
-attempts to improve it — L2 (step 13), quarter splits (step 16) and pooled LRGB
-(step 17). All three measured worse. Two of the three also refuted the mechanism
-proposed for them beforehand.
+**This tally was invalidated on 2026-08-17 and is kept for the record.** It read:
+L1 / 60 epochs / split-half stacks / residual=linear had survived three attempts
+to improve it — L2 (13), quarter splits (16), pooled LRGB (17), all three worse.
+
+All three ran on training pairs registered to different references and sitting
+8-36 px apart (step 18). Two have since been re-measured on the fixed pipeline
+and **both reversed**: L2 is now the default, and pooling beats per-filter models
+(step 19). Quarter splits has not been re-run; its stated mechanism — shallower
+stacks teach over-aggressive shrinkage — is independent of alignment, so that
+verdict is the one most likely to survive, but it is now the only one resting on
+unaudited ground.
+
+The general lesson is worse than any single reversal: misregistration did not
+merely degrade the models, it inverted the conclusions of the experiments used to
+steer the design. Every A/B run before 2026-08-17 is suspect.
 
 ---
 
 ## Standing conclusions
 
-1. **Denoised frames are not a science product and not a display product.**
-   Calibrated linear frames remain the science product for transit work, the
-   colour-magnitude diagram, and the transient search.
+1. **Denoised frames are not a science product.** Calibrated linear frames remain
+   the science product for transit work, the colour-magnitude diagram, and the
+   transient search. As of step 18 they *are* a usable display product — sources
+   survive intact and photometry is within 5-11% — but that residual excess still
+   disqualifies them from measurement.
 2. **Loss is not evidence.** A constant predictor drives it down. Judge a
    checkpoint by `corr(input, output)` against the measured ceiling, and by
    aperture flux ratios — never by the curve or a downsampled preview.
@@ -654,24 +782,33 @@ whether N2N suits this data at all (step 3, yes).
 
 Still open, roughly in order of what would be worth knowing:
 
-- **The faint end, 0.75 at the detection limit.** Three attempts to move it have
-  failed — L2 (13), quarter splits (16), pooled LRGB (17). No identified
-  mechanism. The L1-median story that stood for months was tested and is wrong.
-- **Over-recovery at mid SNR.** The current model *adds* 8-13% flux to an
-  injected source at SNR 5-23, non-monotonically, crossing unity. Unexplained,
-  and it is the property that most directly disqualifies the denoiser from the
-  transient search. Verified not to be an aperture or pedestal artefact
-  (step 16).
-- **Why heavier smoothing tracks worse recovery.** L2, quarters and pooling all
-  smoothed harder and all recovered less flux (rms 0.14-0.19 against the
-  baseline's 0.23-0.24). Consistent across three independent interventions, but
-  correlation only — never tested as a cause, and smoothing strength has never
-  been varied directly as the single variable. This is the most promising
-  untested lead.
-- **What actually limits this.** Data thinness was the standing hypothesis and
-  it now looks wrong: two separate 5x increases in training pairs (quarters,
-  pooling) both made it worse. Whatever the constraint is, it is not simply pair
-  count.
+- **The faint end.** The three attempts that "failed" — L2 (13), quarter splits
+  (16), pooled LRGB (17) — all ran on misaligned pairs (18). Two have reversed on
+  re-test. Re-measure before treating any of it as known.
+- **Over-recovery at mid SNR.** Survived the fix and is now the leading defect.
+  Post-fix on sh2-92 the model *adds* 11% (Ha) and 5% (O-III) of real source
+  flux, flat across brightness; pooling halves Ha's to 5.5%. Re-verified
+  2026-08-17 against three benign explanations, all excluded: background pedestal
+  (0.038 ADU, would give +1 ADU against +42 measured); PSF sharpening (the ratio
+  *rises* with aperture radius, 1.106 at r=2 to 1.179 at r=20, and the denoised
+  PSF is slightly *broader*); and background-fitting differences (one shared
+  model gives the same ratio). The network adds a real halo around sources.
+- **Why heavier smoothing tracks worse recovery.** The correlation held but the
+  sign flipped: post-fix, pooling smooths *less* (std ratio 0.516 -> 0.498, toward
+  ideal) and recovers *more*. A correlation that survives an intervention
+  reversing both terms is better evidence of a real mechanism than the original
+  three-way agreement was. Still never varied as the single variable.
+- **What actually limits this.** Data thinness is back as the leading hypothesis.
+  It was dismissed because two increases in pair count measured worse — but both
+  were confounded by misalignment, and pooling reversed on re-test (19). Pair
+  count is not sufficient on its own (quarters also raised it, at the cost of
+  depth), but at *matched depth* more pairs now helps.
+
+  The obvious next experiment: **23 pairable (dso, filter) groups exist at 300 s**
+  — abell2151, ngc5033 and ngc5907 carry full L+R+G+B, m92 and m13 two or three
+  broadband filters, and ic1396 adds a third narrowband Ha group. Pooling all of
+  it with m92 held out reproduces step 17's original setup with 23 pairs instead
+  of 2.
 - **Tiling artefact.** Checkerboard from the overlap blend, seen on the sub-based
   model, never checked on the stack model.
 - **Source-bias** (step 7), unconfirmed across seeds and inside the noise floor.
