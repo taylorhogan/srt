@@ -177,6 +177,7 @@ def main() -> int:
     model.load_state_dict(best_sd)
     mp = Path(_root) / "local" / "models" / f"n2n_{args.tag}_{args.exptime}s.pt"
     torch.save({"model_state": best_sd, "filter": args.tag, "epoch": best_ep,
+                "asinh_sigma_mult": denoiser.ASINH_SIGMA_MULT,
                 "pooled_filters": filters, "train_dso": args.train,
                 "test_dso": args.test, "seed": args.seed, "loss": args.loss}, mp)
     log(f"  best val {best:.5f} at epoch {best_ep} -> {mp.name}")

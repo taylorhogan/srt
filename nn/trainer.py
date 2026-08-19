@@ -433,7 +433,9 @@ def train(
 
         if metric < best_val_loss:
             best_val_loss = metric
-            torch.save({"model_state": model.state_dict(), "filter": filter_name, "epoch": epoch}, model_path)
+            torch.save({"model_state": model.state_dict(), "filter": filter_name,
+                        "epoch": epoch,
+                        "asinh_sigma_mult": denoiser.ASINH_SIGMA_MULT}, model_path)
 
         if epoch % 10 == 0 or epoch == epochs:
             elapsed = time.time() - t0

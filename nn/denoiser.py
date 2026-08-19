@@ -6,6 +6,7 @@ QHY600 sensor (9576×6388 px) can be processed without hitting GPU VRAM limits.
 
 import os
 import sys
+import warnings
 from pathlib import Path
 from typing import Optional
 
@@ -34,8 +35,36 @@ def get_model_path(filter_name: str, exptime_s: int) -> Path:
 
 
 def load_model(model_path: Path) -> nn.Module:
-    """Load a saved checkpoint and return the model (on CPU)."""
+    """Load a saved checkpoint and return the model (on CPU).
+
+    Verifies the checkpoint's asinh scale against this module's
+    ASINH_SIGMA_MULT. The two MUST agree: the constant sets the units the
+    network's input and output live in, so a mismatch does not fail, it
+    silently rescales the photometry — the same class of train/inference drift
+    as c617047 and c61cd26. Until 2026-08-19 this check was documented but
+    never implemented, and only two of the four save paths stamped a value.
+
+    Checkpoints written before that carry no `asinh_sigma_mult`. They warn
+    rather than raise: the constant has only ever held one value (1.0), so a
+    legacy checkpoint is consistent with the current code, but that cannot be
+    verified from the file itself.
+    """
     checkpoint = torch.load(model_path, map_location="cpu", weights_only=True)
+    saved = checkpoint.get("asinh_sigma_mult")
+    if saved is None:
+        warnings.warn(
+            f"{Path(model_path).name} predates asinh_sigma_mult stamping; "
+            f"assuming it was trained at the current {ASINH_SIGMA_MULT}. "
+            "Retrain to get a verifiable checkpoint.",
+            RuntimeWarning, stacklevel=2,
+        )
+    elif float(saved) != float(ASINH_SIGMA_MULT):
+        raise ValueError(
+            f"{Path(model_path).name} was trained with "
+            f"ASINH_SIGMA_MULT={saved}, but this checkout has "
+            f"{ASINH_SIGMA_MULT}. Inference would rescale the photometry "
+            "silently. Check out the matching revision or retrain."
+        )
     model = UNet()
     model.load_state_dict(checkpoint["model_state"])
     model.eval()
@@ -54,8 +83,8 @@ def load_model(model_path: Path) -> nn.Module:
 #
 # A single module-level constant because training and inference MUST agree on
 # it; every other way of expressing this has drifted at least once already
-# (c617047, c61cd26). It is stamped into the checkpoint by trainer.train() and
-# checked on load.
+# (c617047, c61cd26). Every save path stamps it into the checkpoint and
+# load_model() refuses a mismatch.
 ASINH_SIGMA_MULT = 1.0
 
 
