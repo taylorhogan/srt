@@ -4945,7 +4945,16 @@ def publish_cmd(words: list[str], account: str) -> None:
     # slow every webchat start for a command that is rarely used.
     from stacking import color_process, stacker
 
-    tokens = list(words[1:])
+    # words[2:], not words[1:]: the dispatcher hands the handler the whole
+    # sentence, so words[0] is the "@iris" mention and words[1] is "publish"
+    # itself. Slicing from 1 left the command word in the DSO name and every
+    # invocation died on "No image directory found for 'publish ic1396'".
+    #
+    # This survived its own test because the test called publish_cmd directly
+    # with a hand-built ['publish', 'bubble', '19', '.75'] -- which has the
+    # mention missing, so words[1:] happened to be right. Every sibling command
+    # in this module uses words[2:].
+    tokens = list(words[2:])
     if not tokens:
         social_server.post_social_message(
             "Usage: publish <dso> <id> [crop]   e.g. `publish bubble 19 .75`")
