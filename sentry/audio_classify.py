@@ -132,7 +132,7 @@ def _similarity(a, b):
     return float(1 / (1 + mse * 100))
 
 
-def classify(png_path, direction):
+def classify(png_path, direction, root=None):
     """Judge a roof-move spectrogram against the known-good library for `direction`.
 
     Returns {"verdict": "good"|"bad"|"unknown", "best_match", "best_score",
@@ -141,10 +141,11 @@ def classify(png_path, direction):
     Never raises — this runs in the roof safety path, so any failure comes back
     as an "unknown" verdict instead.
     """
+    root = root or ROOF_AUDIO_ROOT
     result = {"verdict": "unknown", "best_match": None, "best_score": None,
               "threshold": None, "n_refs": 0, "note": ""}
     try:
-        lib_dir = os.path.join(ROOF_AUDIO_ROOT, "good", direction or "unknown")
+        lib_dir = os.path.join(root, "good", direction or "unknown")
         ref_paths = sorted(glob.glob(os.path.join(lib_dir, "*.png")))
         result["n_refs"] = len(ref_paths)
         if len(ref_paths) < MIN_GOOD_REFS:
@@ -176,13 +177,14 @@ def classify(png_path, direction):
 # --------------------------------------------------------------------------- #
 # Labeling — file unlabeled captures into the good/bad library
 # --------------------------------------------------------------------------- #
-def list_unlabeled(direction=None):
+def list_unlabeled(direction=None, root=None):
     """Return unlabeled captures as [{"base", "direction", "png", "wav"}], newest first.
 
     Basenames start with an ISO timestamp, so lexicographic order is time order.
     """
+    root = root or ROOF_AUDIO_ROOT
     entries = []
-    base_dir = os.path.join(ROOF_AUDIO_ROOT, "unlabeled")
+    base_dir = os.path.join(root, "unlabeled")
     dirs = [direction] if direction else \
         (sorted(os.listdir(base_dir)) if os.path.isdir(base_dir) else [])
     for d in dirs:
@@ -195,7 +197,7 @@ def list_unlabeled(direction=None):
     return entries
 
 
-def label(direction, verdict, name=None):
+def label(direction, verdict, name=None, root=None):
     """Move an unlabeled capture (PNG + WAV) into the good/bad library.
 
     Targets the most recent unlabeled capture for `direction`, or the one whose
@@ -204,13 +206,14 @@ def label(direction, verdict, name=None):
     """
     if verdict not in ("good", "bad"):
         raise ValueError(f"verdict must be 'good' or 'bad', not {verdict!r}")
-    candidates = list_unlabeled(direction)
+    root = root or ROOF_AUDIO_ROOT
+    candidates = list_unlabeled(direction, root=root)
     if name:
         candidates = [c for c in candidates if name in c["base"]]
     if not candidates:
         return None
     target = candidates[0]
-    dest_dir = os.path.join(ROOF_AUDIO_ROOT, verdict, direction)
+    dest_dir = os.path.join(root, verdict, direction)
     os.makedirs(dest_dir, exist_ok=True)
     moved = []
     for path in (target["png"], target["wav"]):
@@ -222,14 +225,15 @@ def label(direction, verdict, name=None):
     return {"base": target["base"], "direction": direction, "moved": moved}
 
 
-def _prune_good_library(direction):
+def _prune_good_library(direction, root=None):
     """Keep only the newest MAX_GOOD_REFS good captures for `direction`.
 
     Filenames are timestamp-prefixed, so lexicographic order is chronological;
     anything past the cap (oldest first) has its PNG + WAV removed. Best-effort —
     a failed delete is logged, not raised. Returns the retired basenames.
     """
-    good_dir = os.path.join(ROOF_AUDIO_ROOT, "good", direction or "unknown")
+    root = root or ROOF_AUDIO_ROOT
+    good_dir = os.path.join(root, "good", direction or "unknown")
     pngs = sorted(glob.glob(os.path.join(good_dir, "*.png")))
     retired = []
     surplus = pngs[:-MAX_GOOD_REFS] if len(pngs) > MAX_GOOD_REFS else []
@@ -247,7 +251,7 @@ def _prune_good_library(direction):
     return retired
 
 
-def promote_to_good(result):
+def promote_to_good(result, root=None):
     """Auto-file a just-captured roof-move audio clip into the good library.
 
     `result` is the dict returned by finish_background_capture (spectrogram + wav
@@ -256,9 +260,10 @@ def promote_to_good(result):
     Returns {"moved": [new_paths], "retired": [basenames]} or None. Never raises
     — this runs in the roof safety path, so a filing failure must not break it.
     """
+    root = root or ROOF_AUDIO_ROOT
     try:
         direction = result.get("direction") or "unknown"
-        dest_dir = os.path.join(ROOF_AUDIO_ROOT, "good", direction)
+        dest_dir = os.path.join(root, "good", direction)
         os.makedirs(dest_dir, exist_ok=True)
         moved = []
         for path in (result.get("spectrogram"), result.get("wav")):
@@ -270,20 +275,21 @@ def promote_to_good(result):
             return None
         _logger.info("Auto-filed roof %s audio as good: %s",
                      direction, [os.path.basename(m) for m in moved])
-        retired = _prune_good_library(direction)
+        retired = _prune_good_library(direction, root=root)
         return {"moved": moved, "retired": retired}
     except Exception as e:  # noqa: BLE001 — must not crash the roof flow
         _logger.warning("Auto-file to good failed: %s", e)
         return None
 
 
-def library_counts():
+def library_counts(root=None):
     """Return {status: {direction: n_spectrograms}} for the roof audio library."""
+    root = root or ROOF_AUDIO_ROOT
     counts = {}
-    if not os.path.isdir(ROOF_AUDIO_ROOT):
+    if not os.path.isdir(root):
         return counts
-    for status in sorted(os.listdir(ROOF_AUDIO_ROOT)):
-        spath = os.path.join(ROOF_AUDIO_ROOT, status)
+    for status in sorted(os.listdir(root)):
+        spath = os.path.join(root, status)
         if not os.path.isdir(spath):
             continue
         for d in sorted(os.listdir(spath)):

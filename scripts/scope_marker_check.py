@@ -94,7 +94,15 @@ DICTS = {
     "6X6_250": cv2.aruco.DICT_6X6_250,
     "APRILTAG_36h11": cv2.aruco.DICT_APRILTAG_36h11,
 }
-DEFAULT_DICT = "4X4_50"     # what is physically mounted today
+DEFAULT_DICT = "APRILTAG_36h11"   # what is physically mounted today
+#
+# Was 4X4_50, and stayed that way after the mounted tag changed -- which made
+# the checker silently blind: it detected nothing, said "unknown", and looked
+# like a camera problem rather than a stale constant. The parked reference
+# recorded alongside it was retired at the same time and for the same reason.
+# Changing only one of the two is worse than changing neither: the old
+# reference holds the corners of a DIFFERENT tag in a DIFFERENT place, so a
+# working detector compared against it would report a confident UNSAFE.
 
 # The question is NOT "is the scope parked" -- it is "can the roof close
 # without hitting the scope". Parked is one pose; SAFE is a region around it,
@@ -117,9 +125,31 @@ SAFE_DEGREES = 3.0
 TOLERANCE_PX = SAFE_DEGREES * PX_PER_DEGREE
 
 
+# The default adaptive-threshold sweep (win 3..23 step 10) loses the tag when
+# the flat panel is lit. Measured 2026-08-19 during flats: the panel sits ~54%
+# saturated a few hundred pixels from the marker, and at the default window
+# sizes the local threshold near the tag is set by the glare rather than by the
+# tag -- the detector still found 14 quadrilateral candidates and decoded none
+# of them. Sweeping more window sizes, small ones included, recovers it.
+#
+# This is margin, NOT a safety fix. The panel is not lit when park and roof
+# state are actually checked (confirmed by the user 2026-08-19), so the gate
+# never meets this lighting -- an earlier version of this comment claimed the
+# opposite and overstated it. What the flats frame provided was a free
+# adverse-lighting stress test, and the detector failed it at default settings.
+#
+# Checked for regressions on six earlier frames (day, night, three poses): every
+# one still detects, at the same centre to 0.3 px. Strictly more sensitive.
+_WIN_MIN, _WIN_MAX, _WIN_STEP = 3, 53, 4
+
+
 def detector(name=DEFAULT_DICT):
+    params = cv2.aruco.DetectorParameters()
+    params.adaptiveThreshWinSizeMin = _WIN_MIN
+    params.adaptiveThreshWinSizeMax = _WIN_MAX
+    params.adaptiveThreshWinSizeStep = _WIN_STEP
     return cv2.aruco.ArucoDetector(cv2.aruco.getPredefinedDictionary(DICTS[name]),
-                                   cv2.aruco.DetectorParameters())
+                                   params)
 
 
 def grab(path):

@@ -31,6 +31,7 @@ from utils import utils, pushover
 from sentry import vision_safety
 from sentry import roof_current_signature as rcs
 from sentry import audio_classify as roof_audio
+from sentry import kasa_audio
 from end_points import end
 from iris_astronomy import astro_dso_visibility
 from nina_gen import nina_sequence_gen
@@ -182,6 +183,24 @@ def toggle_roof(dev_map: dict, capture_direction: Optional[str] = None) -> None:
     # errors and the stream is closed before the post-move vision check, so mic
     # capture never overlaps a webcam snapshot.
     audio_capture = roof_audio.start_background_capture(direction=capture_direction)
+    # The same move, heard through the inside Kasa cam, into the parallel
+    # library being built to replace this microphone (see sentry/kasa_audio.py:
+    # the two mics are 44.1 kHz and 8 kHz, so their spectrograms cannot be
+    # compared and must not share a tree).
+    #
+    # Fire-and-forget, and it deliberately does NOT get a finish/join below.
+    # The camera hands over a fixed-length stream that cannot be ended early,
+    # so anything that waits on it would park the roof flow at the post-move
+    # vision check. This is a shadow observer: nothing reads it, nothing gates
+    # on it, and it must be unable to slow or break a roof move.
+    #
+    # It also cannot collide with the vision ladder, which runs on the USB
+    # camera behind inside_camera_server's _camera_lock -- a different device
+    # entirely from the Kasa stream opened here.
+    try:
+        kasa_audio.start_capture_async(direction=capture_direction)
+    except Exception:  # noqa: BLE001 — observer must never touch the roof flow
+        _logger.exception("kasa roof audio: failed to start (ignored)")
 
     if utl_shelly.fire_roof_relay() is None:
         _logger.error("Failed to trigger relay in toggle_roof")
@@ -4926,7 +4945,16 @@ def publish_cmd(words: list[str], account: str) -> None:
     # slow every webchat start for a command that is rarely used.
     from stacking import color_process, stacker
 
-    tokens = list(words[1:])
+    # words[2:], not words[1:]: the dispatcher hands the handler the whole
+    # sentence, so words[0] is the "@iris" mention and words[1] is "publish"
+    # itself. Slicing from 1 left the command word in the DSO name and every
+    # invocation died on "No image directory found for 'publish ic1396'".
+    #
+    # This survived its own test because the test called publish_cmd directly
+    # with a hand-built ['publish', 'bubble', '19', '.75'] -- which has the
+    # mention missing, so words[1:] happened to be right. Every sibling command
+    # in this module uses words[2:].
+    tokens = list(words[2:])
     if not tokens:
         social_server.post_social_message(
             "Usage: publish <dso> <id> [crop]   e.g. `publish bubble 19 .75`")

@@ -304,6 +304,25 @@ HELP: dict[str, dict] = {
                      "process sh2-92 hoo auto",
                      "process sh2-92 hoo auto black=55"],
     },
+    "publish": {
+        "category": "super",
+        "summary": ("Re-render one variant from a `process <dso> <recipe> auto` "
+                    "sweep at full resolution. The number is the one printed on "
+                    "the panel of the contact sheet — that number exists to be "
+                    "typed back here. The sweep itself renders binned 4x for "
+                    "speed, so this is a genuine re-render from the cached "
+                    "channels at native resolution, not an upscale of a panel. "
+                    "The optional crop keeps the centre of the frame: 0.75 and "
+                    "75 both mean the central 75% of width and height; omit it "
+                    "for the full frame. Settings come from that sweep's own "
+                    "record, so a sweep that pinned an axis (auto black=55) "
+                    "republishes correctly. Writes a lossless PNG and a "
+                    "downscaled JPG to <image_dir>/Iris/<dso>/. Needs a sweep on "
+                    "record first — run `process <dso> <recipe> auto`."),
+        "usage": ["publish <dso> <id>", "publish <dso> <id> <crop>"],
+        "examples": ["publish ic1396 19", "publish ic1396 19 .75",
+                     "publish sh2-92 7 75", "publish bubble 19 .75"],
+    },
     "stack": {
         "category": "super",
         "summary": "Stack all LIGHT frames of a DSO (per filter) and post each as JPEG.",
