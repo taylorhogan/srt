@@ -228,8 +228,14 @@ def main() -> int:
     ap.add_argument("--filters", default="L,R,G,B")
     ap.add_argument("--lum", default="L", help="filter supplying the shared reference")
     ap.add_argument("--exptime", type=int, default=300)
+    # Takes the FIRST n frames, not a random sample, so a capped channel is
+    # typically one night rather than a draw across sessions. That is a second
+    # variable on top of depth: on ngc5907 --depth 22 left R with 11 frames
+    # after the quality gate (50% cut) against 76% kept at full depth, because
+    # the first 22 R frames happened to come from a poorer session.
     ap.add_argument("--depth", type=int, default=0,
-                    help="cap frames per channel; 0 uses all (display product)")
+                    help="cap frames per channel, taking the FIRST n (one "
+                         "session, not a spread); 0 uses all")
     ap.add_argument("--model", help="checkpoint for the compose stage")
     ap.add_argument("--max-px", type=int, default=2400)
     ap.add_argument("--white-pct", type=float, default=99.95,

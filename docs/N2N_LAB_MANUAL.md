@@ -737,7 +737,14 @@ regime from sky-dominated toward read/dark-dominated. Ha and O-III pool fine.
 Whether narrowband pools with *broadband* is still untested, and is now the
 obvious next experiment: it would give far more than 2 pairs.
 
-### 20. The LRGB ladder — pooling wins, but stops paying at 4 groups
+### 20. The LRGB ladder — pooling wins (its "stops paying" half superseded by 22)
+
+**Read step 22 before using the arm-3 numbers here.** This step held
+`pairs_per_epoch` at 2000 across arms of 1, 4 and 14 groups, so the 14-group arm
+got 143 patch draws per pair against the 4-group arm's 500. Its conclusion that
+pooling "stops paying" at 4 groups was a budget artefact and does not hold; the
+finding that pooling across filters wins does. Everything measured below is
+still true of what it measured.
 
 `scripts/n2n_lrgb_ladder.py`, 2026-08-19. Step 19's open question was what
 limits this pipeline, with data thinness leading. This is the experiment it
@@ -916,6 +923,70 @@ Consequences:
    point-source photometry or a whole-frame average. The measurement above —
    region medians against a far-sky control, per channel — is cheap and should
    become part of it.
+
+#### Two display traps found rendering that comparison
+
+Neither is the model's fault and both produced a picture that looked like a
+verdict on it.
+
+1. **`compose`'s black point is a percentile of each channel** (`BLACK_PCT = 65`).
+   Denoising shrinks the sky's spread ~2.5x, so the same percentile lands at a
+   different ADU on the denoised channel than the raw one — and by a different
+   amount per channel, since each has its own noise. Structure that sat below
+   black in the raw rises above it, gets asinh-amplified, and the per-channel
+   differences become colour. The first raw/denoised composite came out in
+   rainbow blotches for this reason alone. This is the same error class as the
+   per-image detection threshold `source_survival` was fixed for: a relative
+   threshold on two images of different noise measures the noise.
+
+2. **`compose`'s default white point saturates this field completely.** It is
+   p99 of max(R,G,B), which on ngc5907 is 12 ADU against a 32,000 ADU star, so
+   the galaxy and every star clip in *both* images. The raw then looks *more*
+   detailed, because its noise dithers the clipping edge while the denoised
+   output crosses it cleanly — and the "square stars" that suggests are JPEG
+   blocking at extreme contrast. Measured star profiles are identical to 0.1%
+   at the core and 0.8% at r=15 px. `--white-pct 99.95` (229 ADU) renders both
+   properly.
+
+The rule that survives both: **one stretch, computed from the raw, applied
+unchanged to both frames** — which `save_pair_pngs` already documents and
+`compose` does not do.
+
+#### Inference depth changes how hard the model smooths
+
+Measured on the same channels at two depths, sky noise raw -> denoised:
+
+| depth | L | R | G | B |
+| --- | --- | --- | --- | --- |
+| matched (~11-19 frames) | ~3x | ~3x | ~3x | ~3x |
+| full (57/35/38/33) | **17x** | **20x** | **24x** | **26x** |
+
+Galaxy integrated signal survives both (1.005-1.022), and this is *not* what
+made the full-depth render look glassy — that was the stretch above. But the
+ratio itself is real: `normalise()` divides out each frame's own sky sigma, so
+the network sees unit-sigma noise either way, and it still removes 6-8x more of
+it from a deeper stack. The learned prior is keyed to something normalisation
+does not equalise — most likely the spatial correlation structure that
+registration and interpolation leave behind, which differs with stack depth.
+Untested, and the cleanest probe available for what this model actually keys on.
+
+#### Two more, for the trap list
+
+- **A correlation taken on linear data measures the bright stars, not the
+  denoising.** The first version of `n2n_ladder_rescore.py` omitted the asinh
+  normalisation that `collapse_check` applies, and every arm and filter came
+  back at corr 0.9996-0.9998 against a "ceiling" of 0.9987-0.9993 — 100% of
+  ceiling on all twelve rows. The dynamic range here is ~4000:1, so Pearson r on
+  raw ADU is set almost entirely by whether a handful of 66,000 ADU stars line
+  up, and any two stacks of the same field agree on those. asinh is linear where
+  the sky noise lives, which is the part being judged. Uniform, plausible, and
+  meaningless — it is the reason `normalise()` exists, rediscovered.
+
+- **`scripts/n2n_train_pooled.py` never passed `loss=`**, so it kept training L1
+  after step 18 made L2 the default everywhere else in the chain, silently, for
+  three days. Fixed 2026-08-20 (defaults to L2, `--loss` to override). No
+  measurement in this manual came from it, but any pooled checkpoint built with
+  that script between 2026-08-17 and 2026-08-20 is L1 and should be rebuilt.
 
 ### 22. Scene count re-tested at matched sampling — 14 groups ties 4
 
