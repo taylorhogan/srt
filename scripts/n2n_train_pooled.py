@@ -44,6 +44,19 @@ from nn import stacks, trainer
 
 def main() -> int:
     argv = sys.argv[1:]
+    # L2, not trainer.train's "l1" default. Step 13 measured L1 as better and
+    # step 18 reversed that on the fixed pipeline, where L2 is now the default
+    # everywhere else in the N2N chain (n2n_holdout_run, n2n_pool_ab). This
+    # script never passed `loss` at all, so it silently kept training L1 after
+    # the reversal — the only runner still doing so.
+    loss = "l2"
+    if "--loss" in argv:
+        i = argv.index("--loss")
+        if i + 1 >= len(argv) or argv[i + 1] not in ("l1", "l2"):
+            print("Error: --loss needs l1 or l2")
+            return 1
+        loss = argv[i + 1]
+        del argv[i:i + 2]
     seed = None
     if "--seed" in argv:
         i = argv.index("--seed")
@@ -73,7 +86,7 @@ def main() -> int:
 
     if len(argv) < 2:
         print("Usage: python scripts/n2n_train_pooled.py <filters> <seconds> "
-              "[--seed N] [--exclude dso,dso]")
+              "[--seed N] [--exclude dso,dso] [--loss l1|l2]")
         print("   e.g. python scripts/n2n_train_pooled.py L,R,G,B 300 --seed 0 "
               "--exclude m92")
         return 1
@@ -128,6 +141,7 @@ def main() -> int:
         patch_size=patch_size,
         pairs_per_epoch=pairs_per_ep,
         val_dsos=2,
+        loss=loss,
         seed=seed,
         progress_cb=print,
     )

@@ -119,6 +119,22 @@ def collapse_check(raw: np.ndarray, other: np.ndarray,
     of its ceiling — impossible, and the only reason the bug was caught. Aligned,
     the same run read Ha 30% and O-III 77%.
 
+    **100% is the target and the scale is not monotonic — it is approached from
+    above.** A network that does nothing scores `1 / ceiling`, which is *higher*
+    than perfect, not lower. Measured 2026-08-19 on ngc5907 G, where the ceiling
+    is 0.3085: a 2-epoch checkpoint (still the identity, because `residual=
+    "linear"` zero-initialises the head) read corr 0.9998 = **324% of ceiling**,
+    std ratio 0.9984, and flux retained 1.0000 in all five quintiles. So:
+
+        ~0%    collapsed — constant output
+        100%   perfect denoiser
+        324%   identity — did nothing at all (this target, this depth)
+
+    Read a rise toward 100% as improvement and a number above it as
+    under-denoising. This also gives the retracted 285% O-III result a second
+    reading: besides the unaligned ceiling above, a barely-denoising model lands
+    in that range on its own.
+
     `std_ratio` compares the denoised frame to the raw on ONE scale. Normalising
     each independently divides each by its own sky sigma and forces the ratio to
     ~1 no matter what the network did — that number was meaningless in the first

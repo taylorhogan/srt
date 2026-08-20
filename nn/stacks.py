@@ -101,6 +101,28 @@ def shared_reference_for(
     (the same picker `color_process` uses), else the middle frame. Which one is
     chosen only affects how many frames align; that it is the *same* one for
     every split is what this function exists for.
+
+    **On the Spark the cache never hits, so this is always the middle frame.**
+    `frame_stats.json` is written by the observatory PC and its `path` keys are
+    Windows absolute paths (`C:\\Users\\iriso\\Documents\\N.I.N.A\\Targets\\...`),
+    while `_load_precomputed_fwhm_stars` matches on `os.path.abspath` — which on
+    Linux can never equal a `C:\\...` string. Every lookup misses, the `except`
+    below is not reached (an empty dict is not an error), and no line is logged.
+    Measured 2026-08-19: every one of the 9 targets has a cache, none of them
+    match.
+
+    Two consequences, neither of them visible in any output:
+
+    1. The reference is the middle frame, not the sharpest, on every N2N run
+       ever done on this machine.
+    2. The stacker re-measures FWHM for all four `stack_paths` calls of a group.
+       That is 65% of stack wall time (2.2 min of a 3.4 min 17-frame stack,
+       measured from iris.log), so the cache would roughly halve it.
+
+    Fixing it is **not** a pure speedup and must not be done casually: the cached
+    values disagree with what the stacker measures itself — FWHM ~11% high and
+    star counts ~1.5x low on abell2151 G, systematically — and the quality gate
+    cuts on both, so the surviving frames would change. See the runbook.
     """
     from stacking import stacker
 
@@ -139,8 +161,18 @@ def stack_paths(
     filter_name: str,
     progress_cb: Callable[[str], None] = print,
     shared_reference: Optional[tuple] = None,
+    meta_out: Optional[dict] = None,
 ) -> Optional[np.ndarray]:
-    """Stack *paths* with the project stacker, calibrated where masters exist."""
+    """Stack *paths* with the project stacker, calibrated where masters exist.
+
+    `meta_out`, if given, is updated with the stacker's own info dict — most
+    usefully `n_frames`, the count that survived the quality gate. That is not
+    `len(paths)`: the gate rejects on FWHM and star count, and it routinely
+    drops a quarter of a split (measured on abell2151 G, 5 of 17 and 3 of 17 in
+    the two halves of one training pair). Anything reasoning about stack depth —
+    the depth-match argument of lab manual step 16 above all — needs the
+    surviving count, not the nominal one.
+    """
     from stacking import stacker
 
     if len(paths) < 2:
@@ -162,6 +194,8 @@ def stack_paths(
         # indistinguishable from a hang.
         progress_cb=lambda m: progress_cb(f"    {m}"),
     )
+    if meta_out is not None:
+        meta_out.update(_meta)
     return img
 
 

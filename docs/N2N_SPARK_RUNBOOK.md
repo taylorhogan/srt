@@ -322,3 +322,64 @@ image prettier and one that preserves photometry are different things.
 Dataset construction now runs one `sep.Background` per frame and holds
 normalised copies alongside the originals — roughly 2× frame memory. Fine on
 128 GB, but visible.
+
+---
+
+## The FWHM cache never hits on the Spark (found 2026-08-19)
+
+Every target under `~/Desktop/Targets` has a `frame_stats.json`, and none of
+them are ever used here. The file is written by the observatory PC, so its
+`path` keys are Windows absolute paths:
+
+```
+'path': 'C:\Users\iriso\Documents\N.I.N.A\Targets\abell2151\cdk17\2026-05-17\LIGHT\...fits'
+```
+
+`_load_precomputed_fwhm_stars` matches by `os.path.normcase(os.path.abspath(...))`,
+which on Linux can never equal a `C:\...` string. Every lookup misses. Nothing
+logs it — an empty map is the documented "no cache" case, indistinguishable from
+a cache that is present and unreadable.
+
+What it costs, measured from `iris.log` on one 17-frame abell2151 G stack:
+
+| phase | wall | share |
+| --- | --- | --- |
+| measure FWHM + star counts, 17 frames | 2.2 min | **65%** |
+| load, calibrate, register 12 frames | 0.9 min | 26% |
+| tiled combine + frame levelling | 0.3 min | 9% |
+
+`nn.stacks.stack_paths` makes four such calls per (dso, filter) group and none
+of them pass `precomputed_fwhm_stars`, so a group's frames are measured four
+times over. Wiring the cache through would roughly halve stack build time —
+the same defect `n2n_evaluate.py` has, where it costs 5-6 h.
+
+It also means `shared_reference_for` has silently used the **middle** frame as
+its reference on every N2N run done on this machine, never the sharpest, despite
+its docstring.
+
+### Why this was not just fixed
+
+The cached values are not interchangeable with the stacker's own. Measured
+against `stacker._measure_fwhm_and_stars` on six abell2151 G frames:
+
+| frame | measured px | cached px | ratio | measured stars | cached stars |
+| --- | --- | --- | --- | --- | --- |
+| ..._G_49_..._0050 | 7.346 | 8.281 | 0.887 | 53 | 39 |
+| ..._G_178_..._0051 | 6.904 | 7.904 | 0.874 | 224 | 153 |
+| ..._G_292_..._0052 | 6.916 | 7.677 | 0.901 | 412 | 263 |
+| ..._G_289_..._0053 | 7.602 | 8.496 | 0.895 | 355 | 218 |
+| ..._G_322_..._0054 | 7.072 | 7.731 | 0.915 | 443 | 281 |
+| ..._G_266_..._0055 | 7.301 | 8.150 | 0.896 | 350 | 225 |
+
+FWHM reads ~11% high and star counts ~1.5x low, both systematically. The offsets
+are near-uniform, so *ranking* survives and reference selection would be
+unaffected — but the quality gate cuts on the absolute values, and it is already
+rejecting 3-5 frames of every 17. Switching the source changes which frames land
+in which stack.
+
+So this is a behaviour change wearing a speedup's clothes, and it was deferred
+rather than dropped into the middle of the LRGB ladder run. Whoever fixes it:
+match on the path tail rather than the absolute path, and re-measure one group
+both ways before trusting it. A partial fix is the worst outcome available —
+`_split_cached` would then feed gate-relevant numbers on two different scales
+into the same gate, hits from the cache and misses from the stacker.

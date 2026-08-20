@@ -737,6 +737,129 @@ regime from sky-dominated toward read/dark-dominated. Ha and O-III pool fine.
 Whether narrowband pools with *broadband* is still untested, and is now the
 obvious next experiment: it would give far more than 2 pairs.
 
+### 20. The LRGB ladder — pooling wins, but stops paying at 4 groups
+
+`scripts/n2n_lrgb_ladder.py`, 2026-08-19. Step 19's open question was what
+limits this pipeline, with data thinness leading. This is the experiment it
+named, on broadband instead of narrowband: **18 pairable (dso, filter) groups at
+300 s, 778 frames**, with ngc5907 held out entirely and all four filters scored.
+
+Three arms differing in exactly one thing — which groups are in the training
+pool. Same seed, same L2 loss, same 60 epochs, same `pairs_per_epoch` of 2000,
+and every arm scored on **byte-identical test stacks**, because the stacks are
+built once to `local/n2n_ladder/stacks/` and the arms only choose subsets.
+
+| arm | groups | corr/ceiling | spread | mean abs flux error | mean std/ideal |
+| --- | --- | --- | --- | --- | --- |
+| per-filter (abell2151, one filter each) | 1 | 47-106% | 59 | 3.33% | 1.017 |
+| **pooled-filters (abell2151, L+R+G+B)** | **4** | **63-69%** | **6** | **0.52%** | **0.982** |
+| pooled-scenes (all but ngc5907) | 14 | 36-54% | 19 | 0.50% | 0.991 |
+
+Per filter, coverage-masked (see below):
+
+| filt | arm | %ceil | sources | flux | quintiles faint->bright |
+| --- | --- | --- | --- | --- | --- |
+| L | per-filter | 63% | 98% | 1.0072 | 1.008 1.023 1.019 1.005 1.000 |
+| L | pooled-filt | **69%** | 96% | 0.9938 | 0.953 0.981 0.997 0.997 0.999 |
+| L | pooled-scenes | 54% | 99% | 1.0077 | 0.996 1.000 1.006 1.018 1.005 |
+| R | per-filter | 62% | 102% | 1.0098 | 1.018 1.032 1.024 1.001 0.996 |
+| R | pooled-filt | **63%** | 95% | 0.9936 | 0.945 0.981 0.998 0.998 1.001 |
+| R | pooled-scenes | 42% | 97% | 1.0024 | 0.972 0.976 1.000 1.014 1.005 |
+| G | per-filter | 47% | 99% | **1.1080** | 1.039 1.083 1.106 1.117 1.168 |
+| G | pooled-filt | **63%** | 96% | 0.9956 | 0.960 0.987 0.999 0.997 0.999 |
+| G | pooled-scenes | 37% | 98% | 1.0053 | 0.994 0.988 1.011 1.018 1.004 |
+| B | per-filter | **106%** | 93% | 1.0082 | 0.927 0.987 1.008 1.010 1.013 |
+| B | pooled-filt | 65% | 95% | 0.9962 | 0.963 0.993 1.000 0.998 0.999 |
+| B | pooled-scenes | 36% | 98% | 1.0046 | 0.987 0.990 1.015 1.016 1.004 |
+
+**Pooling across filters wins, and it wins by removing variance rather than by
+raising a score.** Four single-pair models behave four different ways — G carries
+an 11% flux excess rising with brightness (1.039 -> 1.168, the halo defect of
+step 18), B barely denoises at all — while one pooled model behaves the same way
+on all four filters and lands photometry within 0.5% everywhere. It did that
+while getting **4x less patch sampling per pair**, which is the strongest form
+the result could take.
+
+**Pooling across scenes as well makes it worse.** 14 groups is worse than 4 on
+correlation for every filter. The mechanism is not what it first looked like:
+`std/ideal` is ~0.99, so arm 3 removes almost exactly the right *amount* of
+variance, and its point-source photometry is the best of the three (97-99%
+sources, flux within 0.5%). A first reading of "right variance, wrong
+correlation" as *inventing texture* was checked at 1:1 and is **wrong** — arm 3
+is visibly smoother than arm 2, not more textured. It over-smooths extended
+structure, which a 3-px aperture does not measure.
+
+**The confound, which this run cannot remove.** `pairs_per_epoch` was held at
+2000 for every arm, so patch draws per pair went 2000 -> 500 -> 143. What is
+measured is scene count traded against per-pair sampling, not scene count alone.
+Arm 2 beating arm 1 at 4x less sampling is real; arm 3 losing at 3.5x less again
+is not attributable. **The experiment that settles it is arm 3 at `--pairs
+7000`**, matching arm 2's per-pair sampling, one ~2 h run.
+
+#### The stacks are full-frame and the uncovered part is a flat constant
+
+Found while checking why G looked catastrophic. `stacker.stack` crops to its
+high-coverage region but **skips that crop when `shared_reference` is passed** —
+correctly, since cropping per group would put groups back on different grids and
+undo step 18 — and fills residual NaN with the global sky median instead. So
+every stack keeps uncovered pixels as a flat constant, and the two halves of a
+pair have *different* uncovered footprints because they hold different dithered
+frames.
+
+On ngc5907 G that is 0.28% of stack A and 0.47% of stack B, all in one band at
+y < 1000, and `sep` finds ~460 detections in it — **48% of that stack's 952
+sources**. Consequences, both of which produced confident wrong numbers:
+
+- Source survival read **57%** for a model that had destroyed nothing. Masked to
+  the covered region it is **99%**.
+- Repeatability between the two independent test stacks read **51%**, against
+  97-99% for L, R and B. Masked, it is **99%** — G agrees as well as any filter.
+
+`scripts/n2n_ladder_rescore.py` recomputes every metric with those pixels
+excluded, from the saved arrays, so nothing needs retraining. **`rescored.json`
+is authoritative for this run**; the per-arm `results.json` predates the fix.
+
+The models were still *trained* on patches that can contain fill —
+`N2NDataset` samples patch origins with no knowledge of coverage. That is the
+real defect and it is **not** fixed.
+
+#### Calibration: what the headline metric reads at both ends
+
+A 2-epoch checkpoint on ngc5907 G, which is still the identity because
+`residual="linear"` zero-initialises the head, read **324% of ceiling**, std
+ratio 0.9984, flux 1.0000 in all five quintiles. So the scale is approached from
+above and is not monotonic:
+
+    ~0%    collapsed - constant output
+    100%   perfect denoiser
+    324%   identity - did nothing (this target, this depth)
+
+A number rising past 100% means the model stopped denoising, not that it
+improved. B per-filter at 106% is that: near-identity, and its 93% source count
+is the worst of the twelve.
+
+#### Also settled
+
+- **Every one of the 18 training pairs aligned to (0,0) px**, across 6 targets
+  and 4 filters. Step 18's fix was previously evidenced only on bubble/sh2-92.
+- **The tiling artefact is present on the stack model**, closing that open
+  question. Visible at 1:1 in the winning model as a diagonal weave, absent from
+  a 6x-downsampled preview. Residual power peaks at 64 px and 512 px, which are
+  exactly `denoise_frame`'s `overlap` and `tile_size` — indicative of the
+  overlap blend rather than transposed-convolution checkerboard, though a
+  two-tile-offset difference is the test that would prove it.
+- **The quality gate cuts hard and unevenly**, so nominal depth overstates by
+  25-46%: abell2151 rejects 12% of R, 24% of G, 33% of L and 46% of B. The
+  manifest records `accepted` per stack.
+- **The FWHM cache has never worked on this machine.** `frame_stats.json` is
+  written by the observatory PC with Windows path keys, and
+  `_load_precomputed_fwhm_stars` matches on `os.path.abspath`, so every lookup
+  misses silently. Costs 65% of stack wall time, and means
+  `shared_reference_for` has always used the middle frame rather than the
+  sharpest. Not fixed — the cached values disagree with the stacker's own
+  (FWHM ~11% high, star counts ~1.5x low) and the quality gate cuts on both.
+  See the runbook.
+
 ### Standing tally of what has been tried against the 2026-08-13 baseline
 
 **This tally was invalidated on 2026-08-17 and is kept for the record.** It read:
@@ -804,13 +927,31 @@ Still open, roughly in order of what would be worth knowing:
   count is not sufficient on its own (quarters also raised it, at the cost of
   depth), but at *matched depth* more pairs now helps.
 
-  The obvious next experiment: **23 pairable (dso, filter) groups exist at 300 s**
-  — abell2151, ngc5033 and ngc5907 carry full L+R+G+B, m92 and m13 two or three
-  broadband filters, and ic1396 adds a third narrowband Ha group. Pooling all of
-  it with m92 held out reproduces step 17's original setup with 23 pairs instead
-  of 2.
-- **Tiling artefact.** Checkerboard from the overlap blend, seen on the sub-based
-  model, never checked on the stack model.
+  **Answered in part by step 20, and the answer is a curve, not a direction.**
+  Across 18 broadband groups with ngc5907 held out: 1 group -> 4 groups is a
+  clear win (photometry error 3.33% -> 0.52%, cross-filter spread 59 -> 6
+  points), and 4 -> 14 is a clear loss on correlation. Pair count alone is not
+  the axis; pair count *against per-pair sampling* is, because
+  `pairs_per_epoch` was fixed at 2000 so draws per pair went 2000 -> 500 -> 143.
+  **The open part is now precisely one run**: arm 3 at `--pairs 7000` to match
+  arm 2's per-pair sampling. Until that exists, "more scenes stop helping" and
+  "the budget got too thin" are not separated.
+- **Tiling artefact — CONFIRMED on the stack model** (step 20). Visible at 1:1 in
+  the winning pooled model as a diagonal weave in blank sky, invisible in a 6x
+  downsampled preview. Residual power peaks at 64 px and 512 px, exactly
+  `denoise_frame`'s `overlap` and `tile_size`, which points at the overlap blend
+  rather than transposed-convolution checkerboard. Proving it needs the same
+  region denoised at two tile offsets and differenced.
+- **Training patches can contain uncovered fill.** `stacker.stack` skips its
+  coverage crop under `shared_reference` and fills uncovered pixels with the sky
+  median; `N2NDataset` samples patch origins with no knowledge of coverage, so
+  some fraction of every model's training patches are part flat constant. Step
+  20 fixed only the *measurement* side of this. Unknown how much it matters —
+  0.3-0.8% of pixels, but concentrated at one edge.
+- **Why B behaves differently.** Alone among the filters it is near-identity when
+  trained per-filter (106% of ceiling, 93% sources) and it is the group the
+  quality gate cuts hardest (46% rejected on abell2151, leaving a 6-frame pair).
+  Whether that is depth, passband, or the draw is untested.
 - **Source-bias** (step 7), unconfirmed across seeds and inside the noise floor.
 - **The gradient-tail trigger** from step 1, still unidentified.
 - **Validation leakage in the pooled path.** The holdout is group-level
