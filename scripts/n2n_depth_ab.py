@@ -255,7 +255,11 @@ def evaluate(model_path: Path, args) -> dict:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--train", default="sh2-92")
+    ap.add_argument("--train", default="sh2-92",
+                    help="comma list; groups are pooled across every (dso, filter)")
+    ap.add_argument("--tag", default="",
+                    help="prefix for model and results filenames; keeps runs "
+                         "from overwriting each other")
     ap.add_argument("--test", default="ic1396")
     ap.add_argument("--filters", default="Ha,O-III")
     ap.add_argument("--caps", default="22,0",
@@ -277,24 +281,30 @@ def main() -> int:
     caps = [int(c) for c in args.caps.split(",")]
     OUT.mkdir(parents=True, exist_ok=True)
 
+    targets = [t.strip() for t in args.train.split(",") if t.strip()]
+    want = len(filters) * len(targets)
     results = {}
     for cap in caps:
-        tag = f"cap{cap}" if cap else "full"
-        log(f"\n{'='*66}\narm {tag}: train {args.train}, test {args.test}\n{'='*66}")
+        tag = (args.tag + "_" if args.tag else "") + (f"cap{cap}" if cap else "full")
+        log(f"\n{'='*66}\narm {tag}: train {'+'.join(targets)}, test {args.test}\n{'='*66}")
         groups = {}
         for filt in filters:
-            g = build_group(args.train, filt, cap, args.exptime, args.seed, subs)
-            if g:
-                groups[f"{args.train}|{filt}"] = g
-        if len(groups) < len(filters):
-            log(f"arm {tag}: incomplete groups — skipped")
+            for dso in targets:
+                g = build_group(dso, filt, cap, args.exptime, args.seed, subs)
+                if g:
+                    groups[f"{dso}|{filt}"] = g
+        if len(groups) < want:
+            log(f"arm {tag}: {len(groups)} of {want} groups — skipped")
             continue
         depths = {k: g["train_per"] for k, g in groups.items()}
         log(f"  depths {depths}")
         mp = train_arm(groups, tag, args)
         results[tag] = {"model": str(mp), "depths": depths,
                         "eval": evaluate(mp, args)}
-        (OUT / "results.json").write_text(json.dumps(results, indent=2, default=str))
+        # Run-specific filename: a second run with different targets must not
+        # silently replace the first run's numbers.
+        rf = OUT / (f"results_{args.tag}.json" if args.tag else "results.json")
+        rf.write_text(json.dumps(results, indent=2, default=str))
 
     # report
     log(f"\n{'='*66}\nextended-flux retention on held-out {args.test}\n{'='*66}")
@@ -317,7 +327,7 @@ def main() -> int:
                 log(f"  {t:10s} sources {s['n_denoised']}/{s['n_raw']} "
                     f"({100*s['source_survival']:.0f}%)  "
                     f"flux {s.get('flux_retained_median', float('nan')):.4f}")
-    log(f"\nwrote {OUT / 'results.json'}")
+    log(f"\nwrote {OUT / (f'results_{args.tag}.json' if args.tag else 'results.json')}")
     return 0
 
 

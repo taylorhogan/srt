@@ -1148,6 +1148,79 @@ The obvious next run is cheap: **pool bubble and sh2-92 at their natural
 depths**, combining the target that generalises with the depth that fixes
 photometry, and score it on the same ic1396 arrays.
 
+### 25. Pooling shallow with deep gives you the shallow model's bias
+
+2026-08-20, `n2n_depth_ab.py --train bubble,sh2-92 --caps 0`. Step 24 left two
+findings pulling in opposite directions: bubble generalises to ic1396 better,
+and depth fixes the photometric excess. Bubble maxes out at 22/29 frames, so
+this pooled all four groups — bubble at 22/29, sh2-92 at 51/72 — hoping to get
+both. Four narrowband models now exist, all scored on byte-identical ic1396
+stacks.
+
+**Ha**
+
+| model | 1-2σ | 2-4σ | 4-8σ | 8-16σ | 16-32σ | >32σ | src | flux |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| pooledNB (bubble 22/29) | 0.250 | 0.314 | **0.380** | **0.530** | **0.614** | 0.992 | 101% | 1.0619 |
+| cap22 (sh2-92 18/18) | 0.243 | 0.293 | 0.329 | 0.496 | 0.596 | 0.922 | 102% | 1.0593 |
+| deep (sh2-92 43/59) | **0.270** | 0.305 | 0.340 | 0.482 | 0.565 | 0.916 | 96% | **0.9924** |
+| pooled (both 22-72) | 0.248 | 0.289 | 0.340 | 0.493 | 0.580 | **1.007** | 103% | 1.0736 |
+
+**O-III**
+
+| model | 1-2σ | 2-4σ | 4-8σ | 8-16σ | 16-32σ | >32σ | src | flux |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| pooledNB (bubble 22/29) | 0.255 | **0.294** | **0.384** | **0.460** | **0.691** | 1.008 | 102% | 1.0704 |
+| cap22 (sh2-92 18/18) | 0.222 | 0.239 | 0.281 | 0.345 | 0.536 | 0.797 | 105% | 1.0860 |
+| deep (sh2-92 43/59) | **0.262** | 0.278 | 0.317 | 0.380 | 0.584 | 0.878 | 97% | **0.9930** |
+| pooled (both 22-72) | 0.243 | 0.263 | 0.342 | 0.419 | 0.664 | **1.028** | 104% | 1.0904 |
+
+**The shallowest group in the pool sets the photometric bias.** Every model
+containing a group under ~30 frames reads 1.06-1.09 flux; the one deep-only
+model reads 0.992-0.993. The pooled model contains the deep groups *and* the
+shallow ones and comes out at **1.074/1.090 — worse than either parent**. This
+is not an average: half the training pairs being shallow is enough to teach the
+whole model the shallow model's over-recovery.
+
+Mechanically that is what you would expect if the excess is learned boost.
+Trained on noisy stacks the network learns to lift features out of noise;
+applied to a cleaner frame that lift over-recovers. Mixing depths does not
+average the lift, because the shallow pairs are the ones that reward it.
+
+**Design rule: never pool groups whose depths differ by more than ~2x if the
+output is meant to be photometric.** Equivalently, the useful depth of a pooled
+training set is its *minimum*, not its mean — which also puts a caution on the
+broadband ladder's `pooled-scenes` arms, whose groups spanned 6 to 31 frames
+(steps 20 and 22). Their photometry was measured as fine, but they were never
+compared against a deep-only broadband model, so the same effect could be
+sitting in them unnoticed.
+
+**On extended structure, pooling averaged rather than took the better parent.**
+Ha stayed at 0.340 against bubble's 0.380; O-III reached 0.342, best among the
+sh2-92-containing models and still under bubble's 0.384. Nothing tried has
+exceeded ~0.38 at 4-8 sigma, so **ic1396 remains unrenderable by any of these
+four models** and the extended-structure problem is untouched by anything in
+steps 24 or 25.
+
+The bright end is the one place pooling won: >32 sigma goes to 1.007/1.028
+against deep-only's 0.916/0.878, so bright extended flux survives — now slightly
+over-recovered rather than under.
+
+#### Where this leaves the two goals
+
+They conflict on current data:
+
+- **Photometry** wants deep-only training, no group under ~40 frames. Only
+  sh2-92 qualifies.
+- **Extended structure** wants bubble, which cannot be deep — it has 59 Ha and
+  77 O-III frames in total.
+
+Two ways out, neither tested: **more bubble integration**, so the target that
+generalises can also be trained deep; or an answer to **why bubble generalises
+to ic1396 better than sh2-92 does** despite a quarter of the data. The second is
+the more valuable question — it is about training-set composition, which no
+hyperparameter sweep in this manual has touched.
+
 ### Standing tally of what has been tried against the 2026-08-13 baseline
 
 **This tally was invalidated on 2026-08-17 and is kept for the record.** It read:
