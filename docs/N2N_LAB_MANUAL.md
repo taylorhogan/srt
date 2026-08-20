@@ -1099,6 +1099,55 @@ average, and both are blind to this.
 
 Run it on any model before trusting it on extended targets.
 
+### 24. Training depth — falsifies the fix it was aimed at, solves a different one
+
+2026-08-20, `scripts/n2n_depth_ab.py --train sh2-92 --test ic1396 --caps 22,0`.
+
+**The prediction, written before the run:** the model over-smooths because its
+shrinkage is calibrated to the noise level it trained on — ~3x sky-noise removal
+at matched depth against 17-26x when the input is cleaner than anything it saw.
+Every narrowband model had learned on 22-29 frame half-stacks; sh2-92 allows 51
+and 72. So a deeper-trained model should hold low-surface-brightness structure
+better and stop deleting nebulae.
+
+Depth is the only variable: same target, same two filters, same seed, same
+pooled architecture and L2 loss, same frame ordering. Both arms scored on the
+**byte-identical ic1396 stacks** step 23 used, so pooledNB's row is directly
+comparable. Post-gate depths: Ha 17,20 -> 44,42 and O-III 19,17 -> 63,55.
+
+| model | trained on | depth | Ha 4-8σ | O-III 4-8σ | Ha flux | O-III flux | Ha src | O-III src |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| pooledNB | bubble | 22/29 | **0.380** | **0.384** | 1.0619 | 1.0704 | 101% | 102% |
+| cap22 | sh2-92 | 18/18 | 0.329 | 0.281 | 1.0593 | 1.0860 | 102% | 105% |
+| full | sh2-92 | 43/59 | 0.340 | 0.317 | **0.9924** | **0.9930** | 96% | 97% |
+
+**1. The prediction is falsified.** Deeper training moves 4-8 sigma retention by
++0.011 (Ha) and +0.036 (O-III). ic1396 is still destroyed — 34% and 32% of its
+flux at the surface brightness it actually has. Depth is **not** the mechanism
+behind the extended-structure loss, so the cause sits in the spatial prior
+itself rather than in a miscalibrated noise level. That closes off the cheapest
+hypothesis and points the next work at the loss function or the architecture.
+
+**2. It solves the leading defect it was not aimed at.** The point-source flux
+excess — over-recovery, open since step 18 and the standing "leading defect"
+after the registration fix — **disappears with training depth**: 1.059 -> 0.992
+on Ha and 1.086 -> 0.993 on O-III, with source counts falling from 102%/105% to
+96%/97%. Both *shallow* models carry the excess (bubble-trained 1.062/1.070,
+sh2-92-trained 1.059/1.086) and the deep one does not, which is two independent
+confirmations from different training targets. **The halo the network was
+thought to add around sources is an artefact of training on stacks shallower
+than the frame it is applied to.**
+
+**3. Training target beats depth for extended retention.** Bubble-trained at
+22/29 holds more faint flux than sh2-92-trained at 43/59 on both filters
+(0.380/0.384 against 0.340/0.317), on a quarter of the data. Why one nebula
+generalises to ic1396 better than another is unexplained and is now the more
+interesting question than depth.
+
+The obvious next run is cheap: **pool bubble and sh2-92 at their natural
+depths**, combining the target that generalises with the depth that fixes
+photometry, and score it on the same ic1396 arrays.
+
 ### Standing tally of what has been tried against the 2026-08-13 baseline
 
 **This tally was invalidated on 2026-08-17 and is kept for the record.** It read:
@@ -1151,7 +1200,12 @@ Still open, roughly in order of what would be worth knowing:
 - **The faint end.** The three attempts that "failed" — L2 (13), quarter splits
   (16), pooled LRGB (17) — all ran on misaligned pairs (18). Two have reversed on
   re-test. Re-measure before treating any of it as known.
-- **Over-recovery at mid SNR.** Survived the fix and is now the leading defect.
+- **Over-recovery at mid SNR — LARGELY EXPLAINED by step 24.** It tracks
+  training depth: models trained on 22-29 frame half-stacks read 1.06-1.09 on
+  held-out ic1396, and the same architecture trained at 43-59 frames reads
+  0.992-0.993. Deep-train before treating any residual excess as real.
+  Original entry follows.
+- **Over-recovery at mid SNR.** Survived the fix and was long the leading defect.
   Post-fix on sh2-92 the model *adds* 11% (Ha) and 5% (O-III) of real source
   flux, flat across brightness; pooling halves Ha's to 5.5%. Re-verified
   2026-08-17 against three benign explanations, all excluded: background pedestal
