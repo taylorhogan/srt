@@ -194,6 +194,15 @@ EXTEND_FACTOR = 3.0   # expand around that peak while above this x floor
 MIN_MOVE_S = 3.0
 BIN_S = 0.5
 PAD_S = 4.0           # kept either side, so the start-up clunk is not clipped
+# Every clip is emitted at EXACTLY this length, move starting at PAD_S.
+# Not cosmetic: the spectrogram renderer stretches any duration to the same
+# 1000x600 image, so two normal moves clipped at 17 s and 20 s land at
+# different positions and widths, and the image-MSE classifier reads the
+# misalignment as dissimilarity. Measured on the first two good opens:
+# similarity 0.147 between two moves the eMeet system rated good -- a
+# threshold so weak (0.13) that almost anything would classify as good.
+# Fixed length + fixed move position makes the images comparable at all.
+CLIP_S = 24.0
 
 
 def extract_move(pcm, bin_s=BIN_S, factor=MOVE_FACTOR,
@@ -246,9 +255,13 @@ def extract_move(pcm, bin_s=BIN_S, factor=MOVE_FACTOR,
                       "floor_rms": round(floor, 1),
                       "peak_bin_rms": round(float(rms[peak]), 1)}
 
-    pad = int(pad_s / bin_s)
-    i0 = max(0, (lo - pad)) * n
-    i1 = min(pcm.size, (hi + 1 + pad) * n)
+    # Fixed-length window: PAD_S of lead-in, then whatever of the move and
+    # its aftermath fits in CLIP_S. Clamp to the recording, keeping length.
+    want = int(CLIP_S * RATE)
+    i0 = max(0, int((lo * bin_s - pad_s) * RATE))
+    if i0 + want > pcm.size:
+        i0 = max(0, pcm.size - want)
+    i1 = i0 + want
     detail = {"floor_rms": round(floor, 1),
               "move_rms": round(float(rms[lo:hi + 1].mean()), 1),
               "ratio": round(float(rms[lo:hi + 1].mean() / floor), 1),
