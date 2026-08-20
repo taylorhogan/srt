@@ -118,6 +118,32 @@ M31 is the start not only for sentiment: its HII regions are individually bright
 enough that you are effectively taking spectra of nebulae rather than of diffuse
 disk light, which is what makes the exposures survivable.
 
+## Field of view: M31 does not fit, and mostly does not need to
+
+The QHY600 on the CDK17 frames **41.5′ × 27.7′** at 0.26″/px. M31 is
+**~190′ × 60′** — about 4.5x the frame's long axis — and Rubin's outermost
+HII regions sit ~100′ from the nucleus, more than two frame-widths from
+centre. This cuts differently for the two curves:
+
+* **Curve A (spectroscopy) does not care.** The slit samples one position at
+  a time; M31 overfilling the field is irrelevant, and at 1.6″ per slit-width
+  it even helps — every HII region is a well-separated target rather than a
+  crowded blur. FOV is no argument against starting the spectroscopy on M31.
+* **Curve B (photometry) is where FOV bites.** Weighing the visible matter
+  needs a surface-brightness profile along the major axis out to the last
+  spectroscopic point — on M31 a mosaic of roughly 6–10 overlapping panels
+  tied to one photometric scale. The stacking pipeline handles single fields;
+  panel-to-panel stitching is new work, though the level-to-common-sky
+  machinery in `stacking/stacker.py` already solves the hard half (matching
+  panels to one background level is the same problem as matching frames).
+
+**The practical split, then: learn the spectroscopy on M31, build the first
+complete A-vs-B comparison on NGC 7331.** At ~10′ × 4′ it fits in a single
+frame with margin, so curve B needs no mosaic, and at 76° / 238 km/s it gives
+nearly M31's signal. M31 remains the easiest place in the sky to get a first
+galaxy spectrum; NGC 7331 is the easiest place to finish the whole
+measurement.
+
 ## Why inclination decides the target list
 
 A Doppler shift measures only the line-of-sight component. Rotation projects as
