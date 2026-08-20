@@ -1,8 +1,12 @@
 #!/usr/bin/env python3
-"""Render the held-out DSO as an LRGB colour image, raw vs denoised.
+"""Render a DSO as a colour image, raw vs denoised, in any of the recipes.
 
-    python scripts/n2n_lrgb_render.py stacks                    # build channels
-    python scripts/n2n_lrgb_render.py compose --model <path>    # denoise + compose
+    python scripts/n2n_lrgb_render.py stacks --dso ic1396 --recipe HOO --lum Ha
+    python scripts/n2n_lrgb_render.py compose --dso ic1396 --recipe HOO --model <path>
+
+Recipes come from `color_process.RECIPES` — LRGB, HOO (R<-Ha, G/B<-O-III) and
+SHO. HOO points two output channels at one O-III stack, so the filter list is
+de-duplicated before stacking; without that the same frames get stacked twice.
 
 The ladder's own stacks cannot be used for this. It builds one shared reference
 **per (dso, filter) group**, which is all N2N needs — pairs never cross filters —
@@ -56,11 +60,34 @@ def suffix(args) -> str:
 
 
 def meta_path(args) -> Path:
-    return OUT / f"meta{suffix(args)}.json"
+    """Keyed by target AND recipe — the npy files already carry the dso in their
+    names, so without this a second target silently overwrites the first's
+    manifest while leaving its arrays in place."""
+    return OUT / f"meta_{args.dso}_{args.recipe}{suffix(args)}.json"
 
 
 def log(m: str = "") -> None:
     print(m, flush=True)
+
+
+def recipe_filters(args) -> list[str]:
+    """Distinct FITS filters this recipe needs, in a stable order.
+
+    HOO maps one O-III stack onto both G and B, so the filter list is shorter
+    than the channel list and must be de-duplicated before stacking — otherwise
+    the same 38 frames get stacked twice.
+    """
+    if args.filters:
+        return [f.strip() for f in args.filters.split(",") if f.strip()]
+    from stacking import color_process
+    mapping = color_process.RECIPES[args.recipe]
+    seen, out = set(), []
+    for ch in ("L", "R", "G", "B"):
+        f = mapping.get(ch)
+        if f and f not in seen:
+            seen.add(f)
+            out.append(f)
+    return out
 
 
 def build(args) -> int:
@@ -71,7 +98,7 @@ def build(args) -> int:
     cfg = config.data()
     machine = cfg.get("machine", {}).get(socket.gethostname()) or {}
     subs = Path(machine["subs_dir"])
-    filters = [f.strip() for f in args.filters.split(",") if f.strip()]
+    filters = recipe_filters(args)
     idx = stacks.index_frames(subs, filters, args.exptime)
 
     # One reference for every channel, taken from the luminance frames. Sharing
@@ -130,7 +157,10 @@ def compose(args) -> int:
     from stacking import color_process
 
     meta = json.loads(meta_path(args).read_text())
-    filters = [f for f in ("L", "R", "G", "B") if f in meta["channels"]]
+    mapping = color_process.RECIPES[args.recipe]
+    filters = [f for f in recipe_filters(args) if f in meta["channels"]]
+    log(f"recipe {args.recipe}: " + ", ".join(
+        f"{ch}<-{mapping[ch]}" for ch in ("L", "R", "G", "B") if ch in mapping))
 
     ck = torch.load(args.model, map_location="cpu", weights_only=False)
     if abs(float(ck.get("asinh_sigma_mult", denoiser.ASINH_SIGMA_MULT))
@@ -158,6 +188,14 @@ def compose(args) -> int:
     w = min(a.shape[1] for a in raw_ch.values())
     raw_ch = {k: v[:h, :w] for k, v in raw_ch.items()}
     den_ch = {k: v[:h, :w] for k, v in den_ch.items()}
+
+    # Filter arrays -> output channels. HOO points both G and B at the same
+    # O-III stack, which is what makes its palette teal rather than green.
+    def to_channels(d: dict) -> dict:
+        return {ch: d[mapping[ch]] for ch in ("L", "R", "G", "B")
+                if ch in mapping and mapping[ch] in d}
+
+    raw_ch, den_ch = to_channels(raw_ch), to_channels(den_ch)
 
     # compose()'s defaults are tuned for nebulae and put the white point at
     # p99 of max(R,G,B), which on this field is 12 ADU against a 32,000 ADU
@@ -214,7 +252,7 @@ def compose(args) -> int:
     for tag, subbed in (("raw", subbed_raw), ("denoised", subbed_den)):
         rgb = build(subbed)
         p = color_process.save_rgb(
-            rgb, OUT / f"{meta['dso']}_LRGB_{tag}{suffix(args)}.jpg",
+            rgb, OUT / f"{meta['dso']}_{args.recipe}_{tag}{suffix(args)}.jpg",
             max_px=args.max_px)
         log(f"wrote {p}")
         del rgb
@@ -225,8 +263,12 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("stage", choices=("stacks", "compose"))
     ap.add_argument("--dso", default="ngc5907")
-    ap.add_argument("--filters", default="L,R,G,B")
-    ap.add_argument("--lum", default="L", help="filter supplying the shared reference")
+    ap.add_argument("--recipe", default="LRGB", choices=("LRGB", "HOO", "SHO"))
+    ap.add_argument("--filters", default="",
+                    help="override the recipe's filter list")
+    ap.add_argument("--lum", default="",
+                    help="filter supplying the shared reference; default is the "
+                         "recipe's first, which should be the deepest channel")
     ap.add_argument("--exptime", type=int, default=300)
     # Takes the FIRST n frames, not a random sample, so a capped channel is
     # typically one night rather than a draw across sessions. That is a second

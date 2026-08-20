@@ -1043,6 +1043,62 @@ this model, more distinct fields is not it.
 `std_ratio` on L reached 0.4020 against an ideal of 0.4022, the closest any
 configuration has come.
 
+### 23. ic1396 in HOO — the denoiser deletes the nebula
+
+2026-08-20, and the first run where a prediction from `n2n_extended_check.py`
+was written down before the picture existed and then matched it exactly.
+
+ic1396 at 300 s: 88 frames (Ha 50, O-III 38) across 2026-08-18/19, stacked onto
+**one shared Ha reference** so the two channels land on the same pixels, 33 and
+32 surviving the quality gate. Denoised, then composed R<-Ha, G/B<-O-III.
+
+**The nebula is gone.** The raw shows faint Ha filling the whole frame threaded
+with dark dust lanes; the denoised output is a few isolated bright knots on
+black, and the dust structure vanishes with the nebulosity it was silhouetted
+against.
+
+This was predictable, and predicted, from surface brightness alone. ic1396's
+nebulosity sits at **1-5 sigma** — p99 is 3.5 ADU above a 1.2 ADU sky, p99.9 is
+40 ADU — and the retention curve says that band is where almost everything is
+lost:
+
+| smoothed SB (sky sigma) | Ha kept | O-III kept |
+| --- | --- | --- |
+| 1..2 | 0.250 | 0.255 |
+| 2..4 | 0.314 | 0.294 |
+| 4..8 | 0.380 | 0.384 |
+| 8..16 | 0.530 | 0.460 |
+| 16..32 | 0.614 | 0.691 |
+| >32 | 0.992 | 1.008 |
+
+Only above ~32 sigma is signal safe, and those are exactly the knots that
+survived in the image. A galaxy loses a halo to this; a nebula loses its subject.
+
+**Which model, settled by measurement rather than by which scored better.** The
+ladder winner (`pooled-filters`, trained on abell2151 broadband) was beaten by
+`pooledNB` (trained on bubble Ha + O-III) in **every bin on both filters** —
+0.380 vs 0.309 at 4-8 sigma, 0.992 vs 0.946 above 32. Domain match beat the
+better benchmark score, which is what `scripts/n2n_train_pooled.py` has argued
+all along about narrowband sky being a different noise regime. Neither model had
+seen ic1396.
+
+The denoised frame looks *cleaner* and is worse. Anyone judging by how smooth
+the sky came out would call it an improvement — the same failure the 2026-08-15
+run made when it reported quality as `sep.Background().globalrms`.
+
+#### The gate that was missing
+
+`scripts/n2n_extended_check.py`. It bins by **smoothed** surface brightness
+rather than per-pixel value — at 1-2 sigma a pixel is mostly noise, so per-pixel
+binning puts signal and noise in the same bin and the ratio collapses toward
+zero for any working denoiser, which says nothing — and it reports the
+**cross-channel spread** per bin, because a model that eats 30% from every
+channel dims the image while one that eats 36% from R and 51% from G changes its
+colour. Everything else in the gate is point-source photometry or a whole-frame
+average, and both are blind to this.
+
+Run it on any model before trusting it on extended targets.
+
 ### Standing tally of what has been tried against the 2026-08-13 baseline
 
 **This tally was invalidated on 2026-08-17 and is kept for the record.** It read:
@@ -1065,11 +1121,15 @@ steer the design. Every A/B run before 2026-08-17 is suspect.
 
 ## Standing conclusions
 
-1. **Denoised frames are not a science product.** Calibrated linear frames remain
-   the science product for transit work, the colour-magnitude diagram, and the
-   transient search. As of step 18 they *are* a usable display product — sources
-   survive intact and photometry is within 5-11% — but that residual excess still
-   disqualifies them from measurement.
+1. **Denoised frames are not a science product, and are a display product only
+   for point-source-dominated fields.** Calibrated linear frames remain the
+   science product for transit work, the colour-magnitude diagram, and the
+   transient search. Since step 18 point sources survive intact and their
+   photometry is within a few percent — but steps 21 and 23 rule out anything
+   whose subject is extended and faint. Low-surface-brightness flux is retained
+   at 25-40% below ~8 sigma, unequally per channel, which costs a galaxy its
+   halo colour and costs a nebula its nebula. **Never judge a denoised frame by
+   how smooth the sky came out**; run `scripts/n2n_extended_check.py` first.
 2. **Loss is not evidence.** A constant predictor drives it down. Judge a
    checkpoint by `corr(input, output)` against the measured ceiling, and by
    aperture flux ratios — never by the curve or a downsampled preview.
