@@ -860,6 +860,118 @@ is the worst of the twelve.
   (FWHM ~11% high, star counts ~1.5x low) and the quality gate cuts on both.
   See the runbook.
 
+### 21. The denoiser is not colour-safe on low-surface-brightness structure
+
+2026-08-20, found by looking at the LRGB render rather than at a number. The
+composite shows a green halo around ngc5907 that the raw does not. It is real,
+it is the model's, and **no metric in the ladder could have caught it** — every
+one of them is aperture photometry on point sources, and this is a ratio error
+between channels on extended emission.
+
+Measured on the depth-matched render channels (all four on one shared reference,
+so the regions are the same pixels), gradient-removed exactly as `compose` does,
+in an annulus following the edge-on disk:
+
+| region | L | R | G | B |
+| --- | --- | --- | --- | --- |
+| halo, raw (ADU) | 5.080 | 1.681 | 1.920 | 1.609 |
+| halo, denoised | 3.877 | 0.602 | 0.987 | 0.657 |
+| **fraction kept** | **76.3%** | **35.8%** | **51.4%** | **40.8%** |
+| far sky control, raw | -0.175 | -0.098 | -0.080 | -0.119 |
+| far sky control, denoised | -0.040 | -0.046 | -0.038 | -0.076 |
+
+The control matters: far from the galaxy both raw and denoised sit at zero, so
+the halo signal is real extended emission and not a residual gradient.
+
+Colour ratios against L in the halo move by a third to a half:
+
+    R/L  0.331 -> 0.155   (-53%)
+    G/L  0.378 -> 0.255   (-33%)
+    B/L  0.317 -> 0.169   (-47%)
+
+**G is retained 1.44x as well as R, and that ratio is the green halo.**
+
+The galaxy *core* is untouched — G/L 0.300 -> 0.295, R/L 0.324 -> 0.317, B/L
+0.228 -> 0.223, all within 1-2%. So the defect is confined to low surface
+brightness. Point sources are likewise fine: a bright star's radial profile is
+preserved to 0.1% at the core and 0.8% at r=15 px.
+
+Retention does not track SNR cleanly. Halo signal in units of each channel's own
+sky sigma is L 1.30, R 0.60, G 0.52, B 0.50, so L's high retention fits, but
+among R/G/B the ordering does not — R has the *best* SNR of the three and the
+*worst* retention. R's stack was also the shallowest (11 of 22 frames survived
+the gate against 19 for G and B), which is the obvious suspect and is untested.
+
+Consequences:
+
+1. **The denoiser cannot be the colour path as it stands.** LRGB channels are
+   essentially never equal depth, and a depth- or noise-dependent retention on
+   faint extended flux turns straight into a colour cast.
+2. This is the same phenomenon as step 20's arm-3 result read through a
+   different instrument — 14 groups over-smoothed extended structure while
+   scoring 97-99% on sources. Extended low-SB emission is what this model gives
+   up, and point-source metrics are blind to it by construction.
+3. **A gate on extended structure is missing.** Everything in the current gate
+   (`source_survival`, aperture flux, corr against ceiling) is either
+   point-source photometry or a whole-frame average. The measurement above —
+   region medians against a far-sky control, per channel — is cheap and should
+   become part of it.
+
+### 22. Scene count re-tested at matched sampling — 14 groups ties 4
+
+2026-08-20, `--arm pooled-scenes --pairs 7000 --suffix _p7000`. Step 20 held
+`pairs_per_epoch` at 2000 for every arm, so patch draws *per pair* went
+2000 -> 500 -> 143 as groups went 1 -> 4 -> 14, and its "pooling stops paying at
+4 groups" could not be told apart from "the budget got too thin". This run gives
+14 groups the same 500 draws per pair that 4 groups got.
+
+| arm | groups | draws/pair | corr/ceiling | spread | mean abs flux err | mean faint quintile |
+| --- | --- | --- | --- | --- | --- | --- |
+| per-filter | 1 | 2000 | 47-106% | 59 | 3.33% | 0.998 |
+| pooled-filters | 4 | 500 | 63-69% | 6 | **0.52%** | 0.955 |
+| pooled-scenes | 14 | 143 | 36-54% | 19 | 0.50% | 0.987 |
+| pooled-scenes_p7000 | 14 | **500** | **63-70%** | 8 | 0.80% | 0.947 |
+
+Head to head at 500 draws/pair:
+
+| filt | 4 groups | 14 groups | 4 grp flux | 14 grp flux |
+| --- | --- | --- | --- | --- |
+| L | 69% | 70% | 0.9938 | 0.9964 |
+| R | 63% | 64% | 0.9936 | 0.9803 |
+| G | 63% | 63% | 0.9956 | 0.9915 |
+| B | 65% | 66% | 0.9962 | 1.0001 |
+
+**Both halves of step 20's conclusion move, in opposite directions.**
+
+1. "Pooling stops paying at 14 groups" was **wrong** — it was the fixed budget.
+   Starved at 143 draws/pair the same 14 groups scored 36-54%; fed at 500 they
+   score 63-70%. G alone goes 37% -> 63%.
+2. "More scenes keep helping" is **also unsupported.** 14 groups matches 4 on
+   correlation (+1 point or level on every filter, inside run-to-run variance)
+   and is slightly *worse* on photometry — mean flux error 0.80% against 0.52%,
+   faint quintile 0.947 against 0.955.
+
+**The whole measurable gain is the 1 -> 4 step**, i.e. pooling across the filters
+of one target. Going to 14 groups costs 3.5x the training time (110 min against
+~31) and buys nothing. Data thinness, as "not enough scenes", is dead as the
+leading explanation for what limits this pipeline.
+
+The epoch curves say the same thing from the other side. Best epoch tracks total
+patch exposure per pair, not group count:
+
+    per-filter      1 grp   2000/pair   epoch 13-16
+    pooled-filters  4 grp    500/pair   epoch 26
+    pooled-scenes  14 grp    143/pair   epoch 36    <- starved, still improving late
+    pooled-scenes  14 grp    500/pair   epoch 14    <- fed, then overfits
+
+At 7000 pairs the run overfits from epoch 14 onward — val rises monotonically
+0.5966 -> 0.6052 while train falls 0.5318 -> 0.5062. Four times the scenes did
+not delay overfitting; it arrived *sooner* than with 4 groups. Whatever limits
+this model, more distinct fields is not it.
+
+`std_ratio` on L reached 0.4020 against an ideal of 0.4022, the closest any
+configuration has come.
+
 ### Standing tally of what has been tried against the 2026-08-13 baseline
 
 **This tally was invalidated on 2026-08-17 and is kept for the record.** It read:
@@ -927,15 +1039,16 @@ Still open, roughly in order of what would be worth knowing:
   count is not sufficient on its own (quarters also raised it, at the cost of
   depth), but at *matched depth* more pairs now helps.
 
-  **Answered in part by step 20, and the answer is a curve, not a direction.**
-  Across 18 broadband groups with ngc5907 held out: 1 group -> 4 groups is a
-  clear win (photometry error 3.33% -> 0.52%, cross-filter spread 59 -> 6
-  points), and 4 -> 14 is a clear loss on correlation. Pair count alone is not
-  the axis; pair count *against per-pair sampling* is, because
-  `pairs_per_epoch` was fixed at 2000 so draws per pair went 2000 -> 500 -> 143.
-  **The open part is now precisely one run**: arm 3 at `--pairs 7000` to match
-  arm 2's per-pair sampling. Until that exists, "more scenes stop helping" and
-  "the budget got too thin" are not separated.
+  **Answered by steps 20 and 22, and the answer is: not scene count.** Pooling
+  the four filters of one target (1 -> 4 groups) is a large win — photometry
+  error 3.33% -> 0.52%, cross-filter spread 59 -> 6 points. Going on to 14
+  groups, at matched per-pair sampling, changes correlation by +1 point or less
+  and makes photometry slightly worse, at 3.5x the training cost. The step-20
+  appearance that 14 groups was much worse was a fixed `pairs_per_epoch`
+  starving them at 143 draws per pair. So "not enough scenes" is no longer a
+  live explanation, and what actually limits this is **still unidentified** —
+  step 21's finding, that faint extended structure is what the model gives up,
+  is the most promising place to look next.
 - **Tiling artefact — CONFIRMED on the stack model** (step 20). Visible at 1:1 in
   the winning pooled model as a diagonal weave in blank sky, invisible in a 6x
   downsampled preview. Residual power peaks at 64 px and 512 px, exactly
@@ -952,6 +1065,10 @@ Still open, roughly in order of what would be worth knowing:
   trained per-filter (106% of ceiling, 93% sources) and it is the group the
   quality gate cuts hardest (46% rejected on abell2151, leaving a 6-frame pair).
   Whether that is depth, passband, or the draw is untested.
+- **Why faint extended retention differs per channel** (step 21). R keeps 36% and
+  L keeps 76% of the same halo. Stack depth is the leading suspect (R survived
+  the gate at 11 frames against 19) and separating it from passband needs one
+  render with equal-depth channels.
 - **Source-bias** (step 7), unconfirmed across seeds and inside the noise floor.
 - **The gradient-tail trigger** from step 1, still unidentified.
 - **Validation leakage in the pooled path.** The holdout is group-level

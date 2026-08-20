@@ -170,12 +170,18 @@ def masked_metrics(raw: np.ndarray, other: np.ndarray, den: np.ndarray,
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--arm", action="append", choices=ARMS)
+    # Not restricted to ARMS: a suffixed run (--suffix _p7000) writes to its own
+    # directory and must be rescorable alongside the three base arms.
+    ap.add_argument("--arm", action="append",
+                    help="output dir name under local/n2n_ladder; "
+                         "default is every dir holding a results.json")
     ap.add_argument("--test", default="ngc5907")
     ap.add_argument("--filters", default="L,R,G,B")
     args = ap.parse_args()
 
-    arms = args.arm or [a for a in ARMS if (LADDER / a / "results.json").exists()]
+    arms = args.arm or sorted(
+        d.name for d in LADDER.iterdir()
+        if d.is_dir() and (d / "results.json").exists())
     filters = [f.strip() for f in args.filters.split(",") if f.strip()]
     stacks_dir = LADDER / "stacks"
     all_rows = []
