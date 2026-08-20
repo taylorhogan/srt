@@ -308,7 +308,43 @@ def get_status_with_lights() -> tuple[bool, bool, bool, Any]:
     """
     parked, closed, open, mod_date = vision_safety.visual_status()
     _post_vision_decision_image(parked, closed, open)
+    _shadow_compare_kasa(parked, closed, open)
     return parked, closed, open, mod_date
+
+
+def _shadow_compare_kasa(parked: bool, closed: bool, is_open: bool) -> None:
+    """Log what the Kasa camera would have said, next to what the webcam said.
+
+    Shadow only: runs on a daemon thread so the roof flow pays nothing, gates
+    nothing, and swallows everything. The point is the disagreement count --
+    the Kasa system is not allowed to decide anything until weeks of these
+    lines show zero unexplained splits (docs: the cutover plan, 2026-08-20).
+    A DISAGREE here is data, not an alarm.
+    """
+    import threading
+
+    def _run():
+        try:
+            from sentry import kasa_state
+            k_safe, k_closed, k_open, _ = kasa_state.kasa_status(quick=True)
+            det = kasa_state.last_detail or {}
+            roof_web = "closed" if closed else ("open" if is_open else "unknown")
+            roof_kasa = "closed" if k_closed else ("open" if k_open else "unknown")
+            agree = (roof_web == roof_kasa) and (parked == k_safe)
+            _logger.info(
+                "SHADOW kasa-vs-webcam %s: webcam scope=%s roof=%s | kasa scope=%s "
+                "roof=%s regime=%s",
+                "AGREE" if agree else "DISAGREE",
+                "parked" if parked else "not-parked", roof_web,
+                det.get("scope"), roof_kasa,
+                (det.get("roof_detail") or {}).get("regime"))
+        except Exception:  # noqa: BLE001 -- shadow observer, never surfaces
+            _logger.exception("kasa shadow compare failed (ignored)")
+
+    try:
+        threading.Thread(target=_run, name="kasa-shadow", daemon=True).start()
+    except Exception:  # noqa: BLE001
+        _logger.exception("kasa shadow thread failed to start (ignored)")
 
 
 def _post_vision_decision_image(parked: bool, closed: bool, is_open: bool) -> None:
