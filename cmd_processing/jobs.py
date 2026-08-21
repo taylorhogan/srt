@@ -93,6 +93,7 @@ _CLASSIFY = {
     "hr":          ("search", "archive"),
     "bad":         ("search", "archive"),
     "stats":       ("search", "archive"),
+    "seen":        ("search", "archive"),
     "update":      ("quick",  "quick"),
     "focus":       ("focus",  "mount_exclusive"),
     "autofocus":   ("focus",  "mount_exclusive"),
@@ -171,6 +172,7 @@ def make_title(command_text: str) -> str:
         "drift": "Drift analysis",
         "bad": "Bad-frame scan",
         "stats": "Image statistics",
+        "seen": "Stars seen per night",
         "help": "Help",
     }.get(verb)
     if pretty is None:

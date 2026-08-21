@@ -2874,6 +2874,7 @@ def get_super_user_commands() -> dict[str, Callable]:
         "todo": todo_cmd,
         "active": active_cmd,
         "stats": image_stats_cmd,
+        "seen": seen_cmd,
         "snr": snr_cmd,
         "transit": transit_cmd,
         "transient": transient_cmd,
@@ -4159,6 +4160,49 @@ def _save_frame_stats_cache(cache_path: Path, cached_by_path: dict[str, dict]) -
             tmp.unlink(missing_ok=True)
         except Exception:
             pass
+
+
+
+def seen_cmd(words: list[str], account: str) -> None:
+    """Post the nightly catalogue-stars-seen chart in a background thread."""
+    jobs.spawn(_seen_run, args=(words, account))
+
+
+def _seen_run(words: list[str], account: str) -> None:
+    """Worker for seen_cmd.
+
+    Usage:
+        seen           -- last 5 nights
+        seen <days>    -- that many nights, one row each, newest at the top
+
+    One row per night: percent of catalogue stars (mag <= 5 in the sky
+    camera's field) actually detected, through the night. Red shading is the
+    rain detector's own signal -- spans where central-sky motion sat above
+    its onset threshold -- darker where an alert was actually sent. Both
+    series come from logs that already persist (sky_log.jsonl since 08-08,
+    rain_log.jsonl since 08-10), so history is available from before this
+    command existed.
+    """
+    days = 5
+    extra = [w for w in (words[2:] if len(words) > 2 else []) if w]
+    if extra:
+        if not extra[0].isdigit() or not 1 <= int(extra[0]) <= 30:
+            social_server.post_social_message(
+                "Usage: seen [days]   (1..30, default 5)")
+            return
+        days = int(extra[0])
+    try:
+        from scripts import sky_transparency_report as tr
+        out, note = tr.build_multi(days=days)
+    except Exception as e:  # noqa: BLE001
+        _logger.exception("seen: chart build failed")
+        social_server.post_social_message(f"seen: chart failed - {e}")
+        return
+    if out is None:
+        social_server.post_social_message(f"seen: {note}")
+        return
+    social_server.post_social_message(
+        f"Catalogue stars seen, last {note} (red = rain detector above onset)", out)
 
 
 def image_stats_cmd(words: list[str], account: str) -> None:

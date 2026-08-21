@@ -304,6 +304,19 @@ HELP: dict[str, dict] = {
                      "process sh2-92 hoo auto",
                      "process sh2-92 hoo auto black=55"],
     },
+    "seen": {
+        "category": "super",
+        "summary": ("Chart of catalogue stars actually seen per night, one row "
+                    "per night, newest at the top. The y-axis is the percent of "
+                    "stars brighter than mag 5 in the sky camera's field that "
+                    "were detected. Red shading marks periods the rain detector's "
+                    "signal sat above its onset threshold (darker red where an "
+                    "alert was actually sent) — so a starless night reads as "
+                    "either weather (red) or a camera/solve problem (no red). "
+                    "History reaches back to 2026-08-08 via sky_log.jsonl."),
+        "usage": ["seen", "seen <days>"],
+        "examples": ["seen", "seen 7", "seen 14"],
+    },
     "publish": {
         "category": "super",
         "summary": ("Re-render one variant from a `process <dso> <recipe> auto` "
