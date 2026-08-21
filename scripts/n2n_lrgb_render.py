@@ -90,6 +90,50 @@ def recipe_filters(args) -> list[str]:
     return out
 
 
+def archive_calibration(cal_root: Path, filt: str, exptime: int, epoch: str):
+    """Explicit bias/dark/flat for archive lights, matched by epoch and filter.
+
+    Config-resolved calibration is wrong for archive data — it points at the
+    current epoch, and applying 2026 masters taken at -10C to 2024 lights taken
+    at -20C is worse than not calibrating. Flats are matched through
+    `canonical_filter`, without which the 2024 O-III flats (labelled `O2`) are
+    invisible.
+    """
+    from astropy.io import fits as _fits
+
+    from stacking.color_process import canonical_filter
+
+    want = canonical_filter(filt) or filt
+    bias, dark, flat = [], [], []
+    seen = set()
+    for fp in sorted(Path(cal_root).rglob("*.fits")):
+        if "RECYCLE" in str(fp):
+            continue
+        rp = fp.resolve()
+        if rp in seen:
+            continue
+        seen.add(rp)
+        parts = [x.upper() for x in fp.parts]
+        kind = next((k for k in ("BIAS", "DARK", "FLAT") if k in parts), None)
+        if not kind:
+            continue
+        try:
+            h = _fits.getheader(fp)
+            if epoch and not str(h.get("DATE-OBS", "")).startswith(epoch):
+                continue
+            e = round(float(h.get("EXPTIME", 0)))
+            f = str(h.get("FILTER", "")).strip()
+        except Exception:
+            continue
+        if kind == "BIAS":
+            bias.append(fp)
+        elif kind == "DARK" and e == exptime:
+            dark.append(fp)
+        elif kind == "FLAT" and (canonical_filter(f) or f) == want:
+            flat.append(fp)
+    return bias, dark, flat
+
+
 def build(args) -> int:
     from nn import stacks
     from stacking import stacker
@@ -97,7 +141,7 @@ def build(args) -> int:
     OUT.mkdir(parents=True, exist_ok=True)
     cfg = config.data()
     machine = cfg.get("machine", {}).get(socket.gethostname()) or {}
-    subs = Path(machine["subs_dir"])
+    subs = Path(args.root) if args.root else Path(machine["subs_dir"])
     filters = recipe_filters(args)
     idx = stacks.index_frames(subs, filters, args.exptime)
 
@@ -129,11 +173,24 @@ def build(args) -> int:
             log(f"[{filt}] cached {out.name}")
             meta["channels"][filt] = {"frames": len(paths), "file": out.name}
             continue
-        log(f"[{filt}] stacking {len(paths)} frames onto the {lum} reference")
         t0 = time.time()
         m: dict = {}
-        img = stacks.stack_paths(paths, filt, progress_cb=lambda s: None,
-                                 shared_reference=ref, meta_out=m)
+        if args.cal_root:
+            bias, dark, flat = archive_calibration(Path(args.cal_root), filt,
+                                                   args.exptime, args.cal_epoch)
+            log(f"[{filt}] stacking {len(paths)} frames onto the {lum} reference "
+                f"— calibration: {len(bias)} bias, {len(dark)} dark, {len(flat)} flat")
+            if not flat:
+                log(f"[{filt}] no epoch-matched flats — vignetting stays in")
+            img, m = stacker.stack(
+                list(paths), method=stacker.StackMethod.SIGMA_CLIP_FWHM,
+                shared_reference=ref, bias_paths=bias or None,
+                dark_paths=dark or None, flat_paths=flat or None,
+                register=True, progress_cb=lambda s: None)
+        else:
+            log(f"[{filt}] stacking {len(paths)} frames onto the {lum} reference")
+            img = stacks.stack_paths(paths, filt, progress_cb=lambda s: None,
+                                     shared_reference=ref, meta_out=m)
         if img is None:
             log(f"[{filt}] stacking failed")
             continue
@@ -156,11 +213,61 @@ def compose(args) -> int:
     from nn.noise2noise_model import UNet
     from stacking import color_process
 
-    meta = json.loads(meta_path(args).read_text())
+    mp = meta_path(args)
+    if not mp.exists():
+        # Recipes share channels — SHO builds Ha and O-III, which is all HOO
+        # needs — so fall back to any manifest for this target that covers them
+        # rather than re-stacking identical frames under another name.
+        need = set(recipe_filters(args))
+        for cand in sorted(OUT.glob(f"meta_{args.dso}_*{suffix(args)}.json")):
+            ch = json.loads(cand.read_text()).get("channels", {})
+            if need <= set(ch):
+                log(f"reusing channels from {cand.name}")
+                mp = cand
+                break
+    meta = json.loads(mp.read_text())
     mapping = color_process.RECIPES[args.recipe]
     filters = [f for f in recipe_filters(args) if f in meta["channels"]]
     log(f"recipe {args.recipe}: " + ", ".join(
         f"{ch}<-{mapping[ch]}" for ch in ("L", "R", "G", "B") if ch in mapping))
+
+    if not args.model:
+        log("no --model: rendering the raw composite only")
+        raw_ch = {}
+        for f in filters:
+            raw_ch[f] = np.load(OUT / meta["channels"][f]["file"]).astype(np.float32)
+        h = min(a.shape[0] for a in raw_ch.values())
+        w = min(a.shape[1] for a in raw_ch.values())
+        raw_ch = {k: v[:h, :w] for k, v in raw_ch.items()}
+        raw_ch = {ch: raw_ch[mapping[ch]] for ch in ("L", "R", "G", "B")
+                  if ch in mapping and mapping[ch] in raw_ch}
+        opts = color_process.effective_options(
+            white_pct=args.white_pct, black_pct=args.black_pct)
+        log(f"compose: {color_process.describe_options(opts)}")
+        subbed, white = color_process._prepare(
+            raw_ch, opts["subtract_background"], opts["mesh"], opts["white_pct"])
+        blacks = {c: float(np.nanpercentile(subbed[c], opts["black_pct"]))
+                  for c in subbed}
+        log(f"stretch: white {white:.2f} ADU, blacks "
+            + ", ".join(f"{c} {v:.2f}" for c, v in sorted(blacks.items())))
+        soft = opts["softening"]
+
+        def st(chan, black):
+            y = np.clip((chan - black) / max(white - black, 1e-6), 0.0, 1.0)
+            return np.arcsinh(y / soft) / np.arcsinh(1.0 / soft)
+
+        rgb = np.dstack([st(subbed[c], blacks[c]) for c in ("R", "G", "B")])
+        if "L" in subbed:
+            lum = st(subbed["L"], blacks["L"])
+            rl = rgb @ np.array([0.299, 0.587, 0.114], dtype=np.float32)
+            with np.errstate(divide="ignore", invalid="ignore"):
+                sc = np.where(rl > 1e-4, lum / np.maximum(rl, 1e-4), 0.0)
+            rgb = rgb * np.clip(sc, 0.0, color_process.MAX_LUM_BOOST)[:, :, None]
+        pth = color_process.save_rgb(np.clip(np.nan_to_num(rgb), 0, 1),
+                                     OUT / f"{meta['dso']}_{args.recipe}_raw{suffix(args)}.jpg",
+                                     max_px=args.max_px)
+        log(f"wrote {pth}")
+        return 0
 
     ck = torch.load(args.model, map_location="cpu", weights_only=False)
     if abs(float(ck.get("asinh_sigma_mult", denoiser.ASINH_SIGMA_MULT))
@@ -278,12 +385,21 @@ def main() -> int:
     ap.add_argument("--depth", type=int, default=0,
                     help="cap frames per channel, taking the FIRST n (one "
                          "session, not a spread); 0 uses all")
-    ap.add_argument("--model", help="checkpoint for the compose stage")
+    ap.add_argument("--model", default="",
+                    help="checkpoint for the compose stage; omit to render only "
+                         "the raw composite")
     ap.add_argument("--max-px", type=int, default=2400)
     ap.add_argument("--white-pct", type=float, default=99.95,
                     help="shared white point percentile; compose()'s 99.0 "
                          "saturates this field completely")
     ap.add_argument("--black-pct", type=float, default=40.0)
+    ap.add_argument("--root", default="",
+                    help="where to find LIGHT frames; default is this machine's subs_dir")
+    ap.add_argument("--cal-root", default="",
+                    help="take bias/dark/flat from here instead of config — "
+                         "required for archive data, whose epoch config does not know")
+    ap.add_argument("--cal-epoch", default="",
+                    help="restrict calibration to frames whose DATE-OBS starts with this")
     ap.add_argument("--force", action="store_true")
     args = ap.parse_args()
 
@@ -292,9 +408,6 @@ def main() -> int:
 
     if args.stage == "stacks":
         return build(args)
-    if not args.model:
-        log("compose needs --model")
-        return 1
     return compose(args)
 
 
