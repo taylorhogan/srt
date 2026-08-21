@@ -1221,6 +1221,71 @@ to ic1396 better than sh2-92 does** despite a quarter of the data. The second is
 the more valuable question — it is about training-set composition, which no
 hyperparameter sweep in this manual has touched.
 
+### 26. What predicts generalisation is distribution match, not data volume
+
+2026-08-20. Step 25 left the live question: why does bubble generalise to ic1396
+better than sh2-92 does, on a quarter of the data and at half the stack depth?
+
+**First, the effect is the target, not pooling.** Running step 18's two
+*per-filter* bubble models on the same ic1396 arrays, no pooling involved:
+
+| model | trained on | Ha 4-8σ | O-III 4-8σ |
+| --- | --- | --- | --- |
+| bubble per-filter | bubble | **0.397** | 0.342 |
+| pooledNB | bubble | 0.380 | **0.384** |
+| deep | sh2-92 | 0.340 | 0.317 |
+| cap22 | sh2-92 | 0.329 | 0.281 |
+| pooled | both | 0.340 | 0.342 |
+
+Every bubble-trained model beats every sh2-92-trained model, pooled or not.
+Bubble-trained spans 0.342-0.397; sh2-92-trained spans 0.281-0.340. The
+separation is clean and pooling is orthogonal to it.
+
+**The hypothesis that failed.** The obvious explanation was that bubble shows the
+model more low-surface-brightness structure, so it learns that faint extended
+emission is real. It is exactly backwards: sh2-92 has **more** of its area at
+1-8 sigma (6.87% Ha, 7.66% O-III) than bubble (2.62%, 3.09%) and generalises
+worse.
+
+**What does predict it: how closely the training field's surface-brightness
+distribution matches the target's.** Percent of frame area per smoothed-SB bin,
+in units of each stack's own sky sigma:
+
+| stack | <0σ | 0-1σ | 1-8σ |
+| --- | --- | --- | --- |
+| **ic1396 Ha (target)** | **41.51** | **55.45** | **2.46** |
+| bubble Ha (22 fr) | 41.69 | 55.25 | 2.62 |
+| sh2-92 Ha (22 fr) | 29.79 | 65.39 | 4.33 |
+| sh2-92 Ha (51 fr) | 24.42 | 67.85 | 6.87 |
+| **ic1396 O-III (target)** | **45.51** | **51.52** | **2.26** |
+| bubble O-III (29 fr) | 45.04 | 51.26 | 3.09 |
+| sh2-92 O-III (22 fr) | 36.60 | 58.49 | 4.39 |
+
+Bubble tracks ic1396 to within 0.2 percentage points on the two bins that hold
+97% of the frame. sh2-92 is 12 points off in the `<0` bin even when depth-matched
+— capping it to 22 frames moves 1-8 sigma from 6.87% to 4.33%, so depth explains
+part of the gap but not the part that matters. **The difference is intrinsic to
+the fields.**
+
+The mechanism this suggests: the network learns, from the distribution it is
+shown, where "signal" stops and "noise" begins. Trained on a field whose
+emission mostly sits above 1 sigma, it learns to treat sub-sigma structure as
+noise — and then deletes exactly that on a field like ic1396, which is 55%
+sub-sigma. Bubble, being 55% sub-sigma itself, teaches the opposite.
+
+**Status: suggestive, not established.** This is two training targets and one
+test target — a correlation across n=2, with a plausible mechanism. The
+falsifiable version, which needs a third narrowband field to run cleanly:
+**a bubble-trained model should LOSE to an sh2-92-trained model when the test
+target's distribution resembles sh2-92's.** If that fails, distribution match is
+not the mechanism and something else about bubble is doing the work.
+
+If it holds, it is the most actionable finding in this manual, because it is
+about **training-set composition** — an axis no experiment here has ever varied
+deliberately. Every sweep so far has moved depth, loss, pair count, or pooling.
+It would mean choosing training targets by the surface-brightness profile of
+what you intend to denoise, and it costs nothing but selection.
+
 ### Standing tally of what has been tried against the 2026-08-13 baseline
 
 **This tally was invalidated on 2026-08-17 and is kept for the record.** It read:
