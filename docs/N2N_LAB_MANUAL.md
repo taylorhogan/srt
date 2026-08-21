@@ -1554,6 +1554,81 @@ steer the design. Every A/B run before 2026-08-17 is suspect.
 
 ---
 
+## Choosing training data
+
+Guidance, distilled from steps 18-29. Everything here is measured; the section
+exists because the evidence is otherwise spread across a dozen chronology
+entries and the wrong criteria are more intuitive than the right ones.
+
+### Select on these
+
+**1. Depth: aim for >=40 frames per half-stack, and never pool groups whose
+depths differ by more than ~2x.**
+
+The only criterion with a mechanism behind it. Shrinkage is calibrated to the
+noise level the model trained on, so a shallow-trained model over-recovers when
+applied to anything cleaner — the "halo around sources" that was this manual's
+leading defect for a week is exactly that (step 24). Deep-only training moved
+aperture flux from 1.06-1.09 to 0.992-0.993.
+
+Mixing depths does not average, it takes the worse (step 25): bubble at 22/29
+pooled with sh2-92 at 51/72 gave 1.074/1.090 — **worse than either parent**. The
+useful depth of a pooled training set is its *minimum*.
+
+Budget for the quality gate, which rejects 12-46% depending on filter and
+target. Nominal 51 became 44 and 42 in practice; nominal 12 became 6 and 7.
+
+**2. Match the domain: narrowband models for narrowband, broadband for
+broadband.**
+
+On narrowband ic1396 the narrowband-trained model beat the broadband-trained one
+in every bin on both filters (step 23), 0.380/0.384 against 0.340/0.317. Two
+models. Whether one model over all seven filters would work is untested, and
+`n2n_train_pooled.py`'s argument that narrowband sky shifts the noise regime
+from sky-dominated toward read/dark-dominated still stands unrefuted.
+
+**3. Pool the filters of a target; about four groups is enough.**
+
+Pooling beats per-filter on four held-out targets across both domains (steps 19,
+20, 23, 27). Going from 4 groups to 14 bought nothing once per-pair sampling was
+matched (step 22). Pairs are always formed within `(dso, filter)` — pooling
+shares *weights*, never pairs, because an Ha stack and an O-III stack of one
+target are two different scenes.
+
+### Do not select on these
+
+Each sounds reasonable and each was measured to be irrelevant or backwards:
+
+| criterion | what the measurement said |
+| --- | --- |
+| data volume | bubble has a quarter of sh2-92's frames and trains a better model |
+| seeing | sh2-92 is *sharper* — 1.59" against 1.90" — and trains worse |
+| surface-brightness similarity to the target | proposed in step 26, falsified in step 27 on a third field |
+| amount of faint structure in the training field | sh2-92 has 2.6x more area at 1-8 sigma and teaches worse |
+| star density | excluded — the effect survives with `source_bias` off |
+| scene count | no gain from 4 groups to 14 at matched sampling |
+
+### The gap
+
+**Bubble beats sh2-92 by +0.044 at 4-8 sigma (3.7x the seed floor) and nothing
+explains it** after excluding all six above plus stack depth and patch sampling.
+There is a real "this field teaches better" axis that cannot currently be named,
+which means training data cannot be chosen by inspection.
+
+### So measure it — about an hour per candidate
+
+1. Build split stacks and **assert every training pair is (0,0) px**. A
+   misaligned pair teaches the network to delete point sources (step 18).
+2. Train pooled across that target's filters, L2, deep.
+3. Score on a **held-out** target with `scripts/n2n_extended_check.py`, paired
+   against the current best with `scripts/n2n_compare_paired.py`.
+4. Require the difference to clear the **seed floor** — ~0.02 retention at 1-2
+   sigma, ~0.012 at 4-8, ~0.03 on flux. One replicate at a different
+   `--train-seed` establishes it for a new dataset (step 28).
+
+Step 4 is not optional. Six experiments on 2026-08-20/21 were argued from
+differences that turned out to be inside the floor.
+
 ## Standing conclusions
 
 1. **Denoised frames are not a science product, and are a display product only
