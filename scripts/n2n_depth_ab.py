@@ -149,8 +149,9 @@ def train_arm(groups: dict, tag: str, args) -> Path:
     from nn.noise2noise_model import UNet
     from nn.trainer import N2NDataset
 
-    torch.manual_seed(args.seed)
-    np.random.seed(args.seed)
+    tseed = args.seed if args.train_seed is None else args.train_seed
+    torch.manual_seed(tseed)
+    np.random.seed(tseed)
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
 
@@ -167,10 +168,16 @@ def train_arm(groups: dict, tag: str, args) -> Path:
         va += [np.load(f) for f in fs[2:]]
         vag += [f"{key}|val"] * 2
 
+    # source_bias weights patch origins toward detected sources. At the default
+    # 0.7, 70% of training patches are drawn near a source — so a star-dense
+    # field feeds the network mostly star patches and a sparse one feeds it
+    # mostly extended emission. Suspected cause of bubble beating sh2-92: 207
+    # stars against 747 in the same window, with identical extended power.
     ds = N2NDataset(tr, group_ids=trg, patch_size=patch, pairs_per_epoch=pairs,
-                    seed=args.seed)
+                    source_bias=args.source_bias, seed=tseed)
     vs = N2NDataset(va, group_ids=vag, patch_size=patch,
-                    pairs_per_epoch=max(batch, pairs // 5), seed=args.seed + 1)
+                    pairs_per_epoch=max(batch, pairs // 5),
+                    source_bias=args.source_bias, seed=tseed + 1)
     dl = DataLoader(ds, batch_size=batch, shuffle=True, num_workers=2)
     vl = DataLoader(vs, batch_size=batch, shuffle=False, num_workers=2)
     log(f"  {len(ds._valid_pairs)} pairs over {len(set(trg))} groups, "
@@ -215,6 +222,7 @@ def train_arm(groups: dict, tag: str, args) -> Path:
                 "asinh_sigma_mult": denoiser.ASINH_SIGMA_MULT, "loss": args.loss,
                 "train_dso": args.train, "test_dso": args.test, "seed": args.seed,
                 "groups": sorted(groups), "epochs": args.epochs,
+                "source_bias": args.source_bias, "train_seed": tseed,
                 "train_depth": {k: g["train_per"] for k, g in groups.items()}}, path)
     log(f"  best val {best:.5f} at epoch {best_ep} -> {path.name}")
     del tr, va, ds, vs
@@ -266,9 +274,18 @@ def main() -> int:
                     help="comma list of per-stack frame caps; 0 = natural depth")
     ap.add_argument("--exptime", type=int, default=300)
     ap.add_argument("--epochs", type=int, default=60)
-    ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--seed", type=int, default=0,
+                    help="seeds the frame permutation, so it fixes WHICH frames "
+                         "land in each half-stack")
+    ap.add_argument("--train-seed", type=int, default=None,
+                    help="seeds patch sampling and weight init only, leaving the "
+                         "stacks cached. Vary this to measure run-to-run spread "
+                         "without re-stacking; the manual records patch selection "
+                         "as the dominant source of variance (step 15).")
     ap.add_argument("--loss", choices=("l1", "l2"), default="l2")
     ap.add_argument("--pairs", type=int, default=0)
+    ap.add_argument("--source-bias", type=float, default=0.7,
+                    help="fraction of patches drawn toward sources; 0 = uniform")
     args = ap.parse_args()
 
     import sep
@@ -286,6 +303,10 @@ def main() -> int:
     results = {}
     for cap in caps:
         tag = (args.tag + "_" if args.tag else "") + (f"cap{cap}" if cap else "full")
+        if args.source_bias != 0.7:
+            tag += f"_sb{args.source_bias:g}"
+        if args.train_seed is not None:
+            tag += f"_ts{args.train_seed}"
         log(f"\n{'='*66}\narm {tag}: train {'+'.join(targets)}, test {args.test}\n{'='*66}")
         groups = {}
         for filt in filters:

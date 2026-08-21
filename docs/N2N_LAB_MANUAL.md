@@ -1101,6 +1101,9 @@ Run it on any model before trusting it on extended targets.
 
 ### 24. Training depth — falsifies the fix it was aimed at, solves a different one
 
+**Its retention numbers are retracted by step 28** (the +0.011/+0.036 gains sit
+inside the seed-to-seed floor). The photometry finding stands at ~2x the floor.
+
 2026-08-20, `scripts/n2n_depth_ab.py --train sh2-92 --test ic1396 --caps 22,0`.
 
 **The prediction, written before the run:** the model over-smooths because its
@@ -1355,6 +1358,81 @@ so all 122 NGC 6888 O-III frames are invisible to every existing path — an HOO
 process would quietly render a one-channel image. `Sii` is fine (uppercases into
 the S-II aliases). Anything reading the archive must handle it.
 
+### 28. The noise floor, and a re-audit of everything measured on 2026-08-20/21
+
+2026-08-21. Six hypotheses were argued that day from differences of 0.01-0.07 in
+extended retention, with no error bars and no decision rule. This step measures
+what a repeat of an identical run produces, and re-reads every claim against it.
+
+#### The instrument was wrong twice before it was right
+
+1. **No uncertainty at all.** Every retention number reported before this step is
+   a point estimate with nothing attached.
+2. **Bootstrapping over pixels fakes precision.** A retention bin can hold 10^6
+   pixels and still be poorly determined, because they sit in a few spatially
+   correlated patches. On ic1396 O-III only **54 tiles** of 256 px carry enough
+   4-8 sigma emission, and **140** carry 1-2 sigma. The honest n is tens, not
+   millions.
+3. **Unpaired intervals are the wrong test.** Unpaired 95% CIs came out at
+   +/-0.05 and declared every comparison indistinguishable. Both models see the
+   same field, so tile-to-tile variation in how much structure a tile holds is
+   common to both and must be cancelled. The paired test on identical data
+   resolves 0.02 cleanly.
+
+`scripts/n2n_compare_paired.py` is the resulting instrument: per-tile retention,
+paired differences, block bootstrap over tiles.
+
+#### The noise floor
+
+Three trainings of one configuration (sh2-92 deep, L2, 60 epochs, same cached
+stacks, `--train-seed 0/1/2` so only patch sampling and weight init differ):
+
+| | 1-2σ | 4-8σ | Ha flux | O-III flux |
+| --- | --- | --- | --- | --- |
+| seed 0 | 0.270 | 0.328 | 0.9924 | 0.9930 |
+| seed 1 | 0.261 | 0.321 | 1.0147 | 1.0227 |
+| seed 2 | 0.235 | 0.307 | 1.0022 | 1.0059 |
+| **paired vs seed 0** | **up to -0.021** | **up to -0.012** | | |
+
+**Minimum detectable effect: ~0.02 at 1-2 sigma, ~0.012 at 4-8 sigma, ~0.03 on
+aperture flux.** Anything smaller is a seed.
+
+#### Re-audit
+
+| claim | effect | vs floor | verdict |
+| --- | --- | --- | --- |
+| Denoiser destroys faint extended structure | 0.25-0.36 against ideal 1.0 | ~30x | **stands** |
+| bubble beats sh2-92 at 4-8σ | +0.044 | 3.7x | **stands** |
+| Pooling Ha+O-III beats per-filter | +0.042 and +0.071, two fields | 3-6x | **stands** |
+| Deep training removes the flux excess | 1.06 -> 1.01 | 2x | **marginal, replicated** |
+| `source_bias` 0.7 helps | +0.018 to +0.025 | 1.0-1.2x | **not established** |
+| Deeper training improves retention | +0.011 to +0.036 | within floor | **retracted** |
+| Any target effect at 1-2σ | ~0.004 | floor is 5x larger | **retracted** |
+
+Two corrections to what steps 24-27 assert:
+
+- **Step 24's retention claim is retracted.** Its photometry claim (depth removes
+  the flux excess) survives at 2x the floor and is supported by three shallow
+  models from two targets against three deep seeds, but it is not the clean
+  result it was written as.
+- **The `source_bias` result claimed on 2026-08-21 is withdrawn.** It was called
+  confirmed, closing step 7's open question. Its effect is the same size as the
+  seed-2 difference. Step 7 stays open.
+
+**bubble beating sh2-92 survives at 3.7x the floor and is robust to
+`source_bias`** — +0.044 at 0.7 and +0.047 at 0.0 — so whatever bubble does, it
+does not act through patch sampling. It remains unexplained, with data volume,
+stack depth, pooling, seeing (sh2-92 is *sharper*, 1.59" against 1.90"),
+distribution match, star density, and now patch sampling all excluded.
+
+#### Standing rule
+
+**No A/B on extended structure is reportable without a seed control.** One
+configuration trained at two or more seeds, compared with the same paired test,
+establishes the floor for that dataset; only effects clearly above it count. The
+cost is one extra training run per experiment, against a day spent chasing six
+explanations for differences that were mostly noise.
+
 ### Standing tally of what has been tried against the 2026-08-13 baseline
 
 **This tally was invalidated on 2026-08-17 and is kept for the record.** It read:
@@ -1389,6 +1467,11 @@ steer the design. Every A/B run before 2026-08-17 is suspect.
 2. **Loss is not evidence.** A constant predictor drives it down. Judge a
    checkpoint by `corr(input, output)` against the measured ceiling, and by
    aperture flux ratios — never by the curve or a downsampled preview.
+2b. **A difference is not a result until it clears the seed floor.** Measured
+   2026-08-21 on ic1396 O-III: ~0.02 retention at 1-2 sigma, ~0.012 at 4-8, and
+   ~0.03 on aperture flux, from three trainings of one configuration. Effective
+   n is independent *structures* (54 tiles at 4-8 sigma), not pixels. Use
+   `scripts/n2n_compare_paired.py`, and run a seed control in every A/B.
 3. **The ceiling is not 1.0.** These frames are noise dominated; a perfect
    denoiser reaches ~0.64 on m92, ~0.37 on abell2151. An early version of the
    collapse check used a naive >0.9 threshold and failed a working model.
@@ -1461,7 +1544,9 @@ Still open, roughly in order of what would be worth knowing:
   L keeps 76% of the same halo. Stack depth is the leading suspect (R survived
   the gate at 11 frames against 19) and separating it from passband needs one
   render with equal-depth channels.
-- **Source-bias** (step 7), unconfirmed across seeds and inside the noise floor.
+- **Source-bias** (step 7), still unconfirmed. A 2026-08-21 result claimed it
+  helped (+0.018 to +0.025) and was withdrawn in step 28: the effect is the same
+  size as the seed-to-seed spread. Needs several seeds per arm, not one.
 - **The gradient-tail trigger** from step 1, still unidentified.
 - **Validation leakage in the pooled path.** The holdout is group-level
   (`dso|filter`), so it can hold out `abell2151|L` while training on
