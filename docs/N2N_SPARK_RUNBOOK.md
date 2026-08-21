@@ -14,9 +14,31 @@ that one before concluding anything from a run here; as of 2026-08-13 the
 denoiser destroys 99.8% of bright-star flux and is not usable for science or
 display.
 
-The 06:00 cron (`scripts/spark_morning_search.bsh`) does the rsync from the
-observatory and then the transit search. **N2N is not wired into it** — this is
-a manual chain.
+Cron on the Spark, as of 2026-08-21:
+
+| when | job | what |
+| --- | --- | --- |
+| 05:00 | `sync_nina_targets_to_spark.bsh` | rsync last night's frames from the observatory |
+| 06:00 | `sync_sentry_library_to_spark.bsh` | rsync the sentry audio library |
+| 07:00 | `spark_morning_render.bsh` | render targets that gained frames overnight |
+
+**The render job is the only automated N2N path.** It runs
+`spark_morning_render.py`, which picks the targets whose LIGHT frames changed in
+the last 30 h, chooses a recipe from the filters present (SHO > HOO > LRGB),
+and runs `n2n_lrgb_render.py routine` on at most two of them, deepest first. It
+rebuilds stacks rather than reusing the cache, which after a night of new subs
+would otherwise render yesterday's image and report success. Both raw and
+denoised composites are written and neither is chosen — see step 29 on why that
+decision needs an eye.
+
+Everything else in this runbook — training, evaluation, the ladder — remains a
+manual chain.
+
+`spark_morning_search.bsh` (rsync + transit search) **was removed from cron on
+2026-08-21** and replaced by the render job. The rsync is unaffected: the 05:00
+entry has always existed and the search job merely called it a second time.
+Nightly transit searching has stopped; run `scripts/spark_transit_search.py
+--auto` by hand.
 
 ---
 

@@ -1,0 +1,27 @@
+#!/bin/bash
+#
+# spark_morning_render.bsh
+# Morning job on the Spark: render the targets that gained frames overnight.
+#
+# Cron (runs after the 05:00 sync_nina_targets_to_spark.bsh entry):
+#   0 6 * * * /home/taylor/Documents/srt/scripts/spark_morning_render.bsh
+#
+# Replaced spark_morning_search.bsh on 2026-08-21. That job did the rsync and
+# then the transit search; the rsync is unaffected because
+# sync_nina_targets_to_spark.bsh has its own 05:00 entry and always did — the
+# search job called it a second time. Removing the search stops nightly
+# transit searching; run scripts/spark_transit_search.py --auto by hand.
+#
+# Deliberately does no hardware work and touches nothing the observatory owns.
+
+SRT=/home/taylor/Documents/srt
+LOG_DIR=$SRT/local/spark_render
+mkdir -p "$LOG_DIR"
+
+{
+    echo "=== $(date -Is) morning render ==="
+    cd "$SRT" || exit 1
+    source .venv/bin/activate
+    python scripts/spark_morning_render.py --since-hours 30 --max-targets 2
+    echo "--- render done (rc=$?) at $(date -Is) ---"
+} >> "$LOG_DIR/morning.log" 2>&1
