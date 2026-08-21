@@ -46,7 +46,15 @@ RECIPES: dict[str, dict[str, str]] = {
 # FITS FILTER values vary by capture software; match on a squashed form.
 _ALIASES: dict[str, tuple[str, ...]] = {
     "Ha":    ("HA", "HALPHA", "H-ALPHA", "HALFA"),
-    "O-III": ("OIII", "O3", "O-III", "OXYGEN3"),
+    # "O2" is what the 2024-era capture software wrote for O-III, and the whole
+    # archive on /media/taylor/cdk17 uses it. Identified 2026-08-21 from focus
+    # position, which tracks wavelength: O2 focuses at 71909, between B (72053,
+    # 445nm) and G (71888, 530nm), exactly where a 500nm filter belongs — while
+    # Ha and S-II sit far off at 71432 and 70682. Before this entry those frames
+    # were invisible to every path that resolves a filter, so an HOO or SHO
+    # process on that data rendered a one-channel image and looked like it
+    # worked. 122 O-III frames on NGC 6888 alone.
+    "O-III": ("OIII", "O3", "O-III", "OXYGEN3", "O2"),
     "S-II":  ("SII", "S2", "S-II", "SULFUR2"),
     "L":     ("L", "LUM", "LUMINANCE", "LUMA", "CLEAR"),
     "R":     ("R", "RED"),
@@ -108,6 +116,22 @@ AUTO_SWEEP: dict[str, list] = {
 
 def _squash(name: str) -> str:
     return "".join(ch for ch in str(name).upper() if ch.isalnum() or ch == "-")
+
+
+def canonical_filter(name: str) -> Optional[str]:
+    """Map any spelling of a filter onto the canonical key, or None.
+
+    `resolve_filter` answers "which of these available names is my filter";
+    this answers "what filter is this frame", which is what anything reading a
+    FITS FILTER card actually needs. Matching that card literally is a silent
+    data-loss bug whenever the capture software's spelling changes — see the
+    `O2` entry in _ALIASES.
+    """
+    sq = _squash(name)
+    for canon, spellings in _ALIASES.items():
+        if sq == _squash(canon) or sq in {_squash(a) for a in spellings}:
+            return canon
+    return None
 
 
 def resolve_filter(wanted: str, available: list[str]) -> Optional[str]:

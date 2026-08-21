@@ -59,16 +59,29 @@ def index_frames(
     """
     from astropy.io import fits as _fits
 
-    want = {f.strip() for f in filters}
+    from stacking.color_process import canonical_filter
+
+    # Match through the alias table rather than on the literal FILTER card, and
+    # key the result on the canonical name. Matching literally silently drops
+    # any frame whose capture software spelled the filter differently — the
+    # 2024 archive writes O-III as "O2", so a literal match discarded 122 O-III
+    # frames of NGC 6888 while reporting nothing.
+    want = {}
+    for f in filters:
+        f = f.strip()
+        want[f] = canonical_filter(f) or f
+    canon_want = {v: k for k, v in want.items()}
     out: dict[tuple[str, str], list[Path]] = {}
     for fp in sorted(Path(subs_dir).rglob("*.fits")):
         if fp.parent.name.upper() != "LIGHT":
             continue
         try:
             hdr = _fits.getheader(fp)
-            filt = str(hdr.get("FILTER", "")).strip()
-            if filt not in want:
+            raw_filt = str(hdr.get("FILTER", "")).strip()
+            canon = canonical_filter(raw_filt) or raw_filt
+            if canon not in canon_want:
                 continue
+            filt = canon_want[canon]
             if round(float(hdr.get("EXPTIME", 0))) != exptime_s:
                 continue
         except Exception:

@@ -1309,8 +1309,24 @@ falsifiable form: **a bubble-trained model should LOSE to an sh2-92-trained one
 on a field whose distribution resembles sh2-92's.**
 
 The archive drive supplied the third field this needed. `/media/taylor/cdk17`
-holds five narrowband targets from 2024 that were not in `Targets/`: NGC 6888
-(Ha 166, O-III 122, S-II 100), IC 405, NGC 7635, PK 205+14.1 and IC 1318.
+holds five narrowband targets from 2024 that were not in `Targets/`.
+
+**Corrected counts (2026-08-21).** The first inventory of this drive scanned
+both `/media/taylor/cdk17/FromCDK17` and `/media/taylor/cdk17`, and the second
+contains the first, so everything under `FromCDK17` was counted twice. Unique
+files at 300 s:
+
+| object | Ha | O-III | S-II |
+| --- | --- | --- | --- |
+| IC 405 | 87 | 37 | 40 |
+| NGC 6888 | 83 | 61 | 50 |
+| NGC 7635 | 27 | 40 | 32 |
+| PK 205+14.1 | 19 | 10 | 10 |
+| IC 1318 | 15 | 10 | 10 |
+
+NGC 6888 was reported as 166/122/100 and is **not** deeper in Ha than sh2-92
+(137); IC 405 is the deepest archive Ha at 87. IC 405 sits outside `FromCDK17`
+and was never doubled, so its figures were always right.
 
 NGC 6888's O-III channel lands on the sh2-92 side of the axis, which is what the
 test required (stacked uncalibrated, 22 frames — see the caveat below):
