@@ -4202,7 +4202,7 @@ def _seen_run(words: list[str], account: str) -> None:
         social_server.post_social_message(f"seen: {note}")
         return
     social_server.post_social_message(
-        f"Catalogue stars seen, last {note} (red = rain detector above onset)", out)
+        f"Catalogue stars seen, last {note} (yellow = motion above rain onset, red = alert sent, grey dots = distrusted counts)", out)
 
 
 def image_stats_cmd(words: list[str], account: str) -> None:

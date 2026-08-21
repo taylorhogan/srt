@@ -177,14 +177,12 @@ def all_nights(rows):
         t = r.get("generated")
         if not t or r.get("solve_matches") is None or not r.get("night"):
             continue
-        # A rain frame still "solves": IR-lit raindrops make point-like blobs
-        # that coincide with catalogue positions by chance -- the night of
-        # 2026-08-20 logged 94/97 samples trustworthy=False yet carrying 1-28
-        # matches, drawing a fictitious few-percent star line through solid
-        # rain. The pipeline already flags those frames; honour it. Rows from
-        # before the flag existed have no key and pass.
-        if r.get("trustworthy") is False:
-            continue
+        # Rows with trustworthy=False stay in, tagged, and render as a faint
+        # series rather than as the blue line: a rain frame still "solves"
+        # (IR-lit raindrops coincide with catalogue positions by chance --
+        # 08-20 logged 94/97 untrustworthy samples carrying 1-28 matches), so
+        # those numbers are not measurements, but "measured and distrusted"
+        # is itself information and renders differently from "no sample".
         try:
             when = datetime.fromisoformat(t).astimezone()
         except ValueError:
@@ -253,14 +251,24 @@ def build_multi(days=5, mag_limit=MAG_LIMIT):
     fig, axes = plt.subplots(len(keys), 1, figsize=(11, 1.9 * len(keys) + 0.9),
                              squeeze=False)
     for ax, key in zip(axes[:, 0], reversed(keys)):
-        pts = []
+        pts, faint = [], []
         for when, r in nights[key]:
             n = in_field(sol, when.astimezone(), mag_limit)
             if n > 0:
-                pts.append((when, 100.0 * r["solve_matches"] / n))
+                (faint if r.get("trustworthy") is False else pts).append(
+                    (when, 100.0 * r["solve_matches"] / n))
+        # Yellow: motion above the detector's onset. Red: an alert was sent.
         for t0, t1, alerted in rain_spans(key):
-            ax.axvspan(t0, t1 + timedelta(minutes=5), color="#d62828",
-                       alpha=0.55 if alerted else 0.3, zorder=1)
+            ax.axvspan(t0, t1 + timedelta(minutes=5),
+                       color="#d62828" if alerted else "#e9c46a",
+                       alpha=0.55 if alerted else 0.35, zorder=1)
+        if faint:
+            ft, fp = zip(*faint)
+            # Markers, not a line: the faint series is sparse and a connected
+            # stroke would bridge hours, the same lie just removed from the
+            # blue line.
+            ax.plot(ft, fp, color="#8fa3bf", marker=".", ms=3, ls="none",
+                    alpha=0.85, zorder=2)
         if pts:
             ts, pc = zip(*pts)
             # Break the line where samples are missing rather than bridging:
@@ -285,8 +293,9 @@ def build_multi(days=5, mag_limit=MAG_LIMIT):
         ax.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
         ax.grid(alpha=0.2)
     axes[0, 0].set_title(
-        "Catalogue stars seen per night (%% of mag<=%.1f in frame)  --  "
-        "red = rain detector above onset (dark red = alert sent)" % mag_limit)
+        "Catalogue stars seen per night (%% of mag<=%.1f in frame)   "
+        "yellow = motion above rain onset   red = rain alert sent   "
+        "grey dots = star counts the pipeline distrusts" % mag_limit, fontsize=10)
     fig.patch.set_facecolor("#1a1a2e")
     for ax in axes[:, 0]:
         ax.set_facecolor("#16213e")

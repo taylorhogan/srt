@@ -309,10 +309,12 @@ HELP: dict[str, dict] = {
         "summary": ("Chart of catalogue stars actually seen per night, one row "
                     "per night, newest at the top. The y-axis is the percent of "
                     "stars brighter than mag 5 in the sky camera's field that "
-                    "were detected. Red shading marks periods the rain detector's "
-                    "signal sat above its onset threshold (darker red where an "
-                    "alert was actually sent) — so a starless night reads as "
-                    "either weather (red) or a camera/solve problem (no red). "
+                    "were detected. Yellow shading marks periods the rain detector's "
+                    "signal sat above its onset threshold; red where an alert "
+                    "was actually sent. Grey dots are samples whose star "
+                    "counts the pipeline itself distrusts (rain/cloud frames) — "
+                    "so a starless night reads as weather (yellow/red) rather "
+                    "than a camera fault. "
                     "History reaches back to 2026-08-08 via sky_log.jsonl."),
         "usage": ["seen", "seen <days>"],
         "examples": ["seen", "seen 7", "seen 14"],
