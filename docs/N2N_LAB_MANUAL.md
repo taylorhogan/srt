@@ -1221,7 +1221,14 @@ to ic1396 better than sh2-92 does** despite a quarter of the data. The second is
 the more valuable question — it is about training-set composition, which no
 hyperparameter sweep in this manual has touched.
 
-### 26. What predicts generalisation is distribution match, not data volume
+### 26. Distribution match — proposed here, FALSIFIED in step 27
+
+**Read step 27 before using anything below.** The distribution-match explanation
+offered here was tested on a third narrowband field and did not survive. What
+stands from this step is the *observation* — bubble-trained models beat
+sh2-92-trained ones on ic1396, and it is the target rather than pooling — plus
+the surface-brightness axis itself, which remains a useful way to characterise a
+field. The proposed *mechanism* is wrong.
 
 2026-08-20. Step 25 left the live question: why does bubble generalise to ic1396
 better than sh2-92 does, on a quarter of the data and at half the stack depth?
@@ -1285,6 +1292,68 @@ about **training-set composition** — an axis no experiment here has ever varie
 deliberately. Every sweep so far has moved depth, loss, pair count, or pooling.
 It would mean choosing training targets by the surface-brightness profile of
 what you intend to denoise, and it costs nothing but selection.
+
+### 27. Distribution match falsified — bubble is simply the better teacher
+
+2026-08-21. Step 26 proposed that generalisation tracks how closely the training
+field's surface-brightness distribution matches the target's, and stated the
+falsifiable form: **a bubble-trained model should LOSE to an sh2-92-trained one
+on a field whose distribution resembles sh2-92's.**
+
+The archive drive supplied the third field this needed. `/media/taylor/cdk17`
+holds five narrowband targets from 2024 that were not in `Targets/`: NGC 6888
+(Ha 166, O-III 122, S-II 100), IC 405, NGC 7635, PK 205+14.1 and IC 1318.
+
+NGC 6888's O-III channel lands on the sh2-92 side of the axis, which is what the
+test required (stacked uncalibrated, 22 frames — see the caveat below):
+
+| field | <0σ | 0-1σ | >1σ |
+| --- | --- | --- | --- |
+| ngc6888 O-III | **34.5** | 59.2 | 6.27 |
+| sh2-92 O-III | 36.6 | 58.5 | 4.91 |
+| bubble O-III | 45.0 | 51.3 | 3.70 |
+| ic1396 O-III | 45.5 | 51.5 | 2.97 |
+
+**The prediction failed.** Extended-flux retention at 4-8 sigma:
+
+| model | trained on | ic1396 O-III | ngc6888 O-III |
+| --- | --- | --- | --- |
+| bubble per-filter | bubble | 0.342 | 0.388 |
+| pooledNB | bubble | **0.384** | **0.459** |
+| cap22 | sh2-92 | 0.281 | 0.342 |
+| deep | sh2-92 | 0.317 | 0.379 |
+
+Bubble-trained wins on **both** fields, regardless of which one the test field
+resembles. Distribution match is not the mechanism.
+
+**What is ruled out for bubble's advantage:** data volume (bubble has a
+quarter), stack depth (bubble is shallower — 22/29 against 51/72), pooling
+(bubble's *per-filter* models win too), and now distribution match.
+
+**What replicated on a field neither model had seen:** pooling Ha with O-III
+beats per-filter, 0.459 against 0.388. That is step 19 confirmed on new data.
+
+**The remaining lead, unproven.** At matched depth bubble's stacks carry 2-7x
+more total structure power in sky-sigma units than sh2-92's, and half the
+fine-scale (2-8 px) power — the band dominated by noise. Both peak at the same
+8-32 px scale, so it is not a difference in the *scale* of structure but in how
+much structure there is relative to noise. Whether that is seeing, guiding, sky,
+or the object is untested, and no further hypothesis is being built on a single
+measurement after this one.
+
+**Caveats on this run.** The NGC 6888 stacks are **uncalibrated** — no epoch-
+matched flats exist for 2024, though 2024-09 darks and bias at -20C do. Absolute
+numbers are therefore not comparable to the calibrated ic1396 column; the
+model-to-model comparison within the ngc6888 column is fair, because all four
+models saw the identical array. Registration plus sigma clipping rejects most
+fixed-pattern artefacts on a dithered set, which is what makes the shape
+measurement usable at all, but nothing here should be trained on.
+
+**Trap recorded: the 2024 archive labels O-III as `O2`.** `index_frames` matches
+FILTER literally and `color_process._ALIASES` lists only OIII/O3/O-III/OXYGEN3,
+so all 122 NGC 6888 O-III frames are invisible to every existing path — an HOO
+process would quietly render a one-channel image. `Sii` is fine (uppercases into
+the S-II aliases). Anything reading the archive must handle it.
 
 ### Standing tally of what has been tried against the 2026-08-13 baseline
 
