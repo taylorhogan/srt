@@ -177,6 +177,14 @@ def all_nights(rows):
         t = r.get("generated")
         if not t or r.get("solve_matches") is None or not r.get("night"):
             continue
+        # A rain frame still "solves": IR-lit raindrops make point-like blobs
+        # that coincide with catalogue positions by chance -- the night of
+        # 2026-08-20 logged 94/97 samples trustworthy=False yet carrying 1-28
+        # matches, drawing a fictitious few-percent star line through solid
+        # rain. The pipeline already flags those frames; honour it. Rows from
+        # before the flag existed have no key and pass.
+        if r.get("trustworthy") is False:
+            continue
         try:
             when = datetime.fromisoformat(t).astimezone()
         except ValueError:
@@ -255,7 +263,16 @@ def build_multi(days=5, mag_limit=MAG_LIMIT):
                        alpha=0.55 if alerted else 0.3, zorder=1)
         if pts:
             ts, pc = zip(*pts)
-            ax.plot(ts, pc, color="#4cc9f0", lw=1.2, zorder=3)
+            # Break the line where samples are missing rather than bridging:
+            # a connected stroke across a 5-hour hole (dropped untrustworthy
+            # rain frames, a camera outage) reads as 5 hours of measurement.
+            seg_t, seg_p = [ts[0]], [pc[0]]
+            for i in range(1, len(ts)):
+                if (ts[i] - ts[i-1]).total_seconds() > 1500:
+                    ax.plot(seg_t, seg_p, color="#4cc9f0", lw=1.2, zorder=3)
+                    seg_t, seg_p = [], []
+                seg_t.append(ts[i]); seg_p.append(pc[i])
+            ax.plot(seg_t, seg_p, color="#4cc9f0", lw=1.2, zorder=3)
             med = float(np.median(pc))
             label = "%s   median %.0f%%" % (key, med)
         else:
