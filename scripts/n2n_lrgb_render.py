@@ -366,9 +366,157 @@ def compose(args) -> int:
     return 0
 
 
+DOMAIN_MODELS = {
+    # Domain-matched by default. The narrowband-trained model beat the
+    # broadband one in every bin on both filters when applied to narrowband
+    # (lab manual step 23), so picking by domain is not a convenience.
+    "narrowband": "local/models/n2n_pooledNB_300s.pt",
+    "broadband": "local/models/n2n_ladder_pooled-filters_300s.pt",
+}
+
+
+def pick_model(filters) -> tuple:
+    nb = {"Ha", "O-III", "S-II"}
+    domain = "narrowband" if set(filters) & nb else "broadband"
+    return domain, os.path.join(_root, DOMAIN_MODELS[domain])
+
+
+def routine(args) -> int:
+    """Stack, export each channel, denoise, export again, compose both.
+
+    The nightly path for a target that already has a suitable model: no
+    training, no held-out scoring, just the products. Everything lands in
+    `<image_dir>/Iris/<dso>/` beside that target's lights.
+
+    **Denoised output is a display product for point-source-dominated fields
+    only.** On extended emission the model is band-limited — it keeps 96-98% of
+    structure above 512 px and 30-50% of the fine texture that makes a nebula
+    read as one (lab manual step 29). Both composites are written so the pair
+    can be compared rather than the denoised one silently replacing the raw.
+    """
+    from stacking import color_process, stacker
+
+    if build(args) != 0:
+        return 1
+    meta = json.loads(meta_path(args).read_text())
+    mapping = color_process.RECIPES[args.recipe]
+    filters = [f for f in recipe_filters(args) if f in meta["channels"]]
+    if not filters:
+        log("no channels built — nothing to render")
+        return 1
+
+    domain, model_path = pick_model(filters)
+    if args.model:
+        model_path = args.model
+    log("")
+    log(f"recipe {args.recipe}  filters {filters}  domain {domain}")
+    log(f"model {os.path.basename(model_path)}")
+    if not os.path.exists(model_path):
+        log(f"  missing — raw products only")
+        model_path = ""
+
+    # results_dir() creates its own; an explicit --out-dir has to be made here.
+    out_dir = Path(args.out_dir) if args.out_dir else stacker.results_dir(args.dso)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    log(f"products -> {out_dir}")
+
+    raw = {f: np.load(OUT / meta["channels"][f]["file"]).astype(np.float32)
+           for f in filters}
+    h = min(a.shape[0] for a in raw.values())
+    w = min(a.shape[1] for a in raw.values())
+    raw = {k: v[:h, :w] for k, v in raw.items()}
+
+    den = {}
+    if model_path:
+        import torch
+
+        from nn import denoiser
+        from nn.noise2noise_model import UNet
+        ck = torch.load(model_path, map_location="cpu", weights_only=False)
+        m = UNet(residual="linear")
+        m.load_state_dict(ck["model_state"])
+        m.eval()
+        dev = "cuda" if torch.cuda.is_available() else "cpu"
+        for f in filters:
+            t0 = time.time()
+            den[f] = denoiser.denoise_frame(raw[f], m, device=dev)[:h, :w]
+            log(f"  denoised {f} in {time.time() - t0:.0f}s")
+
+    def to_channels(d):
+        return {ch: d[mapping[ch]] for ch in ("L", "R", "G", "B")
+                if ch in mapping and mapping[ch] in d}
+
+    opts = color_process.effective_options(
+        white_pct=args.white_pct, black_pct=args.black_pct)
+    log(f"compose: {color_process.describe_options(opts)}")
+
+    # ONE stretch, from the raw, applied to both sets — so the channel JPEGs and
+    # the two composites are all on the same scale and every visible difference
+    # between raw and denoised is the model's. compose() would instead pick
+    # black per channel by percentile, which lands at a different ADU on a
+    # denoised channel and manufactures a colour shift.
+    subbed_raw, white = color_process._prepare(
+        to_channels(raw), opts["subtract_background"], opts["mesh"], opts["white_pct"])
+    blacks = {c: float(np.nanpercentile(subbed_raw[c], opts["black_pct"]))
+              for c in subbed_raw}
+    soft = opts["softening"]
+    log(f"stretch from raw: white {white:.2f} ADU, blacks "
+        + ", ".join(f"{c} {v:.2f}" for c, v in sorted(blacks.items())))
+
+    def st(chan, black):
+        y = np.clip((chan - black) / max(white - black, 1e-6), 0.0, 1.0)
+        return np.arcsinh(y / soft) / np.arcsinh(1.0 / soft)
+
+    from PIL import Image
+    written = []
+
+    def emit(subbed, tag):
+        for ch in ("R", "G", "B", "L"):
+            if ch not in subbed:
+                continue
+            mono = st(subbed[ch], blacks[ch])
+            arr = (np.clip(np.nan_to_num(mono), 0, 1) * 255).astype(np.uint8)[::-1]
+            img = Image.fromarray(arr, mode="L")
+            mx = color_process.CHANNEL_JPG_MAX_PX
+            if max(img.size) > mx:
+                r_ = mx / max(img.size)
+                img = img.resize((int(img.width * r_), int(img.height * r_)),
+                                 Image.LANCZOS)
+            pth = out_dir / f"{args.dso}_{args.recipe}_{tag}_{mapping[ch]}.jpg"
+            img.save(pth, quality=92, optimize=True)
+            written.append(pth)
+        rgb = np.dstack([st(subbed[c], blacks[c]) for c in ("R", "G", "B")])
+        if opts["scnr"] > 0:
+            rgb = color_process._scnr(rgb, float(np.clip(opts["scnr"], 0, 1)))
+        if "L" in subbed:
+            lum = st(subbed["L"], blacks["L"])
+            rl = rgb @ np.array([0.299, 0.587, 0.114], dtype=np.float32)
+            with np.errstate(divide="ignore", invalid="ignore"):
+                sc = np.where(rl > 1e-4, lum / np.maximum(rl, 1e-4), 0.0)
+            rgb = rgb * np.clip(sc, 0.0, color_process.MAX_LUM_BOOST)[:, :, None]
+        pth = color_process.save_rgb(np.clip(np.nan_to_num(rgb), 0, 1),
+                                     out_dir / f"{args.dso}_{args.recipe}_{tag}.jpg",
+                                     max_px=args.max_px)
+        written.append(pth)
+
+    emit(subbed_raw, "raw")
+    if den:
+        subbed_den, _ = color_process._prepare(
+            to_channels(den), opts["subtract_background"], opts["mesh"],
+            opts["white_pct"])
+        emit(subbed_den, "denoised")
+
+    log("")
+    for pth in written:
+        log(f"  wrote {pth.name}")
+    log("")
+    log(f"{len(written)} files in {out_dir}")
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("stage", choices=("stacks", "compose"))
+    ap.add_argument("stage", choices=("stacks", "compose", "routine"))
     ap.add_argument("--dso", default="ngc5907")
     ap.add_argument("--recipe", default="LRGB", choices=("LRGB", "HOO", "SHO"))
     ap.add_argument("--filters", default="",
@@ -400,12 +548,16 @@ def main() -> int:
                          "required for archive data, whose epoch config does not know")
     ap.add_argument("--cal-epoch", default="",
                     help="restrict calibration to frames whose DATE-OBS starts with this")
+    ap.add_argument("--out-dir", default="",
+                    help="default is <image_dir>/Iris/<dso>/")
     ap.add_argument("--force", action="store_true")
     args = ap.parse_args()
 
     import sep
     sep.set_extract_pixstack(5_000_000)
 
+    if args.stage == "routine":
+        return routine(args)
     if args.stage == "stacks":
         return build(args)
     return compose(args)

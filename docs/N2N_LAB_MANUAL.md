@@ -1554,6 +1554,45 @@ steer the design. Every A/B run before 2026-08-17 is suspect.
 
 ---
 
+## The routine path: producing a night's images
+
+`python scripts/n2n_lrgb_render.py routine --dso <name> --recipe <LRGB|HOO|SHO>`
+
+Stacks each filter onto one shared reference, writes a mono JPEG per channel,
+denoises, writes those channels again, and composes both a raw and a denoised
+colour image — eight files for a three-filter recipe, into
+`<image_dir>/Iris/<dso>/`. No training and no held-out scoring: this is the path
+for a target that already has a suitable model.
+
+The model is chosen by **domain**, narrowband or broadband, from the filters the
+recipe needs (step 23: the narrowband-trained model beat the broadband one in
+every bin on both filters when applied to narrowband). `--model` overrides it.
+A missing model degrades to raw products rather than failing.
+
+**One stretch, taken from the raw, is applied to every output** — both composites
+and all channel JPEGs. `compose` would instead pick black per channel by
+percentile, which lands at a different ADU on a denoised channel and
+manufactures a colour shift out of nothing. Both composites are always written,
+so the pair can be compared rather than the denoised one quietly replacing the
+raw.
+
+### When the denoised version is the better product
+
+Not by object class. **By surface brightness.** NGC 6888 is a nebula and its
+denoised SHO is arguably the better image — the filaments are bright, well above
+the noise, and survive; the background comes out cleaner and the faint outer
+patches become *more* visible. ic1396 is also a nebula and its denoised render
+is ruined, because its emission sits at 1-5 sigma, in the band the model
+discards (step 29).
+
+The discriminator is measurable before rendering, with
+`scripts/n2n_sb_profile.py`: the fraction of frame area above 1 sigma. ic1396
+O-III is 2.26%, NGC 6888 Ha 5.78%. Structure that clears a few sigma survives;
+structure at 1-2 sigma does not, whatever it is attached to.
+
+So: **run both, look at both, publish the one that is actually better.** That is
+why the routine path writes the pair rather than choosing.
+
 ## Choosing training data
 
 Guidance, distilled from steps 18-29. Everything here is measured; the section
