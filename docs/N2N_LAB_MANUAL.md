@@ -1554,6 +1554,41 @@ steer the design. Every A/B run before 2026-08-17 is suspect.
 
 ---
 
+### Colour safety is worst where channel depth is unequal (NGC 6888, SHO)
+
+2026-08-21, noticed by eye in the first SHO render — "the S-II nebulosity is
+somewhat removed" — then measured. Retention per channel on NGC 6888 with
+pooledNB:
+
+| SB bin | S-II | Ha | O-III | spread |
+| --- | --- | --- | --- | --- |
+| 2-4σ | 0.340 | 0.523 | 0.422 | 0.184 |
+| 4-8σ | 0.439 | 0.664 | 0.492 | 0.225 |
+| 8-16σ | 0.556 | **0.887** | 0.606 | **0.331** |
+| 16-32σ | 0.695 | 0.915 | 0.751 | 0.219 |
+| >32σ | 1.009 | 1.021 | 1.037 | 0.028 |
+
+S-II is the worst-retained channel in every bin below 32 sigma and Ha the best,
+so in SHO the *red* channel loses a third more than the *green* — a visible
+green shift. Largest cross-channel spread recorded here; step 21's ngc5907 case
+was 0.15.
+
+**It is depth and brightness, not the filter.** S-II is disadvantaged twice:
+
+| | frames kept | sky sigma | nebula signal | in sigma |
+| --- | --- | --- | --- | --- |
+| Ha | 74 of 83 | 0.734 | 4.20 ADU | 5.7 |
+| S-II | 39 of 50 | 0.948 | 2.62 ADU | 2.8 |
+
+Half Ha's structure SNR, and retention tracks structure SNR (step 29). Bringing
+S-II from 50 frames to ~85 would put its noise near Ha's and close most of the
+gap — the fix is integration time, not the model.
+
+**Consequence for SHO:** do not read ionisation structure off a denoised
+composite. The S-II/Ha ratio is altered by up to 40% in the mid-brightness
+range. The raw composite is unaffected, which is the reason the routine path
+writes both.
+
 ## The routine path: producing a night's images
 
 `python scripts/n2n_lrgb_render.py routine --dso <name> --recipe <LRGB|HOO|SHO>`
