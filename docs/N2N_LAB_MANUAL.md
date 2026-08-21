@@ -1045,6 +1045,11 @@ configuration has come.
 
 ### 23. ic1396 in HOO — the denoiser deletes the nebula
 
+**Qualified by step 29.** Injection with ground truth shows the model is
+band-limited rather than blind: large-scale emission survives at 96-98% and fine
+texture at 30-50%. The picture and the retention number below stand; the
+mechanism stated here does not.
+
 2026-08-20, and the first run where a prediction from `n2n_extended_check.py`
 was written down before the picture existed and then matched it exactly.
 
@@ -1432,6 +1437,86 @@ configuration trained at two or more seeds, compared with the same paired test,
 establishes the floor for that dataset; only effects clearly above it count. The
 cost is one extra training run per experiment, against a day spent chasing six
 explanations for differences that were mostly noise.
+
+### 29. The denoiser is band-limited, not blind — measured transfer function
+
+2026-08-21. Step 23 concluded the denoiser "deletes the nebula" from a retention
+number and a picture. Injection with known ground truth says something more
+specific, and more useful.
+
+**Injection is the only measurement here with ground truth.** Everything else
+compares denoised against raw, which cannot separate "the model failed" from
+"the information was not there". Adding a known structure and differencing two
+denoiser runs — `denoise(base + truth) - denoise(base)` — cancels the underlying
+field and both background models, leaving the model's response to a signal whose
+shape is known exactly.
+
+#### The transfer function
+
+`scripts/n2n_fractal_injection.py`, injecting a band-limited Gaussian random
+field with P(k) ~ k^-3 at 1 sigma RMS into ic1396 O-III, denoised with pooledNB:
+
+| scale (px/cycle) | T(k) |
+| --- | --- |
+| 1024-4096 | 0.984 |
+| 512-1024 | 0.962 |
+| 256-512 | 0.875 |
+| 128-256 | 0.720 |
+| 64-128 | 0.615 |
+| 32-64 | 0.545 |
+| 8-16 | 0.495 |
+| 4-8 | 0.323 |
+
+**Half-power point around 100-150 px.** The model preserves large-scale emission
+almost perfectly and progressively discards finer structure.
+
+This is corroborated by an independent experiment. `n2n_extended_injection.py`
+injects Gaussian blobs and the transfer function predicts its results
+quantitatively: sigma=100 blob (dominant scale ~400 px) predicted ~0.9, measured
+0.92; sigma=30 (~120 px) predicted ~0.72, measured 0.79; sigma=10 (~40 px)
+predicted ~0.55, measured 0.63. Two independent injections agreeing to a few
+percent is the strongest internal consistency any measurement in this manual has
+shown.
+
+#### What this rules in and out
+
+- **Not an information limit.** A 0.5 sigma-peak, 100 px structure carries
+  integrated SNR ~89 and is recovered at 0.924. The photons are there and the
+  model uses them. The "more integration is the only fix" reading, offered
+  earlier the same day, is wrong.
+- **Not a broken metric.** `n2n_extended_check`'s retention, applied to the
+  *injected* field where truth is known, reads 0.93-0.96. It is unbiased on
+  large-scale-dominated input.
+- **Not background subtraction.** Raw and denoised background models differ by
+  0.0126 ADU, 1.2% of sky sigma; sharing one model changes retention the wrong
+  way.
+- **Point sources are unaffected**: radial profile preserved to 0.1% at the core
+  and 0.8% at r=15 px.
+
+#### The gap that remains
+
+Real ic1396 emission reads 0.384 where the transfer function alone predicts
+better. An attempt to close it by decomposing the real field into spatial
+octaves gave an implausible 10.7 sigma RMS at 32-64 px against a field whose p99
+is 3.4 sigma — bright star halos leaking past a mask covering only 1.6% of
+pixels. **That decomposition is not to be trusted and the gap is open.** Either
+real nebular morphology differs from a power-law field in a way that matters, or
+the model's response to *pre-existing* structure differs from its response to an
+*added* perturbation — injection measures the marginal response, retention the
+absolute one, and for a nonlinear operator those need not agree.
+
+#### Consequence
+
+Denoised output is band-limited, and the band it discards is exactly the
+resolution-limit detail that makes a nebula look like a nebula (seeing here is
+FWHM ~7 px). That is an architecture property, not a photon-count problem: a
+4-level U-Net on 256 px patches has a receptive field of the same order as the
+measured half-power point, which is the first thing to check. Widening the
+receptive field, or weighting the loss toward fine scales, are the levers this
+finding points at — none of which is a hyperparameter already swept.
+
+Step 23's "deletes the nebula" is too strong and is qualified here: large-scale
+emission survives at 96-98%, fine texture at 30-50%.
 
 ### Standing tally of what has been tried against the 2026-08-13 baseline
 
