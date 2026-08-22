@@ -156,8 +156,10 @@ def train_arm(groups: dict, tag: str, args) -> Path:
     torch.backends.cudnn.benchmark = False
 
     cfg = config.data().get("nn", {})
-    patch = int(cfg.get("patch_size", 256))
-    batch = int(cfg.get("batch_size", 8))
+    # Overridable so a patch-size experiment does not require editing config,
+    # which every other path also reads.
+    patch = int(args.patch or cfg.get("patch_size", 256))
+    batch = int(args.batch or cfg.get("batch_size", 8))
     pairs = args.pairs or int(cfg.get("pairs_per_epoch", 2000))
 
     tr, trg, va, vag = [], [], [], []
@@ -223,6 +225,7 @@ def train_arm(groups: dict, tag: str, args) -> Path:
                 "train_dso": args.train, "test_dso": args.test, "seed": args.seed,
                 "groups": sorted(groups), "epochs": args.epochs,
                 "source_bias": args.source_bias, "train_seed": tseed,
+                "patch_size": patch, "batch_size": batch,
                 "train_depth": {k: g["train_per"] for k, g in groups.items()}}, path)
     log(f"  best val {best:.5f} at epoch {best_ep} -> {path.name}")
     del tr, va, ds, vs
@@ -284,6 +287,12 @@ def main() -> int:
                          "as the dominant source of variance (step 15).")
     ap.add_argument("--loss", choices=("l1", "l2"), default="l2")
     ap.add_argument("--pairs", type=int, default=0)
+    ap.add_argument("--patch", type=int, default=0,
+                    help="training patch size; 0 uses cfg['nn'] (256). The "
+                         "receptive field is ~140 px, so only 21%% of a 256 "
+                         "patch has full context against 53%% of a 512 one.")
+    ap.add_argument("--batch", type=int, default=0,
+                    help="batch size; 0 uses cfg['nn'] (8)")
     ap.add_argument("--source-bias", type=float, default=0.7,
                     help="fraction of patches drawn toward sources; 0 = uniform")
     args = ap.parse_args()
@@ -307,6 +316,8 @@ def main() -> int:
             tag += f"_sb{args.source_bias:g}"
         if args.train_seed is not None:
             tag += f"_ts{args.train_seed}"
+        if args.patch:
+            tag += f"_p{args.patch}"
         log(f"\n{'='*66}\narm {tag}: train {'+'.join(targets)}, test {args.test}\n{'='*66}")
         groups = {}
         for filt in filters:

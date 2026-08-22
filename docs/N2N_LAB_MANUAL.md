@@ -1628,6 +1628,63 @@ structure at 1-2 sigma does not, whatever it is attached to.
 So: **run both, look at both, publish the one that is actually better.** That is
 why the routine path writes the pair rather than choosing.
 
+### 30. Training patch size — the band limit is partly a training artefact
+
+2026-08-22, prompted by the question of why the training patch (256) and the
+inference tile (512) differ at all. Neither constant records a reason, and the
+mismatch turns out to matter.
+
+The receptive field of this 4-level U-Net with two 3x3 convs per block is
+~140 px. So the share of a patch whose pixels see their full surroundings is
+
+    256 px patch:  21%
+    512 px patch:  53%
+
+which means the network was trained mostly on edge-starved pixels and applied
+mostly to well-contexted ones — a train/inference distribution gap nobody chose,
+falling out of two independently picked constants. The same shape of mistake as
+the shallow-training flux excess of step 24.
+
+Tested by training sh2-92 deep at patch 512, **three seeds per arm**, and
+measuring the transfer function with `n2n_fractal_injection.py`:
+
+| band (px/cycle) | patch 256, 3 seeds | patch 512, 3 seeds | |
+| --- | --- | --- | --- |
+| 1024-4096 | 0.991-0.993 | 0.990-0.993 | overlap |
+| 512-1024 | 0.976-0.983 | 0.975-0.981 | overlap |
+| 256-512 | 0.915-0.939 | 0.920-0.942 | overlap |
+| **128-256** | **0.785-0.845** | **0.848-0.888** | **separated** |
+| **64-128** | **0.690-0.777** | **0.839-0.859** | **separated** |
+| **32-64** | **0.605-0.672** | **0.696-0.804** | **separated** |
+| 16-32 | 0.581-0.700 | 0.619-0.667 | overlap |
+| 8-16 | 0.508-0.692 | 0.593-0.642 | overlap |
+| 4-8 | 0.308-0.364 | 0.325-0.335 | overlap |
+
+**Three adjacent bands separate with no overlap between the arms' ranges**, and
+they are exactly the bands near the receptive field. Everything coarser was
+already ~0.99 and cannot improve; everything finer is noise-limited, where
+context cannot help. Global amplitude is unchanged (0.918-0.931 against
+0.908-0.928). That pattern is what the hypothesis predicts and is hard to get
+from a lucky seed.
+
+**The half-power point moves from ~100 px to ~40 px.** `patch_size` is now 512 in
+`configs/config_public.py`.
+
+What it costs: ~4x the training wall time at unchanged `pairs_per_epoch` — 31 min
+becomes ~2 h — because a 512 patch is four times the pixels. `batch_size` 8 fits
+without OOM on the GB10.
+
+What it does **not** fix: 4-8 px is still 0.33, so ic1396's faintest structure
+still does not survive. Better, not solved.
+
+**Consequence for existing checkpoints.** Every model in `local/models/` was
+trained at 256, including the two in production use (`n2n_pooledNB_300s.pt`,
+`n2n_ladder_pooled-filters_300s.pt`). They are still valid — patch size is a
+training-time choice and the network is fully convolutional — but they no longer
+match the config default, and any A/B against a freshly trained model now
+carries patch size as a second variable. Retraining both at 512 is the obvious
+follow-up and has not been done.
+
 ## Choosing training data
 
 Guidance, distilled from steps 18-29. Everything here is measured; the section

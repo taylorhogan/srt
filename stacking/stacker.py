@@ -1999,9 +1999,14 @@ def convergence_curve(
     cancel_cb: Optional[Callable[[], bool]] = None,
     precomputed_fwhm_stars: Optional[dict[Path, tuple[float, int]]] = None,
     calibration: Optional[CalibrationSet] = None,
-) -> tuple[list[int], list[float], float]:
+) -> tuple[list[int], list[float], float, float]:
     """
     Measure how quickly stacking converges to the golden (all-frames) stack.
+
+    Returns (counts, mean_residuals, slope_pct, final_rmse_pct). The annotation
+    said three values until 2026-08-21 while the body returned four, so a caller
+    that trusted it unpacked wrongly and failed only after the ~10 min of
+    measurement that produces the tuple.
 
     Prepares frames via the same FWHM-filter + registration pipeline as stack(),
     then downscales to ~512 px for speed.  For each Fibonacci-spaced count k it

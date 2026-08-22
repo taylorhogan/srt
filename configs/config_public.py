@@ -7,7 +7,7 @@ class PublicConfig():
 
         },
         "version": {
-            "date": "2026.8.21.9"
+            "date": "2026.8.22.1"
         },
 
         "logger": {
@@ -592,7 +592,21 @@ class PublicConfig():
 
         "nn": {
             "models_dir": "local/models",
-            "patch_size": 256,
+            # 512, not 256, since 2026-08-22. The receptive field is ~140 px,
+            # so a 256 patch has only 21% of its pixels seeing full context
+            # against 53% of a 512 one — two constants chosen independently that
+            # left the model trained mostly on edge-starved pixels and applied
+            # mostly to well-contexted ones. Measured with three seeds per arm,
+            # the transfer function separates with no overlap in exactly the
+            # bands near the receptive field:
+            #     band       patch 256      patch 512
+            #     128-256    0.785-0.845    0.848-0.888
+            #     64-128     0.690-0.777    0.839-0.859
+            #     32-64      0.605-0.672    0.696-0.804
+            # Everything coarser was already ~0.99 and everything finer is
+            # noise-limited; both overlap. Costs ~4x the training wall time at
+            # the same pairs_per_epoch (31 min -> ~2 h). See lab manual step 30.
+            "patch_size": 512,
             "pairs_per_epoch": 2000,
             "epochs": 60,
             "batch_size": 8,

@@ -90,15 +90,43 @@ class UNet(nn.Module):
     """
 
     def __init__(self, features: tuple[int, ...] = (32, 64, 128, 256),
-                 norm: str = "none", residual: str = "linear"):
+                 norm: str = "none", residual: str = "linear",
+                 in_ch: int = 1, out_ch: Optional[int] = None):
+        """`in_ch` > 1 denoises several filters jointly.
+
+        The default of 1 is the historical single-filter model and every
+        checkpoint written before 2026-08-22 assumes it; `load_state_dict` is
+        strict, so a mismatch fails loudly rather than silently reinterpreting
+        weights.
+
+        Why more than one channel is worth having: with in_ch=1 each filter is
+        denoised in complete isolation, so per-channel retention differences
+        cannot be anything but independent — which is exactly what produced the
+        measured colour casts (lab manual steps 21, and the S-II case on
+        NGC 6888). A joint model can at least represent "this structure appears
+        in every channel, so it is real", which a single-channel one cannot.
+
+        `out_ch` defaults to `in_ch`: N2N predicts its input's clean counterpart,
+        so the shapes match by construction.
+        """
         super().__init__()
         if residual not in ("none", "asinh", "linear"):
             raise ValueError(f"residual must be none/asinh/linear, got {residual!r}")
+        if in_ch < 1:
+            raise ValueError(f"in_ch must be >= 1, got {in_ch}")
         self.norm = norm
         self.residual = residual
+        self.in_ch = in_ch
+        self.out_ch = in_ch if out_ch is None else out_ch
+        if self.residual != "none" and self.out_ch != in_ch:
+            # The residual paths add the head's output to the input, so the two
+            # must have the same channel count.
+            raise ValueError(
+                f"residual={residual!r} needs out_ch == in_ch "
+                f"({self.out_ch} != {in_ch})")
         self.encoders = nn.ModuleList()
         self.pools = nn.ModuleList()
-        in_ch = 1
+        in_ch = self.in_ch
         for f in features:
             self.encoders.append(_ConvBlock(in_ch, f, norm))
             self.pools.append(nn.MaxPool2d(2))
@@ -115,7 +143,7 @@ class UNet(nn.Module):
             self.decoders.append(_ConvBlock(f * 2, f, norm))
             in_ch = f
 
-        self.head = nn.Conv2d(features[0], 1, 1)
+        self.head = nn.Conv2d(features[0], self.out_ch, 1)
         if residual != "none":
             nn.init.zeros_(self.head.weight)
             nn.init.zeros_(self.head.bias)
