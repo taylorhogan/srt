@@ -1572,6 +1572,77 @@ finding points at — none of which is a hyperparameter already swept.
 Step 23's "deletes the nebula" is too strong and is qualified here: large-scale
 emission survives at 96-98%, fine texture at 30-50%.
 
+### 32. The Wiener bound: the fine scales were never the defect — the mid scales are
+
+2026-08-23, `scripts/n2n_wiener_bound.py`. Phase 0a of the improvement plan.
+Step 29 measured the transfer function falling to ~0.33 at 4-8 px and the work
+since has treated that fine-scale loss as the thing to fix. Nobody had checked
+what an *optimal* estimator would do. For a scene with signal spectrum S(k)
+under noise N(k), the linear-MMSE filter passes
+
+    T*(k) = S(k) / (S(k) + N(k))
+
+and an additive perturbation — exactly what the fractal injection adds — is
+passed with that gain.
+
+**Both spectra come from a half-stack pair with no model in the loop**: the
+cross-spectrum Re(FA·conj(FB)) gives S(k) because independent noise cancels in
+the cross term, and P[A-B]/2 gives N(k) because the signal cancels — the
+correlation-ceiling trick, taken per frequency band. Consistency check: S+N
+reproduces the measured power of half A to 1-9% in every band. Point sources
+are masked (radius capped at 25 px so the nebula itself survives the mask —
+the uncapped version masked the filaments and ran 20 minutes before that was
+caught) and any residual star wings inflate S(k), i.e. bias the verdict toward
+"headroom", never toward "optimal". Measured T(k) is taken by injecting into
+the same half-stack the bound is computed for, so bound and measurement see the
+same noise.
+
+ngc6888, both channels, pooledNB and the p512 model:
+
+| band (px) | O-III S/N | O-III T* | O-III p512 | Ha S/N | Ha T* | Ha p512 |
+| --- | --- | --- | --- | --- | --- | --- |
+| 256-512 | 870 | 0.999 | 0.931 | 200 | 0.995 | 0.931 |
+| 128-256 | 781 | 0.999 | 0.871 | 174 | 0.994 | 0.871 |
+| 64-128 | 83 | 0.988 | 0.859 | 248 | 0.996 | 0.849 |
+| 32-64 | 107 | 0.991 | 0.788 | 157 | 0.994 | 0.742 |
+| 16-32 | 17.5 | 0.946 | 0.727 | 67 | 0.985 | 0.718 |
+| 8-16 | 2.7 | 0.731 | **0.738** | 9.7 | 0.906 | 0.748 |
+| 4-8 | 0.36 | 0.263 | **0.388** | 0.83 | 0.452 | 0.397 |
+
+**Three findings, one per region:**
+
+1. **The 4-8 px band is closed.** S/N there is 0.36-0.83, the bound is
+   0.26-0.45, and the measured 0.36-0.40 sits at or *above* it — a nonlinear,
+   spatially adaptive net beating a global linear filter, which it is allowed
+   to do. The "notorious 0.33" of steps 29-30 is optimal estimation, not a
+   defect. Nothing but photons wins there, and the manual stops chasing it.
+2. **8-16 px is at the bound for p512** on O-III (0.738 vs 0.731) and has
+   modest headroom on Ha (+0.16), tracking that channel's higher S/N.
+3. **16-256 px is the actual defect.** Those bands are signal-dominated —
+   S/N 17 to 870 — so the bound sits at 0.95-0.999, and the model passes
+   0.72-0.93. Headroom **+0.07 to +0.27**, largest at 16-64 px, on both
+   channels. The model is optimal at the hard scales and is discarding
+   strongly-detected signal at the easy ones — the signature of an
+   over-regularised prior, and precisely what a mid-band-weighted loss should
+   attack.
+
+**A mechanism for colour non-safety falls out for free.** T*(k) scales with
+channel S/N, so an optimal estimator retains more of a brighter channel. Part
+of the Ha >> S-II retention gap (steps 21, 31) is therefore the physics of the
+bound, not model error — consistent with the self-trained upper bound (31)
+failing to close it.
+
+Caveats: one field, two channels, one input depth (a 23/31-frame half-stack);
+the bound is the *global linear* MMSE, which a spatially adaptive model may
+locally exceed (and does, below 10 px). None of these move the mid-band
+verdict: even a tenfold star-wing inflation of S(k) leaves S/N >= 10 and the
+bound above 0.9 in every 16-256 px band.
+
+**Consequence for the improvement plan:** Phase 2 proceeds, retargeted. The
+objective is the 16-256 px bands; the per-band headroom above is the loss
+weighting; 4-16 px is closed and any future claim of improving it must first
+beat this bound.
+
 ### Standing tally of what has been tried against the 2026-08-13 baseline
 
 **This tally was invalidated on 2026-08-17 and is kept for the record.** It read:

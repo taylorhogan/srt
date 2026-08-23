@@ -82,7 +82,15 @@ Makes every future val number honest; three lines.
 is blind — the epoch-plateau finding was invisible for a week purely for lack
 of curves.
 
-## Phase 2 — attack the band limit (only if 0a shows headroom)
+## Phase 2 — attack the band limit (0a ran 2026-08-23: headroom confirmed, retargeted)
+
+Phase 0a's verdict (manual step 32): the 4-8 px band is **at or above** the
+Wiener bound — closed, photons only — and 8-16 px is at the bound for p512 on
+O-III. The real defect is **16-256 px**, where the scene is signal-dominated
+(S/N 17-870, bound 0.95-0.999) and the model passes 0.72-0.93: headroom +0.07
+to +0.27, largest at 16-64 px, on both channels measured. So Phase 2's
+objective is the mid band, its loss weights are the measured per-band headroom,
+and any fine-scale claim must first beat the bound in step 32.
 
 The two levers step 29 names, neither ever tried, in this order:
 
