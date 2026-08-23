@@ -1643,6 +1643,66 @@ objective is the 16-256 px bands; the per-band headroom above is the loss
 weighting; 4-16 px is closed and any future claim of improving it must first
 beat this bound.
 
+### 33. Phase 1 measured: the tiling weave dies, the epoch cut does not survive
+
+2026-08-23, the improvement plan's cheap-wins phase. One intervention promoted,
+one retracted — the retraction being a correction to step 31.
+
+#### Crop stitching replaces the Tukey blend (promoted; now the default)
+
+`denoise_frame` gained `stitch="crop"`: each tile runs at full size but only its
+central `tile_size - 2*overlap` region is kept, so every output pixel is
+computed exactly once, from a tile in which it has >= 64 px of real context.
+The frame is reflection-padded so borders get context too. No blending means no
+two-tile disagreement to average — which step 20 identified as the weave.
+
+Measured by translation-consistency (`scripts/n2n_tile_artifact.py`: denoise
+twice with the grid shifted 192 px — a multiple of neither stitching period —
+and difference the interiors; any difference is pure tile-placement
+dependence), on ic1396 O-III with pooledNB:
+
+|  | blend | crop |
+| --- | --- | --- |
+| placement-dependence rms | 0.0043 sigma | **0.0013 sigma** (0.31x) |
+| p99.9 | 0.033 sigma | **0.011 sigma** (0.35x) |
+| fractal-injection recovery | 0.872 | 0.871 |
+
+Recovery identical to three decimals — a pure stitching win. The blend's
+artefact power sat exactly where step 20 said: 54% in the 32-96 px bands (the
+64 px overlap) and 25% at 256-768 px (the tile scale). The weave was visible
+despite its tiny rms because it is coherent and periodic; 3x down should put it
+under the sky grain. Cost: ~36% more tiles, ~13 s per frame. `"crop"` is now
+the default; `"blend"` is kept for comparison.
+
+#### Epochs cannot be cut to 20 (retracted; corrects step 31)
+
+Step 31 observed both logged loss curves plateauing by epoch 7-12 and suggested
+`epochs: 60` should be ~20. Tested properly — one 20-epoch run (cosine
+`T_max=20`, so a genuinely rescheduled run, not a truncation) on the sh2-92
+deep p512 config, against the three existing 60-epoch seeds:
+
+| metric | 60-epoch seeds (3) | 20-epoch |
+| --- | --- | --- |
+| best val | 0.57713-0.57909 | 0.57942 |
+| retention Ha 4-8 sigma | 0.327-0.363 | 0.336 |
+| retention O-III 4-8 sigma | 0.302-0.336 | 0.314 |
+| **T(k) 128-256 px** | **0.848-0.888** | **0.826** |
+| **T(k) 64-128 px** | **0.839-0.859** | **0.777** |
+| T(k) 32-64 px | 0.696-0.804 | 0.702 |
+
+Val loss and retention are indistinguishable — and the mid-band transfer, the
+exact band step 32 identified as the real defect, is ~0.05-0.06 **below the
+seed range**, three times the seeds' spread at 64-128 px. One seed, so recorded
+with that caveat, but the size and the location leave little room: **the L2
+plateau hides the transfer function still improving between epochs 20 and 60.**
+
+Two consequences. `epochs` stays at 60, at least for Phase-2 work whose whole
+objective is mid-band T(k). And "loss is not evidence" (standing conclusion 2)
+gains a sharper form: **even a flat loss can conceal a metric that is still
+moving.** Judged on the loss curve alone, the epoch cut would have shipped —
+which is precisely why the improvement plan required judging it on retention
+and transfer instead.
+
 ### Standing tally of what has been tried against the 2026-08-13 baseline
 
 **This tally was invalidated on 2026-08-17 and is kept for the record.** It read:

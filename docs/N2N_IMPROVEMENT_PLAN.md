@@ -44,9 +44,9 @@ Wiener-optimal transfer is T*(k) = S(k)/(S(k)+N(k)).
 - If measured T(k) sits well below T*(k), the gap is the headroom Phase 2 is
   allowed to chase, band by band.
 
-**0b. Tiling artefact mechanism test** (open question, step 20): denoise one
-region at two tile offsets and difference. Confirms the overlap blend as the
-mechanism and gives a before-number for the Phase 1 fix.
+**0b. Tiling artefact mechanism test — DONE with 1b**: the blend's artefact
+power sits at 32–96 px (54%) and 256–768 px (25%), i.e. the overlap and tile
+scales. Mechanism confirmed.
 
 **0c. Marginal-vs-absolute gap probe** (step 29's open gap: real ic1396 reads
 0.384 where T(k) predicts better). Inject the fractal field at 0.25σ and 2σ
@@ -58,17 +58,16 @@ quoted. Pure computation on existing models.
 
 Ordered by value per hour; none depends on Phase 0.
 
-**1a. Epochs 20 vs 60** — one training run, judged on retention not loss. Both
-logged runs plateau by epoch 7–12; confirming at 20 makes every later
-experiment ~3× cheaper, which compounds through the rest of this plan. Then set
-`epochs: 20` in config with the evidence comment.
+**1a. Epochs 20 vs 60 — RAN 2026-08-23, FAILED validation (manual step 33).**
+Val loss and retention indistinguishable, but mid-band T(k) came out ~0.06
+below the three-seed range at 64–256 px — exactly the Phase-2 target band. The
+L2 plateau hides the transfer function still improving. `epochs` stays 60; the
+3× cost saving is off the table, and the episode is the plan's own protocol
+working (it would have shipped on the loss curve).
 
-**1b. Fix the tiled-inference blend.** Replace the Tukey overlap blend with
-reflection-padded tiles + centre crop (each output pixel computed once, with
-full context, no blend disagreement). Measure: artefact power at 64/512 px
-before vs after, retention unchanged. This improves **every image the
-observatory publishes**, including the ones already liked, and needs no
-retraining.
+**1b. Fix the tiled-inference blend — DONE 2026-08-23 (manual step 33).**
+`denoise_frame(stitch="crop")`, now the default: placement-dependence 0.31×,
+recovery unchanged to three decimals. `n2n_tile_artifact.py` is the measure.
 
 **1c. Coverage-aware patch sampling.** `N2NDataset` currently samples patch
 origins blind to the stacker's median-fill regions (open question, step 20).

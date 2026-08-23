@@ -165,17 +165,37 @@ def denoise_frame(
     device: Optional[str] = None,
     tile_size: int = 512,
     overlap: int = 64,
+    # "crop" since 2026-08-23: measured 3.2x less tile-placement dependence
+    # (rms 0.0043 -> 0.0013 sigma, p99.9 0.033 -> 0.011) at identical injection
+    # recovery (0.872 vs 0.871) — scripts/n2n_tile_artifact.py. The blend's
+    # artefact power sat exactly at the overlap and tile scales, confirming the
+    # step-20 weave was the blend averaging tiles wherever they disagreed.
+    # Costs ~36% more tiles (~13 s/frame). "blend" kept for comparison.
+    stitch: str = "crop",
 ) -> np.ndarray:
     """Denoise a single 2-D float32 FITS frame using tiled inference.
 
     Background (vignetting gradient) is estimated with sep and subtracted
     before tiling so every tile sees a flat sky — this eliminates the tile-
     boundary seam artefacts caused by per-tile DC-level disagreement.  The
-    background is added back after inference.
+    background is added back after inference.  Input and output are in the
+    original ADU scale.
 
-    Edge tiles are zero-padded to tile_size and the padding is discarded after
-    inference.  Tiles are blended with a raised-cosine weight for smooth
-    transitions.  Input and output are in the original ADU scale.
+    `stitch` selects how tiles become a frame:
+
+    - "blend" — the historical path: tiles at step `tile_size - overlap`,
+      merged with a raised-cosine (Tukey) weight across the overlap. Where two
+      tiles disagree, the blend averages them — which is exactly the diagonal
+      weave measured in the lab manual (step 20: residual power peaking at the
+      64 px overlap and 512 px tile scales).
+    - "crop" — each tile is run at full size but only its central
+      `tile_size - 2*overlap` region is kept, so **every output pixel is
+      computed exactly once, from a tile in which it has at least `overlap`
+      pixels of real context**. The frame is reflection-padded by `overlap`
+      first so border pixels get context too. No blending, so no two-tile
+      disagreement to average; the possible cost is a step at core boundaries
+      where adjacent pixels came from different tiles, which the two-offset
+      test in `scripts/n2n_tile_artifact.py` measures against the weave.
     """
     if device is None:
         device = best_device()
@@ -189,6 +209,41 @@ def denoise_frame(
     norm_frame, scale = normalise(frame_sub)
 
     h, w = frame.shape
+
+    if stitch == "crop":
+        core = tile_size - 2 * overlap
+        if core <= 0:
+            raise ValueError("crop stitching needs tile_size > 2*overlap")
+        padded = np.pad(norm_frame, overlap, mode="reflect")
+        H, W = padded.shape
+        # Ensure at least one full tile fits; tiny frames just run whole.
+        if H < tile_size or W < tile_size:
+            padded = np.pad(padded,
+                            ((0, max(0, tile_size - H)), (0, max(0, tile_size - W))),
+                            mode="reflect")
+            H, W = padded.shape
+        ys = list(range(0, H - tile_size + 1, core))
+        if ys[-1] != H - tile_size:
+            ys.append(H - tile_size)
+        xs = list(range(0, W - tile_size + 1, core))
+        if xs[-1] != W - tile_size:
+            xs.append(W - tile_size)
+        out_n = np.zeros((h, w), dtype=np.float32)
+        with torch.no_grad():
+            for y0 in ys:
+                for x0 in xs:
+                    tile = padded[y0:y0 + tile_size, x0:x0 + tile_size]
+                    inp = torch.from_numpy(np.ascontiguousarray(tile)[None, None]).to(device)
+                    pred = model(inp).cpu().numpy()[0, 0]
+                    cy0, cx0 = y0, x0                       # core start, unpadded coords
+                    cy1 = min(cy0 + core, h)
+                    cx1 = min(cx0 + core, w)
+                    if cy0 >= h or cx0 >= w:
+                        continue
+                    out_n[cy0:cy1, cx0:cx1] = pred[overlap:overlap + (cy1 - cy0),
+                                                   overlap:overlap + (cx1 - cx0)]
+        return denormalise(out_n, scale) + background
+
     step = tile_size - overlap
     output = np.zeros((h, w), dtype=np.float64)
     weight = np.zeros((h, w), dtype=np.float64)
