@@ -56,7 +56,23 @@ class N2NDataset(Dataset):
         # inference path. The background is discarded: the model only ever sees
         # flat-sky, unit-scaled data, at train and at test alike.
         self.frames: list[np.ndarray] = []
+        # Coverage-fill maps, one per frame, at _BLOCK resolution. The stacker
+        # skips its high-coverage crop under shared_reference and fills the
+        # uncovered pixels with the frame's exact median (lab manual step 20),
+        # so a patch sampled there is part flat constant — a target that is
+        # trivially predictable and teaches nothing except "emit a constant",
+        # the collapse attractor. Detected on the RAW frame (exact-median
+        # equality, the stacker's own signature) before normalisation smears it.
+        self._fillmap: list[Optional[np.ndarray]] = []
         for f in frames:
+            fill = (f == np.median(f))
+            if fill.any():
+                d = self._BLOCK
+                H, W = f.shape[0] // d, f.shape[1] // d
+                self._fillmap.append(
+                    fill[:H * d, :W * d].reshape(H, d, W, d).mean(axis=(1, 3)))
+            else:
+                self._fillmap.append(None)
             sub, _ = denoiser.subtract_background(f)
             norm, _ = denoiser.normalise(sub)
             self.frames.append(norm)
@@ -152,8 +168,12 @@ class N2NDataset(Dataset):
         ps = self.patch_size
         cdf = self._cdf[frame_idx]
         if cdf is None or self.rng.random() >= self.source_bias:
-            return (int(self.rng.integers(0, h - ps)),
-                    int(self.rng.integers(0, w - ps)))
+            for _try in range(8):
+                y0 = int(self.rng.integers(0, h - ps))
+                x0 = int(self.rng.integers(0, w - ps))
+                if not self._patch_filled(frame_idx, y0, x0):
+                    break
+            return y0, x0
         d, pb = self._BLOCK, max(1, self.patch_size // self._BLOCK)
         ow = (w // d) - pb + 1
         k = int(np.searchsorted(cdf, self.rng.random()))
@@ -163,6 +183,17 @@ class N2NDataset(Dataset):
         y0 = min(max(by * d + int(self.rng.integers(0, d)), 0), h - ps)
         x0 = min(max(bx * d + int(self.rng.integers(0, d)), 0), w - ps)
         return y0, x0
+
+    def _patch_filled(self, frame_idx: int, y0: int, x0: int,
+                      max_frac: float = 0.05) -> bool:
+        """True when more than max_frac of the patch is coverage fill."""
+        fm = self._fillmap[frame_idx]
+        if fm is None:
+            return False
+        d, pb = self._BLOCK, max(1, self.patch_size // self._BLOCK)
+        by, bx = y0 // d, x0 // d
+        block = fm[by:by + pb, bx:bx + pb]
+        return bool(block.size) and float(block.mean()) > max_frac
 
     def __len__(self) -> int:
         return self.pairs_per_epoch
@@ -250,22 +281,33 @@ def _holdout_frames(
         groups: dict[str, list[int]] = {}
         for idx, gid in enumerate(group_ids):
             groups.setdefault(gid, []).append(idx)
-        # Only groups with >=2 frames can form within-DSO N2N pairs
+        # Only groups with >=2 frames can form within-DSO N2N pairs.
+        #
+        # Held out at the DSO level, not the group level (fixed 2026-08-23).
+        # Groups are keyed "dso|filter" so pairs never cross filters, but a
+        # group-level holdout would hold out "m92|R" while training on "m92|L"
+        # — the same stars, the same field, another passband — which made every
+        # pooled val optimistic (lab manual, open questions). Groups sharing a
+        # DSO prefix now move together.
         pairable = [g for g, idxs in groups.items() if len(idxs) >= 2]
+        by_dso: dict[str, list[str]] = {}
+        for g in pairable:
+            by_dso.setdefault(str(g).split("|")[0], []).append(g)
         if len(pairable) >= 2:
             target = val_frac * n
             val_groups: list[str] = []
             acc = 0
-            for g in rng.permutation(pairable):
-                # Hold out at least min_val_groups DSOs, then keep going until
-                # val_frac of frames is reached; always leave >=1 pairable
-                # group for training
-                if len(val_groups) >= len(pairable) - 1:
+            for dso in rng.permutation(list(by_dso)):
+                cand = by_dso[str(dso)]
+                # Hold out whole DSOs (every filter of them) until at least
+                # min_val_groups DSOs and val_frac of frames are reached;
+                # always leave at least one pairable group for training.
+                if len(val_groups) + len(cand) > len(pairable) - 1:
+                    continue
+                if len({g.split("|")[0] for g in val_groups}) >= min_val_groups                         and acc >= target:
                     break
-                if len(val_groups) >= min_val_groups and acc >= target:
-                    break
-                val_groups.append(str(g))
-                acc += len(groups[g])
+                val_groups.extend(str(g) for g in cand)
+                acc += sum(len(groups[g]) for g in cand)
             val_set = set(val_groups)
             va = [i for g in val_groups for i in groups[g]]
             tr = [i for g, idxs in groups.items() if g not in val_set for i in idxs]

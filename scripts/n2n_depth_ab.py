@@ -189,7 +189,14 @@ def train_arm(groups: dict, tag: str, args) -> Path:
     model = UNet(residual="linear").to(dev)
     opt = torch.optim.Adam(model.parameters(), lr=3e-4)
     sch = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=args.epochs)
-    crit = nn.MSELoss() if args.loss == "l2" else nn.L1Loss()
+    if args.loss == "msl2":
+        # Headroom-weighted multi-scale L2, lab manual step 32/34. Raises the
+        # price of mid-band (16-256 px) error, where the Wiener bound showed
+        # +0.07..0.27 of claimable signal, without licensing fine-band error.
+        from nn.losses import MultiScaleL2
+        crit = MultiScaleL2().to(dev)
+    else:
+        crit = nn.MSELoss() if args.loss == "l2" else nn.L1Loss()
 
     best, best_sd, best_ep = float("inf"), None, 0
     t0 = time.time()
@@ -285,7 +292,7 @@ def main() -> int:
                          "stacks cached. Vary this to measure run-to-run spread "
                          "without re-stacking; the manual records patch selection "
                          "as the dominant source of variance (step 15).")
-    ap.add_argument("--loss", choices=("l1", "l2"), default="l2")
+    ap.add_argument("--loss", choices=("l1", "l2", "msl2"), default="l2")
     ap.add_argument("--pairs", type=int, default=0)
     ap.add_argument("--patch", type=int, default=0,
                     help="training patch size; 0 uses cfg['nn'] (256). The "
