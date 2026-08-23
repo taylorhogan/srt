@@ -58,6 +58,11 @@ RECIPE_RULES = [
     ("LRGB", {"L", "R", "G", "B"}),
 ]
 MIN_FRAMES = 12          # below this a stack is not worth the wall time
+# Narrowband recipes: no L channel, so the shared reference comes from Ha, and
+# they take the nebula stretch rather than the galaxy one. Kept as a set because
+# adding HSO to RECIPE_RULES without adding it here silently gave that recipe
+# `--lum L` (a filter it does not have) and the wrong stretch.
+NARROWBAND = {"SHO", "HSO", "HOO"}
 
 
 def log(m: str = "") -> None:
@@ -161,11 +166,11 @@ def main() -> int:
 
     rc = 0
     for dso, recipe, _total, _s in plan:
-        lum = "Ha" if recipe in ("SHO", "HOO") else "L"
+        lum = "Ha" if recipe in NARROWBAND else "L"
         cmd = [sys.executable, os.path.join(_root, "scripts", "n2n_lrgb_render.py"),
                "routine", "--dso", dso.lower().replace(" ", ""), "--recipe", recipe,
                "--lum", lum, "--exptime", str(args.exptime), "--force"]
-        if recipe in ("SHO", "HOO"):
+        if recipe in NARROWBAND:
             cmd += ["--white-pct", "99", "--black-pct", "65"]
         log(f"\n$ {' '.join(cmd[1:])}")
         if args.dry_run:
