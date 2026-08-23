@@ -198,6 +198,22 @@ def train_arm(groups: dict, tag: str, args) -> Path:
     else:
         crit = nn.MSELoss() if args.loss == "l2" else nn.L1Loss()
 
+    # Per-epoch curves. Every experiment trained through this script for a week
+    # left nothing but six console lines each; the epoch-plateau finding (steps
+    # 31/33) was invisible for exactly that reason.
+    writer = None
+    try:
+        import shutil
+
+        from torch.utils.tensorboard import SummaryWriter
+        log_dir = Path(_root) / "local" / "runs" / f"depth_{tag}_{args.exptime}s"
+        if log_dir.exists():
+            shutil.rmtree(log_dir)
+        writer = SummaryWriter(log_dir=str(log_dir))
+        log(f"  tensorboard: {log_dir}")
+    except Exception as exc:
+        log(f"  no tensorboard ({exc})")
+
     best, best_sd, best_ep = float("inf"), None, 0
     t0 = time.time()
     for ep in range(1, args.epochs + 1):
@@ -221,10 +237,15 @@ def train_arm(groups: dict, tag: str, args) -> Path:
         if v < best:
             best, best_ep = v, ep
             best_sd = {k: t.detach().clone() for k, t in model.state_dict().items()}
+        if writer is not None:
+            writer.add_scalars("loss", {"train": tot / max(len(dl), 1), "val": v}, ep)
+            writer.flush()
         if ep % 10 == 0 or ep == args.epochs:
             log(f"  [{tag}] epoch {ep:3d} train={tot/max(len(dl),1):.5f} "
                 f"val={v:.5f} best={best:.5f} ({time.time()-t0:.0f}s)")
 
+    if writer is not None:
+        writer.close()
     path = Path(_root) / "local" / "models" / f"n2n_depth_{tag}_{args.exptime}s.pt"
     path.parent.mkdir(parents=True, exist_ok=True)
     torch.save({"model_state": best_sd, "filter": tag, "epoch": best_ep,
