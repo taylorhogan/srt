@@ -10,7 +10,34 @@ kept**. Most of this document is negative results. That is the point.
 
 ---
 
-## Current state — 2026-08-14
+## Current state — 2026-08-23
+
+**If you read one thing, read this.** The denoiser works and its limits are
+measured.
+
+- **Use it** on point-source-dominated fields and on bright nebulae. Point
+  sources survive to 0.1%, sky noise drops ~55x, photometry is within 1-2% when
+  trained deep.
+- **Do not use it** where the subject is faint extended emission. It is
+  band-limited: transfer ~0.98 above 512 px, ~0.72 at 128-256, ~0.33 at 4-8
+  (step 29). ic1396 loses its nebulosity; NGC 6888's bright filaments survive.
+  The discriminator is surface brightness, not object class — measure with
+  `scripts/n2n_sb_profile.py` (step 23, and the routine-path section).
+- **It is not colour-safe.** Channels are retained unequally, so SHO and LRGB
+  composites shift hue. Worst measured: NGC 6888 S-II 0.556 against Ha 0.887
+  (steps 21, 30-31).
+- **Production models**: `n2n_pooledNB_300s.pt` (narrowband),
+  `n2n_ladder_pooled-filters_300s.pt` (broadband). Six attempts to beat the
+  narrowband one failed (step 31).
+- **Never report an A/B without a seed control.** Floor: ~0.02 retention at
+  1-2 sigma, ~0.012 at 4-8, ~0.03 on flux (step 28).
+
+Levers that measurably work: **integration depth** (deeper stacks fix the
+photometric excess and are the only thing that moves S-II), and **patch size**
+(512, step 30). Levers that measurably do not: training target, scene count,
+pooling scheme, channel count, source bias.
+
+## Superseded — current state as of 2026-08-14
 
 **Usable as a display product. Not a science product. Specifically not for the
 transient search.**
@@ -1600,6 +1627,90 @@ composite. The S-II/Ha ratio is altered by up to 40% in the mid-brightness
 range. The raw composite is unaffected, which is the reason the routine path
 writes both.
 
+### 31. Five narrowband variants, one conclusion: the training set is not the limit
+
+2026-08-22/23. Five models were trained to try to improve narrowband denoising,
+all scored on the same held-out NGC 6888 stacks. Recording them together
+because the individually-null results are the point, and each is cheap to
+repeat by accident.
+
+| model | trained on | patch | ch | Ha | O-III | S-II | spread |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `n2n_pooledNB_300s` (production) | Soap Bubble | 256 | 1 | 0.887 | **0.606** | **0.556** | **0.331** |
+| `n2n_sc_sho7635` | NGC 7635 | 512 | 1 | 0.893 | 0.513 | 0.506 | 0.387 |
+| `n2n_mc3_sho7635` | NGC 7635 | 512 | 3 | 0.812 | 0.649 | 0.392 | 0.419 |
+| `n2n_nb_soap_7635` | both | 512 | 1 | 0.941 | 0.579 | 0.510 | 0.431 |
+| `n2n_pooledNB_p512` | Soap Bubble | 512 | 1 | 0.890 | 0.585 | 0.534 | 0.356 |
+| `n2n_self6888_p512` | **NGC 6888 itself** | 512 | 1 | **0.954** | 0.602 | 0.572 | 0.382 |
+
+(retention at 8-16 sigma; spread is the colour-safety number)
+
+**Nothing beat production on the channels that matter.** Every variant improved
+Ha and left O-III and S-II where they were, so every one made cross-channel
+spread *worse*. `pooledNB`, trained at patch 256 on two groups and never having
+seen an S-II frame, is still the best narrowband model available.
+
+#### The upper bound settles the S-II question
+
+`n2n_self6888_p512` was trained on NGC 6888's own split stacks and then applied
+to NGC 6888 — not a held-out test, deliberately. Self-training removes
+generalisation error entirely, so its retention is approximately **the best this
+architecture can do on this data**, and it bounds what any training-set choice
+could achieve.
+
+It reaches Ha **0.954** and leaves O-III at 0.602 and S-II at 0.572 — within
+noise of production. So the S-II deficit is **not generalisation error**. No
+training target, no depth, no patch size and no channel count closes it. It is
+structure-SNR limited, exactly as the convergence curves implied (NGC 6888 S-II
+converges to 15.3% against Ha's 10.4%), and **integration time is the only
+remaining lever**.
+
+#### The models are nearly interchangeable
+
+Measured on the ngc6888 Ha stack, in units of its 0.734 ADU sky noise:
+
+    model vs model      rms 0.307 - 0.585 sigma
+    model vs raw        rms 0.896 - 1.114 sigma
+
+Every model moves the frame ~1 sigma from the raw and differs from its siblings
+by a third to a half of that, in scattered directions rather than coherently.
+That is why the rendered images are visually indistinguishable — noticed by eye
+first, then confirmed. **Model choice makes ~10% of the decision; the shared
+band limit makes the other 90%.**
+
+Practical consequence: stop training narrowband variants hoping for a visible
+gain. Depth and integration are the levers.
+
+#### 60 epochs is roughly 3x more than needed
+
+The first two runs ever to log per-epoch curves (see below) both plateau early.
+On `self6888_p512`, val is within 0.002 of its best **by epoch 7**; epochs 7-60
+changed val by +0.003 and cost ~106 minutes of the 2-hour run. On
+`pooledNB_p512` the plateau is by epoch ~12.
+
+This also retires a claim made repeatedly in this manual. "Best epoch" has been
+quoted as a signal — 13, 15, 19, 23, 25, 26, 36 — and step 22 read a story into
+it ("the pooled model keeps learning while single-pair models peak early,
+evidence for thinness"). Those are **tie-breaks on a flat noisy plateau**, and
+the differences are smaller than the seed floor. Do not cite best-epoch as
+evidence.
+
+`epochs: 60` should probably be ~20, which would make every future A/B three
+times cheaper. Not changed yet: it deserves one run at 20 against one at 60,
+compared on retention rather than on loss.
+
+#### Nothing logged curves until 2026-08-23
+
+Only `nn.trainer.train` ever wrote TensorBoard scalars. Every script written
+during the ladder, depth, multichannel and patch-size work used its own training
+loop and logged nothing but every-tenth-epoch console lines — so a week of runs
+left six sampled points each and no curves. `n2n_pooled_nb.py` now writes
+per-epoch `loss/train`, `loss/val`, `loss_best` and `lr` to
+`local/runs/{tag}_{exptime}s`; the other trainers still do not. View with
+`tensorboard --logdir local/runs`.
+
+The plateau finding above was invisible for a week purely because of this.
+
 ## The routine path: producing a night's images
 
 `python scripts/n2n_lrgb_render.py routine --dso <name> --recipe <LRGB|HOO|SHO>`
@@ -1773,6 +1884,12 @@ differences that turned out to be inside the floor.
 
 ## Standing conclusions
 
+0. **The training set is not the limit; integration is.** Six narrowband models
+   across four training targets, two patch sizes and one to three channels land
+   within 0.3-0.6 sigma of each other on the same frame, against ~1.0 sigma of
+   total effect — visually indistinguishable (step 31). A model trained on the
+   target itself, which bounds what any training choice can reach, leaves S-II
+   and O-III exactly where production has them. Spend nights, not epochs.
 1. **Denoised frames are not a science product, and are a display product only
    for point-source-dominated fields.** Calibrated linear frames remain the
    science product for transit work, the colour-magnitude diagram, and the

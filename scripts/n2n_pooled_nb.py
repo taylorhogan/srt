@@ -115,6 +115,23 @@ def main() -> int:
     sch = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=args.epochs)
     crit = nn.MSELoss() if args.loss == "l2" else nn.L1Loss()
 
+    # TensorBoard. Every training script written this week used its own loop and
+    # none of them logged, so a week of runs left no curves behind — only
+    # `nn.trainer.train` ever wrote to local/runs/. Logged per epoch, not per 10,
+    # so the shape of the curve is visible rather than six points through it.
+    writer = None
+    try:
+        import shutil
+
+        from torch.utils.tensorboard import SummaryWriter
+        log_dir = Path(_root) / "local" / "runs" / f"{args.tag}_{args.exptime}s"
+        if log_dir.exists():
+            shutil.rmtree(log_dir)   # as trainer.train does: read curves before re-running
+        writer = SummaryWriter(log_dir=str(log_dir))
+        log(f"tensorboard: {log_dir}")
+    except Exception as exc:
+        log(f"no tensorboard ({exc}) — continuing without curves")
+
     best, best_sd, best_ep = float("inf"), None, 0
     t0 = time.time()
     for ep in range(1, args.epochs + 1):
@@ -134,10 +151,17 @@ def main() -> int:
         if v < best:
             best, best_ep = v, ep
             best_sd = {k: t.detach().clone() for k, t in model.state_dict().items()}
+        if writer is not None:
+            writer.add_scalars("loss", {"train": tot / max(len(dl), 1), "val": v}, ep)
+            writer.add_scalar("loss_best", best, ep)
+            writer.add_scalar("lr", opt.param_groups[0]["lr"], ep)
+            writer.flush()
         if ep % 10 == 0 or ep == args.epochs:
             log(f"  epoch {ep:3d} train={tot/max(len(dl),1):.5f} val={v:.5f} "
                 f"best={best:.5f} ({time.time()-t0:.0f}s)")
 
+    if writer is not None:
+        writer.close()
     model.load_state_dict(best_sd)
     mp = Path(_root) / "local" / "models" / f"n2n_{args.tag}_{args.exptime}s.pt"
     torch.save({"model_state": best_sd, "in_ch": 1, "epoch": best_ep,
