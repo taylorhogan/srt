@@ -111,3 +111,4 @@ python-multipart
 psutil
 prefect
 pyserial
+skyfield

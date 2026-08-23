@@ -191,11 +191,37 @@ def tonight_cmd(words: list[str], index: int, m: Mastodon, account: str) -> bool
                 post_social_message(f"{best_name} — sky chart", sky)
             post_social_message(weather_msg)
             post_dso_preview(best_name)
+            _post_iss_passes()
             return weather_ok
         else:
             post_social_message(f"{best_name} not a known object")
     return False
 
+
+
+def _post_iss_passes() -> None:
+    """Append tonight's in-frame ISS passes to the report, arming the recorder.
+
+    Best-effort: needs skyfield + network for a fresh TLE, and the tonight
+    report must survive without either. "In frame" means the sky camera's
+    field (above ~40 deg) while the ISS is sunlit over a dark site -- the
+    triple that only lines up every couple of weeks, which is why most nights
+    this posts nothing at all rather than "no passes".
+    """
+    try:
+        from sentry import iss_watch
+        passes = iss_watch.passes_tonight(arm=True)
+    except Exception:
+        logging.getLogger(__name__).warning("ISS pass check failed", exc_info=True)
+        return
+    if not passes:
+        return
+    lines = ["ISS will cross the sky camera's frame tonight — auto-record armed:"]
+    for p in passes:
+        lines.append("  rise %s  peak %s at %.0f°  set %s"
+                     % (p["rise"][11:16], p["peak"][11:16],
+                        p["peak_alt_deg"], p["set"][11:16]))
+    post_social_message("\n".join(lines))
 
 
 def version_cmd(words: list[str], index: int, m: Mastodon, account: str) -> None:

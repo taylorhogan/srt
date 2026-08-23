@@ -178,6 +178,14 @@ def main() -> int:
         # is, and a task on this machine needs an elevation prompt nobody is
         # sitting in front of at dawn.
         _maybe_post_night_report()
+        # Armed ISS pass about to start? Spawns the detached recorder; the
+        # 5-minute cadence of this loop is exactly why the arm window is six.
+        # Never raises (guards internally) and touches nothing on quiet ticks.
+        try:
+            from sentry import iss_watch
+            iss_watch.check_and_spawn()
+        except Exception:
+            logging.getLogger(__name__).exception("iss check failed (ignored)")
     else:
         ann = None
         if "--annotate" in sys.argv:
