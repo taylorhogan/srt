@@ -62,6 +62,33 @@ SUN_DARK_DEG = -6.0        # site darkness: civil twilight
 # ticks every 5 minutes, so 6 guarantees exactly one tick arms it.
 SPAWN_AHEAD_S = 6 * 60
 
+# The observatory's own horizon: az -> minimum visible altitude, from the
+# same file the DSO scheduler uses (configs/my.hrz). The tree line runs
+# 37-60 deg here, so "above the Iris horizon" is a genuinely different
+# question from "in the sky camera's frame" -- the camera floor is a flat
+# 40, the horizon is azimuth-dependent and mostly higher.
+HORIZON_FILE = "configs/my.hrz"
+
+
+def _horizon():
+    """(az_list, alt_list) from my.hrz, wrapped so interpolation closes 360."""
+    az, alt = [], []
+    with open(HORIZON_FILE) as fh:
+        for line in fh:
+            parts = line.split()
+            if len(parts) == 2:
+                az.append(float(parts[0])); alt.append(float(parts[1]))
+    if az and az[0] != 0.0:
+        az.insert(0, 0.0); alt.insert(0, alt[0])
+    if az and az[-1] != 360.0:
+        az.append(360.0); alt.append(alt[0])
+    return az, alt
+
+
+def _horizon_alt(azimuth, hz):
+    import numpy as np
+    return float(np.interp(azimuth % 360.0, hz[0], hz[1]))
+
 
 def _fetch_tle():
     import requests
@@ -118,9 +145,12 @@ def passes_tonight(hours=16.0, arm=True):
     """
     sat, site, eph, ts = _sky()
     sun, earth = eph["sun"], eph["earth"]
+    hz = _horizon()
     t0 = ts.now()
     t1 = ts.from_datetime(t0.utc_datetime() + timedelta(hours=hours))
-    t, events = sat.find_events(site, t0, t1, altitude_degrees=MIN_ALT_DEG)
+    # 35, not MIN_ALT_DEG: the horizon dips to 36.9 in places, so a pass can
+    # clear the tree line without ever reaching the camera's 40-deg floor.
+    t, events = sat.find_events(site, t0, t1, altitude_degrees=35.0)
 
     out, current = [], {}
     for ti, ev in zip(t, events):
@@ -130,33 +160,47 @@ def passes_tonight(hours=16.0, arm=True):
             current["peak"] = ti
         elif ev == 2 and "peak" in current:
             current["set"] = ti
-            # Sample the arc: visible if any point is sunlit over a dark site.
+            # Sample the arc every ~15 s. A pass counts for a category if
+            # ANY sampled point satisfies it while the ISS is sunlit over a
+            # dark site; the categories are judged independently because the
+            # camera floor is flat and the horizon is azimuth-shaped.
             span = (current["set"].utc_datetime()
                     - current["rise"].utc_datetime()).total_seconds()
-            vis = False
-            for frac in (0.0, 0.25, 0.5, 0.75, 1.0):
+            in_camera = above_horizon = False
+            n = max(2, int(span // 15))
+            for i in range(n + 1):
                 tx = ts.from_datetime(current["rise"].utc_datetime()
-                                      + timedelta(seconds=span * frac))
+                                      + timedelta(seconds=span * i / n))
                 sunlit = bool(sat.at(tx).is_sunlit(eph))
                 sun_alt = (earth + site).at(tx).observe(sun).apparent()\
                     .altaz()[0].degrees
-                if sunlit and sun_alt < SUN_DARK_DEG:
-                    vis = True
+                if not (sunlit and sun_alt < SUN_DARK_DEG):
+                    continue
+                alt, az, _ = (sat - site).at(tx).altaz()
+                if alt.degrees >= MIN_ALT_DEG:
+                    in_camera = True
+                if alt.degrees > _horizon_alt(az.degrees, hz):
+                    above_horizon = True
+                if in_camera and above_horizon:
                     break
-            if vis:
+            if in_camera or above_horizon:
                 alt, _, _ = (sat - site).at(current["peak"]).altaz()
                 out.append({
                     "rise": current["rise"].utc_datetime().astimezone().isoformat(timespec="seconds"),
                     "peak": current["peak"].utc_datetime().astimezone().isoformat(timespec="seconds"),
                     "set": current["set"].utc_datetime().astimezone().isoformat(timespec="seconds"),
                     "peak_alt_deg": round(float(alt.degrees), 1),
+                    "in_camera": in_camera,
+                    "above_horizon": above_horizon,
                 })
             current = {}
-    if arm and out:
-        json.dump({"passes": out, "armed": datetime.now().astimezone().isoformat(timespec="seconds")},
+    camera_passes = [p for p in out if p["in_camera"]]
+    if arm and camera_passes:
+        json.dump({"passes": camera_passes,
+                   "armed": datetime.now().astimezone().isoformat(timespec="seconds")},
                   open(MARKER, "w"), indent=1)
-        _logger.info("ISS recorder armed for %d pass(es); first peak %s",
-                     len(out), out[0]["peak"])
+        _logger.info("ISS recorder armed for %d camera pass(es); first peak %s",
+                     len(camera_passes), camera_passes[0]["peak"])
     return out
 
 
@@ -252,9 +296,11 @@ def main():
         print("no visible-in-frame ISS passes in the window")
         return 1
     for p in passes:
-        print("rise %s  peak %s (alt %.0f)  set %s"
+        tags = [t for t, on in (("camera", p.get("in_camera")),
+                                ("horizon", p.get("above_horizon"))) if on]
+        print("rise %s  peak %s (alt %.0f)  set %s  [%s]"
               % (p["rise"][11:19], p["peak"][11:19], p["peak_alt_deg"],
-                 p["set"][11:19]))
+                 p["set"][11:19], "+".join(tags)))
     return 0
 
 

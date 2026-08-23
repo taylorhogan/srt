@@ -203,10 +203,12 @@ def _post_iss_passes() -> None:
     """Append tonight's in-frame ISS passes to the report, arming the recorder.
 
     Best-effort: needs skyfield + network for a fresh TLE, and the tonight
-    report must survive without either. "In frame" means the sky camera's
-    field (above ~40 deg) while the ISS is sunlit over a dark site -- the
-    triple that only lines up every couple of weeks, which is why most nights
-    this posts nothing at all rather than "no passes".
+    report must survive without either. Two independent tests per pass, both
+    requiring the ISS sunlit over a dark site: inside the sky camera's field
+    (a flat ~40 deg floor -- these arm the auto-record), and above the Iris
+    horizon (configs/my.hrz, the azimuth-shaped tree line the DSO scheduler
+    uses -- watchable from the observatory, but not recorded). Most nights
+    neither lines up, so this posts nothing rather than "no passes".
     """
     try:
         from sentry import iss_watch
@@ -216,11 +218,17 @@ def _post_iss_passes() -> None:
         return
     if not passes:
         return
-    lines = ["ISS will cross the sky camera's frame tonight — auto-record armed:"]
+    any_cam = any(p.get("in_camera") for p in passes)
+    lines = ["ISS passes tonight"
+             + (" — sky camera auto-record armed:" if any_cam else ":")]
     for p in passes:
-        lines.append("  rise %s  peak %s at %.0f°  set %s"
+        where = " + ".join(w for w, on in
+                           (("sky camera frame", p.get("in_camera")),
+                            ("above the Iris horizon", p.get("above_horizon")))
+                           if on)
+        lines.append("  rise %s  peak %s at %.0f°  set %s   [%s]"
                      % (p["rise"][11:16], p["peak"][11:16],
-                        p["peak_alt_deg"], p["set"][11:16]))
+                        p["peak_alt_deg"], p["set"][11:16], where))
     post_social_message("\n".join(lines))
 
 
