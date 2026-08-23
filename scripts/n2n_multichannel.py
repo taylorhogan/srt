@@ -78,7 +78,11 @@ def build(args) -> int:
 
     (OUT / "stacks").mkdir(parents=True, exist_ok=True)
     machine = config.data().get("machine", {}).get(socket.gethostname()) or {}
-    subs = Path(machine["subs_dir"])
+    subs = Path(args.root) if args.root else Path(machine["subs_dir"])
+    # Archive lights need their own epoch's calibration; config resolves the
+    # current one, and 2026 masters at -10C on 2024 lights at -20C is worse
+    # than none. Same helper the render path uses.
+    rnd = _load("rnd", "scripts/n2n_lrgb_render.py") if args.cal_root else None
     filters = [f.strip() for f in args.filters.split(",") if f.strip()]
     idx = stacks.index_frames(subs, filters, args.exptime)
 
@@ -119,12 +123,26 @@ def build(args) -> int:
         def chunk(lo, n):
             return [paths[i] for i in order[lo:lo + n]]
 
-        made = [stacks.stack_paths(chunk(k * train_per, train_per), filt,
-                                   progress_cb=lambda m: None, shared_reference=ref)
-                for k in range(2)]
-        vmade = [stacks.stack_paths(chunk(2 * train_per + k * val_per, val_per),
-                                    filt, progress_cb=lambda m: None,
-                                    shared_reference=ref) for k in range(2)]
+        if rnd is not None:
+            from stacking import stacker
+            bias, dark, flat = rnd.archive_calibration(
+                Path(args.cal_root), filt, args.exptime, args.cal_epoch)
+            log(f"[{filt}] calibration {len(bias)} bias / {len(dark)} dark / "
+                f"{len(flat)} flat")
+
+            def _st(ps):
+                img, _ = stacker.stack(
+                    list(ps), method=stacker.StackMethod.SIGMA_CLIP_FWHM,
+                    shared_reference=ref, bias_paths=bias or None,
+                    dark_paths=dark or None, flat_paths=flat or None,
+                    register=True, progress_cb=lambda m: None)
+                return img
+        else:
+            def _st(ps):
+                return stacks.stack_paths(ps, filt, progress_cb=lambda m: None,
+                                          shared_reference=ref)
+        made = [_st(chunk(k * train_per, train_per)) for k in range(2)]
+        vmade = [_st(chunk(2 * train_per + k * val_per, val_per)) for k in range(2)]
         if any(x is None for x in made + vmade):
             log(f"[{filt}] stacking failed")
             return 1
@@ -280,7 +298,25 @@ def train(args) -> int:
     vl = DataLoader(vs, batch_size=batch, shuffle=False, num_workers=2)
 
     dev = "cuda" if torch.cuda.is_available() else "cpu"
-    model = UNet(residual="linear", in_ch=C).to(dev)
+    if args.single:
+        # Arm A: today's approach — one model, filters pooled as separate
+        # groups, each denoised alone. Trained from the *same* stacks as the
+        # joint arm so the only difference is whether the channels are seen
+        # together, not which pixels went in.
+        from nn.trainer import N2NDataset
+        frames, gids, vframes, vgids = [], [], [], []
+        for i, f in enumerate(filters):
+            frames += [tr_a[i], tr_b[i]]; gids += [f, f]
+            vframes += [va_a[i], va_b[i]]; vgids += [f + "|val", f + "|val"]
+        ds = N2NDataset(frames, group_ids=gids, patch_size=patch,
+                        pairs_per_epoch=pairs, seed=args.seed)
+        vs = N2NDataset(vframes, group_ids=vgids, patch_size=patch,
+                        pairs_per_epoch=max(batch, pairs // 5), seed=args.seed + 1)
+        dl = DataLoader(ds, batch_size=batch, shuffle=True, num_workers=2)
+        vl = DataLoader(vs, batch_size=batch, shuffle=False, num_workers=2)
+        log(f"  single-channel arm: {len(ds._valid_pairs)} pairs over "
+            f"{len(set(gids))} groups")
+    model = UNet(residual="linear", in_ch=1 if args.single else C).to(dev)
     opt = torch.optim.Adam(model.parameters(), lr=3e-4)
     sch = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=args.epochs)
     crit = nn.MSELoss() if args.loss == "l2" else nn.L1Loss()
@@ -311,9 +347,11 @@ def train(args) -> int:
 
     model.load_state_dict(best_sd)
     from nn import denoiser
-    mp = Path(_root) / "local" / "models" / f"n2n_mc{C}_{args.tag}_{args.exptime}s.pt"
+    kind = "sc" if args.single else f"mc{C}"
+    mp = Path(_root) / "local" / "models" / f"n2n_{kind}_{args.tag}_{args.exptime}s.pt"
     mp.parent.mkdir(parents=True, exist_ok=True)
-    torch.save({"model_state": best_sd, "in_ch": C, "filters": filters,
+    torch.save({"model_state": best_sd, "in_ch": 1 if args.single else C,
+                "single": bool(args.single), "filters": filters,
                 "epoch": best_ep, "loss": args.loss, "seed": args.seed,
                 "patch_size": patch, "train_dso": args.train, "test_dso": args.test,
                 "asinh_sigma_mult": denoiser.ASINH_SIGMA_MULT}, mp)
@@ -322,15 +360,20 @@ def train(args) -> int:
     # Evaluate on the held-out target: per-channel retention and, the point of
     # the exercise, the spread between channels.
     raws, labels = [], []
+    tdir = Path(args.test_dir) if args.test_dir else TEST_DIR
     for f in filters:
-        p = TEST_DIR / f"{args.test}_{f}_raw.npy"
+        p = tdir / f"{args.test}_{f}_raw.npy"
         if not p.exists():
             log(f"  no test stack {p.name} — skipping evaluation")
             return 0
         raws.append(np.load(p).astype(np.float32)); labels.append(f)
     hh = min(x.shape[0] for x in raws); ww = min(x.shape[1] for x in raws)
     raws = [x[:hh, :ww] for x in raws]
-    dens = denoise_multi(raws, model.cpu(), dev)
+    if args.single:
+        from nn import denoiser as _dn
+        dens = [_dn.denoise_frame(r, model, device=dev) for r in raws]
+    else:
+        dens = denoise_multi(raws, model.cpu(), dev)
 
     EDGES = [-2, 0, 1, 2, 4, 8, 16, 32, 1e9]
     log(f"\nextended-flux retention on held-out {args.test}")
@@ -372,7 +415,14 @@ def main() -> int:
     ap.add_argument("--patch", type=int, default=0)
     ap.add_argument("--batch", type=int, default=0)
     ap.add_argument("--pairs", type=int, default=0)
+    ap.add_argument("--root", default="", help="where LIGHT frames live")
+    ap.add_argument("--cal-root", default="", help="explicit calibration tree")
+    ap.add_argument("--cal-epoch", default="")
+    ap.add_argument("--test-dir", default="", help="where the test stacks live")
     ap.add_argument("--tag", default="nb")
+    ap.add_argument("--single", action="store_true",
+                    help="train one filter at a time (pooled groups) instead of "
+                         "jointly — the baseline arm")
     ap.add_argument("--force", action="store_true")
     args = ap.parse_args()
 

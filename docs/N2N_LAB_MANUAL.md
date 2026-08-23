@@ -1321,6 +1321,17 @@ files at 300 s:
 | IC 405 | 87 | 37 | 40 |
 | NGC 6888 | 83 | 61 | 50 |
 | NGC 7635 | 27 | 40 | 32 |
+
+**`bubble` in `Targets/` is NOT NGC 7635.** Corrected 2026-08-23 after the two
+were treated as the same object earlier in this manual. `Targets/bubble` is at
+RA 20h15m22s, l=75.6 b=+1.7 — **PN G75.5+1.7, the Soap Bubble Nebula**, in
+Cygnus. The archive's NGC 7635 is at 23h20m46s, l=112.2 — the **Bubble Nebula**,
+in Cassiopeia. They are 47 degrees apart and share nothing but a nickname.
+
+Everywhere this manual says bubble "beats sh2-92 as a training target" (steps
+24-27), the target is the **Soap Bubble**, from 2026 data with 59 Ha and 77
+O-III and no S-II. NGC 7635 is 2024 archive data, thinner, and is the only
+source of S-II.
 | PK 205+14.1 | 19 | 10 | 10 |
 | IC 1318 | 15 | 10 | 10 |
 
