@@ -41,6 +41,14 @@ RECIPES: dict[str, dict[str, str]] = {
     "LRGB": {"R": "R", "G": "G", "B": "B", "L": "L"},
     "HOO":  {"R": "Ha", "G": "O-III", "B": "O-III"},
     "SHO":  {"R": "S-II", "G": "Ha", "B": "O-III"},
+    # HSO is SHO with R and G swapped. Which reads better is set by the
+    # relative channel strengths, not by taste: on NGC 6888 the nebula measures
+    # Ha 4.20 ADU, S-II 2.62 (0.62 of Ha), O-III 0.36 (0.09). SHO therefore puts
+    # the strongest channel in green and renders yellow-green; HSO puts it in
+    # red and renders warm. Both are honest — compose holds one brightness scale
+    # across channels so their ratio survives — so the choice is which channel
+    # you want carrying the image.
+    "HSO":  {"R": "Ha", "G": "S-II", "B": "O-III"},
 }
 
 # FITS FILTER values vary by capture software; match on a squashed form.

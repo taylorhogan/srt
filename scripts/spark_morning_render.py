@@ -40,6 +40,19 @@ if _root not in sys.path:
 
 # Recipes in preference order: the richest palette the filters support.
 RECIPE_RULES = [
+    # HSO before SHO for a three-filter narrowband target. Both are honest —
+    # compose holds one brightness scale across channels either way — but on
+    # NGC 6888 the nebula measures Ha 4.20 ADU, S-II 2.62, O-III 0.36, so SHO
+    # puts the two strong channels on adjacent primaries (red/green, Ha
+    # dominant) and washes to yellow-green, while HSO puts them on opposing
+    # primaries and their ratio reads directly as hue: green where S-II
+    # dominates the rim, orange where Ha and S-II overlap.
+    #
+    # Caveat worth knowing when reading the output: green IS the S-II channel,
+    # and S-II is the channel the denoiser under-retains most (0.572 against
+    # Ha's 0.954, step 31). HSO therefore shows that defect plainly rather than
+    # burying it in a mixture — better to look at, less forgiving.
+    ("HSO", {"Ha", "S-II", "O-III"}),
     ("SHO", {"S-II", "Ha", "O-III"}),
     ("HOO", {"Ha", "O-III"}),
     ("LRGB", {"L", "R", "G", "B"}),

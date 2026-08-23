@@ -518,7 +518,8 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("stage", choices=("stacks", "compose", "routine"))
     ap.add_argument("--dso", default="ngc5907")
-    ap.add_argument("--recipe", default="LRGB", choices=("LRGB", "HOO", "SHO"))
+    ap.add_argument("--recipe", default="LRGB",
+                    choices=("LRGB", "HOO", "SHO", "HSO"))
     ap.add_argument("--filters", default="",
                     help="override the recipe's filter list")
     ap.add_argument("--lum", default="",
