@@ -18,6 +18,7 @@ import math
 import operator
 import os
 import sys
+import time
 from collections.abc import Generator
 from typing import Any, Optional
 
@@ -95,8 +96,114 @@ _TYPE_OVERRIDES = {
     'ic405':   'N',   # Flaming Star Nebula   SIMBAD: Rad
 }
 
+# SIMBAD access, built to survive the server being unreachable.
+#
+# Measured 2026-08-23, during a real CDS Strasbourg outage (DNS resolved,
+# TCP timed out): `tonight` posted nothing for 14+ minutes and had to be
+# cancelled. Three separate faults, all fixed here.
+#
+# 1. TIMEOUT. astroquery's default is 60 s, and get_dso_type() runs one query
+#    PER waiting target, so an outage costs 60 s x queue length before the
+#    first line of output. Nothing here is worth a minute: a lookup that has
+#    not answered in 10 s is not going to.
+_SIMBAD_TIMEOUT_S = 10
+
+# 2. IMPORT-TIME QUERY. add_votable_fields('otype') hits the network -- it
+#    fetches the votable field list to validate the name -- so with SIMBAD
+#    down this module could not be IMPORTED, and that takes the social server
+#    and scheduler down with it, not just the grid. It is now deferred to
+#    first use and failure is survivable.
 _simbad = Simbad()
-_simbad.add_votable_fields('otype')
+_simbad.TIMEOUT = _SIMBAD_TIMEOUT_S
+_simbad_ready: Optional[bool] = None
+_simbad_retry_after = 0.0
+
+# How long to stop trying after a failed setup. Without this the retry runs
+# once PER TARGET and the outage cost comes straight back: measured 21 s per
+# lookup during the 2026-08-23 outage (two connection attempts), which on a
+# ten-target queue is 3.5 minutes of silence -- the very thing being fixed.
+# One attempt per 10 minutes keeps a recovery visible within a single run
+# while making the outage effectively free.
+_SIMBAD_RETRY_COOLDOWN_S = 600
+
+
+def _get_simbad() -> Optional[Simbad]:
+    """The configured Simbad client, or None if SIMBAD cannot be set up.
+
+    Retries after :data:`_SIMBAD_RETRY_COOLDOWN_S`, never on every call: an
+    outage is temporary, so a failure at import must not disable the otype
+    lookup for the life of the process, but retrying per target reintroduces
+    the stall.
+    """
+    global _simbad_ready, _simbad_retry_after
+    if _simbad_ready:
+        return _simbad
+    if time.monotonic() < _simbad_retry_after:
+        return None
+    try:
+        _simbad.add_votable_fields('otype')
+        _simbad_ready = True
+        return _simbad
+    except Exception as e:  # noqa: BLE001 -- offline is a normal state here
+        _simbad_ready = False
+        _simbad_retry_after = time.monotonic() + _SIMBAD_RETRY_COOLDOWN_S
+        LOGGER.warning("SIMBAD unavailable (%s: %s); object types fall back "
+                       "to the cache, then '?'. Not retrying for %d s.",
+                       type(e).__name__, e, _SIMBAD_RETRY_COOLDOWN_S)
+        return None
+
+
+# 3. NO CACHE. An object's SIMBAD type never changes, so querying it every
+#    night is pure cost -- and it is the only reason the grid needs the
+#    network at all. Types are cached locally and the cache is consulted
+#    FIRST, so a warm cache makes an outage invisible.
+#
+#    The cache stores the RAW otype code ("GlC", "OpC", ...), not the derived
+#    G/C/N letter, with "" meaning SIMBAD resolved nothing. That choice matters
+#    twice over: the letter sets below are still being corrected as codes are
+#    found missing from them (see the otypedef note), and a cache of letters
+#    would freeze today's mapping bugs in place -- whereas a cache of codes is
+#    re-mapped on every read, so a set fix applies retroactively with no
+#    re-query. It also lets unresolvable names ("gravwav", placeholder queue
+#    entries) be cached as "": measured on the live 43-target queue, not
+#    caching those cost 20 s per run for names that will never resolve.
+_TYPE_CACHE_PATH = Path(__file__).resolve().parent.parent / "local" / "dso_types.json"
+_type_cache: Optional[dict] = None
+
+
+def _load_type_cache() -> dict:
+    global _type_cache
+    if _type_cache is None:
+        try:
+            with open(_TYPE_CACHE_PATH) as fh:
+                _type_cache = json.load(fh)
+        except Exception:
+            _type_cache = {}
+    return _type_cache
+
+
+def _save_type_cache(key: str, value: str) -> None:
+    cache = _load_type_cache()
+    cache[key] = value
+    try:
+        _TYPE_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        tmp = str(_TYPE_CACHE_PATH) + ".tmp"
+        with open(tmp, "w") as fh:
+            json.dump(cache, fh, indent=2, sort_keys=True)
+        os.replace(tmp, _TYPE_CACHE_PATH)
+    except Exception as e:  # noqa: BLE001 -- the cache is an optimisation
+        LOGGER.warning("could not write %s: %s", _TYPE_CACHE_PATH, e)
+
+
+def _letter_for_otype(otype: str) -> str:
+    """Map a raw SIMBAD otype code to the grid's G/C/N, or "?"."""
+    if otype in _GALAXY_TYPES:
+        return "G"
+    if otype in _CLUSTER_TYPES:
+        return "C"
+    if otype in _NEBULA_TYPES:
+        return "N"
+    return "?"
 
 
 def get_dso_type(name: str) -> str:
@@ -106,26 +213,50 @@ def get_dso_type(name: str) -> str:
     the name, or resolved it to something outside the three families -- the
     queue carries placeholder entries such as ``gravwav`` that are not objects
     at all, and those should stay visibly unclassified.
+
+    Order is override -> local cache -> SIMBAD. The cache exists so that a
+    SIMBAD outage costs nothing on a queue that has been ranked before (see
+    the notes at :data:`_TYPE_CACHE_PATH`); a hit skips the network entirely.
     """
-    override = _TYPE_OVERRIDES.get(name.strip().lower().replace(" ", ""))
+    key = name.strip().lower().replace(" ", "")
+    override = _TYPE_OVERRIDES.get(key)
     if override is not None:
         return override
+    cached = _load_type_cache().get(key)
+    if cached is not None:
+        # Raw otype codes are re-mapped on read so set corrections apply to
+        # already-cached objects. Entries written by the first version of this
+        # cache held the derived letter instead; accept those unchanged rather
+        # than forcing a re-query of the whole queue.
+        if cached in ("G", "C", "N"):
+            return cached
+        return _letter_for_otype(cached)
+    simbad = _get_simbad()
+    if simbad is None:
+        return "?"
     try:
-        result = _simbad.query_object(name)
+        result = simbad.query_object(name)
         # An unresolvable name yields an empty table, not None; indexing it
-        # raises rather than returning anything useful.
+        # raises rather than returning anything useful. Cached as "" -- a name
+        # SIMBAD does not know is a permanent fact about the name, and these
+        # are the queue's placeholder entries, which recur every single night.
         if result is None or len(result) == 0:
+            _save_type_cache(key, "")
             return "?"
         col = 'OTYPE' if 'OTYPE' in result.colnames else 'otype'
         otype = str(result[col][0]).strip()
-        if otype in _GALAXY_TYPES:
-            return "G"
-        if otype in _CLUSTER_TYPES:
-            return "C"
-        if otype in _NEBULA_TYPES:
-            return "N"
-        return "?"
-    except Exception:
+        _save_type_cache(key, otype)
+        return _letter_for_otype(otype)
+    except Exception as e:  # noqa: BLE001 -- an outage must not break the grid
+        # Setup succeeded but the query did not: SIMBAD is reachable enough to
+        # connect and not enough to answer. Trip the same cooldown, or every
+        # remaining target pays the full timeout one after another.
+        global _simbad_ready, _simbad_retry_after
+        _simbad_ready = False
+        _simbad_retry_after = time.monotonic() + _SIMBAD_RETRY_COOLDOWN_S
+        LOGGER.warning("SIMBAD lookup failed for %s (%s: %s); not retrying "
+                       "for %d s", name, type(e).__name__, e,
+                       _SIMBAD_RETRY_COOLDOWN_S)
         return "?"
 
 

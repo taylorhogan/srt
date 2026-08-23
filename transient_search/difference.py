@@ -549,6 +549,12 @@ def _resolve_simbad(cands: list, cfg: dict,
     except Exception:
         return
     sim = Simbad()
+    # astroquery defaults to 60 s. This loop already breaks out on the first
+    # failure, so an outage costs one timeout rather than one per candidate --
+    # but 60 s of a stalled `transient` run still looks like a hang, and a
+    # lookup that has not answered in 10 s is not going to. Same reasoning as
+    # astro_dso_visibility._SIMBAD_TIMEOUT_S, after the 2026-08-23 CDS outage.
+    sim.TIMEOUT = 10
     try:
         sim.add_votable_fields("otype")
     except Exception:
