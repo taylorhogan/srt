@@ -225,8 +225,19 @@ def main():
         ra1, dec1, _ = _read(pwi4)
         dra, ddec = _sep_arcsec(ra0, dec0, ra1, dec1)
         results["pwi4_ra"] = dra
-        print("   achieved dRA %+.1f arcsec (commanded %+.0f), dDec %+.1f\n"
-              % (dra, off, ddec))
+        # PWI4's ra_add_arcsec is in RA-COORDINATE arcsec, while _sep_arcsec
+        # reports great-circle arcsec on the sky -- the two differ by cos(dec),
+        # which at dec 56.9 is 0.547. Measured 2026-08-24: commanded 30 gave
+        # 16.40 on-sky against a predicted 16.40, a ratio of 0.9999. Comparing
+        # the raw numbers instead makes a perfectly executed offset look like
+        # 55% compliance, which is exactly the wrong conclusion to draw from
+        # the test this script exists to run.
+        import math
+        expect_ra = off * math.cos(math.radians(dec0))
+        results["pwi4_ra_expected"] = expect_ra
+        print("   achieved dRA %+.1f arcsec on sky (commanded %+.0f arcsec of RA"
+              " = %+.1f on sky at dec %.1f), dDec %+.1f\n"
+              % (dra, off, expect_ra, dec0, ddec))
         pwi4.mount_offset(ra_reset=0)
         time.sleep(SETTLE_S)
 
@@ -283,9 +294,11 @@ def main():
     tol = 0.4 * off
     pr, pd = results.get("pwi4_ra"), results.get("pwi4_dec")
     if pr is not None:
-        held = abs(pr) >= tol
-        print("PWI4 RA offset:  %s (%.1f of %.0f arcsec)"
-              % ("HELD" if held else "ERASED", pr, off))
+        exp = results.get("pwi4_ra_expected", off)
+        held = abs(pr) >= 0.4 * abs(exp)
+        print("PWI4 RA offset:  %s (%.1f of %.1f arcsec expected on sky, %.0f%%)"
+              % ("HELD" if held else "ERASED", pr, exp,
+                 100.0 * abs(pr) / max(abs(exp), 1e-9)))
         if held:
             print("  => the mount CAN hold an RA offset. NINA's pulse-guide path\n"
                   "     is what fails, so dithering via PWI4's offset API would work.")
