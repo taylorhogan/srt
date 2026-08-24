@@ -76,7 +76,8 @@ def per_tile_retention(raw_path: str, model_path: str, tile: int, min_px: int):
     sb = xc.smoothed_sb(r, 64) / sig
 
     ck = torch.load(model_path, map_location="cpu", weights_only=False)
-    model = UNet(residual="linear")
+    model = UNet(residual="linear",
+                 features=tuple(ck.get("features") or (32, 64, 128, 256)))
     model.load_state_dict(ck["model_state"])
     model.eval()
     dev = "cuda" if torch.cuda.is_available() else "cpu"

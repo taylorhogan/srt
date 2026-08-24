@@ -93,18 +93,18 @@ and any fine-scale claim must first beat the bound in step 32.
 
 The two levers step 29 names, neither ever tried, in this order:
 
-**2a. Fine-scale-weighted loss.** Plain L2 on asinh pixels is dominated by
-large-scale agreement; fine scales are mostly noise, so the loss barely pays
-for keeping them. Replace with multi-scale L2 (Laplacian-pyramid or FFT-band
-weighting, weights ∝ the Phase-0 headroom per band). One config, 2–3 seeds on
-sh2-92 deep, judged by T(k) against the six existing baseline seeds. Cost ~4 h
-at 20 epochs.
+**2a. Headroom-weighted loss — RAN 2026-08-23, REFUTED (manual step 34).**
+No band where the worst msl2 seed beats the best baseline; 8–16 px separated
+worse; seed spread ~6× the baseline's. A diagonal weighting cannot move the L2
+optimum and the model was evidently not capacity-starved in the mid band. The
+loss lever is closed; the headroom question falls entirely to architecture.
 
-**2b. Fifth U-Net level** (receptive field ~140 → ~280 px). Patch 512 moved
-exactly the bands near the current receptive field (step 30), which is the
-strongest hint architecture sets the mid-band ceiling. Same protocol. Only run
-if 2a leaves mid-band headroom unclaimed — the two overlap, and the loss change
-is cheaper than the architecture change.
+**2b. Fifth U-Net level — RUNNING 2026-08-23** (features 32,64,128,256,256,
+10.97M params, receptive field ~2×; checkpoints now carry `features` so every
+loader rebuilds the right shape). Two seeds, same protocol, judged by T(k) in
+the 16–256 px bands against the three baselines. This is the last Phase-2
+lever; if it also fails to reach the headroom, the plan's stop condition
+applies and the manual records the mid-band gap as unexplained.
 
 Explicitly **not** in this phase, with the step that killed each: training
 target (27, 31), scene count (22), channel count (31), pooling scheme (25, 31),

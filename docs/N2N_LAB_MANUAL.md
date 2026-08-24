@@ -1703,6 +1703,54 @@ moving.** Judged on the loss curve alone, the epoch cut would have shipped —
 which is precisely why the improvement plan required judging it on retention
 and transfer instead.
 
+### 34. Headroom-weighted loss refuted — and a one-seed story corrected mid-flight
+
+2026-08-23, Phase 2a. Step 32 measured +0.07-0.27 of claimable mid-band signal
+and the obvious lever was to spend the loss there: `nn/losses.py`, a
+Laplacian-pyramid L2 on the residual with octave weights proportional to the
+measured headroom (peak 1.7x at 16-64 px, mean-normalised so lr and grad-clip
+transfer). Two seeds on the sh2-92 deep p512 config, judged by T(k) against the
+three plain-L2 baselines, everything measured in one run under crop stitching.
+
+| band (px) | baseline, 3 seeds | msl2, 2 seeds | |
+| --- | --- | --- | --- |
+| 256-512 | 0.920-0.941 | 0.903-0.943 | overlap |
+| 128-256 | 0.852-0.892 | 0.788-0.883 | overlap |
+| 64-128 | 0.846-0.865 | 0.718-0.849 | overlap |
+| 32-64 | 0.702-0.811 | 0.633-0.729 | overlap |
+| 8-16 | 0.602-0.661 | 0.486-0.600 | **msl2 worse, separated** |
+| 4-8 | 0.329-0.337 | 0.320-0.345 | overlap |
+
+**Refuted, on three counts**: no band where msl2's worst seed beats the
+baseline's best; one band separated worse; and a seed-to-seed spread of ~0.13
+at 64-128 px against the baseline's 0.02 — the weighting destabilises training
+without buying anything. Photometry also wobbled (flux 0.995 and 1.016 across
+the two seeds, straddling the floor).
+
+**A correction to the interim read, recorded because it is the protocol's whole
+point.** Seed 0 alone showed deficits of 0.08-0.13 in the mid band and was
+reported as "worse across the board, 5-10x the seed spread" — implicitly using
+the *baseline's* spread. Seed 1 landed 0.13 higher in those same bands: the
+stark picture was substantially msl2's own, much larger, variance. One seed of
+the new arm told a false story in both magnitude and mechanism. The two-seed
+rule (step 28) is what caught it.
+
+Why a diagonal band weighting was never going to shift the optimum is clear in
+hindsight: for any fixed positive weights the minimiser of a weighted L2
+against a noisy target is still the conditional mean, band by band. The
+weighting can only reallocate finite capacity — and the measurement says the
+plain-L2 model was not capacity-starved in the mid band, because paying more
+for mid-band error changed nothing except stability. **The mid-band headroom is
+therefore not reachable through the loss**, which narrows the remaining
+explanation to architecture: the receptive field. Phase 2b (a fifth U-Net
+level, ~2x the receptive field, 10.97M against 7.76M parameters) is training as
+this is written, two seeds, same protocol.
+
+Also in this phase, the confound hygiene that made the comparison valid at all:
+baselines re-measured under crop stitching before judging msl2 against them
+(crop shifts T(k) by <=0.006 per band vs blend), since crop became the default
+mid-experiment.
+
 ### Standing tally of what has been tried against the 2026-08-13 baseline
 
 **This tally was invalidated on 2026-08-17 and is kept for the record.** It read:

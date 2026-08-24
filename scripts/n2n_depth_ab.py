@@ -186,7 +186,8 @@ def train_arm(groups: dict, tag: str, args) -> Path:
         f"{pairs} draws/epoch")
 
     dev = "cuda" if torch.cuda.is_available() else "cpu"
-    model = UNet(residual="linear").to(dev)
+    feats = tuple(int(f) for f in args.features.split(",")) if args.features         else (32, 64, 128, 256)
+    model = UNet(residual="linear", features=feats).to(dev)
     opt = torch.optim.Adam(model.parameters(), lr=3e-4)
     sch = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=args.epochs)
     if args.loss == "msl2":
@@ -253,7 +254,7 @@ def train_arm(groups: dict, tag: str, args) -> Path:
                 "train_dso": args.train, "test_dso": args.test, "seed": args.seed,
                 "groups": sorted(groups), "epochs": args.epochs,
                 "source_bias": args.source_bias, "train_seed": tseed,
-                "patch_size": patch, "batch_size": batch,
+                "patch_size": patch, "batch_size": batch, "features": feats,
                 "train_depth": {k: g["train_per"] for k, g in groups.items()}}, path)
     log(f"  best val {best:.5f} at epoch {best_ep} -> {path.name}")
     del tr, va, ds, vs
@@ -315,6 +316,10 @@ def main() -> int:
                          "as the dominant source of variance (step 15).")
     ap.add_argument("--loss", choices=("l1", "l2", "msl2"), default="l2")
     ap.add_argument("--pairs", type=int, default=0)
+    ap.add_argument("--features", default="",
+                    help='UNet feature widths, e.g. "32,64,128,256,256" for a '
+                         "fifth level (~2x the receptive field). Stored in the "
+                         "checkpoint so loaders can rebuild the right shape.")
     ap.add_argument("--patch", type=int, default=0,
                     help="training patch size; 0 uses cfg['nn'] (256). The "
                          "receptive field is ~140 px, so only 21%% of a 256 "
@@ -346,6 +351,8 @@ def main() -> int:
             tag += f"_ts{args.train_seed}"
         if args.patch:
             tag += f"_p{args.patch}"
+        if args.features:
+            tag += f"_L{len(args.features.split(','))}"
         log(f"\n{'='*66}\narm {tag}: train {'+'.join(targets)}, test {args.test}\n{'='*66}")
         groups = {}
         for filt in filters:
