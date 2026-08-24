@@ -27,11 +27,24 @@ frame at purity ~1.0 -- and what breaks is the match of detections to the
 catalogue. Its signature is a FLAT completeness curve (a real detection limit
 falls off steeply with brightness) and limiting_mag going None.
 
-RISK. The solution is a measurement calibration, not a hardware interlock. The
-one gate that reads it (allsky_monitor._add_roof) treats "many catalogue stars
-match" as proof the roof is OPEN, so a stale or wrong solution drives matches
-DOWN and the gate falls back to vision. That direction is safe, and a closed
-roof cannot produce catalogue matches at any orientation. Nothing here moves
+WHICH CAMERA THIS IS, because there are two and they must not be confused.
+This handles the "sky camera" profile ONLY -- the Kasa KC420WS at
+192.168.87.52, which sits OUTSIDE the roof, and whose solution is
+local/sky_solution.json.
+
+It is NOT the "allsky camera" (ASI120MC-S, under the roof,
+local/allsky_solution.json). That distinction is load-bearing for one reason:
+allsky_monitor._add_roof infers "the roof is open" from catalogue stars landing
+on detections, and that inference is only valid for a camera UNDER the roof,
+where a shut roof means no stars. Applied to this outdoor camera the same test
+would read "roof open" on every clear night regardless of the roof, because it
+can always see sky. It is not applied here, and must never be: nothing in this
+file, and nothing reading local/sky_solution.json, may be used to decide roof
+state.
+
+RISK. This camera's solution is a measurement calibration that feeds NO roof
+gate and no hardware interlock -- only the charts, the compass annotation, and
+the sky-circle geometry that rain detection measures inside. Nothing here moves
 hardware.
 
 Usage:
