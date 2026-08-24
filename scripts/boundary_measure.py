@@ -130,15 +130,43 @@ def _fmt(rec):
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--verdict", default=None,
+                    help="ONE-SHOT: capture a frame NOW and file it with this "
+                         "verdict (clears / marginal / would-hit [+ inches]). "
+                         "This is the mode to use when the scope is positioned "
+                         "by hand a few times, rather than driven through many "
+                         "poses -- there is no loop to keep running and nothing "
+                         "to time a spoken verdict against.")
     ap.add_argument("--note", default=None,
-                    help="append a timestamped note (the user's verdict for the "
-                         "current pose: clears / marginal / would-hit, plus "
-                         "inches if measured) instead of running the loop")
+                    help="append a timestamped note WITHOUT capturing a frame "
+                         "(joins to loop samples by time)")
     ap.add_argument("--pose", default=None,
                     help="optional pose label to attach to --note")
     ap.add_argument("--interval", type=float, default=5.0,
                     help="seconds between samples (default 5)")
     args = ap.parse_args()
+
+    if args.verdict is not None:
+        parked = _parked_reference()
+        rec = sample(parked)
+        rec["kind"] = "verdict"
+        rec["verdict"] = args.verdict
+        if args.pose is not None:
+            rec["pose"] = args.pose
+        # sample() already appended the plain sample; append the tagged copy so
+        # the verdict and the measurement it refers to are ONE record and cannot
+        # be mis-joined later.
+        _append(rec)
+        px = rec.get("disp_px")
+        print("%s  |  %s" % (_fmt(rec), args.verdict))
+        if px is not None:
+            print("   displacement from park: %.1f px  (~%.2f deg at the "
+                  "unrefined %.0f px/deg estimate)" % (px, px / PX_PER_DEGREE,
+                                                       PX_PER_DEGREE))
+        elif not rec["marker_ids"]:
+            print("   NOTE: tag not detected at this pose -- beyond detection "
+                  "range, which is itself a result worth having.")
+        return 0
 
     if args.note is not None:
         rec = {"kind": "note", "when": _now(), "note": args.note}
