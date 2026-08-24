@@ -1751,6 +1751,69 @@ baselines re-measured under crop stitching before judging msl2 against them
 (crop shifts T(k) by <=0.006 per band vs blend), since crop became the default
 mid-experiment.
 
+### 35. The fifth level wins at one amplitude — and the amplitude was the blind spot
+
+2026-08-24. Phase 2b, and the deferred Phase 0c that turned out to govern it.
+
+**2b at the standard amplitude: the first separated win of the campaign.** A
+fifth U-Net level (features 32,64,128,256,256, 10.97M params, ~2x receptive
+field; checkpoints now carry `features` and every loader rebuilds from them).
+Two seeds against the three 4-level baselines, fractal injection at 1 sigma RMS:
+
+| band (px) | baseline, 3 seeds | 5-level, 2 seeds | |
+| --- | --- | --- | --- |
+| 64-128 | 0.846-0.865 | **0.897-0.900** | better, separated |
+| 32-64 | 0.702-0.811 | **0.859-0.860** | better, separated |
+| 8-16 | 0.602-0.661 | 0.470-0.658 | overlap, l5 spread 0.19 |
+
+The mid-band gain is tight across seeds (0.001-0.003 spread) — systematic, not
+luck — and claims about half the gap to the Wiener bound. The apparent 8-16 px
+regression from seed 0 alone did not survive seed 1 (one-seed trap, again, in
+the opposite direction from msl2's). Photometry clean (flux 0.9996-1.0120).
+
+**But retention on real ic1396 emission did not move** (Ha 0.314-0.316 against
+baselines 0.327-0.363 at 4-8 sigma — at the floor, slightly the wrong side).
+The transfer gain refused to appear in the display metric, which is the step-29
+marginal-vs-absolute gap demanding to be measured. That is Phase 0c, listed in
+the plan's analysis phase and **deferred — a sequencing error, recorded as
+such**, because it turns out to govern everything Phase 2 did:
+
+**0c: the transfer function is strongly amplitude-dependent.** Injecting the
+same field at three amplitudes, 64-128 px band:
+
+| injected RMS | base_s0 | l5_s0 |
+| --- | --- | --- |
+| 0.25 sigma | 0.621 | **0.540** |
+| 1.0 sigma | 0.846 | **0.897** |
+| 2.0 sigma | 0.863 | 0.829 |
+
+Swings of +-0.25 per band, and opposite trends in different bands (base 8-16
+goes 0.896 -> 0.661 -> 0.580 as amplitude rises while its mid bands go up). So:
+
+1. **T(k) at a single amplitude is an operating-point measurement, not a filter
+   property.** Every transfer number in steps 29-35 carries an implicit "at
+   1 sigma RMS" that was never stated until now.
+2. **The fifth level's win is amplitude-local.** At 0.25 sigma — where faint
+   real nebulosity lives — it is *worse* than the baseline in the bands it was
+   built to improve. That is why retention never moved: the gain exists at an
+   amplitude real faint emission does not have.
+3. The step-29 gap (real emission at 0.384 where injection predicted better) is
+   explained in kind: the injection was probing a more favourable operating
+   point than the scene occupies.
+
+**Phase 2 closes with no promotion.** Both levers ran: the loss cannot reach
+the headroom (34), and the architecture reaches it only at one amplitude (35).
+The receptive-field mechanism is proven — the mid-band ceiling does move with
+it — but a model that helps bright structure and hurts faint structure in the
+same bands fails the plan's no-regression gate outright.
+
+What a future attempt needs, stated for whoever picks this up: the objective
+must be an **amplitude-swept** transfer surface T(k, A), not a slice of it; and
+the Wiener comparison of step 32 should be redone per amplitude, since the
+bound comparison inherits the same caveat. Until then production stays as it
+is, and the honest levers remain the ones steps 24-31 established: integration
+depth and photons.
+
 ### Standing tally of what has been tried against the 2026-08-13 baseline
 
 **This tally was invalidated on 2026-08-17 and is kept for the record.** It read:

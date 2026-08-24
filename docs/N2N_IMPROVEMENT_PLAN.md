@@ -48,11 +48,11 @@ Wiener-optimal transfer is T*(k) = S(k)/(S(k)+N(k)).
 power sits at 32–96 px (54%) and 256–768 px (25%), i.e. the overlap and tile
 scales. Mechanism confirmed.
 
-**0c. Marginal-vs-absolute gap probe** (step 29's open gap: real ic1396 reads
-0.384 where T(k) predicts better). Inject the fractal field at 0.25σ and 2σ
-amplitudes; if recovered fraction depends on amplitude, the operator's response
-is state-dependent and injection numbers need a caveat everywhere they are
-quoted. Pure computation on existing models.
+**0c. Marginal-vs-absolute gap probe — RAN 2026-08-24, decisive (manual step
+35), and deferred past Phase 2 in error.** T(k) swings ±0.25 per band with
+injected amplitude; the 5-level model's mid-band win at 1σ inverts to a loss at
+0.25σ. Run first, this would have disqualified single-amplitude T(k) as the
+Phase-2 objective before either training campaign.
 
 ## Phase 1 — cheap certain wins (~1 day total, mostly unattended)
 
@@ -99,12 +99,13 @@ worse; seed spread ~6× the baseline's. A diagonal weighting cannot move the L2
 optimum and the model was evidently not capacity-starved in the mid band. The
 loss lever is closed; the headroom question falls entirely to architecture.
 
-**2b. Fifth U-Net level — RUNNING 2026-08-23** (features 32,64,128,256,256,
-10.97M params, receptive field ~2×; checkpoints now carry `features` so every
-loader rebuilds the right shape). Two seeds, same protocol, judged by T(k) in
-the 16–256 px bands against the three baselines. This is the last Phase-2
-lever; if it also fails to reach the headroom, the plan's stop condition
-applies and the manual records the mid-band gap as unexplained.
+**2b. Fifth U-Net level — RAN, closed with no promotion (manual step 35).**
+The only separated T(k) win of the campaign (32–128 px, tight across seeds) —
+but amplitude-local: at 0.25σ it is worse than baseline in the same bands, and
+retention on real emission never moved. Mechanism proven, product unimproved.
+**Phase 2 is closed.** A future attempt needs an amplitude-swept objective
+T(k, A); production stays `pooledNB` / `pooled-filters`, and the working levers
+remain integration depth and photons.
 
 Explicitly **not** in this phase, with the step that killed each: training
 target (27, 31), scene count (22), channel count (31), pooling scheme (25, 31),
