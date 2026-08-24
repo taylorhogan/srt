@@ -1,0 +1,138 @@
+<article id="trunk-hoo" class="note">
+    <h2 class="note-title">The shadow is the subject</h2>
+    <div class="note-meta"><span class="note-date">2026-08-24</span> &middot; IC&nbsp;1396A, THE ELEPHANT TRUNK &middot; H&alpha; / O&nbsp;III &middot; NOISE2NOISE, POOLED NARROWBAND &middot; STATUS: DISPLAY ONLY</div>
+
+    <h3>Abstract</h3>
+
+    <p class="science-text note-abstract">
+        A night on the Elephant Trunk, stacked and denoised without a human in the loop and
+        delivered to a phone as a push notification before breakfast. The picture's most
+        striking feature is the thing that is not there: a black channel winding down the
+        middle of a red field, with stars showing through it. That darkness is not missing
+        data and not a failure of the processing. It is a cloud of dust, thick enough to
+        block the nebula behind it, and it can be shown to be real by measurement rather
+        than by eye &mdash; the dark region reads <em>below</em> the surrounding sky, which
+        nothing but absorption can do.
+    </p>
+
+    <h3>The picture</h3>
+
+    <figure>
+        <a href="images/trunk_hoo_denoised.jpg" target="_blank" rel="noopener noreferrer">
+            <img src="images/trunk_hoo_denoised.jpg" alt="The Elephant Trunk Nebula in HOO: a dark sinuous dust column silhouetted against a broad red field of hydrogen emission, with stars scattered across and through it.">
+        </a>
+        <figcaption>IC&nbsp;1396A on the night of 2026-08-23, composed as HOO:
+            H&alpha; &rarr; red, O&nbsp;III &rarr; green and blue. 14 accepted H&alpha;
+            frames and 21 accepted O&nbsp;III frames at 300&nbsp;s each, stacked onto a
+            single shared reference and denoised after stacking.</figcaption>
+    </figure>
+
+    <h3>What the dark lane is</h3>
+
+    <p class="science-text">
+        The Elephant Trunk is a cometary globule &mdash; a dense knot of dust and molecular
+        gas, compressed and sculpted by the ultraviolet light of a hot star outside this
+        frame. It sits <em>in front of</em> the wider IC&nbsp;1396 emission region. So the
+        arrangement is layered: hydrogen glowing across the background, an opaque cloud
+        between it and the telescope, and the cloud's silhouette is what the camera records.
+        The picture is not showing a hole in the nebula. It is showing a shadow.
+    </p>
+
+    <p class="science-text">
+        Dust does this because it is very good at stopping starlight. Grains a fraction of a
+        micron across absorb and scatter optical photons far out of proportion to their
+        mass, so a cloud that is diffuse by any terrestrial standard is functionally solid
+        at these wavelengths. What gets through is what was never behind the cloud in the
+        first place.
+    </p>
+
+    <h3>How we know it is dust and not a processing artefact</h3>
+
+    <p class="science-text">
+        A black region in an astronomical image is exactly the kind of feature that ought to
+        be distrusted, because there are several dull ways to manufacture one. A stretch
+        whose black point is set too high will clip faint signal to nothing. A denoiser that
+        is over-suppressing will flatten low-signal regions toward zero. Both would produce
+        something that looks like this, and neither would be the sky.
+    </p>
+
+    <p class="science-text">
+        The discriminator is the sign. Clipping and over-suppression can drive a region down
+        <em>to</em> the sky level; neither can push it <em>below</em>. Absorption can, because
+        a cloud in the foreground removes light that the surrounding sky still delivers.
+        Measured on the raw stacks against a single global sky value &mdash; no
+        two-dimensional background model, so nothing in the fitting could absorb the nebula
+        &mdash; the darkest tiles come out at <strong>&minus;2.74&nbsp;ADU in
+        H&alpha;</strong> and <strong>&minus;2.00&nbsp;ADU in O&nbsp;III</strong>, against
+        sky levels of 4.26 and 2.62. Averaged over a 128-pixel tile the noise on that
+        measurement is 0.012&nbsp;ADU, which puts the deficit at more than
+        <strong>200&nbsp;standard deviations</strong>. It is not noise, and it is not the
+        floor of the stretch.
+    </p>
+
+    <p class="science-text">
+        A second, independent check comes free with narrowband. The two filters were stacked
+        separately, from different frames, and they darken by similar amounts in the same
+        places &mdash; H&alpha; by 1.75&nbsp;&sigma; and O&nbsp;III by 1.62&nbsp;&sigma;
+        relative to their own skies, over the same span of the frame. Extinction by dust is
+        broadly achromatic across two lines this close together, so that agreement is what
+        the physics predicts. A processing fault would have no reason to land in the same
+        place, at the same depth, in two channels that never saw each other.
+    </p>
+
+    <p class="science-text">
+        The stars scattered across the dark lane are consistent with the same picture rather
+        than a contradiction of it. Most of them lie in front of the globule, between it and
+        the telescope, so nothing dims them; a few are background stars seen through thinner
+        material at the cloud's edges. In the darkest tiles the globule is removing roughly
+        60% of the H&alpha; signal that reaches the sky around it, which is why it renders as
+        flat black once stretched.
+    </p>
+
+    <h3>The denoiser, and the notification</h3>
+
+    <p class="science-text">
+        The image was produced by the observatory's Noise2Noise model, which is trained
+        without any clean reference at all: it learns from pairs of independent stacks of the
+        same field, where the only difference between the two is the noise. This particular
+        model was pooled across H&alpha; and O&nbsp;III and trained on a different object
+        entirely &mdash; it had never seen the Elephant Trunk. It is applied once, after
+        stacking rather than to each frame, which costs about eleven seconds per channel and
+        cannot launder a shared bias into an apparently converging result.
+    </p>
+
+    <p class="science-text">
+        The standing rule for this series applies here too, and it is not a formality. The
+        denoised frame preserves source flux to within a few percent &mdash; measured on this
+        field at 104&ndash;117% across every brightness level, faintest included &mdash; but
+        "within a few percent" is not good enough to measure with. The denoised image is for
+        looking at. Every number quoted above, including the depth of the shadow, was taken
+        from the calibrated linear stacks, never from the picture.
+    </p>
+
+    <p class="science-text">
+        The whole sequence runs unattended. A scheduled job each morning finds the targets
+        that gained frames overnight, builds a shared reference, stacks each filter onto it,
+        applies the quality gate, denoises, composes the colour image, and writes the
+        products alongside the night's data. The finished denoised composite is then sent
+        straight to a phone as a push notification, captioned with how many frames each
+        filter contributed and how many survived the gate &mdash; on this night, 14 of 20 in
+        H&alpha; and 21 of 26 in O&nbsp;III. The first look at the Elephant Trunk was on a
+        phone screen, several hours after the roof had already closed.
+    </p>
+
+    <p class="science-text caveat">
+        One caveat worth recording, because it nearly produced a wrong conclusion. The
+        morning's first automatic render set its black point as a percentile of the image's
+        own pixel distribution. On a denoised frame that rule misfires: removing the noise
+        narrows the distribution, so the same percentile lands at a different brightness, and
+        the black point ended up sitting <em>inside</em> the noise. Faint nebulosity that
+        survives in the raw frame &mdash; where random scatter lifts sky pixels above the
+        cut &mdash; fell below it once the scatter was gone, and the denoiser appeared to
+        have eaten the outer nebula. It had not; the flux was measurably still there. The
+        fix was to anchor the black point to the measured sky rather than to a percentile.
+        The lesson is the usual one in this work: a processing choice that is harmless on a
+        noisy image can become destructive on a clean one, and the failure looks exactly like
+        a discovery.
+    </p>
+</article>
