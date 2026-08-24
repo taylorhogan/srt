@@ -137,6 +137,15 @@ def main():
                          "by hand a few times, rather than driven through many "
                          "poses -- there is no loop to keep running and nothing "
                          "to time a spoken verdict against.")
+    ap.add_argument("--label-last", default=None,
+                    help="attach a verdict to the LAST capture already taken, "
+                         "without measuring again. This is the safe ordering: "
+                         "measure, read the number back, THEN label it. "
+                         "--verdict captures fresh, so if the scope moved "
+                         "between the operator judging and the command running, "
+                         "the label lands on the wrong pose -- which happened "
+                         "on 2026-08-24 (a verdict meant for 74 px was written "
+                         "against 559 px) and cost the session.")
     ap.add_argument("--note", default=None,
                     help="append a timestamped note WITHOUT capturing a frame "
                          "(joins to loop samples by time)")
@@ -145,6 +154,28 @@ def main():
     ap.add_argument("--interval", type=float, default=5.0,
                     help="seconds between samples (default 5)")
     args = ap.parse_args()
+
+    if args.label_last is not None:
+        try:
+            rows = [json.loads(l) for l in open(LOG_PATH) if l.strip()]
+        except Exception:
+            rows = []
+        caps = [r for r in rows if r.get("kind") in ("sample", "verdict")]
+        if not caps:
+            print("nothing captured yet -- take a measurement first")
+            return 1
+        last = dict(caps[-1])
+        last["kind"] = "verdict"
+        last["verdict"] = args.label_last
+        last["labelled_at"] = _now()
+        if args.pose is not None:
+            last["pose"] = args.pose
+        _append(last)
+        px = last.get("disp_px")
+        print("labelled the %s capture (%s) as: %s"
+              % (last["when"][11:19],
+                 ("%.1f px" % px) if px is not None else "no tag", args.label_last))
+        return 0
 
     if args.verdict is not None:
         parked = _parked_reference()
