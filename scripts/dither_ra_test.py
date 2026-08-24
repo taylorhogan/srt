@@ -30,12 +30,28 @@ So this runs two tests and a control:
     C  ASCOM PulseGuide in RA              -- what NINA does; expect: erased
        (skipped unless --ascom; needs the driver free, so not while NINA holds it)
 
-SAFETY. This MOVES THE MOUNT, so the absolute rule applies: the roof must be
-confirmed OPEN first, or a slewing scope can intersect the roof's travel path.
-The check is enforced below and the script aborts if the roof cannot be
-confirmed -- `--force` exists but should only be used when you are standing
-there looking at an open roof. Offsets are tiny (30 arcsec, 0.008 deg) and
-every one is reset in a finally block, so the mount ends where it started.
+DAYTIME IS FINE. Nothing here reads a camera or needs a star: the measurement
+is PWI4's own reported RA/Dec, from the encoders and the pointing model. The
+roof check is ordered for it too -- the inside Kasa cam is tried first, because
+it reads roof state correctly in full afternoon sun (green_excess), whereas the
+safety camera's exposure ladder could not reach parked quorum in bright
+daylight with the roof open on 2026-08-23.
+
+SAFETY, two separate rules.
+
+1. THE ROOF. This MOVES THE MOUNT, so the roof must be confirmed OPEN first or
+   a slewing scope can intersect the roof's travel path. Enforced below;
+   `--force` exists but is only for when you are standing there looking at an
+   open roof. Offsets are tiny (30 arcsec, 0.008 deg) and every one is reset in
+   a finally block, so the mount ends where it started.
+
+2. THE SUN -- and this one only bites in daylight, which is exactly when this
+   test is most convenient to run. A CDK17 tracking near the Sun will cook the
+   camera, the filters, or worse. So the mount's own pointing is checked
+   against the Sun's position and the test refuses inside SUN_KEEPOUT_DEG.
+   That is a check on where you have ALREADY pointed -- this script never
+   slews to a target, it only nudges by 30 arcsec, so it cannot walk you into
+   the Sun by itself. Choosing a safe target is still yours to do.
 
 Usage (roof open, mount powered, PWI4 connected and TRACKING a target):
     python scripts/dither_ra_test.py
@@ -57,6 +73,14 @@ if __package__ is None or __package__ == "":
 DEFAULT_ARCSEC = 30.0
 SETTLE_S = 6.0
 SAMPLES = 5
+
+# How close to the Sun the scope may already be pointing before this refuses to
+# run. Generous on purpose: the hazard is a 17-inch aperture concentrating
+# sunlight onto the filter wheel and sensor, and the cost of being wrong is the
+# camera. Scattered light well outside the disc is also enough to make any
+# daylight pointing unpleasant. Nothing here slews, so this only ever rejects a
+# pointing the operator already chose.
+SUN_KEEPOUT_DEG = 30.0
 
 
 def _read(pwi4, n=SAMPLES, gap=0.4):
@@ -108,6 +132,31 @@ def roof_is_open(force=False):
     return ok
 
 
+def sun_separation_deg(alt_degs, az_degs):
+    """Angular distance from the mount's current pointing to the Sun.
+
+    Returns (separation_deg, sun_alt_deg, sun_az_deg), or (None, None, None) if
+    the Sun's position cannot be computed -- which is treated as unsafe by the
+    caller rather than waved through.
+    """
+    import math
+    from datetime import datetime
+    import pytz
+    from astral import LocationInfo
+    from astral.sun import elevation, azimuth
+    from configs import config
+    loc = config.data()["location"]
+    li = LocationInfo("obs", "", loc["timezone"], loc["latitude"], loc["longitude"])
+    now = datetime.now(pytz.timezone(loc["timezone"]))
+    s_alt = float(elevation(li.observer, now))
+    s_az = float(azimuth(li.observer, now))
+    a1, a2 = math.radians(alt_degs), math.radians(s_alt)
+    dz = math.radians(az_degs - s_az)
+    sep = math.degrees(math.acos(max(-1.0, min(1.0,
+        math.sin(a1) * math.sin(a2) + math.cos(a1) * math.cos(a2) * math.cos(dz)))))
+    return sep, s_alt, s_az
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -141,6 +190,26 @@ def main():
         return 2
     print("mount tracking, alt %.2f az %.2f" % (s.mount.altitude_degs,
                                                 s.mount.azimuth_degs))
+
+    # Sun keep-out. Only meaningful with the Sun up, but checked unconditionally
+    # so a failure to compute it can never be mistaken for "safe".
+    try:
+        sep, s_alt, s_az = sun_separation_deg(s.mount.altitude_degs,
+                                              s.mount.azimuth_degs)
+    except Exception as e:
+        print("ABORT: could not compute the Sun's position (%s: %s). Refusing "
+              "to move the mount without knowing where the Sun is." % (type(e).__name__, e))
+        return 2
+    if s_alt > -1.0:
+        print("sun alt %.1f az %.1f -- scope is %.1f deg from the Sun" % (s_alt, s_az, sep))
+        if sep < SUN_KEEPOUT_DEG:
+            print("\nABORT: pointing is %.1f deg from the Sun, inside the %.0f deg "
+                  "keep-out. A 17-inch aperture near the Sun destroys the camera.\n"
+                  "Re-point well away from the Sun and run again. Nothing was moved."
+                  % (sep, SUN_KEEPOUT_DEG))
+            return 2
+    else:
+        print("sun is down (alt %.1f) -- no keep-out needed" % s_alt)
 
     off = args.arcsec
     results = {}
