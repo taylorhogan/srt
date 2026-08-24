@@ -271,7 +271,12 @@ def evaluate(model_path: Path, args) -> dict:
     from nn.noise2noise_model import UNet
 
     ck = torch.load(model_path, map_location="cpu", weights_only=False)
-    model = UNet(residual="linear")
+    # Rebuild the architecture the checkpoint was trained with. This was the
+    # one loader not taught about `features` when 5-level support landed, and
+    # it crashed the l5 seed-0 eval after a full training run — the checkpoint
+    # itself was fine.
+    model = UNet(residual="linear",
+                 features=tuple(ck.get("features") or (32, 64, 128, 256)))
     model.load_state_dict(ck["model_state"])
     model.eval()
     dev = "cuda" if torch.cuda.is_available() else "cpu"
