@@ -111,18 +111,44 @@ DEFAULT_DICT = "APRILTAG_36h11"   # what is physically mounted today
 # which was the wrong answer to the wrong question: it was almost certainly
 # safe, just not exactly parked.
 #
-# Scale, measured 2026-08-16 by moving the scope a known ~5 degrees:
-#   23 px per degree     detector noise 0.12 px (0.005 deg)
-#   hand re-park          40 px  (1.75 deg)  -- operator considers this safe
-#   deliberately unsafe  565 px  (24.6 deg)  -- OTA against the roof rail
+# MEASURED 2026-08-24. The boundary session finally ran: roof open, mount
+# UNPOWERED and the OTA positioned by hand, operator calling each pose while
+# looking at the clearance against the roof. Log:
+# local/boundary_session.jsonl. Full detail in
+# local/boundary_session_ABANDONED_20260824.jsonl is NOT part of this -- that
+# run was discarded because a verdict got attached to the wrong pose.
 #
-# So the boundary lies somewhere between 1.75 and 24.6 degrees and has NOT been
-# measured. 3 degrees is a placeholder chosen to accept a hand-park with margin
-# while staying far below the one known-unsafe pose. It is not derived from
-# clearance and must be replaced by a measured marginal-safe position.
+#     12.4 px  ( 0.5 deg)  clears
+#     94.3 px  ( 4.1 deg)  clears
+#    266.8 px  (11.6 deg)  MARGINAL -- operator: "close but would clear"
+#    296.8 px  (12.9 deg)  MARGINAL -- leaning hit
+#    603.7 px  (26.2 deg)  would hit
+#
+# Direction: a mix, mostly toward the roof -- i.e. the collision geometry
+# itself, which is the axis that matters. The tolerance is a single scalar
+# compared against displacement in ANY direction, so it is keyed to the tight
+# axis and is therefore conservative for others rather than permissive.
+#
+# The two independent marginal calls sit 30 px apart, 11% of the lower. That
+# spread IS the error bar -- the judgement is subjective, by eye -- and the 30%
+# margin taken below comfortably exceeds it.
+#
+# THE MEASUREMENT IS IN PIXELS, so the tolerance is defined in pixels and the
+# degree figure is derived for display only. That is the honest direction of
+# the conversion: PX_PER_DEGREE is still the unrefined single-estimate 23 from
+# 2026-08-16, because the mount was unpowered for this session and there is no
+# alt/az to fit a real scale against. Nothing in the safety path uses degrees.
 PX_PER_DEGREE = 23.0
-SAFE_DEGREES = 3.0
-TOLERANCE_PX = SAFE_DEGREES * PX_PER_DEGREE
+
+# The last pose the operator would still accept, times a 0.7 safety factor.
+# Was 69 px (a 3.0 degree placeholder chosen to clear a hand-park), which this
+# session shows was far too tight: 94 px was called an unambiguous clear, so
+# the gate had been refusing a wide band of genuinely safe poses -- and a
+# refusal to close the roof costs a night, or a wet telescope.
+_MARGINAL_PX = 266.8
+_SAFETY_FACTOR = 0.7
+TOLERANCE_PX = _MARGINAL_PX * _SAFETY_FACTOR      # 186.8 px, ~8.1 deg
+SAFE_DEGREES = TOLERANCE_PX / PX_PER_DEGREE       # display only
 
 
 # The default adaptive-threshold sweep (win 3..23 step 10) loses the tag when
