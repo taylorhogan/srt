@@ -170,8 +170,16 @@ def main() -> int:
         cmd = [sys.executable, os.path.join(_root, "scripts", "n2n_lrgb_render.py"),
                "routine", "--dso", dso.lower().replace(" ", ""), "--recipe", recipe,
                "--lum", lum, "--exptime", str(args.exptime), "--force"]
-        if recipe in NARROWBAND:
-            cmd += ["--white-pct", "99", "--black-pct", "65"]
+        # No narrowband stretch override. These used to be forced to
+        # --white-pct 99 --black-pct 65, and on the 2026-08-24 trunk render that
+        # put white at 4.71 ADU (clipping everything above ~3 sigma into flat
+        # red slabs) and black at 0.572 ADU — only 0.36 sigma above sky, i.e.
+        # inside the noise. Raw sky pixels dithered above that line and read as
+        # a veil while denoised sky correctly fell below it, so the denoiser
+        # looked as though it had eaten the nebulosity. It had not: tile
+        # photometry measured 104-117% flux retention at every brightness. The
+        # renderer's own defaults (white p99.95, black at sky - 0.5 sigma) are
+        # the ones that render this field correctly.
         log(f"\n$ {' '.join(cmd[1:])}")
         if args.dry_run:
             continue

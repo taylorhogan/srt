@@ -206,6 +206,46 @@ def build(args) -> int:
     return 0
 
 
+
+def sky_anchored_blacks(subbed: dict, black_sigma: float, black_pct: float,
+                        log=print) -> dict:
+    """Black point per channel, anchored to the sky rather than a percentile.
+
+    `BLACK_PCT = 65` sends 65% of pixels to black. That is a *relative* rule, and
+    denoising changes the distribution it is relative to — which is what wrecked
+    the 2026-08-24 trunk render. Measured there: p65 on Ha landed at 0.572 ADU
+    against a sky sigma of 1.569, i.e. **0.36 sigma above sky**, inside the noise.
+    In the raw, sky pixels are dithered above that line and read as a faint veil;
+    denoised, they correctly fall below it and go black, so the render looked as
+    though the model had eaten the nebulosity. It had not — tile photometry put
+    flux retention at 104-117% at every brightness.
+
+    Anchoring to `sky_median - black_sigma * sigma` puts the black point below the
+    sky in both frames, so genuine faint signal survives the stretch and the two
+    renders stay comparable. sigma comes from `sep.Background`, which sigma-clips,
+    so nebulosity does not inflate it.
+
+    black_sigma <= 0 restores the old percentile behaviour.
+    """
+    if black_sigma is None or black_sigma <= 0:
+        return {c: float(np.nanpercentile(subbed[c], black_pct)) for c in subbed}
+    import sep
+    out = {}
+    for c, arr in subbed.items():
+        a = np.ascontiguousarray(arr.astype(np.float32))
+        try:
+            bkg = sep.Background(a)
+            sig = float(bkg.globalrms)
+            med = float(np.nanmedian(a))
+        except Exception:
+            out[c] = float(np.nanpercentile(arr, black_pct))
+            continue
+        out[c] = med - black_sigma * sig
+        pct = float(np.mean(a <= out[c]) * 100.0)
+        log(f"    {c}: sky {med:+.3f} sigma {sig:.3f} -> black {out[c]:+.3f} ADU "
+            f"({pct:.0f}% of pixels, vs {black_pct:.0f}% under the old rule)")
+    return out
+
 def compose(args) -> int:
     import torch
 
@@ -381,6 +421,60 @@ def pick_model(filters) -> tuple:
     return domain, os.path.join(_root, DOMAIN_MODELS[domain])
 
 
+
+# Pushover caps an attachment at 2.5 MB. The composite is written at --max-px
+# (2400 by default) and lands around 0.5-1 MB, but a dense field can exceed the
+# cap, and Pushover rejects an oversized attachment with a healthy-looking HTTP
+# response — the same silent-failure mode utils/pushover.py exists to avoid. So
+# shrink until it fits rather than trusting it to.
+_PUSH_MAX_BYTES = 2_500_000
+
+
+def _fit_for_push(src: Path, work: Path) -> Path:
+    """Return a path whose JPEG is under the attachment cap."""
+    if src.stat().st_size <= _PUSH_MAX_BYTES:
+        return src
+    from PIL import Image
+    img = Image.open(src)
+    for max_px in (1800, 1400, 1000, 700):
+        img2 = img.copy()
+        r = max_px / max(img2.size)
+        if r < 1.0:
+            img2 = img2.resize((int(img2.width * r), int(img2.height * r)),
+                               Image.LANCZOS)
+        out = work / f"push_{src.stem}_{max_px}.jpg"
+        img2.save(out, quality=88, optimize=True)
+        if out.stat().st_size <= _PUSH_MAX_BYTES:
+            return out
+    return out
+
+
+def push_render(args, out_dir: Path, written: list, meta: dict, log=print) -> bool:
+    """Pushover the denoised composite. Never raises — a render must not fail
+    because a notification did."""
+    try:
+        from utils import pushover
+        pick = [p for p in written
+                if p.name == f"{args.dso}_{args.recipe}_denoised.jpg"]
+        if not pick:
+            log("  push: no denoised composite to send")
+            return False
+        img = _fit_for_push(pick[0], out_dir)
+        chans = (meta or {}).get("channels", {}) or {}
+        parts = [f"{k} {v.get('accepted', '?')}/{v.get('frames', '?')}"
+                 for k, v in sorted(chans.items())]
+        total = sum(int(v.get("accepted", 0)) for v in chans.values())
+        msg = (f"{args.dso} {args.recipe} denoised - "
+               + ", ".join(parts)
+               + (f" ({total} frames x {args.exptime}s)" if total else ""))
+        ok = pushover.push_message_with_picture(msg, str(img))
+        log(f"  push: {'sent' if ok else 'NOT ACCEPTED'} ({img.name}, "
+            f"{img.stat().st_size / 1024:.0f} KB)")
+        return ok
+    except Exception as e:  # noqa: BLE001
+        log(f"  push failed: {e}")
+        return False
+
 def routine(args) -> int:
     """Stack, export each channel, denoise, export again, compose both.
 
@@ -457,8 +551,7 @@ def routine(args) -> int:
     # denoised channel and manufactures a colour shift.
     subbed_raw, white = color_process._prepare(
         to_channels(raw), opts["subtract_background"], opts["mesh"], opts["white_pct"])
-    blacks = {c: float(np.nanpercentile(subbed_raw[c], opts["black_pct"]))
-              for c in subbed_raw}
+    blacks = sky_anchored_blacks(subbed_raw, args.black_sigma, opts["black_pct"], log)
     soft = opts["softening"]
     log(f"stretch from raw: white {white:.2f} ADU, blacks "
         + ", ".join(f"{c} {v:.2f}" for c, v in sorted(blacks.items())))
@@ -511,6 +604,9 @@ def routine(args) -> int:
         log(f"  wrote {pth.name}")
     log("")
     log(f"{len(written)} files in {out_dir}")
+
+    if args.push:
+        push_render(args, out_dir, written, meta, log)
     return 0
 
 
@@ -541,7 +637,16 @@ def main() -> int:
     ap.add_argument("--white-pct", type=float, default=99.95,
                     help="shared white point percentile; compose()'s 99.0 "
                          "saturates this field completely")
-    ap.add_argument("--black-pct", type=float, default=40.0)
+    ap.add_argument("--black-pct", type=float, default=40.0,
+                    help="only used when --black-sigma <= 0")
+    # Sky-anchored black, default on. A percentile black is relative to a
+    # distribution that denoising changes: on the 2026-08-24 trunk render p65
+    # landed 0.36 sigma above sky, so raw sky pixels were dithered above it and
+    # denoised ones fell below, and the render looked as though the model had
+    # eaten the nebulosity (it had not — flux retention measured 104-117%).
+    ap.add_argument("--black-sigma", type=float, default=0.5,
+                    help="black point at sky_median - N*sigma, measured from the "
+                         "raw; 0 or less restores the --black-pct percentile")
     ap.add_argument("--root", default="",
                     help="where to find LIGHT frames; default is this machine's subs_dir")
     ap.add_argument("--cal-root", default="",
@@ -552,6 +657,10 @@ def main() -> int:
     ap.add_argument("--out-dir", default="",
                     help="default is <image_dir>/Iris/<dso>/")
     ap.add_argument("--force", action="store_true")
+    ap.add_argument("--push", action="store_true",
+                    help="Pushover the denoised composite when the render finishes")
+    ap.add_argument("--no-push", dest="push", action="store_false")
+    ap.set_defaults(push=True)
     args = ap.parse_args()
 
     import sep
