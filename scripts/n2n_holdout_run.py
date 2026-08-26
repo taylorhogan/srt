@@ -229,6 +229,83 @@ def source_survival(raw: np.ndarray, denoised: np.ndarray,
     return out
 
 
+def extended_retention(raw: np.ndarray, denoised: np.ndarray,
+                       smooth: int = 64) -> dict:
+    """How much low-surface-brightness extended flux survives, by region.
+
+    The gate's other metrics cannot see this. `source_survival` and the aperture
+    photometry are point-source measurements, and `collapse_check` is a
+    whole-frame average; a model can score 97-99% on both while flattening a
+    galaxy halo. That is exactly what happened on ngc5907 (lab manual step 21):
+    faint extended flux kept at 76/36/51/41% for L/R/G/B, which is a *ratio*
+    error between channels and therefore a colour cast — a visible green halo —
+    found by eye because no number in the ladder was looking for it.
+
+    Three regions, all defined from a heavily smoothed copy of the raw frame:
+
+      core     bright extended structure, >10 sigma
+      halo     the low-surface-brightness band, 0.5-3 sigma  <- the one that matters
+      far sky  <0.1 sigma, the control
+
+    **Selection uses the smoothed frame, never the per-pixel value.** Picking
+    pixels by their own noisy value and then reading the denoised frame at those
+    pixels shows shrinkage even for a perfect denoiser, because a pixel sitting
+    at +1 sigma is mostly noise and its true value really is near zero. Smoothing
+    over `smooth` px averages that away, so the band is chosen by real surface
+    brightness. This function reproduces step 21's hand-drawn annulus result to
+    0.2 points of channel spread from an automatic region.
+
+    Far sky is reported as an absolute level, not a ratio: both frames sit near
+    zero there, so a ratio of two near-zero numbers is meaningless. Its job is to
+    confirm that the halo signal is real extended emission and not a residual
+    gradient — if far sky is not ~0 in both, the halo number cannot be trusted.
+
+    Regions are defined per channel from that channel's own frame, so the
+    absolute retention is comparable across runs. Comparing *between* filters
+    additionally assumes they share a pixel grid; the runner stacks each filter
+    onto its own reference, so treat the cross-filter spread as indicative.
+    """
+    import sep
+    from scipy.ndimage import binary_dilation, uniform_filter
+
+    from stacking.color_process import _remove_gradient
+
+    r = _remove_gradient(np.ascontiguousarray(raw.astype(np.float32)))
+    d = _remove_gradient(np.ascontiguousarray(denoised.astype(np.float32)))
+    sig = float(sep.Background(np.ascontiguousarray(r)).globalrms)
+    sm = uniform_filter(r, smooth)
+
+    # Point sources are handled by source_survival; exclude them so this
+    # measures extended structure only.
+    try:
+        src = sep.extract(np.ascontiguousarray(r), 6.0 * sig, minarea=5)
+        pt = np.zeros(r.shape, bool)
+        yy = np.clip(src["y"].astype(int), 0, r.shape[0] - 1)
+        xx = np.clip(src["x"].astype(int), 0, r.shape[1] - 1)
+        pt[yy, xx] = True
+        pt = binary_dilation(pt, iterations=6)
+    except Exception:
+        pt = np.zeros(r.shape, bool)
+
+    out = {"sky_sigma": sig, "point_masked_frac": float(pt.mean())}
+    bands = {"core": sm > 10 * sig,
+             "halo": (sm > 0.5 * sig) & (sm < 3 * sig),
+             "far_sky": sm < 0.1 * sig}
+    for name, m in bands.items():
+        m = m & ~pt
+        frac = float(m.mean())
+        out[f"{name}_frac"] = frac
+        if frac < 1e-4:
+            out[f"{name}_raw"] = out[f"{name}_den"] = float("nan")
+            continue
+        rv = float(np.median(r[m])); dv = float(np.median(d[m]))
+        out[f"{name}_raw"] = rv
+        out[f"{name}_den"] = dv
+        if name != "far_sky":
+            out[f"{name}_kept"] = dv / rv if abs(rv) > 1e-3 else float("nan")
+    return out
+
+
 def save_pair_pngs(raw: np.ndarray, denoised: np.ndarray, out_dir: Path,
                    stem: str, max_px: int = 1600) -> list[Path]:
     """Write before/after PNGs under ONE stretch computed from the raw frame.
@@ -443,7 +520,15 @@ def run_filter(filt: str, args, subs_dir: Path, out_dir: Path) -> dict:
         q = " ".join(f"{v:.3f}" for v in srv["flux_retained_quintiles"])
         log(f"  flux retained: median {srv['flux_retained_median']:.4f} | "
             f"faint->bright {q}")
+    ext = extended_retention(te_st[0], den)
+    log(f"  extended flux kept: core {100*ext.get('core_kept', float('nan')):.0f}%  "
+        f"halo {100*ext.get('halo_kept', float('nan')):.0f}%  "
+        f"(far-sky control raw {ext['far_sky_raw']:+.3f} / den {ext['far_sky_den']:+.3f} ADU)")
+    if ext.get("halo_kept", 1.0) < 0.70:
+        log("  *** loses >30% of low-surface-brightness flux — not colour-safe, "
+            "see lab manual step 21 ***")
     chk.update(srv)
+    chk.update({f"ext_{k}": v for k, v in ext.items()})
 
     pngs = save_pair_pngs(te_st[0], den, out_dir, f"{args.test}_{safe}")
 
@@ -520,7 +605,19 @@ def main() -> int:
     for r in results:
         log(f"  {r['filter']:6s} val={r['best_val']:.5f}@{r['best_epoch']:3d} "
             f"depth={r['train_depth']:3d} corr={r['corr_in_out']:.4f}/"
-            f"{r['ceiling']:.4f} ({100 * r['fraction_of_ceiling']:.0f}%)")
+            f"{r['ceiling']:.4f} ({100 * r['fraction_of_ceiling']:.0f}%) "
+            f"halo={100 * r.get('ext_halo_kept', float('nan')):.0f}%")
+
+    # The colour cast is a RATIO error between channels, so the spread in halo
+    # retention is the thing to watch — not any single channel's value. On
+    # ngc5907 the spread was ~40 points and showed up as a green halo that every
+    # point-source metric scored 97-99% on (lab manual step 21).
+    halos = [r.get("ext_halo_kept") for r in results
+             if r.get("ext_halo_kept") == r.get("ext_halo_kept")]
+    if len(halos) > 1:
+        spread = 100 * (max(halos) - min(halos))
+        log(f"  halo retention spread across filters: {spread:.0f} points"
+            + ("  *** colour cast likely ***" if spread > 15 else ""))
     import json
     (out_dir / "summary.json").write_text(json.dumps(results, indent=2))
     log("ALL DONE")

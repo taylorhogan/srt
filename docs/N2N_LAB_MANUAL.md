@@ -951,6 +951,19 @@ Consequences:
    region medians against a far-sky control, per channel — is cheap and should
    become part of it.
 
+   **Done 2026-08-26**: `extended_retention()` in `scripts/n2n_holdout_run.py`.
+   Three bands (core >10 sigma, halo 0.5-3 sigma, far sky <0.1 sigma) taken from
+   a 64px-smoothed copy of the raw, point sources masked, far sky reported as an
+   absolute level rather than a ratio of two near-zero numbers. Selection is on
+   the *smoothed* frame on purpose: picking pixels by their own noisy value and
+   reading the denoised frame there shows shrinkage even for a perfect denoiser,
+   because a pixel at +1 sigma is mostly noise. Re-measured on this same ngc5907
+   depth-matched set through the automatic regions: L 88 / R 50 / G 79 / B 51,
+   core 91-101%, far sky ~0 in both — a **38.6 point** channel spread against the
+   40.5 measured here by hand, from a region the operator never drew. The runner
+   warns below 70% halo retention, and the summary flags a cross-filter spread
+   over 15 points.
+
 #### Two display traps found rendering that comparison
 
 Neither is the model's fault and both produced a picture that looked like a
