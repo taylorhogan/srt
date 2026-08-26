@@ -1,4 +1,5 @@
 import logging
+import re
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -1143,17 +1144,37 @@ def _extract_filter(fits_path: Path) -> str:
 
 
 # Standard colour mapping for common narrowband/broadband filters.
+# Keyed on a SQUASHED filter name -- upper-cased with every non-alphanumeric
+# character removed -- because the FITS FILTER header and this table did not
+# agree and nothing said so.
+#
+# The header writes "O-III" and "S-II" WITH HYPHENS. The old table keyed on
+# "OIII"/"SII" without them, so both filters missed the lookup and fell through
+# to the same amber default: a night shot in S-II and O-III drew every point
+# the same colour, and the legend agreed with itself while disagreeing with the
+# plot. Reported 2026-08-26 after a night of exactly that pair.
+#
+# Squashing also absorbs "Ha"/"HA"/"H-alpha" and the 2024-era "O2" spelling for
+# O-III without needing a row each.
 _FILTER_COLORS = {
-    "L":  "#cccccc",
-    "R":  "#e74c3c",
-    "G":  "#2ecc71",
-    "B":  "#3498db",
-    "Ha": "#e74c3c",
-    "Oiii": "#2ecc71",
+    "L":    "#cccccc",
+    "R":    "#e74c3c",
+    "G":    "#2ecc71",
+    "B":    "#3498db",
+    "HA":   "#e74c3c",
+    "HALPHA": "#e74c3c",
     "OIII": "#2ecc71",
-    "Sii": "#9b59b6",
-    "SII": "#9b59b6",
+    "O2":   "#2ecc71",
+    "SII":  "#9b59b6",
+    "S2":   "#9b59b6",
 }
+_FILTER_COLOR_DEFAULT = "#f39c12"
+
+
+def _filter_color(name):
+    """Plot colour for a FITS FILTER value, tolerant of how it is spelled."""
+    key = re.sub(r"[^A-Z0-9]", "", str(name or "").upper())
+    return _FILTER_COLORS.get(key, _FILTER_COLOR_DEFAULT)
 
 
 def save_stats_plot(
@@ -1246,8 +1267,8 @@ def save_stats_plot(
     median_ecc  = float(np.median(eccs))
 
     unique_filters = sorted(set(frame_filters) | set(sky_filters))
-    star_colors = [_FILTER_COLORS.get(f, "#f39c12") for f in frame_filters]
-    sky_colors  = [_FILTER_COLORS.get(f, "#f39c12") for f in sky_filters]
+    star_colors = [_filter_color(f) for f in frame_filters]
+    sky_colors  = [_filter_color(f) for f in sky_filters]
 
     fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(12, 10), sharex=True)
 
@@ -1290,7 +1311,7 @@ def save_stats_plot(
     # Legend for filters.
     handles = []
     for f in unique_filters:
-        c = _FILTER_COLORS.get(f, "#f39c12")
+        c = _filter_color(f)
         handles.append(plt.Line2D([0], [0], marker="o", color="none", markerfacecolor=c,
                                   markersize=8, label=f))
     ax1.legend(handles=handles, loc="upper right", fontsize=9, framealpha=0.7)
@@ -1361,25 +1382,25 @@ def save_stats_plot_from_cache(
             fwhm_nums.append(i)
             fwhms.append(float(fwhm))
             eccs.append(float(ecc) if ecc is not None else 0.0)
-            star_colors.append(_FILTER_COLORS.get(filt, "#f39c12"))
+            star_colors.append(_filter_color(filt))
 
         mag = d.get("sky_mag_arcsec2")
         adu = d.get("sky_adu_per_s")
         if mag is not None:
             sky_nums.append(i)
             sky_vals.append(float(mag))
-            sky_colors.append(_FILTER_COLORS.get(filt, "#f39c12"))
+            sky_colors.append(_filter_color(filt))
             use_mag = True
         elif adu is not None:
             sky_nums.append(i)
             sky_vals.append(float(adu))
-            sky_colors.append(_FILTER_COLORS.get(filt, "#f39c12"))
+            sky_colors.append(_filter_color(filt))
 
         sc = d.get("star_count")
         if sc is not None:
             star_nums.append(i)
             star_counts.append(int(sc))
-            star_count_colors.append(_FILTER_COLORS.get(filt, "#f39c12"))
+            star_count_colors.append(_filter_color(filt))
 
     if not fwhms:
         return output_path, 0
