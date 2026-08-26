@@ -1592,6 +1592,96 @@ def _tail_lines(path, n, block=65536):
     return text.splitlines()[-n:], end
 
 
+_NINALOG_SEQ_SCAN_BYTES = 8 * 1024 * 1024
+
+
+def _tail_matching(path, n, pred, max_bytes=_NINALOG_SEQ_SCAN_BYTES, block=262144):
+    """Last *n* lines satisfying *pred*, scanning backwards from the end.
+
+    Sequence events are a thin slice of the log -- one exposure produces dozens
+    of equipment lines around a single 'Starting ... Item: TakeExposure' -- so
+    a fixed tail would return almost none of them. This keeps reading backwards
+    until it has enough matches or hits *max_bytes*, which bounds the work on a
+    log whose last sequence event may be hours back.
+    """
+    with open(path, "rb") as fh:
+        fh.seek(0, os.SEEK_END)
+        end = pos = fh.tell()
+        buf, hits, scanned = b"", [], 0
+        while pos > 0 and scanned < max_bytes:
+            step = min(block, pos)
+            pos -= step
+            scanned += step
+            fh.seek(pos)
+            buf = fh.read(step) + buf
+            # Drop the first line: it may be truncated mid-way by the block
+            # boundary, and would parse into a mangled event.
+            body = buf.split(b"\n", 1)[1] if pos > 0 and b"\n" in buf else buf
+            hits = [l for l in body.decode("utf-8", errors="replace").splitlines()
+                    if pred(l)]
+            if len(hits) >= n:
+                break
+    return hits[-n:], end, scanned
+
+
+# 2026-08-26T04:38:04.3065|INFO|SequenceItem.cs|Run|208|Starting Category: ...
+_LOGLINE_RE = re.compile(r"^(\d{4}-\d\d-\d\dT[\d:.]+)\|[^|]*\|[^|]*\|[^|]*\|[^|]*\|(.*)$")
+_SEQ_RE = re.compile(r"^(Starting|Finishing) (Category|Trigger): (.*)$")
+
+
+def _seq_events(lines):
+    """Parse log lines into (when, verb, kind, label) sequence events."""
+    out = []
+    for ln in lines:
+        m = _LOGLINE_RE.match(ln)
+        if not m:
+            continue
+        s = _SEQ_RE.match(m.group(2).strip())
+        if not s:
+            continue
+        out.append((m.group(1), s.group(1), s.group(2), s.group(3).strip()))
+    return out
+
+
+def _format_seq(events):
+    """Render events newest-last, pairing each start with its finish.
+
+    An unmatched start is the instruction still running, which is the whole
+    point of looking -- it is marked rather than left to be inferred from the
+    absence of a following line.
+    """
+    finishes = {}
+    for when, verb, kind, label in events:
+        if verb == "Finishing":
+            finishes.setdefault(label, []).append(when)
+
+    def _secs(a, b):
+        try:
+            return (datetime.fromisoformat(b) - datetime.fromisoformat(a)).total_seconds()
+        except Exception:
+            return None
+
+    rows = []
+    for when, verb, kind, label in events:
+        if verb != "Starting":
+            continue
+        if kind == "Trigger":
+            # Triggers log a Starting and never a Finishing, so pairing them
+            # would mark every trigger that ever fired as still running. They
+            # are point events; say so and move on.
+            rows.append("%s  %s  [trigger]" % (when[11:19], label))
+            continue
+        done = next((f for f in finishes.get(label, []) if f > when), None)
+        if done is None:
+            tail = "  <-- RUNNING"
+        else:
+            d = _secs(when, done)
+            tail = "  (%.1fs)" % d if d is not None and d < 90 else (
+                "  (%.1f min)" % (d / 60.0) if d is not None else "")
+        rows.append("%s  %s%s" % (when[11:19], label, tail))
+    return rows
+
+
 def ninalog_cmd(words: list[str], account: str) -> None:
     """Show the last N lines of N.I.N.A's own log. example: ninalog 20
 
@@ -1604,13 +1694,18 @@ def ninalog_cmd(words: list[str], account: str) -> None:
     process, so the highest-numbered name is not reliably the current one after
     a restart.
     """
+    args = [w for w in words[2:] if w]
+    seq_only = bool(args) and args[0].lower() in ("seq", "sequence")
+    if seq_only:
+        args = args[1:]
     n = 5
-    if len(words) > 2:
+    if args:
         try:
-            n = int(words[2])
+            n = int(args[0])
         except ValueError:
             social_server.post_social_message(
-                f"ninalog: '{words[2]}' is not a number. Usage: ninalog [lines]")
+                f"ninalog: '{args[0]}' is not a number. "
+                "Usage: ninalog [seq] [lines]")
             return
     if n < 1:
         social_server.post_social_message("ninalog: line count must be at least 1")
@@ -1629,7 +1724,20 @@ def ninalog_cmd(words: list[str], account: str) -> None:
     newest = max(candidates, key=lambda p: p.stat().st_mtime)
 
     try:
-        lines, size = _tail_lines(newest, capped)
+        if seq_only:
+            # Ask for more raw lines than rows wanted: each instruction emits a
+            # Starting AND a Finishing, only the Starting becomes a row, and the
+            # Finishing has to be inside the window or the duration cannot be
+            # paired. 3x covers both plus the container and trigger lines that
+            # are interleaved.
+            raw, size, scanned = _tail_matching(
+                newest, capped * 3,
+                lambda l: "Starting Category:" in l or "Finishing Category:" in l
+                or "Starting Trigger:" in l)
+            lines = _format_seq(_seq_events(raw))[-capped:]
+        else:
+            lines, size = _tail_lines(newest, capped)
+            scanned = None
     except OSError as exc:
         social_server.post_social_message(f"ninalog: could not read {newest.name} ({exc})")
         return
@@ -1640,6 +1748,19 @@ def ninalog_cmd(words: list[str], account: str) -> None:
         "%.0fs" % age if age < 90 else "%.0f min" % (age / 60.0))
     if capped != n:
         header += "  (capped at %d lines)" % _NINALOG_MAX_LINES
+    if seq_only:
+        header += "  [sequence instructions]"
+        if not lines:
+            # Distinguish "none found" from "gave up looking": on a log whose
+            # last sequence event is older than the scan window, silence would
+            # otherwise read as an idle sequencer.
+            hit_limit = scanned is not None and scanned >= _NINALOG_SEQ_SCAN_BYTES
+            social_server.post_social_message(
+                header + "\nNo sequence instructions in the last %.0f MB%s."
+                % ((scanned or 0) / 1048576.0,
+                   " (scan limit reached — the sequencer may have run earlier)"
+                   if hit_limit else ""))
+            return
     social_server.post_social_message(header + "\n" + "\n".join(lines))
 
 

@@ -228,15 +228,20 @@ HELP: dict[str, dict] = {
     },
     "ninalog": {
         "category": "super",
-        "summary": "Post the last N lines of N.I.N.A's own log (default 5).",
-        "usage": ["ninalog", "ninalog <n>"],
-        "examples": ["ninalog", "ninalog 20"],
+        "summary": ("Post the last N lines of N.I.N.A's own log (default 5), or "
+                    "just the sequence instructions with `seq`."),
+        "usage": ["ninalog", "ninalog <n>", "ninalog seq", "ninalog seq <n>"],
+        "examples": ["ninalog", "ninalog 20", "ninalog seq", "ninalog seq 15"],
         "notes": ["Separate from `log`, which is iris.log.",
-                  "This is the only place that says which sequence instruction "
-                  "is running right now — look for 'Starting Category: ... "
-                  "Item: ...' — without adding script calls to the sequence.",
+                  "`seq` filters to the sequencer's own instructions and pairs "
+                  "each with its finish to show how long it took. The one still "
+                  "open is marked RUNNING — that is what the sequencer is doing "
+                  "right now, with no script calls added to the sequence.",
+                  "Triggers are shown as [trigger]: N.I.N.A logs them starting "
+                  "but never finishing, so they have no duration.",
                   "Newest log file by modification time, since N.I.N.A opens a "
-                  "new one per process. Capped at 200 lines."],
+                  "new one per process. Capped at 200 lines; `seq` scans back "
+                  "at most 8 MB and says so if it hits that limit."],
     },
     "update": {
         "category": "super",
