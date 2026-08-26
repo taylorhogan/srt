@@ -1422,42 +1422,47 @@ def save_stats_plot_from_cache(
     ax1.set_ylabel('FWHM (arcsec)')
     ax1.set_title(f"{len(fwhms)} frames · {dso_label(frames)}", color="white")
 
-    _draw_filter_lines(ax2, fwhm_nums, eccs)
-    ax2.scatter(fwhm_nums, eccs, c=star_colors, s=30, zorder=3)
-    ax2.axhline(median_ecc, color="white", linestyle="--", linewidth=1, alpha=0.8)
-    ax2.text(fwhm_nums[0], median_ecc, f" median {median_ecc:.3f}",
+    # Panel order is FWHM, stars, eccentricity, sky. Stars sits directly under
+    # FWHM because the two are read together: a frame with a high FWHM and a
+    # collapsed star count is cloud or focus, while a high FWHM with the star
+    # count holding is seeing. Separating them by two panels made that
+    # comparison a scroll rather than a glance.
+    if star_counts:
+        median_stars = float(np.median(star_counts))
+        _draw_filter_lines(ax2, star_nums, star_counts)
+        ax2.scatter(star_nums, star_counts, c=star_count_colors, s=30, zorder=3)
+        ax2.axhline(median_stars, color="white", linestyle="--", linewidth=1, alpha=0.8)
+        ax2.text(star_nums[0], median_stars, f" median {median_stars:.0f}",
+                 va="bottom", color="white", fontsize=9)
+        ax2.set_ylabel("Stars detected")
+    else:
+        ax2.text(0.5, 0.5, "No star count data", transform=ax2.transAxes,
+                 ha="center", va="center", color="#aaaaaa", fontsize=10)
+        ax2.set_ylabel("Stars detected")
+
+    _draw_filter_lines(ax3, fwhm_nums, eccs)
+    ax3.scatter(fwhm_nums, eccs, c=star_colors, s=30, zorder=3)
+    ax3.axhline(median_ecc, color="white", linestyle="--", linewidth=1, alpha=0.8)
+    ax3.text(fwhm_nums[0], median_ecc, f" median {median_ecc:.3f}",
              va="bottom", color="white", fontsize=9)
-    ax2.set_ylabel("Eccentricity")
+    ax3.set_ylabel("Eccentricity")
 
     if sky_vals:
         median_sky = float(np.median(sky_vals))
-        _draw_filter_lines(ax3, sky_nums, sky_vals)
-        ax3.scatter(sky_nums, sky_vals, c=sky_colors, s=30, zorder=3)
-        ax3.axhline(median_sky, color="white", linestyle="--", linewidth=1, alpha=0.8)
-        ax3.text(sky_nums[0], median_sky, f" median {median_sky:.2f}",
+        _draw_filter_lines(ax4, sky_nums, sky_vals)
+        ax4.scatter(sky_nums, sky_vals, c=sky_colors, s=30, zorder=3)
+        ax4.axhline(median_sky, color="white", linestyle="--", linewidth=1, alpha=0.8)
+        ax4.text(sky_nums[0], median_sky, f" median {median_sky:.2f}",
                  va="bottom", color="white", fontsize=9)
         if use_mag:
-            ax3.invert_yaxis()
-            ax3.set_ylabel("Sky (mag/arcsec²)\nhigher = darker")
+            ax4.invert_yaxis()
+            ax4.set_ylabel("Sky (mag/arcsec²)\nhigher = darker")
         else:
-            ax3.set_ylabel("Sky (ADU/s)\nlower = darker")
+            ax4.set_ylabel("Sky (ADU/s)\nlower = darker")
     else:
-        ax3.text(0.5, 0.5, "No sky data", transform=ax3.transAxes,
+        ax4.text(0.5, 0.5, "No sky data", transform=ax4.transAxes,
                  ha="center", va="center", color="#aaaaaa", fontsize=10)
-        ax3.set_ylabel("Sky brightness")
-
-    if star_counts:
-        median_stars = float(np.median(star_counts))
-        _draw_filter_lines(ax4, star_nums, star_counts)
-        ax4.scatter(star_nums, star_counts, c=star_count_colors, s=30, zorder=3)
-        ax4.axhline(median_stars, color="white", linestyle="--", linewidth=1, alpha=0.8)
-        ax4.text(star_nums[0], median_stars, f" median {median_stars:.0f}",
-                 va="bottom", color="white", fontsize=9)
-        ax4.set_ylabel("Stars detected")
-    else:
-        ax4.text(0.5, 0.5, "No star count data", transform=ax4.transAxes,
-                 ha="center", va="center", color="#aaaaaa", fontsize=10)
-        ax4.set_ylabel("Stars detected")
+        ax4.set_ylabel("Sky brightness")
 
     ax4.set_xlabel("Frame")
     ax4.set_xlim(0.5, n_total + 0.5)
