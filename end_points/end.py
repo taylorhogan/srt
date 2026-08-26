@@ -293,16 +293,28 @@ def _record_optics_trend(dso_dir, frames: list[dict], arcsec_per_pixel: float,
         **{k: (round(v, 4) if isinstance(v, float) else v) for k, v in metrics.items()},
     }
 
+    # The sweet spot is None whenever the fit was saturated, a saddle, or failed
+    # -- those are not measurements and must not be formatted as though they
+    # were. Say which, so the log distinguishes "no minimum in the field" from
+    # "we did not look".
+    _ss_status = metrics.get("sweet_spot_status", "unknown")
+    if metrics.get("sweet_spot_r") is None:
+        _ss = "sweet spot %s" % _ss_status
+        if metrics.get("sweet_spot_direction_deg") is not None:
+            _ss += " (ran off toward %.0f deg)" % metrics["sweet_spot_direction_deg"]
+    else:
+        _ss = "sweet spot (%+.2f, %+.2f) r=%.2f" % (
+            metrics["sweet_spot_x"], metrics["sweet_spot_y"], metrics["sweet_spot_r"])
+
     logger.info(
         "Optics trend [%s %s]: %d frames / %d stars — seeing floor %.2f\", "
-        "field excess %.2f\", edge excess %.2f\", sweet spot (%+.2f, %+.2f) r=%.2f, "
+        "field excess %.2f\", edge excess %.2f\", %s, "
         "radial %.2f, uniform %.2f @ %.0f deg",
         night, ",".join(filters) or "?", metrics.get("frames_used", 0),
         metrics.get("stars_pooled", 0), metrics.get("seeing_floor_arcsec", float("nan")),
         metrics.get("field_excess_arcsec", float("nan")),
         metrics.get("edge_excess_arcsec", float("nan")),
-        metrics.get("sweet_spot_x", float("nan")), metrics.get("sweet_spot_y", float("nan")),
-        metrics.get("sweet_spot_r", float("nan")), metrics.get("radial_fraction", float("nan")),
+        _ss, metrics.get("radial_fraction", float("nan")),
         metrics.get("uniform_fraction", float("nan")),
         metrics.get("uniform_angle_deg", float("nan")),
     )
@@ -342,9 +354,12 @@ def _record_optics_trend(dso_dir, frames: list[dict], arcsec_per_pixel: float,
         logger.exception("Could not write %s", hist_path)
         return
 
+    _ss_msg = ("sweet spot r=%.2f" % metrics["sweet_spot_r"]
+               if metrics.get("sweet_spot_r") is not None
+               else "sweet spot %s" % _ss_status)
     social_server.post_social_message(
         f"Optics: field excess {metrics.get('field_excess_arcsec', 0):.2f}\", "
-        f"sweet spot r={metrics.get('sweet_spot_r', 0):.2f}, "
+        f"{_ss_msg}, "
         f"radial {metrics.get('radial_fraction', 0):+.2f} "
         f"({metrics.get('stars_pooled', 0)} stars, night {len(history)} of history)"
     )

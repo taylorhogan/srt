@@ -799,7 +799,25 @@ def compute_optics_trend_metrics(
         sweet_spot_x/y/r      where FWHM is minimised, in normalised field
                               coordinates (-1..1, 0 = centre). THE collimation
                               indicator: seeing lifts the whole surface without
-                              moving its minimum.
+                              moving its minimum. **None unless
+                              sweet_spot_status == "ok"** -- see below.
+        sweet_spot_status     "ok" | "saturated" | "saddle" | "failed".
+                              Anything but "ok" means the surface was too flat
+                              or the wrong shape to locate a minimum, and x/y/r
+                              are None rather than a number. This distinction is
+                              load-bearing: the old code clamped a runaway fit
+                              to the frame edge and wrote that as a measurement,
+                              and because the clamp is an ATTRACTOR every
+                              degenerate night landed on the identical value.
+                              2026-08-23 and 08-24 both wrote r = 2.121 exactly,
+                              which reads as a 5.5x rise in the collimation
+                              indicator across three weeks and is an artefact.
+        sweet_spot_direction_deg
+                              only when "saturated": which way the fit ran off.
+                              The direction survives when the magnitude does
+                              not, and a run of degenerate nights all pointing
+                              the same way is weak evidence the true minimum is
+                              moving that way. Never treat it as a magnitude.
         radial_fraction       mean cos(2*delta) between elongation and the radial
                               direction: +1 all radial (coma), 0 random,
                               -1 tangential.
@@ -907,25 +925,52 @@ def optics_trend_from_sample(sample, detected: int, shape, arcsec_per_pixel: flo
     # Quadratic surface fit to FWHM^2 in normalised coordinates. Seeing raises
     # the constant term and leaves the location of the minimum alone, which is
     # what makes this the collimation indicator worth trending.
+    #
+    # Beyond this the fitted minimum is off the sensor (the corner is at
+    # r = 1.41 in these coordinates) and the surface is too flat to locate it.
+    _SWEET_SPOT_LIMIT = 1.5
     u = (xs - cx) / (w / 2.0)
     v = (ys - cy) / (h / 2.0)
+    # A clamped fit is NOT a measurement, and it must not be recorded as one.
+    # The clamp exists because an almost-flat field puts the fitted minimum far
+    # outside the frame where it means nothing -- but writing the clamp value
+    # into the trend file makes it indistinguishable from a real reading, and
+    # the clamp is an ATTRACTOR: every degenerate night lands on the same
+    # number. Measured 2026-08-23 and 08-24, both (-1.5, -1.5) => r = 2.121
+    # exactly, which read as a 5.5x rise in the collimation indicator over three
+    # weeks and is nothing of the kind. More nights would make that worse, not
+    # better. So saturation is flagged and the values are withheld.
+    out["sweet_spot_status"] = "unknown"
     try:
         A = np.column_stack([np.ones_like(u), u, v, u * u, v * v, u * v])
         coef, *_ = np.linalg.lstsq(A, sq, rcond=None)
         _, b, c, d, e, f = coef
         hess = np.array([[2.0 * d, f], [f, 2.0 * e]])
         if np.linalg.det(hess) > 0 and d > 0:   # a genuine minimum, not a saddle
-            su, sv = np.linalg.solve(hess, [-b, -c])
-            # Clamp: an almost-flat field puts the fitted minimum far outside the
-            # frame, where it means nothing. Report the edge rather than a number
-            # that would swamp any trend.
-            su = float(np.clip(su, -1.5, 1.5))
-            sv = float(np.clip(sv, -1.5, 1.5))
-            out["sweet_spot_x"] = su
-            out["sweet_spot_y"] = sv
-            out["sweet_spot_r"] = float(np.hypot(su, sv))
+            su_raw, sv_raw = np.linalg.solve(hess, [-b, -c])
+            if abs(su_raw) > _SWEET_SPOT_LIMIT or abs(sv_raw) > _SWEET_SPOT_LIMIT:
+                # Degenerate: report WHERE it ran off to, since the direction is
+                # still weak evidence, but never a magnitude that would be
+                # mistaken for a measurement.
+                out["sweet_spot_status"] = "saturated"
+                out["sweet_spot_x"] = None
+                out["sweet_spot_y"] = None
+                out["sweet_spot_r"] = None
+                n = float(np.hypot(su_raw, sv_raw)) or 1.0
+                out["sweet_spot_direction_deg"] = float(
+                    np.degrees(np.arctan2(sv_raw, su_raw)))
+            else:
+                out["sweet_spot_status"] = "ok"
+                out["sweet_spot_x"] = float(su_raw)
+                out["sweet_spot_y"] = float(sv_raw)
+                out["sweet_spot_r"] = float(np.hypot(su_raw, sv_raw))
+        else:
+            # A saddle means the surface has no minimum at all -- also unknown,
+            # and distinct from saturation, because the causes differ.
+            out["sweet_spot_status"] = "saddle"
     except Exception:
         _logger.debug("sweet-spot fit failed for %s", fits_path, exc_info=True)
+        out["sweet_spot_status"] = "failed"
 
     # --- elongation geometry: optics vs tracking ---------------------------
     # Radial elongation is coma/collimation; one shared direction across the
