@@ -280,6 +280,41 @@ def _latest_frame(root: Path, out_dir: Path):
     return Path(str(out)), meta
 
 
+def _stats_chart(root, out_dir, dso):
+    """Render the session stats chart for *dso*. Returns (path, meta).
+
+    Meta carries the frame count and DSO so the page can caption the chart
+    without parsing the image, and so it can hide the panel outright when
+    there is nothing to show -- an empty axes frame under a heading reads as a
+    fault rather than as an idle observatory.
+    """
+    if not dso:
+        return None, {}
+    try:
+        from fits_processing import imaging_artifacts as ia
+        cfg_nina = config.data()["nina"]
+        cache = Path(cfg_nina["image_dir"]) / dso / "frame_stats.json"
+        if not cache.exists():
+            return None, {}
+        out = out_dir / "live_stats.jpg"
+        res = ia.render_stats_plot_from_cache_path(cache_path=cache,
+                                                   output_path=out)
+        if res is None:
+            return None, {}
+        frames = ia.gather_dso_frames(cache.parent)
+        meta = {"stats_dso": dso, "stats_frames": len(frames)}
+        filts = sorted({str(f.get("filter", "")).strip()
+                        for f in frames if f.get("filter")})
+        if filts:
+            meta["stats_filters"] = filts
+        return Path(str(res)), meta
+    except Exception as exc:
+        # Never let the chart cost the skymap push, which is the part the page
+        # has depended on since long before this panel existed.
+        print("stats chart skipped (%s: %s)" % (type(exc).__name__, exc))
+        return None, {}
+
+
 def main() -> None:
     root = Path(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
     import astropy.units as u
@@ -448,6 +483,18 @@ def main() -> None:
     latest_jpg, latest_meta = _latest_frame(root, out_dir)
     status.update(latest_meta)
 
+    # The session stats chart, rendered by the same code the `stats` command
+    # uses, so the site and the observatory cannot report different numbers --
+    # the same reason latest.jpg is built by the `latest` renderer above.
+    #
+    # Rendered here rather than pushed from frame_watcher's artifact worker,
+    # which already rebuilds this chart on every sub for the local web chat.
+    # That worker runs on the imaging thread, and this job runs every 5 minutes
+    # against 300 s subs, so the freshness is the same while the network I/O
+    # stays out of the capture path.
+    stats_jpg, stats_meta = _stats_chart(root, out_dir, latest_meta.get("latest_dso"))
+    status.update(stats_meta)
+
     js = out_dir / "live_status.json"
     js.write_text(json.dumps(status, indent=1))
     print("rendered", img.name, "->", status.get("target"), status.get("state"))
@@ -460,6 +507,8 @@ def main() -> None:
     pushes = [(img, "skymap.jpg"), (js, "status.json")]
     if latest_jpg is not None and latest_jpg.exists():
         pushes.insert(1, (latest_jpg, "latest.jpg"))
+    if stats_jpg is not None and stats_jpg.exists():
+        pushes.insert(1, (stats_jpg, "stats.jpg"))
     for src, dest in pushes:
         subprocess.run(["scp", "-i", KEY, "-o", "BatchMode=yes", "-o",
                         "ConnectTimeout=15", str(src),
