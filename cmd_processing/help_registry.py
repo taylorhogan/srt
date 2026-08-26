@@ -226,6 +226,18 @@ HELP: dict[str, dict] = {
         "usage": ["log", "log <n>"],
         "examples": ["log 50"],
     },
+    "ninalog": {
+        "category": "super",
+        "summary": "Post the last N lines of N.I.N.A's own log (default 5).",
+        "usage": ["ninalog", "ninalog <n>"],
+        "examples": ["ninalog", "ninalog 20"],
+        "notes": ["Separate from `log`, which is iris.log.",
+                  "This is the only place that says which sequence instruction "
+                  "is running right now — look for 'Starting Category: ... "
+                  "Item: ...' — without adding script calls to the sequence.",
+                  "Newest log file by modification time, since N.I.N.A opens a "
+                  "new one per process. Capped at 200 lines."],
+    },
     "update": {
         "category": "super",
         "summary": "Pull latest code from git and restart the server.",

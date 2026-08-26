@@ -1567,6 +1567,82 @@ def log_cmd(words: list[str], account: str) -> None:
         social_server.post_social_message("iris.log not found")
 
 
+_NINALOG_MAX_LINES = 200
+
+
+def _tail_lines(path, n, block=65536):
+    """Last *n* lines of a file, read from the END.
+
+    N.I.N.A's log is tens of megabytes by the end of a night -- 12.6 MB after
+    one session, and it only grows -- so the readlines() approach used for
+    iris.log would pull the whole thing into memory to show five lines. This
+    seeks backwards a block at a time instead and stops as soon as it has
+    enough newlines.
+    """
+    with open(path, "rb") as fh:
+        fh.seek(0, os.SEEK_END)
+        end = pos = fh.tell()
+        buf = b""
+        while pos > 0 and buf.count(b"\n") <= n:
+            step = min(block, pos)
+            pos -= step
+            fh.seek(pos)
+            buf = fh.read(step) + buf
+    text = buf.decode("utf-8", errors="replace")
+    return text.splitlines()[-n:], end
+
+
+def ninalog_cmd(words: list[str], account: str) -> None:
+    """Show the last N lines of N.I.N.A's own log. example: ninalog 20
+
+    Separate from `log`, which is iris.log -- this is N.I.N.A's, and it is the
+    only place that says which sequence instruction is running right now
+    ("Starting Category: Camera, Item: TakeExposure"), without adding script
+    calls to the sequence to report it.
+
+    The newest log file is chosen by mtime: N.I.N.A opens a new one per
+    process, so the highest-numbered name is not reliably the current one after
+    a restart.
+    """
+    n = 5
+    if len(words) > 2:
+        try:
+            n = int(words[2])
+        except ValueError:
+            social_server.post_social_message(
+                f"ninalog: '{words[2]}' is not a number. Usage: ninalog [lines]")
+            return
+    if n < 1:
+        social_server.post_social_message("ninalog: line count must be at least 1")
+        return
+    capped = min(n, _NINALOG_MAX_LINES)
+
+    log_dir = Path(os.path.expanduser(r"~\AppData\Local\NINA\Logs"))
+    try:
+        candidates = [p for p in log_dir.glob("*.log") if p.is_file()]
+    except OSError as exc:
+        social_server.post_social_message(f"ninalog: cannot read {log_dir} ({exc})")
+        return
+    if not candidates:
+        social_server.post_social_message(f"ninalog: no log files in {log_dir}")
+        return
+    newest = max(candidates, key=lambda p: p.stat().st_mtime)
+
+    try:
+        lines, size = _tail_lines(newest, capped)
+    except OSError as exc:
+        social_server.post_social_message(f"ninalog: could not read {newest.name} ({exc})")
+        return
+
+    age = time.time() - newest.stat().st_mtime
+    header = "%s — %.1f MB, last written %s ago" % (
+        newest.name, size / 1048576.0,
+        "%.0fs" % age if age < 90 else "%.0f min" % (age / 60.0))
+    if capped != n:
+        header += "  (capped at %d lines)" % _NINALOG_MAX_LINES
+    social_server.post_social_message(header + "\n" + "\n".join(lines))
+
+
 def update_cmd(words: list[str], account: str) -> None:
     """Pull latest code from git and restart the server. example: update"""
     imaging_state = get_imaging_state()
@@ -2943,6 +3019,7 @@ def get_super_user_commands() -> dict[str, Callable]:
         "diff": transient_cmd,
         "hr": hr_cmd,
         "log": log_cmd,
+        "ninalog": ninalog_cmd,
         "update": update_cmd,
         "live": live_cmd,
         "optics": optics_cmd,
