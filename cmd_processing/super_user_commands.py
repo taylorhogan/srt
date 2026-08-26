@@ -1681,10 +1681,17 @@ def optics_cmd(words: list[str], account: str) -> None:
     """Post optical quality diagnostic plots for a FITS frame.
 
     Usage:
-        optics              — latest frame of the last-imaged DSO
+        optics              — the last-imaged DSO's RICHEST frame tonight
         optics <dso>        — latest frame of the named DSO
         optics * <n>        — frame n of the last-imaged DSO
         optics <dso> <n>    — frame n of the named DSO
+
+    With no arguments the frame is chosen by star count within the current
+    session, not by being last. The last frame of a night is whatever the
+    sequence stopped on -- often as the target sinks into the trees, or through
+    cloud -- and optical metrics from a frame with a handful of stars describe
+    those few stars more than they describe the telescope. Falls back to the
+    latest frame when no cached star counts are available.
 
     Process-isolated (jobs.spawn_process) so the analysis runs on its own core,
     in true parallel with a concurrent command.
@@ -1769,9 +1776,64 @@ def _optics_run(words: list[str]) -> None:
         return
 
     total_frames = len(fits_files)
+
+    def _richest_frame_tonight():
+        """(path, index, note) for tonight's frame with the most stars.
+
+        None if it cannot be determined, in which case the caller falls back to
+        the newest frame.
+
+        The last frame of a night is a poor default for an OPTICS measurement.
+        It is whatever the sequence happened to stop on -- often as the target
+        sinks into the trees, or through cloud, or right before the run was
+        cancelled -- and optical metrics measured on a frame with a handful of
+        stars are dominated by the few stars that survived, not by the optics.
+        The richest frame of the same night is the same telescope on the same
+        night with the most evidence in it.
+
+        Restricted to the CURRENT session rather than all history, because the
+        point is to describe the optics as they are now: a frame from three
+        weeks ago might be the richest ever and says nothing about tonight.
+        """
+        try:
+            from fits_processing import imaging_artifacts as _ia
+            cached = _ia.gather_dso_frames(dso_dir, latest_session_only=True)
+        except Exception:
+            return None
+        by_path = {}
+        for row in cached:
+            p, n = row.get("path"), row.get("star_count")
+            if p and isinstance(n, (int, float)) and n > 0:
+                by_path[os.path.normcase(os.path.abspath(str(p)))] = (
+                    int(n), str(row.get("filter") or "").strip())
+        if not by_path:
+            return None
+        best_i, best_n, best_filt = None, -1, ""
+        for i, f in enumerate(fits_files):
+            hit = by_path.get(os.path.normcase(os.path.abspath(str(f))))
+            if hit is not None and hit[0] > best_n:
+                best_i, best_n, best_filt = i, hit[0], hit[1]
+        if best_i is None:
+            return None
+        # The filter is named because star count is not filter-independent --
+        # a wider passband simply reaches more stars, so the richest frame of a
+        # multi-filter night tends to come from the same filter every time.
+        # That is fine for measuring the optics, which want the best-sampled
+        # field available, but it does mean two nights' optics numbers are only
+        # strictly comparable when this says the same filter both times.
+        note = " — richest of %d tonight, %d stars" % (len(by_path), best_n)
+        if best_filt:
+            note += " (%s)" % best_filt
+        return fits_files[best_i], best_i + 1, note
+
+    pick_note = ""
     if frame_num is None:
-        fits_path = fits_files[-1]
-        frame_idx = total_frames
+        pick = _richest_frame_tonight() if not dso_arg else None
+        if pick is not None:
+            fits_path, frame_idx, pick_note = pick
+        else:
+            fits_path = fits_files[-1]
+            frame_idx = total_frames
     else:
         if frame_num < 1 or frame_num > total_frames:
             social_server.post_social_message(
@@ -1782,7 +1844,7 @@ def _optics_run(words: list[str]) -> None:
         frame_idx = frame_num
 
     social_server.post_social_message(
-        f"Optics for {dso_dir.name} frame {frame_idx}/{total_frames}"
+        f"Optics for {dso_dir.name} frame {frame_idx}/{total_frames}{pick_note}"
     )
 
     jobs.raise_if_cancelled(_job_id)
