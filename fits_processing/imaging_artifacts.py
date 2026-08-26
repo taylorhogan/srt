@@ -141,8 +141,15 @@ def render_latest_image(
 def render_stats_plot_from_cache_path(
     cache_path: Path,
     output_path: Path,
+    latest_session_only: bool = True,
 ) -> Optional[Path]:
     """Render the multi-panel stats plot from a frame_stats.json cache.
+
+    *latest_session_only* mirrors the ``stats`` command: True is plain
+    ``stats <dso>``, False is ``stats <dso> all``. It is passed through rather
+    than fixed here because the two callers genuinely want different things --
+    the web-chat card is about the night in progress, while the live page shows
+    the target's whole history.
 
     Returns output_path on success, None if cache missing/empty or no frames
     had detectable stars (matches save_stats_plot_from_cache's contract).
@@ -154,7 +161,8 @@ def render_stats_plot_from_cache_path(
         return None
     # Reconcile against disk + sort chronologically so the card matches the
     # fresh `stats` tile (raw cache order can put a day out of place).
-    frames = gather_dso_frames(cache_path.parent)
+    frames = gather_dso_frames(cache_path.parent,
+                               latest_session_only=latest_session_only)
     if not frames:
         return None
 

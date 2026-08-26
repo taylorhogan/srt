@@ -280,6 +280,21 @@ def _latest_frame(root: Path, out_dir: Path):
     return Path(str(out)), meta
 
 
+def _night_of(ts):
+    """The observing night a frame timestamp belongs to, or None.
+
+    Shifted back 12 hours so a session that runs past midnight counts as one
+    night rather than two -- which is most of them here.
+    """
+    if not ts:
+        return None
+    try:
+        t = datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
+        return (t - timedelta(hours=12)).date()
+    except Exception:
+        return None
+
+
 def _stats_chart(root, out_dir, dso):
     """Render the session stats chart for *dso*. Returns (path, meta).
 
@@ -296,17 +311,32 @@ def _stats_chart(root, out_dir, dso):
         cache = Path(cfg_nina["image_dir"]) / dso / "frame_stats.json"
         if not cache.exists():
             return None, {}
+        # EVERY frame of this target, not just the current session -- the
+        # equivalent of `stats <dso> all`. The web-chat card deliberately shows
+        # only tonight, because there it sits beside a live ticker and answers
+        # "how is this night going". The page is not that: a visitor arriving
+        # cold wants what the target has accumulated, and a chart that silently
+        # dropped every earlier night would understate the work.
         out = out_dir / "live_stats.jpg"
         res = ia.render_stats_plot_from_cache_path(cache_path=cache,
-                                                   output_path=out)
+                                                   output_path=out,
+                                                   latest_session_only=False)
         if res is None:
             return None, {}
-        frames = ia.gather_dso_frames(cache.parent)
+        frames = ia.gather_dso_frames(cache.parent, latest_session_only=False)
         meta = {"stats_dso": dso, "stats_frames": len(frames)}
         filts = sorted({str(f.get("filter", "")).strip()
                         for f in frames if f.get("filter")})
         if filts:
             meta["stats_filters"] = filts
+        # Nights, so the caption can say how much history the chart spans.
+        # Counted off the frame timestamps rather than the day boundary,
+        # because a session that runs past midnight is one night's work and
+        # splitting it would inflate the count.
+        nights = {_night_of(f.get("time")) for f in frames}
+        nights.discard(None)
+        if nights:
+            meta["stats_nights"] = len(nights)
         return Path(str(res)), meta
     except Exception as exc:
         # Never let the chart cost the skymap push, which is the part the page
