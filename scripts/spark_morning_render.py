@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Render the targets that gained frames last night.
 
-    python scripts/spark_morning_render.py --since-hours 30
+    python scripts/spark_morning_render.py --since-hours 16
 
 Runs after the 05:00 rsync. For each DSO whose LIGHT frames changed recently it
 picks a recipe from the filters present and runs
@@ -113,6 +113,30 @@ def recent_targets(subs_dir: Path, since_hours: float, exptime: int):
     return fresh
 
 
+def already_rendered(dso: str, recipe: str, counts: dict) -> bool:
+    """True when the last render of this DSO used the same frame counts.
+
+    The time window alone cannot be trusted: it misfires if the job runs late,
+    if the clock skews, or if an rsync touches mtimes without new data. This is
+    the exact test — the previous render wrote its per-channel frame counts to
+    meta_<dso>_<recipe>.json, so if they match there is nothing new to stack.
+
+    Compares FRAMES OFFERED, not frames accepted: the quality gate is free to
+    accept a different number from the same input (it depends on the measured
+    FWHM distribution), and a gate decision changing is not new data.
+    """
+    import json
+    meta = (Path(_root) / "local" / "n2n_lrgb_render"
+            / f"meta_{dso.lower().replace(' ', '')}_{recipe}.json")
+    try:
+        prev = json.loads(meta.read_text())["channels"]
+    except (OSError, ValueError, KeyError):
+        return False
+    was = {k: int(v.get("frames", -1)) for k, v in prev.items()}
+    now = {k: int(v) for k, v in counts.items() if k in was}
+    return bool(was) and was == now
+
+
 def pick_recipe(counts: dict):
     have = {f for f, n in counts.items() if n >= MIN_FRAMES}
     for name, need in RECIPE_RULES:
@@ -129,8 +153,17 @@ def main() -> int:
     from configs import config
 
     ap = argparse.ArgumentParser()
-    ap.add_argument("--since-hours", type=float, default=30.0)
+    # 16 h, not 30. A window longer than a day necessarily spans two mornings:
+    # a frame taken at 03:14 is 3.8 h old at that morning's 07:00 run and 27.8 h
+    # old at the next one, so anything imaged after ~01:00 qualified twice and
+    # the target re-rendered on identical data. Observed 2026-08-27 on trunk,
+    # which burned 23 min of stacking and pushed a notification implying new
+    # data. 16 h reaches back to 15:00 the previous afternoon, covering any full
+    # night, while last night's small hours fall outside.
+    ap.add_argument("--since-hours", type=float, default=16.0)
     ap.add_argument("--exptime", type=int, default=300)
+    ap.add_argument("--rerender", action="store_true",
+                    help="render even if the frame counts are unchanged")
     ap.add_argument("--max-targets", type=int, default=2)
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
@@ -153,6 +186,10 @@ def main() -> int:
         summary = " ".join(f"{k}:{v}" for k, v in sorted(counts.items()))
         if not recipe:
             log(f"{dso}: {summary} — no recipe reaches {MIN_FRAMES} frames, skipped")
+            continue
+        if not args.rerender and already_rendered(dso, recipe, counts):
+            log(f"{dso}: {summary} — unchanged since the last render, skipped "
+                f"(--rerender to force)")
             continue
         plan.append((dso, recipe, sum(counts.values()), summary))
 
