@@ -25,6 +25,10 @@ jobs:
           python-version: "3.13"
       - run: pip install pytest
       - run: python -m pytest tests/ -q
+      # The state diagrams are projections of the transition tables; a table
+      # edit that forgets to regenerate them fails here, so the docs cannot
+      # drift from the machine.
+      - run: python scripts/gen_state_diagrams.py --check
 
   release:
     # Fast-forward the branch the observatory deploys from. No --force: under

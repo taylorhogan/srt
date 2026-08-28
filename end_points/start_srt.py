@@ -38,12 +38,30 @@ if __name__ == "__main__":
     MAX_CRASHES = 5             # within the window before giving up
     crash_times: list[float] = []
 
+    # The shadow conductor (architecture plan, Phase 1). Read-only towards the
+    # observatory -- it watches the legacy state files and builds the journal;
+    # it commands nothing. Behind a config flag so it can be turned off without
+    # a code change if it ever misbehaves during the shadow period.
+    def _conductor_enabled() -> bool:
+        try:
+            from configs import config
+            return bool(config.data().get("conductor", {}).get("shadow_enabled", True))
+        except Exception:
+            return False
+
+    def _conductor_target():
+        from iris.conductor import main as conductor_main
+        conductor_main.main()
+
     while True:
         p1 = Process(target=social_server.main)
         p2 = Process(target=scheduler_server.main)
+        p3 = Process(target=_conductor_target) if _conductor_enabled() else None
 
         p1.start()
         p2.start()
+        if p3:
+            p3.start()
 
         p1.join()  # wait for social server to exit
         exit_code = p1.exitcode
@@ -51,10 +69,13 @@ if __name__ == "__main__":
         # Capture imaging state before the scheduler relaunch can clear it.
         imaging_state = _imaging_state_at_crash()
 
-        # Always clean up the scheduler when the social server exits
+        # Always clean up the siblings when the social server exits
         if p2.is_alive():
             p2.terminate()
             p2.join(timeout=10)
+        if p3 is not None and p3.is_alive():
+            p3.terminate()
+            p3.join(timeout=10)
 
         if exit_code == RESTART_EXIT_CODE:
             # Deliberate restart (the `update` command): deploy the last GREEN

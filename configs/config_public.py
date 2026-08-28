@@ -458,6 +458,16 @@ class PublicConfig():
             "file": "local/convergence.json",
         },
 
+        # The iris-conductor (docs/ARCHITECTURE_PLAN.md). In shadow mode it is
+        # read-only towards the observatory: it watches the legacy state files,
+        # synthesizes events, and builds the journal under local/journal/,
+        # commanding nothing. The flag exists so it can be disabled without a
+        # code change if it misbehaves during the shadow period.
+        "conductor": {
+            "shadow_enabled": True,
+            "port": 8096,
+        },
+
         "transit": {
             "min_frames": 20,
             "aperture_fwhm_mult": 1.5,
