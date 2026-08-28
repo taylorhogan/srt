@@ -604,17 +604,26 @@ def main():
     """Initialise subsystems and run the nightly scheduling loop.
 
     Startup sequence:
-        1. Write ``safety.txt`` as ``USER SAFE``.
-        2. Reset imaging state to ``NONE`` (clears any stale ``imaging.txt``).
-        3. Force mode to ``manual`` — operator must switch to ``auto`` via
-           the web chat before unattended imaging is triggered.
-        4. Connect to the MQTT broker (continues without it if unavailable).
-        5. Enter the ``while True`` loop: wait for noon, run ``nightly_cycle()``.
-           Each nightly run is recorded by Prefect as a named flow run with
-           per-task states, timing, and logs.
+        1. PRESERVE ``safety.txt`` and ``mode.txt`` exactly as found.
+        2. Reset imaging state to ``NONE`` (clears any stale ``imaging.txt``),
+           unless NINA is mid-capture.
+        3. Connect to the MQTT broker (continues without it if unavailable).
+        4. Enter the ``while True`` loop: wait for noon, run ``nightly_cycle()``.
+
+    Startup deliberately writes NEITHER safety.txt NOR mode.txt. It used to
+    write both -- ``USER SAFE`` and ``manual`` -- which meant every restart
+    (including the supervisor relaunching after a social-server crash, and the
+    daily boot) silently RE-ARMED a safety flag the operator may have cleared
+    on purpose, and silently dropped an operator-chosen ``auto`` back to
+    manual so unattended imaging just stopped. Both flags are operator
+    decisions; only operator commands change them. The readers already fail
+    safe when a file is missing (``is_safe()`` -> False, ``get_mode()`` ->
+    manual), so a first-ever run needs no initialisation either.
     """
     print("Starting Scheduler Server")
-    super_user_commands.safe_cmd(None, None)
+    LOGGER.info("Startup flags preserved: safety=%s mode=%s",
+                "SAFE" if super_user_commands.is_safe() else "UNSAFE/unset",
+                super_user_commands.get_mode())
     # Don't reset imaging state if NINA is still capturing — a supervisor
     # relaunch (e.g. after a social-server crash) restarts us mid-run, and
     # clearing imaging.txt would let a manual command start a second NINA run.
@@ -629,7 +638,6 @@ def main():
                        imaging_state.value)
     else:
         super_user_commands.set_imaging_state(super_user_commands.ImagingState.NONE)
-    super_user_commands.set_mode("manual")
     LOGGER.info('Start Scheduler')
     try:
         client = utils.connect_mqtt()
