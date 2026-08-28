@@ -4,14 +4,19 @@
     python scripts/spark_morning_render.py --since-hours 16
 
 Runs after the 05:00 rsync. For each DSO whose LIGHT frames changed recently it
-picks a recipe from the filters present and runs
-`n2n_lrgb_render.py routine`, which writes a mono JPEG per channel, a denoised
-set, and both colour composites into `<image_dir>/Iris/<dso>/`.
+picks EVERY recipe the filters support and runs `n2n_lrgb_render.py routine`
+once per recipe, which writes a mono JPEG per channel, a denoised set, and both
+colour composites into `<image_dir>/Iris/<dso>/`. A three-filter narrowband
+target therefore gets HSO, SHO and HOO in one morning; the palettes disagree
+about presentation, not data, so all of them get to exist and the eye chooses.
 
-**Stacks are always rebuilt (`--force`).** The routine path caches stacks by
-filename, and after a night of new subs that cache is stale by exactly the
-frames this job exists to include. Reusing it would silently render yesterday's
-image and report success.
+**Stacks are rebuilt (`--force`) only for a target's FIRST render of the run.**
+The routine path caches stacks per (dso, filter) — recipes share them — and
+after a night of new subs that cache is stale by exactly the frames this job
+exists to include, so the first recipe rebuilds it. The remaining recipes reuse
+the stacks that first render just wrote: they cost a denoise+compose, not a
+20-60 minute stack. If the first render fails, the rest of that target's
+recipes are skipped rather than composed from a half-rebuilt cache.
 
 **Both composites are always written and neither is chosen.** Whether the
 denoised version is better depends on surface brightness, not object class: NGC
@@ -38,7 +43,9 @@ _root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if _root not in sys.path:
     sys.path.insert(0, _root)
 
-# Recipes in preference order: the richest palette the filters support.
+# Recipes in preference order. Every rule the filters satisfy is rendered
+# (three-filter narrowband -> HSO, SHO and HOO); the order decides which
+# recipe stacks first — the rest reuse its channel stacks.
 RECIPE_RULES = [
     # HSO before SHO for a three-filter narrowband target. Both are honest —
     # compose holds one brightness scale across channels either way — but on
@@ -137,14 +144,16 @@ def already_rendered(dso: str, recipe: str, counts: dict) -> bool:
     return bool(was) and was == now
 
 
-def pick_recipe(counts: dict):
+def pick_recipes(counts: dict) -> list[str]:
+    """Every recipe the qualifying filters support, in stack-first order."""
     have = {f for f, n in counts.items() if n >= MIN_FRAMES}
+    out = []
     for name, need in RECIPE_RULES:
         if need <= have:
-            return name
-        if name == "LRGB" and len(need & have) >= 3:
-            return name
-    return None
+            out.append(name)
+        elif name == "LRGB" and len(need & have) >= 3:
+            out.append(name)
+    return out
 
 
 def main() -> int:
@@ -182,57 +191,70 @@ def main() -> int:
 
     plan = []
     for dso, counts in fresh.items():
-        recipe = pick_recipe(counts)
+        recipes = pick_recipes(counts)
         summary = " ".join(f"{k}:{v}" for k, v in sorted(counts.items()))
-        if not recipe:
+        if not recipes:
             log(f"{dso}: {summary} — no recipe reaches {MIN_FRAMES} frames, skipped")
             continue
-        if not args.rerender and already_rendered(dso, recipe, counts):
-            log(f"{dso}: {summary} — unchanged since the last render, skipped "
-                f"(--rerender to force)")
-            continue
-        plan.append((dso, recipe, sum(counts.values()), summary))
+        if not args.rerender:
+            todo = [r for r in recipes if not already_rendered(dso, r, counts)]
+            if not todo:
+                log(f"{dso}: {summary} — unchanged since the last render, skipped "
+                    f"(--rerender to force)")
+                continue
+            recipes = todo
+        plan.append((dso, recipes, sum(counts.values()), summary))
 
     # Deepest first: if the cap bites, the best data gets rendered.
     plan.sort(key=lambda r: -r[2])
-    for dso, recipe, total, summary in plan:
-        log(f"{dso}: {summary} -> {recipe} ({total} frames)")
+    for dso, recipes, total, summary in plan:
+        log(f"{dso}: {summary} -> {' + '.join(recipes)} ({total} frames)")
     if len(plan) > args.max_targets:
-        log(f"capping at {args.max_targets}; the rest re-qualify on the next run")
+        log(f"capping at {args.max_targets} targets; the rest re-qualify on the next run")
         plan = plan[:args.max_targets]
 
     rc = 0
-    for dso, recipe, _total, _s in plan:
-        lum = "Ha" if recipe in NARROWBAND else "L"
-        cmd = [sys.executable, os.path.join(_root, "scripts", "n2n_lrgb_render.py"),
-               "routine", "--dso", dso.lower().replace(" ", ""), "--recipe", recipe,
-               "--lum", lum, "--exptime", str(args.exptime), "--force"]
-        # No narrowband stretch override. These used to be forced to
-        # --white-pct 99 --black-pct 65, and on the 2026-08-24 trunk render that
-        # put white at 4.71 ADU (clipping everything above ~3 sigma into flat
-        # red slabs) and black at 0.572 ADU — only 0.36 sigma above sky, i.e.
-        # inside the noise. Raw sky pixels dithered above that line and read as
-        # a veil while denoised sky correctly fell below it, so the denoiser
-        # looked as though it had eaten the nebulosity. It had not: tile
-        # photometry measured 104-117% flux retention at every brightness. The
-        # renderer's own defaults (white p99.95, black at sky - 0.5 sigma) are
-        # the ones that render this field correctly.
-        log(f"\n$ {' '.join(cmd[1:])}")
-        if args.dry_run:
-            continue
-        t0 = time.time()
-        # Per-target isolation: one target failing to stack must not stop the
-        # others, and the traceback belongs in this job's log.
-        p = subprocess.run(cmd, cwd=_root, capture_output=True, text=True)
-        for line in (p.stdout or "").splitlines():
-            if line.strip():
-                log(f"  {line}")
-        if p.returncode != 0:
-            rc = 1
-            log(f"  *** {dso} failed (rc={p.returncode}) ***")
-            for line in (p.stderr or "").splitlines()[-15:]:
-                log(f"  ! {line}")
-        log(f"  {dso} finished in {time.time() - t0:.0f}s")
+    for dso, recipes, _total, _s in plan:
+        for i, recipe in enumerate(recipes):
+            lum = "Ha" if recipe in NARROWBAND else "L"
+            cmd = [sys.executable, os.path.join(_root, "scripts", "n2n_lrgb_render.py"),
+                   "routine", "--dso", dso.lower().replace(" ", ""), "--recipe", recipe,
+                   "--lum", lum, "--exptime", str(args.exptime)]
+            # Rebuild the shared channel stacks once per target, on its first
+            # recipe; the rest reuse them (see module docstring).
+            if i == 0:
+                cmd.append("--force")
+            # No narrowband stretch override. These used to be forced to
+            # --white-pct 99 --black-pct 65, and on the 2026-08-24 trunk render that
+            # put white at 4.71 ADU (clipping everything above ~3 sigma into flat
+            # red slabs) and black at 0.572 ADU — only 0.36 sigma above sky, i.e.
+            # inside the noise. Raw sky pixels dithered above that line and read as
+            # a veil while denoised sky correctly fell below it, so the denoiser
+            # looked as though it had eaten the nebulosity. It had not: tile
+            # photometry measured 104-117% flux retention at every brightness. The
+            # renderer's own defaults (white p99.95, black at sky - 0.5 sigma) are
+            # the ones that render this field correctly.
+            log(f"\n$ {' '.join(cmd[1:])}")
+            if args.dry_run:
+                continue
+            t0 = time.time()
+            # Per-target isolation: one target failing to stack must not stop the
+            # others, and the traceback belongs in this job's log.
+            p = subprocess.run(cmd, cwd=_root, capture_output=True, text=True)
+            for line in (p.stdout or "").splitlines():
+                if line.strip():
+                    log(f"  {line}")
+            if p.returncode != 0:
+                rc = 1
+                log(f"  *** {dso} {recipe} failed (rc={p.returncode}) ***")
+                for line in (p.stderr or "").splitlines()[-15:]:
+                    log(f"  ! {line}")
+                if i == 0 and len(recipes) > 1:
+                    # The stack rebuild did not finish; composing the remaining
+                    # recipes from a half-fresh cache would silently mix nights.
+                    log(f"  skipping {' + '.join(recipes[1:])} — stack rebuild incomplete")
+                    break
+            log(f"  {dso} {recipe} finished in {time.time() - t0:.0f}s")
     return rc
 
 
