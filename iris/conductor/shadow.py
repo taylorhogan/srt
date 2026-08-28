@@ -243,8 +243,7 @@ class ShadowConductor:
             elif img == "DONE_PRELUDE":
                 self.offer("NINA_PRELUDE_DONE", "shadow", {"imaging": img})
             elif img == "IN_MAIN":
-                self.offer("NINA_SLOT_DONE", "shadow", {"imaging": img,
-                                                        "note": "sequence launched"})
+                self.offer("SLOT_STARTED", "shadow", {"imaging": img})
             elif img == "IN_FLATS":
                 if prev == "IN_MAIN":
                     self.slots = 0

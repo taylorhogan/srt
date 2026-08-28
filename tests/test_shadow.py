@@ -73,7 +73,7 @@ def test_full_legacy_night_produces_the_canonical_timeline(tmp_path):
         ("CHECKS_PASSED",       "PRE_FLIGHT",   "OPENING_ROOF"),
         ("ROOF_OPEN_CONFIRMED", "OPENING_ROOF", "PRELUDE"),
         ("NINA_PRELUDE_DONE",   "PRELUDE",      "SLOT_SETUP"),
-        ("NINA_SLOT_DONE",      "SLOT_SETUP",   "SLOT_IMAGING"),
+        ("SLOT_STARTED",        "SLOT_SETUP",   "SLOT_IMAGING"),
         ("NINA_SLOT_DONE",      "SLOT_IMAGING", "FLATS"),
         ("NINA_FLATS_DONE",     "FLATS",        "CLOSING_ROOF"),
         ("ROOF_CLOSE_CONFIRMED", "CLOSING_ROOF", "SHUTDOWN"),

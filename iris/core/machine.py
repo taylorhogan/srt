@@ -55,8 +55,15 @@ EVENTS = (
     # roof sensing / motion outcomes
     "ROOF_OPEN_CONFIRMED", "ROOF_CLOSE_CONFIRMED", "ROOF_STALL",
     "ROOF_TIMEOUT", "VISION_CONTRADICTION",
-    # capture (NINA today) cooperative signals
-    "NINA_PRELUDE_DONE", "NINA_SLOT_DONE", "SLOT_WINDOW_END",
+    # capture (NINA today) cooperative signals.
+    # SLOT_STARTED and NINA_SLOT_DONE are deliberately DISTINCT events. An
+    # early draft used NINA_SLOT_DONE for both "sequence launched" (in
+    # SLOT_SETUP) and "sequence finished" (in SLOT_IMAGING), disambiguated
+    # only by state -- and the historical replay caught it: on the real
+    # 2026-05-18 night NINA restarted mid-run, the state desynced by one, the
+    # two meanings crossed, and the machine ended the night stranded in
+    # SLOT_IMAGING. One name, one meaning.
+    "NINA_PRELUDE_DONE", "SLOT_STARTED", "NINA_SLOT_DONE", "SLOT_WINDOW_END",
     "NINA_FLATS_DONE", "CAPTURE_LOST",
     # night lifecycle
     "NIGHT_END_REQUESTED", "SHUTDOWN_DONE", "DAY_TICK",
@@ -105,7 +112,7 @@ TRANSITIONS = (
       guards=(G.slots_remaining,)),
     T("PRELUDE",      "NINA_PRELUDE_DONE",   "FLATS",
       guards=(G.plan_exhausted,)),
-    T("SLOT_SETUP",   "NINA_SLOT_DONE",      "SLOT_IMAGING"),   # sequence launched
+    T("SLOT_SETUP",   "SLOT_STARTED",        "SLOT_IMAGING"),
     T("SLOT_IMAGING", "NINA_SLOT_DONE",      "SLOT_SETUP",
       guards=(G.slots_remaining,)),
     T("SLOT_IMAGING", "NINA_SLOT_DONE",      "FLATS",

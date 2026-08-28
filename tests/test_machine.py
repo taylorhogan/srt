@@ -208,9 +208,9 @@ def test_a_full_two_slot_night_walks_the_table():
         ("CHECKS_PASSED", go2, "OPENING_ROOF"),
         ("ROOF_OPEN_CONFIRMED", go2, "PRELUDE"),
         ("NINA_PRELUDE_DONE", go2, "SLOT_SETUP"),
-        ("NINA_SLOT_DONE", go2, "SLOT_IMAGING"),      # slot 1 running
+        ("SLOT_STARTED", go2, "SLOT_IMAGING"),        # slot 1 running
         ("NINA_SLOT_DONE", go1, "SLOT_SETUP"),        # slot 1 done, one left
-        ("NINA_SLOT_DONE", go1, "SLOT_IMAGING"),      # slot 2 running
+        ("SLOT_STARTED", go1, "SLOT_IMAGING"),        # slot 2 running
         ("NINA_SLOT_DONE", go0, "FLATS"),             # plan exhausted
         ("NINA_FLATS_DONE", go0, "CLOSING_ROOF"),
         ("ROOF_CLOSE_CONFIRMED", go0, "SHUTDOWN"),
