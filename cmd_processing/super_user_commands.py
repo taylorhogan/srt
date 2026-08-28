@@ -3882,41 +3882,15 @@ def _snr_run_locked(words: list[str]) -> None:
 def _load_precomputed_fwhm_stars(
     dso_dir: Path, paths: list[Path], arcsec_per_pixel: float
 ) -> dict[Path, tuple[float, int]]:
-    """Build a {path: (fwhm_px, star_count)} map from a DSO's frame_stats.json.
+    """Moved to fits_processing.frame_cache.load_precomputed_fwhm_stars.
 
-    Lets the stacker reuse the FWHM/star measurements already cached by the
-    `stats`/`bad` commands instead of redoing the detection pass. The cache
-    stores FWHM in arcseconds; the stacker works in pixels, so convert with
-    *arcsec_per_pixel*. Only paths present in *paths* are returned; a missing,
-    unreadable, or value-less cache yields an empty map (stacker measures
-    normally). Matching is by normalised absolute path so cache keys written on
-    a different run still line up.
+    This delegating stub keeps the old private name alive for this module's
+    own three call sites until they migrate in the chat split (plan Phase 5).
+    External packages import the PUBLIC home directly; nothing outside this
+    file may import this name.
     """
-    import json as _json
-
-    cache_path = dso_dir / "frame_stats.json"
-    if not cache_path.exists() or not arcsec_per_pixel:
-        return {}
-    try:
-        with open(cache_path) as fh:
-            rows = _json.load(fh)
-    except Exception:
-        _logger.warning("hr: could not read %s", cache_path, exc_info=True)
-        return {}
-    by_norm = {
-        os.path.normcase(os.path.abspath(r["path"])): r
-        for r in rows
-        if isinstance(r, dict) and r.get("path")
-    }
-    out: dict[Path, tuple[float, int]] = {}
-    for p in paths:
-        r = by_norm.get(os.path.normcase(os.path.abspath(str(p))))
-        if not r:
-            continue
-        fa = r.get("fwhm_arcsec")
-        fwhm_px = float(fa) / arcsec_per_pixel if fa else 0.0
-        out[p] = (fwhm_px, int(r.get("star_count") or 0))
-    return out
+    from fits_processing.frame_cache import load_precomputed_fwhm_stars
+    return load_precomputed_fwhm_stars(dso_dir, paths, arcsec_per_pixel)
 
 
 def hr_cmd(words: list[str], account: str) -> None:

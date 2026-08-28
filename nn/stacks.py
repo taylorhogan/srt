@@ -118,7 +118,7 @@ def shared_reference_for(
     **On the Spark the cache never hits, so this is always the middle frame.**
     `frame_stats.json` is written by the observatory PC and its `path` keys are
     Windows absolute paths (`C:\\Users\\iriso\\Documents\\N.I.N.A\\Targets\\...`),
-    while `_load_precomputed_fwhm_stars` matches on `os.path.abspath` — which on
+    while `load_precomputed_fwhm_stars` matches on `os.path.abspath` — which on
     Linux can never equal a `C:\\...` string. Every lookup misses, the `except`
     below is not reached (an empty dict is not an error), and no line is logged.
     Measured 2026-08-19: every one of the 9 targets has a cache, none of them
@@ -143,10 +143,10 @@ def shared_reference_for(
         return None
     ref_path = paths[len(paths) // 2]
     try:
-        from cmd_processing.super_user_commands import _load_precomputed_fwhm_stars
+        from fits_processing.frame_cache import load_precomputed_fwhm_stars
         arcsec = stacker._get_arcsec_per_pixel()
         dso_dir = Path(paths[0]).parents[3]
-        pre = _load_precomputed_fwhm_stars(dso_dir, paths, arcsec)
+        pre = load_precomputed_fwhm_stars(dso_dir, paths, arcsec)
         if pre:
             fwhm = {p: v[0] for p, v in pre.items()}
             idx = stacker._reference_index_by_fwhm([fwhm.get(p, 0.0) for p in paths])

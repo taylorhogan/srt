@@ -443,8 +443,8 @@ def process_dso(
     ref_filter = max(set(resolved.values()), key=lambda f: len(by_filter[f]))
     ref_paths = by_filter[ref_filter]
     arcsec = stacker._get_arcsec_per_pixel()
-    from cmd_processing.super_user_commands import _load_precomputed_fwhm_stars
-    ref_pre = _load_precomputed_fwhm_stars(dso_dir, ref_paths, arcsec)
+    from fits_processing.frame_cache import load_precomputed_fwhm_stars
+    ref_pre = load_precomputed_fwhm_stars(dso_dir, ref_paths, arcsec)
     ref_fwhm = {p: v[0] for p, v in ref_pre.items()}
     ref_idx = stacker._reference_index_by_fwhm(
         [ref_fwhm.get(p, 0.0) for p in ref_paths]) or 0
@@ -475,7 +475,7 @@ def process_dso(
         bias, dark, flat = stacker.calibration_paths_from_config(filt)
         if not use_flats:
             flat = []
-        pre = _load_precomputed_fwhm_stars(dso_dir, paths, arcsec)
+        pre = load_precomputed_fwhm_stars(dso_dir, paths, arcsec)
         data, info = stacker.stack(
             paths, method=stacker.StackMethod.SIGMA_CLIP_FWHM,
             bias_paths=bias, dark_paths=dark, flat_paths=flat,
