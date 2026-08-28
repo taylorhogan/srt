@@ -17,7 +17,6 @@ Usage:  python scripts/live_skymap.py [--no-push]
 """
 import json
 import os
-import subprocess
 import sys
 import warnings
 from datetime import datetime, timedelta, timezone
@@ -37,10 +36,7 @@ if __package__ is None or __package__ == "":
 
 from configs import config
 
-HOST = "taylor@100.91.17.119"          # web host, over the tailnet
-DEST = "/srv/iris-live"
-KEY = str(Path.home() / ".ssh" / "id_ed25519_iris")
-
+# Transport (host/dest/key) lives in scripts/live_push.py -- the ONE copy.
 BG, FG, DIM = "#0d0d1a", "#e0e6ed", "#8b9bb4"
 ACCENT, TARGET, TREES = "#3e64ff", "#f50057", "#f5a623"
 
@@ -532,21 +528,21 @@ def main() -> None:
     if "--no-push" in sys.argv:
         return
 
-    # Write to .tmp and rename on the far side, so the site never serves a
-    # half-copied image.
+    # Shared transport, NOT an inline scp loop. This file used to duplicate
+    # the copy with only BatchMode+ConnectTimeout -- no ServerAlive* and no
+    # subprocess timeout -- which is exactly the unbounded-hang class that
+    # live_push exists to prevent and that stalled this very job on
+    # 2026-08-14 (three 240s .bat kills in one hour and a stale-feed page,
+    # on a link that measured 3ms once anyone looked). One transport, one
+    # place to get the bounding right.
     pushes = [(img, "skymap.jpg"), (js, "status.json")]
     if latest_jpg is not None and latest_jpg.exists():
         pushes.insert(1, (latest_jpg, "latest.jpg"))
     if stats_jpg is not None and stats_jpg.exists():
         pushes.insert(1, (stats_jpg, "stats.jpg"))
-    for src, dest in pushes:
-        subprocess.run(["scp", "-i", KEY, "-o", "BatchMode=yes", "-o",
-                        "ConnectTimeout=15", str(src),
-                        HOST + ":" + DEST + "/." + dest + ".tmp"], check=True)
-        subprocess.run(["ssh", "-i", KEY, "-o", "BatchMode=yes", HOST,
-                        "mv " + DEST + "/." + dest + ".tmp " + DEST + "/" + dest],
-                       check=True)
-    print("pushed to", HOST + ":" + DEST)
+    from scripts import live_push
+    live_push.push(pushes)
+    print("pushed", len(pushes), "file(s) to", live_push.HOST + ":" + live_push.DEST)
 
 
 if __name__ == "__main__":
