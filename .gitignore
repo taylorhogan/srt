@@ -15,6 +15,12 @@ configs/config_private.py
 
 # Runtime / data files
 *.log
+# ...except committed test fixtures: tests/replay/ holds SNAPSHOTS of runtime
+# logs, frozen as regression data. The global *.log rule silently kept the
+# first such fixture out of three consecutive commits -- local tests passed on
+# the untracked file while CI failed on its absence, and only the deploy gate
+# stopped the broken state reaching the observatory.
+!tests/replay/*.log
 safety.txt
 imaging.txt
 mode.txt
