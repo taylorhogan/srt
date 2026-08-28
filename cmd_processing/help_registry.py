@@ -438,6 +438,97 @@ def get(name: str) -> Optional[dict]:
     return HELP[key] if key else None
 
 
+# Same GitHub-dark palette the queue table uses, so help does not look like it
+# came from a different application.
+_H_BG, _H_BORDER, _H_ROW = "#0d1117", "#30363d", "#21262d"
+_H_DIM, _H_TEXT, _H_CMD = "#8b949e", "#c9d1d9", "#3fb950"
+_H_MONO = ("ui-monospace,SFMono-Regular,Menlo,Consolas,"
+           "'Liberation Mono',monospace")
+
+
+def _h_entry(name, summary, escape):
+    """One command as a two-line block: coloured name, then explanation.
+
+    Stacked rather than laid out in columns. The text version pads names to a
+    fixed width and puts the summary beside them, which is readable on a
+    terminal and bad on a phone: the summary wraps under a deep indent and the
+    eye loses which command it belongs to. On one line each, with the name
+    coloured and the explanation indented under it, the pairing survives any
+    width.
+    """
+    return (
+        f'<div style="padding:7px 0;border-bottom:1px solid {_H_ROW};">'
+        f'<div style="font-family:{_H_MONO};font-size:13px;font-weight:600;'
+        f'color:{_H_CMD};">{escape(name)}</div>'
+        f'<div style="color:{_H_TEXT};font-size:12.5px;line-height:1.45;'
+        f'margin-top:2px;">{escape(summary)}</div>'
+        f'</div>'
+    )
+
+
+def format_list_html(include_super: bool) -> str:
+    """The command list as HTML, for the web chat."""
+    from html import escape
+    gen = sorted((n, e) for n, e in HELP.items() if e["category"] == "general")
+    sup = sorted((n, e) for n, e in HELP.items() if e["category"] == "super")
+
+    def section(title, items):
+        head = (f'<div style="color:{_H_DIM};font-size:10.5px;font-weight:600;'
+                f'letter-spacing:.08em;text-transform:uppercase;'
+                f'margin:12px 0 2px;">{escape(title)}</div>')
+        return head + "".join(_h_entry(n, e["summary"], escape) for n, e in items)
+
+    body = section("General", gen)
+    if include_super:
+        body += section("Super-user", sup)
+    return (
+        f'<div style="background:{_H_BG};border:1px solid {_H_BORDER};'
+        f'border-radius:8px;padding:10px 12px;max-width:100%;">'
+        f'<div style="color:{_H_DIM};font-size:11.5px;margin-bottom:2px;">'
+        f'Type <span style="font-family:{_H_MONO};color:{_H_CMD};">'
+        f'help &lt;name&gt;</span> for details.</div>'
+        f'{body}'
+        f'<div style="color:{_H_DIM};font-size:11px;margin-top:10px;">'
+        f'<a href="https://github.com/taylorhogan/srt/blob/main/docs/commands.md" '
+        f'style="color:#58a6ff;">Full docs</a></div>'
+        f'</div>'
+    )
+
+
+def format_command_html(name: str):
+    """Detailed help for one command as HTML, or None if unknown."""
+    from html import escape
+    entry = get(name)
+    if entry is None:
+        return None
+    key = _resolve(name) or name
+
+    def block(title, items, mono=True):
+        if not items:
+            return ""
+        head = (f'<div style="color:{_H_DIM};font-size:10.5px;font-weight:600;'
+                f'letter-spacing:.08em;text-transform:uppercase;'
+                f'margin:10px 0 3px;">{escape(title)}</div>')
+        style = (f'font-family:{_H_MONO};color:{_H_CMD};' if mono
+                 else f'color:{_H_TEXT};')
+        return head + "".join(
+            f'<div style="{style}font-size:12.5px;line-height:1.5;'
+            f'padding:1px 0 1px 8px;">{escape(str(i))}</div>' for i in items)
+
+    return (
+        f'<div style="background:{_H_BG};border:1px solid {_H_BORDER};'
+        f'border-radius:8px;padding:10px 12px;max-width:100%;">'
+        f'<div style="font-family:{_H_MONO};font-size:14px;font-weight:600;'
+        f'color:{_H_CMD};">{escape(key)}</div>'
+        f'<div style="color:{_H_TEXT};font-size:12.5px;line-height:1.45;'
+        f'margin-top:3px;">{escape(entry["summary"])}</div>'
+        f'{block("Usage", entry.get("usage"))}'
+        f'{block("Examples", entry.get("examples"))}'
+        f'{block("Notes", entry.get("notes"), mono=False)}'
+        f'</div>'
+    )
+
+
 def format_command(name: str) -> str:
     """Format detailed help for one command."""
     entry = get(name)

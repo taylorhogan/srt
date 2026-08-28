@@ -331,6 +331,21 @@ def help_cmd(words: list[str], index: int, m: Mastodon, account: str) -> None:
 
     # words = [<mention>, <cmd-name>, <maybe target>, ...]
     target = words[index + 1].strip() if len(words) > index + 1 else ""
+
+    # HTML in the web chat, plain text if that path is unavailable. The text
+    # build pads command names to a fixed column, which reads fine in a
+    # terminal and badly on a phone -- the summary wraps under a deep indent
+    # and stops looking attached to its command. The HTML version stacks them
+    # and colours the name instead, so the pairing survives any width.
+    try:
+        html = (hr.format_command_html(target) if target
+                else hr.format_list_html(include_super=su.is_super_user(account)))
+        if html:
+            post_html_message(html)
+            return
+    except Exception:
+        logging.getLogger(__name__).exception("help: HTML render failed")
+
     if target:
         post_social_message(hr.format_command(target))
         return
