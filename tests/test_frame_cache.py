@@ -18,14 +18,24 @@ def _write_cache(dso_dir, rows):
     (dso_dir / "frame_stats.json").write_text(json.dumps(rows))
 
 
+import os
+
+
 def test_matches_by_normalised_path_and_converts_units(tmp_path):
     frame = tmp_path / "LIGHT" / "a.fits"
     frame.parent.mkdir()
     frame.write_bytes(b"")
+    # Cache key spelled differently from the query path, in ways abspath
+    # normalises EVERYWHERE: a redundant ./ segment. Case-folding is asserted
+    # only on Windows, because os.path.normcase is a no-op on POSIX -- the
+    # first version of this test upper-cased the path unconditionally and
+    # passed on the observatory while failing on the Linux CI runner, which
+    # was the test encoding the platform rather than the contract.
+    key = str(frame.parent / "." / "a.fits")
+    if os.name == "nt":
+        key = key.upper().replace("\\", "/")
     _write_cache(tmp_path, [
-        # cache key spelled differently (case, separators) than the query path
-        {"path": str(frame).upper().replace("\\", "/"),
-         "fwhm_arcsec": 2.6, "star_count": 123},
+        {"path": key, "fwhm_arcsec": 2.6, "star_count": 123},
     ])
     out = load_precomputed_fwhm_stars(tmp_path, [frame], arcsec_per_pixel=0.26)
     assert list(out) == [frame]
