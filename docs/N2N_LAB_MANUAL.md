@@ -1585,6 +1585,51 @@ finding points at — none of which is a hyperparameter already swept.
 Step 23's "deletes the nebula" is too strong and is qualified here: large-scale
 emission survives at 96-98%, fine texture at 30-50%.
 
+### 36. The colour cast is channel depth, not the model — step 21's suspect confirmed
+
+2026-08-28, `scripts/n2n_halo_rescore.py`. Step 21 found the ngc5907 green halo
+and named the likely cause without testing it: "R's stack was also the shallowest
+(11 of 22 frames survived the gate against 19 for G and B), which is the obvious
+suspect and is untested." Tested now, with `extended_retention` applied to every
+ladder arm on the held-out ngc5907 stacks.
+
+| arm | L | R | G | B | spread |
+| --- | --- | --- | --- | --- | --- |
+| per-filter | 95.0% | 49.9% | 77.2% | 56.8% | 45.1 |
+| pooled-filters | 92.4% | 48.2% | 71.9% | 49.7% | 44.2 |
+| pooled-scenes | 94.7% | 51.3% | 77.6% | 52.2% | **43.4** |
+| pooled-scenes_p7000 | 96.8% | 53.4% | 78.1% | 53.9% | 43.5 |
+
+**Every arm is the same.** 43.4 to 45.1 points of cross-channel spread, a 1.7
+point range on a ~44 point effect. Arm selection cannot fix the cast, and the
+per-channel ordering (L >> G > B ~ R) is identical in all four — so this is a
+property of the data, not of the network.
+
+Against the manifest's accepted frame counts for the same stacks:
+
+| filter | accepted | mean halo kept |
+| --- | --- | --- |
+| L | 24 | 94.7% |
+| G | ~17 | 76.2% |
+| R | 13 | 50.7% |
+| B | 12 | 53.1% |
+
+Monotonic apart from R/B, which are within a frame of each other and within 2.4
+points of retention. **This is the explanation step 21 could not find in SNR** —
+that step noted halo signal in each channel's own sky sigma runs L 1.30, R 0.60,
+G 0.52, B 0.50, so R has the best SNR of R/G/B and the worst retention. Depth
+orders it correctly where SNR does not.
+
+Caveat: four points, and depth and noise are confounded by construction (a deeper
+stack is a quieter one). The claim that survives is the negative one, which needs
+no fit: **switching arms moves the spread by under 2 points, so the model is not
+the lever.**
+
+Consequence for practice: for a galaxy, equalise channel depth rather than hunt
+for a better checkpoint. LRGB channels are almost never equal depth, and the
+retention gap turns straight into a hue error on low-surface-brightness
+structure. A 2:1 imbalance here produced a 44 point spread.
+
 ### 32. The Wiener bound: the fine scales were never the defect — the mid scales are
 
 2026-08-23, `scripts/n2n_wiener_bound.py`. Phase 0a of the improvement plan.
