@@ -4,6 +4,7 @@ __pycache__/
 
 # Virtual environment
 venv/
+.venv/
 
 # Private config
 configs/config_private.py
@@ -27,6 +28,13 @@ sentry/roof_signatures/
 sentry/library_spectrograms/
 sentry/detected_spectrograms/
 sentry/roof_audio/
+sentry/roof_audio_kasa/
+
+# Analysis images belong in local/analysis/, never the repo root. Root-anchored
+# so tracked images in docs/, site/, base_images/ etc. are unaffected.
+/*.png
+/*.jpg
+/*.jpeg
 my_instruction_back.json
 my_cal.back.json
 scheduler_state.json
