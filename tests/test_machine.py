@@ -212,7 +212,8 @@ def test_a_full_two_slot_night_walks_the_table():
         ("NINA_SLOT_DONE", go1, "SLOT_SETUP"),        # slot 1 done, one left
         ("SLOT_STARTED", go1, "SLOT_IMAGING"),        # slot 2 running
         ("NINA_SLOT_DONE", go0, "FLATS"),             # plan exhausted
-        ("NINA_FLATS_DONE", go0, "CLOSING_ROOF"),
+        ("NINA_FLATS_DONE", go0, "PARKING"),
+        ("MOUNT_PARK_CONFIRMED", go0, "CLOSING_ROOF"),
         ("ROOF_CLOSE_CONFIRMED", go0, "SHUTDOWN"),
         ("SHUTDOWN_DONE", go0, "NIGHT_DONE"),
         ("DAY_TICK", go0, "IDLE_DAY"),

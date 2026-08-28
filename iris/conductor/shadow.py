@@ -251,8 +251,11 @@ class ShadowConductor:
             elif img == "DONE_FLATS":
                 self.offer("NINA_FLATS_DONE", "shadow", {"imaging": img})
             elif img == "NONE" and prev in ("DONE_FLATS", "IN_FLATS", "IN_MAIN"):
-                # end.py's last act is clearing the state; the close itself is
-                # observed via the vision lines it logs on the way.
+                # end.py's last act is clearing the state. Its real sequence is
+                # park -> close -> clear, so the shadow emits that order; the
+                # park and close confirmations' true timings are in iris.log
+                # for the morning report to compare.
+                self.offer("MOUNT_PARK_CONFIRMED", "shadow", {"imaging": img})
                 self.offer("ROOF_CLOSE_CONFIRMED", "shadow", {"imaging": img})
                 self.offer("SHUTDOWN_DONE", "shadow", {"imaging": img})
             self._imaging = img

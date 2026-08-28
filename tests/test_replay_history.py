@@ -73,6 +73,7 @@ def _night_events(states):
         elif s == "DONE_FLATS":
             ev.append(("NINA_SLOT_DONE", 0))      # imaging.txt -> IN_FLATS
             ev.append(("NINA_FLATS_DONE", 0))
+            ev.append(("MOUNT_PARK_CONFIRMED", 0))
             ev.append(("ROOF_CLOSE_CONFIRMED", 0))
             ev.append(("SHUTDOWN_DONE", 0))
     ev.append(("DAY_TICK", 0))

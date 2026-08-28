@@ -38,6 +38,14 @@ STATES = (
     "SLOT_SETUP",        # slew / sequence launch for the current slot
     "SLOT_IMAGING",      # main sequence for the current slot
     "FLATS",             # once per night
+    "PARKING",           # mount parking before any roof close. Exists because
+                         #   reality parks the scope AS PART OF closing (end.py
+                         #   does exactly this); an entry guard of "already
+                         #   parked" on CLOSING_ROOF contradicted every
+                         #   mid-night close, where the scope is tracking when
+                         #   the close is decided. Invariant A's guard sits on
+                         #   the PARKING -> CLOSING_ROOF edge: between the park
+                         #   CONFIRMATION and the relay fire.
     "CLOSING_ROOF",      # park confirmed, relay fired, awaiting confirmed closed
     "SHUTDOWN",          # dehumidifier, summary, handoff marker
     "NIGHT_DONE",        # terminal for the night
@@ -65,6 +73,8 @@ EVENTS = (
     # SLOT_IMAGING. One name, one meaning.
     "NINA_PRELUDE_DONE", "SLOT_STARTED", "NINA_SLOT_DONE", "SLOT_WINDOW_END",
     "NINA_FLATS_DONE", "CAPTURE_LOST",
+    # mount
+    "MOUNT_PARK_CONFIRMED",
     # night lifecycle
     "NIGHT_END_REQUESTED", "SHUTDOWN_DONE", "DAY_TICK",
     # weather
@@ -122,32 +132,36 @@ TRANSITIONS = (
     T("SLOT_IMAGING", "SLOT_WINDOW_END",     "FLATS",
       guards=(G.plan_exhausted,)),
     T("SLOT_IMAGING", "REPLAN_REQUESTED",    "SLOT_SETUP"),
-    T("SLOT_IMAGING", "CAPTURE_LOST",        "CLOSING_ROOF",
-      guards=(G.mount_parked, G.roof_state_known)),
+    T("SLOT_IMAGING", "CAPTURE_LOST",        "PARKING"),
     T("SLOT_IMAGING", "WEATHER_BAD",         "FLATS"),
 
-    # --- closing out the night. Invariant A again, on the way down.
-    T("FLATS",        "NINA_FLATS_DONE",     "CLOSING_ROOF",
+    # --- closing out the night. The close DECISION is unguarded (deciding to
+    # go home must always be possible); the roof MOTION is where Invariant A
+    # bites, on the single PARKING -> CLOSING_ROOF edge.
+    T("FLATS",        "NINA_FLATS_DONE",     "PARKING"),
+    T("FLATS",        "CAPTURE_LOST",        "PARKING"),
+    T("PARKING",      "MOUNT_PARK_CONFIRMED", "CLOSING_ROOF",
       guards=(G.mount_parked, G.roof_state_known)),
-    T("FLATS",        "CAPTURE_LOST",        "CLOSING_ROOF",
-      guards=(G.mount_parked, G.roof_state_known)),
+    T("PARKING",      "VISION_CONTRADICTION", "FAULT_ROOF_UNKNOWN"),
     T("CLOSING_ROOF", "ROOF_CLOSE_CONFIRMED", "SHUTDOWN"),
     T("CLOSING_ROOF", "ROOF_STALL",          "FAULT_ROOF_UNKNOWN"),
     T("CLOSING_ROOF", "ROOF_TIMEOUT",        "FAULT_ROOF_UNKNOWN"),
     T("SHUTDOWN",     "SHUTDOWN_DONE",       "NIGHT_DONE"),
     T("NIGHT_DONE",   "DAY_TICK",            "IDLE_DAY"),
 
-    # --- an early end request from any active night state
-    T("PRELUDE",      "NIGHT_END_REQUESTED", "CLOSING_ROOF",
-      guards=(G.mount_parked, G.roof_state_known)),
-    T("SLOT_SETUP",   "NIGHT_END_REQUESTED", "CLOSING_ROOF",
-      guards=(G.mount_parked, G.roof_state_known)),
-    T("SLOT_IMAGING", "NIGHT_END_REQUESTED", "CLOSING_ROOF",
-      guards=(G.mount_parked, G.roof_state_known)),
-    T("FLATS",        "NIGHT_END_REQUESTED", "CLOSING_ROOF",
-      guards=(G.mount_parked, G.roof_state_known)),
+    # --- an early end request from any active night state: the decision to
+    # end is never guarded; the motion after parking is.
+    T("PRELUDE",      "NIGHT_END_REQUESTED", "PARKING"),
+    T("SLOT_SETUP",   "NIGHT_END_REQUESTED", "PARKING"),
+    T("SLOT_IMAGING", "NIGHT_END_REQUESTED", "PARKING"),
+    T("FLATS",        "NIGHT_END_REQUESTED", "PARKING"),
 
-    # --- contradiction between roof sensors, noticed at rest
+    # --- contradiction between roof sensors, noticed at rest. IDLE_DAY,
+    # ARMED and NIGHT_DONE are included: those states CLAIM the roof is
+    # closed, so an open roof seen there is precisely the contradiction.
+    T("IDLE_DAY",     "VISION_CONTRADICTION", "FAULT_ROOF_UNKNOWN"),
+    T("ARMED",        "VISION_CONTRADICTION", "FAULT_ROOF_UNKNOWN"),
+    T("NIGHT_DONE",   "VISION_CONTRADICTION", "FAULT_ROOF_UNKNOWN"),
     T("PRELUDE",      "VISION_CONTRADICTION", "FAULT_ROOF_UNKNOWN"),
     T("SLOT_SETUP",   "VISION_CONTRADICTION", "FAULT_ROOF_UNKNOWN"),
     T("SLOT_IMAGING", "VISION_CONTRADICTION", "FAULT_ROOF_UNKNOWN"),
