@@ -1,0 +1,44 @@
+# The deploy gate. The observatory pulls the `release` branch at boot;
+# `release` is fast-forwarded to `main` ONLY when this workflow is green. A red
+# main therefore means the observatory keeps running yesterday's green code --
+# which is exactly the failure mode an unattended telescope wants.
+#
+# Deliberately dependency-free for now: the suite is syntax coverage of every
+# deployed file plus unit tests of pure modules, so a bare runner with Python
+# and pytest is enough. Heavier stages (machine-table tests, simulated nights
+# against fakes) arrive with the architecture plan's Phase 1 and slot in as
+# additional steps here -- the gate mechanism does not change.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install pytest
+      - run: python -m pytest tests/ -q
+
+  release:
+    # Fast-forward the branch the observatory deploys from. No --force: under
+    # this scheme release is always an ancestor of green main, so a plain push
+    # fast-forwards -- and if it ever is NOT an ancestor, something rewrote
+    # history and a loud failure here is precisely what we want.
+    needs: test
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - run: |
+          git push origin HEAD:release

@@ -57,15 +57,29 @@ if __name__ == "__main__":
             p2.join(timeout=10)
 
         if exit_code == RESTART_EXIT_CODE:
-            # Deliberate restart (the `update` command): pull then relaunch.
+            # Deliberate restart (the `update` command): deploy the last GREEN
+            # commit, then relaunch. `release` is fast-forwarded by CI only
+            # when the tests pass, so a red main never reaches a running
+            # observatory through this path. ff-only rather than a plain pull
+            # because this checkout is also the development machine: if local
+            # main is ahead of release (work in progress, or CI still
+            # running), the merge refuses and we relaunch on the local code
+            # rather than tangling the working copy.
             crash_times.clear()
+            fetch = subprocess.run(
+                ["git", "-C", project_root, "fetch", "origin", "release"],
+                capture_output=True, text=True,
+            )
+            if fetch.returncode != 0:
+                print(f"git fetch failed (exit {fetch.returncode}):\n{fetch.stderr}")
+                break
             result = subprocess.run(
-                ["git", "-C", project_root, "pull"],
+                ["git", "-C", project_root, "merge", "--ff-only", "origin/release"],
                 capture_output=True, text=True,
             )
             if result.returncode != 0:
-                print(f"git pull failed (exit {result.returncode}):\n{result.stderr}")
-                break
+                print("release not fast-forwardable (local work ahead, or CI "
+                      f"pending) — relaunching on local code:\n{result.stderr}")
             continue  # relaunch both processes
         elif exit_code == 0:
             break  # clean exit — stop
