@@ -199,9 +199,13 @@ def rain_spans(night_key):
     alert rows alone: alerts are rate-limited to one per six hours, so the
     2026-08-13 storm -- hours long -- holds exactly two alert rows. Shading
     only those would draw two slivers and miss the storm. A sample counts as
-    wet above the detector's own onset threshold (rain_predict_pct); alerted
-    marks spans that also contain a sent alert, letting the chart distinguish
-    "the ladder fired" from "the signal was above onset".
+    wet above the onset threshold it was actually judged against -- each row
+    carries it as "onset" since the threshold became moon-aware (full-moon
+    glare reads as 1-3% motion, and shading that against the static 1.0%
+    painted whole clear moonlit nights yellow); older rows without the field
+    fall back to the static default. `alerted` marks spans that also contain a
+    sent alert, letting the chart distinguish "the ladder fired" from "the
+    signal was above onset".
     """
     try:
         from sentry.rain_detect import DEFAULTS
@@ -217,7 +221,7 @@ def rain_spans(night_key):
             continue
         if (t - timedelta(hours=12)).date() != night_key or not r.get("night"):
             continue
-        if float(r.get("moving_pct") or 0) >= thresh:
+        if float(r.get("moving_pct") or 0) >= float(r.get("onset") or thresh):
             wet.append((t, bool(r.get("alert"))))
     if not wet:
         return []

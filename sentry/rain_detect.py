@@ -81,6 +81,7 @@ DEFAULTS = {
     "rain_persist": 3,           # consecutive samples required
     "rain_alert_gap_s": 6 * 3600,
     "rain_gap_tolerance_s": 1200,  # a gap shorter than this does not break a run
+    "rain_moon_boost_pct": 3.0,  # added to the predict threshold at full moon
     "rain_diff_adu": 12.0,       # per-pixel change that counts as "moved"
     "rain_burst_seconds": 2.0,   # only needs a handful of adjacent frames
     "rain_min_frames": 4,
@@ -207,6 +208,46 @@ def _consecutive_tail(samples, gap_s):
     return samples[cut:]
 
 
+def moon_onset_boost(when=None, cfg=None):
+    """Percentage points added to the predict threshold while the moon is up.
+
+    The full moon's glare gradient reads as sustained 1-3% central-sky motion
+    -- measured across the 2026-08-25..29 waxing week, one marginal false
+    "predict" per night at 1.0-1.4%, peaking at 2.9%, growing with lunar
+    illumination -- while every real event in rain_log.jsonl reads 10-99%. So
+    the predict threshold rises with the moon: boost = rain_moon_boost_pct x
+    illuminated fraction when the moon is above 5 deg, zero otherwise. At full
+    moon that puts onset at 4.0%, above the observed glare ceiling; a dark sky
+    keeps the sensitive 1.0%. Detect (10%) is never adjusted -- moonlight
+    cannot reach it.
+
+    On any failure (no astropy, no plate solution for the site, bad clock)
+    this returns 0.0: the failure direction is a false alert on a moonlit
+    night, never a missed storm on a dark one.
+    """
+    t = _tunables(cfg)
+    full = float(t["rain_moon_boost_pct"])
+    if full <= 0:
+        return 0.0
+    try:
+        import numpy as np
+        from astropy.coordinates import AltAz, EarthLocation, get_body
+        from astropy.time import Time
+
+        loc = (cfg or config.data())["location"]
+        site = EarthLocation.from_geodetic(loc["longitude"], loc["latitude"],
+                                           loc.get("elevation", 0.0))
+        ts = Time(when if when is not None else datetime.now(timezone.utc))
+        moon = get_body("moon", ts, site)
+        if moon.transform_to(AltAz(obstime=ts, location=site)).alt.deg <= 5.0:
+            return 0.0
+        sun = get_body("sun", ts, site)
+        illum = (1.0 - np.cos(np.radians(sun.separation(moon).deg))) / 2.0
+        return round(full * float(illum), 3)
+    except Exception:
+        return 0.0
+
+
 def _allowed(last, now, gap):
     """Has the rate-limit window expired? A falsy `last` means never alerted.
 
@@ -217,11 +258,14 @@ def _allowed(last, now, gap):
     return (not last) or (now - float(last)) >= gap
 
 
-def evaluate(moving_pct, night, sun_alt, now=None, cfg=None, state=None):
+def evaluate(moving_pct, night, sun_alt, now=None, cfg=None, state=None,
+             onset_boost=0.0):
     """Fold one sample into the state machine. Returns (state, alert or None).
 
     alert is None, "predict" or "detect". Pure apart from the clock, so the
-    thresholds and rate limiting are testable without a camera.
+    thresholds and rate limiting are testable without a camera. `onset_boost`
+    (from moon_onset_boost) raises the predict threshold only -- the caller
+    computes it so this stays a pure function of its arguments.
     """
     t = _tunables(cfg)
     now = float(now if now is not None else time.time())
@@ -266,7 +310,7 @@ def evaluate(moving_pct, night, sun_alt, now=None, cfg=None, state=None):
         # is deliberately ONE WAY: a prediction does not suppress the detection
         # that confirms it.
         st["last_predict"] = now
-    elif (_run_over(st["samples"], t["rain_predict_pct"], n)
+    elif (_run_over(st["samples"], t["rain_predict_pct"] + float(onset_boost), n)
             and _allowed(st.get("last_predict"), now, gap)):
         alert = "predict"
         st["last_predict"] = now
@@ -275,7 +319,7 @@ def evaluate(moving_pct, night, sun_alt, now=None, cfg=None, state=None):
 
 # ------------------------------------------------------------------ notify
 
-def _notify(kind, moving_pct, sun_alt, image, cfg):
+def _notify(kind, moving_pct, sun_alt, image, cfg, onset_boost=0.0):
     from utils import pushover
     t = _tunables(cfg)
     if kind == "detect":
@@ -284,9 +328,12 @@ def _notify(kind, moving_pct, sun_alt, image, cfg):
                "as fast as 2 minutes." % (moving_pct, t["rain_detect_pct"]))
         prio = 1
     else:
+        eff = t["rain_predict_pct"] + float(onset_boost)
         msg = ("Rain likely within ~25-40 min - %.1f%% of the sky frame is moving "
-               "(threshold %.0f%%, %d consecutive samples). Onset ramp has started."
-               % (moving_pct, t["rain_predict_pct"], int(t["rain_persist"])))
+               "(threshold %.1f%%, %d consecutive samples). Onset ramp has started."
+               % (moving_pct, eff, int(t["rain_persist"])))
+        if onset_boost:
+            msg += " Threshold is moon-raised; this cleared it anyway."
         prio = 0
     msg += " Sun %.0f deg." % sun_alt
     try:
@@ -309,13 +356,19 @@ def step(status, frame, cfg=None):
         sun_alt = float(status.get("sun_alt_deg", 0.0))
         m = measure(cfg) if night else None
         pct = m["moving_pct"] if m else None
-        st, alert = evaluate(pct, night, sun_alt, cfg=cfg)
+        boost = moon_onset_boost(cfg=cfg) if night else 0.0
+        st, alert = evaluate(pct, night, sun_alt, cfg=cfg, onset_boost=boost)
         entry = {"t": datetime.now(timezone.utc).isoformat(timespec="seconds"),
                  "night": night, "sun_alt_deg": round(sun_alt, 1),
                  "moving_pct": pct, "alert": alert,
+                 # The predict threshold this sample was judged against; the
+                 # transparency chart shades "wet" from this rather than the
+                 # static default, so a moonlit night is not painted yellow.
+                 "onset": round(_tunables(cfg)["rain_predict_pct"] + boost, 3),
                  "run": len(st.get("samples", []))}
         if alert:
-            entry["sent"] = _notify(alert, pct, sun_alt, frame, cfg)
+            entry["sent"] = _notify(alert, pct, sun_alt, frame, cfg,
+                                    onset_boost=boost)
         _save_state(st)
         _log(entry)
         if pct is not None:
