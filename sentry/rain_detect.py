@@ -69,7 +69,10 @@ if __package__ is None or __package__ == "":
     if project_root not in sys.path:
         sys.path.insert(0, project_root)
 
-from configs import config
+# configs.config is imported lazily inside the functions that need it: it
+# pulls in config_private.py, which does not exist on the bare CI runner, and
+# the ladder itself (evaluate, moon_onset_boost's failure path) is pure -- CI
+# tests it without any config existing.
 
 STATE_FILE = "local/rain_state.json"
 LOG_FILE = "local/rain_log.jsonl"
@@ -93,7 +96,10 @@ def _root():
 
 
 def _tunables(cfg=None):
-    cam = (cfg or config.data()).get("sky camera", {})
+    if cfg is None:
+        from configs import config
+        cfg = config.data()
+    cam = cfg.get("sky camera", {})
     return {k: cam.get(k, v) for k, v in DEFAULTS.items()}
 
 
@@ -138,6 +144,7 @@ def measure(cfg=None, keep_burst=False):
     Returns None if the camera did not give us enough frames -- an unreachable
     camera must read as "no measurement", never as "no rain".
     """
+    from configs import config
     from sentry import sky_camera
     cfg = cfg or config.data()
     t = _tunables(cfg)
@@ -234,6 +241,7 @@ def moon_onset_boost(when=None, cfg=None):
         from astropy.coordinates import AltAz, EarthLocation, get_body
         from astropy.time import Time
 
+        from configs import config
         loc = (cfg or config.data())["location"]
         site = EarthLocation.from_geodetic(loc["longitude"], loc["latitude"],
                                            loc.get("elevation", 0.0))
@@ -350,6 +358,7 @@ def step(status, frame, cfg=None):
     still to attach to any alert. Never raises -- rain detection must not be
     able to sink a capture.
     """
+    from configs import config
     cfg = cfg or config.data()
     try:
         night = bool(status.get("night"))
@@ -386,6 +395,7 @@ def step(status, frame, cfg=None):
 
 
 if __name__ == "__main__":
+    from configs import config
     cfg = config.data()
     t = _tunables(cfg)
     st = _load_state()
