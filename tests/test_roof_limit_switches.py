@@ -38,8 +38,10 @@ def test_short_reads_as_fault_not_position():
 
 
 def test_every_combination_has_exactly_one_meaning():
-    """Exhaustive: 16 combinations -> 4 healthy states + 12 faults, and a
-    position is only ever claimed when BOTH pairs are healthy."""
+    """Exhaustive: 16 combinations -> 3 trustworthy states + 13 faults, and a
+    position is only ever claimed when BOTH pairs are healthy. (Of the 4
+    combinations with two healthy pairs, both-at-limit is physically
+    impossible and counts as a fault -- hence 13, not 12.)"""
     states = {}
     for i in range(16):
         bits = tuple(bool(i >> b & 1) for b in range(4))
@@ -50,7 +52,7 @@ def test_every_combination_has_exactly_one_meaning():
             assert pair_ok(bits[0], bits[1]) and pair_ok(bits[2], bits[3])
         else:
             assert r.detail
-    assert sum(1 for s in states.values() if s == FAULT) == 12
+    assert sum(1 for s in states.values() if s == FAULT) == 13
     assert sorted(s for s in states.values() if s != FAULT) == [
         CLOSED, IN_TRANSIT, OPEN]
 
