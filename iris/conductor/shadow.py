@@ -50,11 +50,19 @@ _VISION_RE = re.compile(
 
 
 class ShadowConductor:
+    # States that mean "a night is in progress on the hardware". Recovering
+    # into one of these while imaging.txt reads NONE and NINA is gone means
+    # the shadow missed the night's end (a mapping gap, a crash) -- reality
+    # has moved on and faithfully resuming the wedge just extends it.
+    _MID_NIGHT = {"OPENING_ROOF", "PRELUDE", "SLOT_SETUP", "SLOT_IMAGING",
+                  "FLATS", "PARKING", "CLOSING_ROOF", "SHUTDOWN"}
+
     def __init__(self, repo_root: Path, journal: Journal):
         self.root = Path(repo_root)
         self.journal = journal
         self.state = INITIAL_STATE
         self.slots = 0
+        self._none_streak = 0         # consecutive polls reading NONE (debounce)
         # last-seen values of the legacy sources, None = not yet read
         self._sched = None            # scheduler_state.json "state"
         self._will_image = None
@@ -85,6 +93,22 @@ class ShadowConductor:
         self._nina = self._nina_running()
         log = self.root / "iris.log"
         self._log_pos = log.stat().st_size if log.exists() else 0
+        # Wedge recovery. On 2026-08-28 a torn imaging.txt read fired the close
+        # cascade mid-slot; every event was (correctly) ignored and the machine
+        # sat in SLOT_IMAGING for 16 hours while reality planned the next
+        # night. Resuming that faithfully would resume the wedge, so a
+        # recovered mid-night state with no capture activity is re-seated to
+        # IDLE_DAY -- journaled as a SHADOW_RESYNC note, because a divergence
+        # silently papered over is a divergence the morning report cannot
+        # count. Shadow-only behaviour: the authoritative conductor treats the
+        # same discrepancy as a FAULT, not a shrug.
+        if (self.state in self._MID_NIGHT and self._imaging == "NONE"
+                and not self._nina):
+            self.journal.append(
+                "note", "SHADOW_RESYNC", "shadow",
+                data={"from_state": self.state,
+                      "reason": "recovered mid-night state with no capture activity"})
+            self.state, self.slots = INITIAL_STATE, 0
         _logger.info("shadow recovered: state=%s slots=%d journal head=%d",
                      self.state, self.slots, self.journal.head())
 
@@ -217,6 +241,17 @@ class ShadowConductor:
         if sched is not None and sched != self._sched:
             prev = self._sched
             if sched == "NOON_CHECK":
+                # A new day starting while the machine still thinks a night is
+                # in progress means the shadow lost the night's end. Re-seat to
+                # IDLE_DAY (journaled) so the new day is tracked instead of a
+                # second day of ignored events. Holds are exempt: SAFE_HOLD /
+                # FAULT / ESTOP are deliberate and only an operator exits them.
+                if self.state != "IDLE_DAY" and self.state not in HOLD_STATES:
+                    self.journal.append(
+                        "note", "SHADOW_RESYNC", "shadow",
+                        data={"from_state": self.state,
+                              "reason": "noon tick while machine was mid-night"})
+                    self.state, self.slots = INITIAL_STATE, 0
                 self.offer("NOON_TICK", "shadow", {"sched": sched})
             elif sched == "WAITING_FOR_PRE_SUNSET":
                 self.slots = 1
@@ -231,6 +266,17 @@ class ShadowConductor:
 
         # --- imaging.txt transitions -> capture events
         img = self._read_imaging()
+        # Debounce NONE: imaging.txt is rewritten in place, and a read can land
+        # mid-write on an empty file, which _read_imaging reports as NONE. On
+        # 2026-08-28 one such flicker (IN_MAIN -> NONE at 03:10, flats an hour
+        # later) fired the close cascade mid-slot and wedged the machine. A
+        # real end state persists; a torn read does not survive two polls.
+        if img == "NONE" and self._imaging not in (None, "NONE"):
+            self._none_streak += 1
+            if self._none_streak < 2:
+                img = self._imaging          # not yet believed
+        else:
+            self._none_streak = 0
         if img != self._imaging:
             prev = self._imaging
             if img == "IN_PRELUDE":
@@ -245,16 +291,29 @@ class ShadowConductor:
             elif img == "IN_MAIN":
                 self.offer("SLOT_STARTED", "shadow", {"imaging": img})
             elif img == "IN_FLATS":
-                if prev == "IN_MAIN":
-                    self.slots = 0
-                    self.offer("NINA_SLOT_DONE", "shadow", {"imaging": img})
+                # Deliberately prev-agnostic: reaching flats means the main
+                # slot ended, whatever intermediate value the 5 s poll missed.
+                # (Requiring prev == IN_MAIN was one of the two gaps behind
+                # the 2026-08-28 wedge.)
+                self.slots = 0
+                self.offer("NINA_SLOT_DONE", "shadow", {"imaging": img})
             elif img == "DONE_FLATS":
                 self.offer("NINA_FLATS_DONE", "shadow", {"imaging": img})
             elif img == "NONE" and prev in ("DONE_FLATS", "IN_FLATS", "IN_MAIN"):
                 # end.py's last act is clearing the state. Its real sequence is
                 # park -> close -> clear, so the shadow emits that order; the
                 # park and close confirmations' true timings are in iris.log
-                # for the morning report to compare.
+                # for the morning report to compare. If the file skipped states
+                # on the way out (ended straight from IN_MAIN or IN_FLATS),
+                # the completions it never showed are synthesized first --
+                # tagged, so the report can tell observed from inferred.
+                if prev == "IN_MAIN":
+                    self.slots = 0
+                    self.offer("NINA_SLOT_DONE", "shadow",
+                               {"imaging": img, "synthesized": True})
+                if prev in ("IN_MAIN", "IN_FLATS"):
+                    self.offer("NINA_FLATS_DONE", "shadow",
+                               {"imaging": img, "synthesized": True})
                 self.offer("MOUNT_PARK_CONFIRMED", "shadow", {"imaging": img})
                 self.offer("ROOF_CLOSE_CONFIRMED", "shadow", {"imaging": img})
                 self.offer("SHUTDOWN_DONE", "shadow", {"imaging": img})

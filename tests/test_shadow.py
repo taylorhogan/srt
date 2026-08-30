@@ -62,8 +62,8 @@ def test_full_legacy_night_produces_the_canonical_timeline(tmp_path):
     _imaging(root, "IN_MAIN"); sh.poll()
     _imaging(root, "IN_FLATS"); sh.poll()
     _imaging(root, "DONE_FLATS"); sh.poll()
-    _imaging(root, "NONE"); sh.poll()            # end.py finished
-    _sched(root, "WAITING_FOR_NOON"); sh.poll()
+    _imaging(root, "NONE"); sh.poll(); sh.poll()  # end.py finished; NONE must
+    _sched(root, "WAITING_FOR_NOON"); sh.poll()   # survive two polls (debounce)
 
     got = _transitions(sh)
     expected = [
@@ -139,6 +139,76 @@ def test_restart_mid_night_resumes_from_journal(tmp_path):
     n_before = sh2.journal.head()
     sh2.poll()                                     # nothing changed on disk
     assert sh2.journal.head() == n_before
+
+
+def _to_in_main(root, sh):
+    """Walk a night to SLOT_IMAGING with imaging.txt at IN_MAIN."""
+    _sched(root, "NOON_CHECK"); sh.poll()
+    _sched(root, "WAITING_FOR_PRE_SUNSET"); sh.poll()
+    _sched(root, "PRE_SUNSET_CHECK"); sh.poll()
+    _imaging(root, "IN_PRELUDE"); sh.poll()
+    _imaging(root, "DONE_PRELUDE"); sh.poll()
+    _imaging(root, "IN_MAIN"); sh.poll()
+    assert sh.state == "SLOT_IMAGING"
+
+
+def test_transient_none_flicker_does_not_fire_the_close_cascade(tmp_path):
+    """The 2026-08-28 wedge: imaging.txt read NONE for one poll mid-slot (a
+    torn read), flats ran an hour later, and the premature close cascade left
+    the machine ignoring events in SLOT_IMAGING for 16 hours."""
+    root = _mkroot(tmp_path)
+    sh = _shadow(root)
+    _to_in_main(root, sh)
+    _imaging(root, "NONE"); sh.poll()            # one flicker: not believed
+    assert sh.state == "SLOT_IMAGING"
+    _imaging(root, "IN_FLATS"); sh.poll()        # reality: flats begin
+    _imaging(root, "DONE_FLATS"); sh.poll()
+    _imaging(root, "NONE"); sh.poll(); sh.poll() # the real end persists
+    assert sh.state == "NIGHT_DONE"
+    got = [e.event for e in sh.journal.replay() if e.kind == "transition"]
+    assert got.count("MOUNT_PARK_CONFIRMED") == 1
+
+
+def test_main_ending_straight_to_none_still_closes_the_night(tmp_path):
+    """A sequence abort skips IN_FLATS/DONE_FLATS entirely; the shadow must
+    synthesize the completions the file never showed, tagged as such."""
+    root = _mkroot(tmp_path)
+    sh = _shadow(root)
+    _to_in_main(root, sh)
+    _imaging(root, "NONE"); sh.poll(); sh.poll()
+    assert sh.state == "NIGHT_DONE"
+    entries = [e for e in sh.journal.replay() if e.kind == "transition"]
+    synth = {e.event for e in entries if e.data.get("synthesized")}
+    assert synth == {"NINA_SLOT_DONE", "NINA_FLATS_DONE"}
+
+
+def test_flats_reached_from_an_unexpected_prev_still_ends_the_slot(tmp_path):
+    root = _mkroot(tmp_path)
+    sh = _shadow(root)
+    _to_in_main(root, sh)
+    _imaging(root, "ACTIVE"); sh.poll()          # an unmapped intermediate
+    _imaging(root, "IN_FLATS"); sh.poll()        # prev != IN_MAIN
+    assert sh.state == "FLATS"
+
+
+def test_recovering_a_wedged_state_resyncs_to_idle(tmp_path):
+    root = _mkroot(tmp_path)
+    sh = _shadow(root)
+    _to_in_main(root, sh)
+    _imaging(root, "NONE")                       # night long over on disk
+    sh2 = _shadow(root)                          # restart
+    assert sh2.state == "IDLE_DAY"
+    notes = [e for e in sh2.journal.replay() if e.event == "SHADOW_RESYNC"]
+    assert notes and notes[-1].data["from_state"] == "SLOT_IMAGING"
+
+
+def test_noon_while_mid_night_resyncs_and_tracks_the_new_day(tmp_path):
+    root = _mkroot(tmp_path)
+    sh = _shadow(root)
+    _to_in_main(root, sh)
+    _sched(root, "NOON_CHECK"); sh.poll()        # a NEW day begins
+    assert sh.state == "PLANNING"
+    assert any(e.event == "SHADOW_RESYNC" for e in sh.journal.replay())
 
 
 def test_guard_counterfactual_is_recorded(tmp_path):

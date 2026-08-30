@@ -105,7 +105,12 @@ def build_report(night: str) -> str:
     else:
         lines.append(f"{len(transitions)} transitions:")
         for w, e in transitions:
-            lines.append("  %s  %s: %s → %s" % (
+            # ASCII arrow on purpose: u2192 crashed print() under the
+            # scheduled task's cp1252 console, which killed the report BEFORE
+            # it posted -- on the first night that had any transitions to
+            # print. main() also reconfigures stdout, but the text itself
+            # staying encodable is the fix that cannot regress.
+            lines.append("  %s  %s: %s -> %s" % (
                 w.strftime("%H:%M:%S"), e.event, e.from_state, e.to_state))
 
     # --- NINA ground truth vs journal
@@ -157,6 +162,13 @@ def build_report(night: str) -> str:
 
 
 def main():
+    # The report must never die on encoding: it prints before it posts, so an
+    # unprintable character under the task's cp1252 console silently costs the
+    # morning verdict.
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
     night = None
     for i, a in enumerate(sys.argv):
         if a == "--night" and i + 1 < len(sys.argv):
