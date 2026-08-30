@@ -202,6 +202,12 @@ def toggle_roof(dev_map: dict, capture_direction: Optional[str] = None) -> None:
     except Exception:  # noqa: BLE001 — observer must never touch the roof flow
         _logger.exception("kasa roof audio: failed to start (ignored)")
 
+    # Log-only anchor for the shadow conductor's decision-diff: every roof
+    # relay fire, from every path (roof!! commands, gated open/close, end.py),
+    # passes through here. The shadow matches this exact line and journals
+    # what the Phase 2 guards WOULD have said at this moment. Change the
+    # wording only together with _ROOF_FIRE_RE in iris/conductor/shadow.py.
+    _logger.info("roof relay fire: direction=%s", capture_direction or "unknown")
     if utl_shelly.fire_roof_relay() is None:
         _logger.error("Failed to trigger relay in toggle_roof")
         if capture is not None:

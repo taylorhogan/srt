@@ -140,6 +140,18 @@ def build_report(night: str) -> str:
     elif transitions:
         lines.append("Guard counterfactuals: none — evidence supported every guarded transition.")
 
+    # --- roof relay fires (decision-diff): every observed fire, with what
+    # Invariant A's guards would have said from live evidence at that moment.
+    fires = [(w, e) for w, e in entries if e.event == "ROOF_FIRE_OBSERVED"]
+    if fires:
+        refused = [(w, e) for w, e in fires if e.data.get("guard_would")]
+        lines.append(f"Roof relay fires observed: {len(fires)}, "
+                     f"guards would have refused {len(refused)}")
+        for w, e in refused:
+            lines.append("  %s  %s: %s   evidence=%s" % (
+                w.strftime("%H:%M:%S"), e.data.get("direction"),
+                e.data["guard_would"], e.data.get("evidence")))
+
     # --- ignored events (reality outside the model)
     ignored = [(w, e) for w, e in entries
                if e.kind == "note" and e.data.get("ignored_in_state")]

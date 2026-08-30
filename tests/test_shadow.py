@@ -30,7 +30,12 @@ def _mkroot(tmp_path):
 
 
 def _shadow(root):
-    return ShadowConductor(root, Journal(root / "local" / "journal"))
+    sh = ShadowConductor(root, Journal(root / "local" / "journal"))
+    # Hermetic: no real mount or Shelly round-trips from tests. Individual
+    # tests override these to stage evidence.
+    sh.pwi4_probe = lambda: "unreachable"
+    sh.limits_probe = lambda: ("not_configured", "")
+    return sh
 
 
 def _sched(root, state, will="yes"):
@@ -224,6 +229,84 @@ def test_guard_counterfactual_is_recorded(tmp_path):
     entries = {e.event: e for e in sh.journal.replay() if e.kind == "transition"}
     would = entries["CHECKS_PASSED"].data.get("guard_would")
     assert would and "vision" in would
+
+
+def _log(root, line):
+    with open(root / "iris.log", "a") as fh:
+        fh.write(line + "\n")
+
+
+def _fire_notes(sh):
+    return [e for e in sh.journal.replay() if e.event == "ROOF_FIRE_OBSERVED"]
+
+
+def test_roof_fire_with_full_evidence_would_be_allowed(tmp_path):
+    """The decision-diff happy path: vision parked+closed, PWI4 parked --
+    Invariant A's guards would have permitted the move legacy made."""
+    root = _mkroot(tmp_path)
+    sh = _shadow(root)
+    sh.pwi4_probe = lambda: "parked"
+    _log(root, "08/30/2026 vision parked=True closed=True open=False x")
+    _log(root, "08/30/2026 roof relay fire: direction=open")
+    sh.poll()
+    notes = _fire_notes(sh)
+    assert len(notes) == 1
+    assert notes[0].data["direction"] == "open"
+    assert notes[0].data["guard_would"] is None
+    assert notes[0].data["evidence"]["parked_pwi4"] == "CONFIRMED"
+
+
+def test_roof_fire_with_unparked_mount_would_be_refused(tmp_path):
+    root = _mkroot(tmp_path)
+    sh = _shadow(root)
+    sh.pwi4_probe = lambda: "not_parked"
+    _log(root, "08/30/2026 vision parked=True closed=True open=False x")
+    _log(root, "08/30/2026 roof relay fire: direction=close")
+    sh.poll()
+    would = _fire_notes(sh)[0].data["guard_would"]
+    assert would is not None and "parked" in would
+
+
+def test_limit_switches_contradicting_vision_read_unknown(tmp_path):
+    """Limits say open, vision says closed: a lying sensor must cost a
+    refusal (roof UNKNOWN), never a wrong move."""
+    root = _mkroot(tmp_path)
+    sh = _shadow(root)
+    sh.pwi4_probe = lambda: "parked"
+    sh.limits_probe = lambda: ("open", "")
+    _log(root, "08/30/2026 vision parked=True closed=True open=False x")
+    _log(root, "08/30/2026 roof relay fire: direction=open")
+    sh.poll()
+    note = _fire_notes(sh)[0]
+    assert note.data["evidence"]["roof"] == "UNKNOWN"
+    assert note.data["guard_would"] is not None
+
+
+def test_limit_switches_alone_carry_roof_state_when_vision_is_stale(tmp_path):
+    import time as _time
+    root = _mkroot(tmp_path)
+    sh = _shadow(root)
+    sh.limits_probe = lambda: ("closed", "")
+    _log(root, "08/30/2026 vision parked=True closed=True open=False x")
+    sh.poll()
+    sh._evidence_ts = _time.time() - 3600          # vision goes stale
+    ev = sh._current_evidence()
+    from iris.core.snapshot import Tri
+    assert ev.parked_vision is Tri.UNKNOWN          # decayed
+    assert ev.roof is Tri.DENIED                    # limits still fresh
+
+
+def test_stale_vision_evidence_decays_to_unknown(tmp_path):
+    import time as _time
+    root = _mkroot(tmp_path)
+    sh = _shadow(root)
+    _log(root, "08/30/2026 vision parked=True closed=True open=False x")
+    sh.poll()
+    from iris.core.snapshot import Tri
+    assert sh._current_evidence().parked_vision is Tri.CONFIRMED
+    sh._evidence_ts = _time.time() - 3600
+    ev = sh._current_evidence()
+    assert ev.parked_vision is Tri.UNKNOWN and ev.roof is Tri.UNKNOWN
 
 
 def test_vision_log_lines_update_evidence(tmp_path):

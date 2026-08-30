@@ -47,6 +47,52 @@ _PERMISSIVE = SensorSnapshot(parked_vision=Tri.CONFIRMED,
 
 _VISION_RE = re.compile(
     r"vision parked=(True|False) closed=(True|False) open=(True|False)")
+# The log-only anchor toggle_roof() writes immediately before firing the
+# relay -- every roof move from every path passes it. Wording is coupled to
+# that line; change them together.
+_ROOF_FIRE_RE = re.compile(r"roof relay fire: direction=(\w+)")
+
+# Evidence older than this decays to UNKNOWN. The legacy system runs a vision
+# check seconds before any roof move, so at decision moments evidence is
+# fresh; a verdict quoted against an hours-old snapshot would be a lie.
+EVIDENCE_MAX_AGE_S = 15 * 60
+
+
+def _read_pwi4_park():
+    """'parked' | 'not_parked' | 'unreachable' -- read-only, never raises.
+
+    Uses the same alt/az-vs-configured-park comparison as
+    pwi4_utils.get_is_parked, but keeps the three-way distinction that
+    function collapses: an unreachable PWI4 (mount powered off, service down)
+    is UNKNOWN evidence, not "not parked"."""
+    try:
+        from configs import config
+        from hardware_control.pwi4_client import PWI4
+        s = PWI4().status()
+        if not s.mount.is_connected:
+            # get_is_parked would CONNECT here; the shadow refuses to command
+            # anything, even a connect, and reports honest ignorance instead.
+            return "unreachable"
+        if s.mount.is_slewing or s.mount.is_tracking:
+            return "not_parked"
+        cfg = config.data()["camera safety"]
+        d_alt = abs(cfg["parked altitude deg"] - s.mount.altitude_degs)
+        d_az = abs(cfg["parked azimuth deg"] - s.mount.azimuth_degs)
+        # Same 1-degree window get_is_parked hard-codes.
+        return "parked" if (d_alt < 1.0 and d_az < 1.0) else "not_parked"
+    except Exception:
+        return "unreachable"
+
+
+def _read_roof_limits():
+    """(state, detail) from the limit switches; NOT_CONFIGURED until the
+    hardware exists. Never raises."""
+    try:
+        from hardware_control import roof_limit_switches as rls
+        r = rls.read()
+        return r.state, r.detail
+    except Exception as exc:
+        return "unreachable", f"{type(exc).__name__}: {exc}"
 
 
 class ShadowConductor:
@@ -63,6 +109,14 @@ class ShadowConductor:
         self.state = INITIAL_STATE
         self.slots = 0
         self._none_streak = 0         # consecutive polls reading NONE (debounce)
+        # Slow sensors (network round-trips) polled every N fast polls.
+        # Injectable so tests drive them without a mount or a Shelly.
+        self.pwi4_probe = _read_pwi4_park
+        self.limits_probe = _read_roof_limits
+        self._slow_every = 6          # ~30 s at the 5 s cadence
+        self._slow_tick = 0
+        self._limits = ("not_configured", "")
+        self._evidence_ts = 0.0       # when a vision line last updated evidence
         # last-seen values of the legacy sources, None = not yet read
         self._sched = None            # scheduler_state.json "state"
         self._will_image = None
@@ -178,9 +232,44 @@ class ShadowConductor:
                 self.evidence = self.evidence.replace(
                     parked_vision=Tri.CONFIRMED if parked else Tri.UNKNOWN,
                     roof=roof)
+                self._evidence_ts = time.time()
+
+    def _poll_slow_sensors(self):
+        """PWI4 park state and roof limit switches, every _slow_every polls.
+
+        Both are strictly read-only network round-trips; keeping them off the
+        5 s cadence keeps an unreachable mount from stalling every poll."""
+        self._slow_tick += 1
+        if self._slow_tick % self._slow_every != 1:
+            return
+        park = self.pwi4_probe()
+        self.evidence = self.evidence.replace(
+            parked_pwi4={"parked": Tri.CONFIRMED,
+                         "not_parked": Tri.DENIED}.get(park, Tri.UNKNOWN))
+        self._limits = self.limits_probe()
+
+    def _roof_from_limits_and_vision(self, vision_roof):
+        """Combine the two roof modalities. Agreement wins; contradiction is
+        UNKNOWN (a lying sensor must cost a refusal, not a wrong move); an
+        unfitted/faulted/unreachable switch pair leaves vision alone."""
+        state = self._limits[0]
+        if state == "open":
+            return Tri.UNKNOWN if vision_roof is Tri.DENIED else Tri.CONFIRMED
+        if state == "closed":
+            return Tri.UNKNOWN if vision_roof is Tri.CONFIRMED else Tri.DENIED
+        if state == "in_transit":
+            return Tri.UNKNOWN
+        return vision_roof
 
     def _current_evidence(self):
-        return self.evidence.replace(
+        e = self.evidence
+        # Vision evidence decays: a verdict quoted against an hours-old
+        # snapshot is a lie. The legacy system runs vision seconds before any
+        # roof move, so at decision moments this is always fresh.
+        if time.time() - self._evidence_ts > EVIDENCE_MAX_AGE_S:
+            e = e.replace(parked_vision=Tri.UNKNOWN, roof=Tri.UNKNOWN)
+        return e.replace(
+            roof=self._roof_from_limits_and_vision(e.roof),
             safety_armed=bool(self._safety),
             mode_auto=self._read_mode_auto(),
             slots_remaining=self.slots,
@@ -235,6 +324,7 @@ class ShadowConductor:
         """One observation pass. Called every few seconds by the runner."""
         lines = self._read_new_log_lines()
         self._update_evidence_from_log(lines)
+        self._poll_slow_sensors()
 
         # --- scheduler transitions -> planner events
         sched, will = self._read_sched()
@@ -330,6 +420,26 @@ class ShadowConductor:
         for ln in lines:
             if "roof stall watchdog" in ln.lower() and "cut" in ln.lower():
                 self.offer("ROOF_STALL", "watchdog", {"log": ln[-160:]})
+
+        # --- decision-diff: every observed relay fire gets a guard verdict.
+        # toggle_roof logs the anchor line immediately before firing; the
+        # journal records what Invariant A's guards would have said at that
+        # moment, from live evidence. This is Phase 2's dataset: a "would have
+        # refused" on a move legacy made is either a guard bug or a legacy
+        # bug, and the morning report surfaces each one.
+        for ln in lines:
+            m = _ROOF_FIRE_RE.search(ln)
+            if m:
+                ev = self._current_evidence()
+                would = G.evaluate((G.mount_parked, G.roof_state_known), ev)
+                self.journal.append(
+                    "note", "ROOF_FIRE_OBSERVED", "shadow",
+                    data={"direction": m.group(1),
+                          "guard_would": would,     # None == would have allowed
+                          "evidence": {"parked_vision": ev.parked_vision.name,
+                                       "parked_pwi4": ev.parked_pwi4.name,
+                                       "roof": ev.roof.name,
+                                       "limits": self._limits[0]}})
 
         # --- NINA process liveness edge
         nina = self._nina_running()
