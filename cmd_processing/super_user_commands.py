@@ -266,7 +266,9 @@ def toggle_roof(dev_map: dict, capture_direction: Optional[str] = None) -> None:
     if capture is not None:
         sig = rcs.finish_background_capture(capture, status="unlabeled")
         if sig is not None:
-            res = rcs.compare(sig)
+            # judge_and_record = compare() plus the golden-reference distance
+            # and a drift record; identical anomaly behaviour otherwise.
+            res = rcs.judge_and_record(sig)
             if res.get("is_anomaly"):
                 reasons = "; ".join(res["reasons"])
                 _logger.warning("Roof current signature anomaly: %s", reasons)

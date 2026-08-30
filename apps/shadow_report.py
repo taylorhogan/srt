@@ -95,6 +95,47 @@ def _journal_entries(night):
     return out
 
 
+def _drift_lines(path, now=None, window_days=14, last_n=5):
+    """Roof-drift summary from local/roof_drift.jsonl (written per roof move
+    by audio_classify and roof_current_signature).
+
+    Rolling references follow a slowly degrading roof; the golden comparison
+    is the one that can see cumulative drift, so THAT is what gets judged
+    here: DRIFT when a majority of the recent moves fail the golden envelope
+    while still passing the rolling one -- the exact signature of slow
+    degradation being absorbed."""
+    try:
+        rows = [json.loads(l) for l in open(path, encoding="utf-8") if l.strip()]
+    except OSError:
+        return []
+    now = now or datetime.now().astimezone()
+    lo = now - timedelta(days=window_days)
+    groups = {}
+    for r in rows:
+        try:
+            t = datetime.fromisoformat(r["t"])
+        except (KeyError, ValueError):
+            continue
+        if t < lo or r.get("golden_ok") is None:
+            continue
+        groups.setdefault((r.get("kind"), r.get("direction")), []).append(r)
+    out = []
+    for (kind, direction), rs in sorted(groups.items()):
+        recent = rs[-last_n:]
+        ok = sum(1 for r in recent if r.get("golden_ok"))
+        bad_but_rolling_fine = sum(1 for r in recent
+                                   if not r.get("golden_ok") and r.get("rolling_ok"))
+        tag = "OK"
+        if len(recent) - ok > len(recent) // 2:
+            tag = "DRIFT" if bad_but_rolling_fine else "FAULTY"
+        latest = recent[-1].get("summary", "")
+        out.append("  %s %s: %d/%d vs golden %s   %s" % (
+            kind, direction or "?", ok, len(recent), tag, latest))
+    if out:
+        out.insert(0, "Roof drift (golden reference):")
+    return out
+
+
 def build_report(night: str) -> str:
     entries = _journal_entries(night)
     transitions = [(w, e) for w, e in entries if e.kind == "transition"]
@@ -160,6 +201,8 @@ def build_report(night: str) -> str:
         for w, e in ignored[:10]:
             lines.append("  %s  %s ignored in %s" % (
                 w.strftime("%H:%M:%S"), e.event, e.data["ignored_in_state"]))
+
+    lines += _drift_lines(ROOT / "local" / "roof_drift.jsonl")
 
     rejected = [(w, e) for w, e in entries if e.kind == "rejected"]
     if rejected:

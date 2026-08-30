@@ -296,6 +296,58 @@ def compare(sig, library=None, sigma=ANOMALY_SIGMA):
 
 
 # --------------------------------------------------------------------------- #
+# Golden reference + drift record
+# --------------------------------------------------------------------------- #
+# The good/ library ACCUMULATES (41 open / 29 close by 2026-08-30) and its
+# envelope has measurably followed the roof: the logged "good" peak_w mean
+# rose 351 W -> 398 W between 08/03 and 08/15 as warmer runs were absorbed.
+# A rolling reference is a change detector, not a health detector -- it will
+# track a slowly degrading roof all the way down. golden/ is the answer: a
+# frozen set from a known-healthy era (seeded by scripts/roof_golden_freeze.py,
+# re-anchored ONLY after mechanical service), giving every move two distances:
+# "vs lately" (compare) and "vs healthy" (the golden envelope here).
+
+def _record_drift(entry):
+    """Append one drift record to local/roof_drift.jsonl. Never raises."""
+    try:
+        import pathlib
+        p = pathlib.Path(__file__).resolve().parents[1] / "local" / "roof_drift.jsonl"
+        p.parent.mkdir(exist_ok=True)
+        entry.setdefault("t", datetime.now().astimezone().isoformat(timespec="seconds"))
+        with open(p, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry) + "\n")
+    except Exception:  # noqa: BLE001 — drift logging must not touch the roof flow
+        logger.exception("roof drift record failed (ignored)")
+
+
+def judge_and_record(sig):
+    """Rolling compare + golden compare + drift record; returns the rolling
+    result so callers behave exactly as with compare()."""
+    res = compare(sig)
+    direction = sig.get("direction")
+    entry = {"kind": "current", "direction": direction,
+             "rolling_ok": not res.get("is_anomaly")}
+    pw = res.get("detail", {}).get("peak_w", {})
+    if pw.get("value") is not None:
+        entry["peak_w"] = pw["value"]
+    golden = load_library(direction=direction, status="golden")
+    if len(golden) >= 2:
+        gres = compare(sig, library=golden)
+        entry["golden_ok"] = not gres.get("is_anomaly")
+        gpw = gres.get("detail", {}).get("peak_w", {})
+        if gpw.get("mean") is not None:
+            entry["summary"] = ("peak_w %s vs golden %s±%s"
+                                % (gpw.get("value"), gpw["mean"], gpw["std"]))
+        if gres.get("reasons"):
+            entry["golden_reasons"] = gres["reasons"][:3]
+    else:
+        entry["golden_ok"] = None
+        entry["summary"] = "no golden library — run scripts/roof_golden_freeze.py"
+    _record_drift(entry)
+    return res
+
+
+# --------------------------------------------------------------------------- #
 # Background capture — for hooking into toggle_roof without blocking it
 # --------------------------------------------------------------------------- #
 def start_background_capture(direction=None, seconds=DEFAULT_SECONDS, hz=DEFAULT_HZ):

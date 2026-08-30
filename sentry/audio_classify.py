@@ -168,10 +168,46 @@ def classify(png_path, direction, root=None):
                     for i in range(len(refs)) for j in range(i + 1, len(refs))]
         result["threshold"] = min(pairwise) * GOOD_MARGIN
         result["verdict"] = "good" if result["best_score"] >= result["threshold"] else "bad"
+
+        # Golden distance. good/ ROLLS (newest 40), so its threshold follows
+        # the roof: a slowly degrading mechanism stays "good" against last
+        # month forever. golden/ is frozen at a known-healthy era (seeded by
+        # scripts/roof_golden_freeze.py, re-anchored only after mechanical
+        # service) and answers the other question: how far from HEALTHY.
+        gpaths = sorted(glob.glob(os.path.join(root, "golden",
+                                               direction or "unknown", "*.png")))
+        if len(gpaths) >= MIN_GOOD_REFS:
+            grefs = [_img_array(p, size) for p in gpaths]
+            result["golden_score"] = max(_similarity(new_arr, a) for a in grefs)
+            gpair = [_similarity(grefs[i], grefs[j])
+                     for i in range(len(grefs)) for j in range(i + 1, len(grefs))]
+            result["golden_threshold"] = min(gpair) * GOOD_MARGIN
+            result["golden_ok"] = result["golden_score"] >= result["golden_threshold"]
+            _record_drift({"kind": "audio", "direction": direction,
+                           "rolling_ok": result["verdict"] == "good",
+                           "golden_ok": result["golden_ok"],
+                           "summary": "similarity %.3f vs golden floor %.3f"
+                                      % (result["golden_score"],
+                                         result["golden_threshold"])})
     except Exception as e:  # noqa: BLE001 — classifier must not crash the roof flow
         _logger.warning("Audio classify failed for %s: %s", png_path, e)
         result["note"] = f"classification failed: {e}"
     return result
+
+
+def _record_drift(entry):
+    """Append one drift record to local/roof_drift.jsonl. Never raises."""
+    try:
+        import json
+        from datetime import datetime as _dt
+        p = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                         "local", "roof_drift.jsonl")
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        entry.setdefault("t", _dt.now().astimezone().isoformat(timespec="seconds"))
+        with open(p, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry) + "\n")
+    except Exception:  # noqa: BLE001 — drift logging must not touch the roof flow
+        _logger.exception("roof drift record failed (ignored)")
 
 
 # --------------------------------------------------------------------------- #
