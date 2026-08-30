@@ -410,6 +410,13 @@ class PublicConfig():
             # ASTAP plate solver (also used by N.I.N.A) — used to give transit
             # candidates real sky coordinates and Gaia identifications.
             "astap_exe": "C:/Program Files/astap/astap.exe",
+            # Shelly Plus i4 DC reading the roof limit switches (sheet RLS-1,
+            # hardware_control/roof_limit_switches.py). Empty until the
+            # hardware is installed and commissioned — the module reports
+            # NOT_CONFIGURED and nothing changes behaviour. The switches gain
+            # a vote in roof-state decisions only after the commissioning
+            # drills pass (scripts/roof_limits_check.py).
+            "roof_limit_shelly_ip": "",
         },
 
         "calibration": {
