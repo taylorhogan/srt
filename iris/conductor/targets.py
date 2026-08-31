@@ -63,7 +63,13 @@ def derive_registry() -> dict:
         if not dso:
             continue
         status = str(row.get("status") or "").strip().lower()
-        resolved = row.get("ra_deg") is not None or bool(row.get("above_horizon"))
+        # above_horizon "0" is what the nightly recompute writes when the NAME
+        # LOOKUP FAILED (and "None" when the window was uncomputable), so both
+        # are evidence of an unresolvable target, not a resolved one. A bare
+        # bool() read "0" backwards and promoted 24 lookup-failure rows to
+        # QUEUED — caught by the registry audit on 2026-08-31.
+        ah = str(row.get("above_horizon") or "").strip()
+        resolved = row.get("ra_deg") is not None or ah not in ("", "0", "None")
         if status == "completed":
             state = "RETIRED"
         elif is_done(dso):

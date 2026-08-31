@@ -210,10 +210,38 @@ def build_report(night: str) -> str:
         for w, e in rejected[:10]:
             lines.append("  %s  %s: %s" % (w.strftime("%H:%M:%S"), e.event, e.guard))
 
+    # --- Target registry: the exit criterion's second half, checked daily.
+    # Summary only (verdict + counts); apps/registry_audit.py prints the full
+    # listing. Guarded so a registry problem can never cost the night verdict.
+    try:
+        lines += _registry_lines()
+    except Exception:
+        lines.append("Target registry: audit failed (see registry_audit.py)")
+
     verdict = "CLEAN" if (not misses and bat) else (
         "no NINA activity to verify against" if not bat else "DIVERGED")
     lines.append(f"Verdict: {verdict}")
     return "\n".join(lines)
+
+
+def _registry_lines():
+    from configs import config
+    from fits_processing.convergence import is_dso_done, load_convergence
+    from iris.conductor import audit as A
+    from iris.conductor.targets import _has_frames, derive_registry
+
+    queue_path = ROOT / config.data()["location"]["instructions"]
+    queue = json.loads(queue_path.read_text(encoding="utf-8"))
+    result = A.audit_registry(queue, derive_registry(), is_dso_done, _has_frames)
+    findings = A.find_inconsistencies(queue, load_convergence(), is_dso_done)
+    n_mis = (len(result["mismatches"]) + len(result["missing"])
+             + len(result["extra"]))
+    counts = ", ".join("%s %d" % (s, result["counts"].get(s, 0))
+                       for s in A.STATES if result["counts"].get(s))
+    tag = "CLEAN" if n_mis == 0 else "MISMATCHED (%d)" % n_mis
+    return ["Target registry: %s -- %s; %d data finding(s) "
+            "(python apps/registry_audit.py for detail)"
+            % (tag, counts, len(findings))]
 
 
 def main():
