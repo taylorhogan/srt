@@ -12,8 +12,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from iris.core import guards as G
-from iris.core.machine import (EVENTS, HOLD_STATES, INITIAL_STATE, STATES,
-                               TRANSITIONS, Outcome, step)
+from iris.core.machine import (EVENTS, HOLD_STATES, INITIAL_STATE, NIGHT_PATH,
+                               STATES, TRANSITIONS, Outcome, step)
 from iris.core.snapshot import SensorSnapshot, Tri
 
 # A snapshot in which every guard passes: night is go, scope parked and
@@ -32,6 +32,21 @@ def test_table_references_only_declared_states_and_events():
         assert row.src == "*" or row.src in STATES, row
         assert row.dst in STATES, row
         assert row.event in EVENTS, row
+
+
+def test_night_path_covers_every_non_hold_state_and_starts_at_idle():
+    """The Live tab renders NIGHT_PATH as the night's stages. If a state is
+    added to the table and not to the path, a console would silently never be
+    able to show it -- so the coverage is asserted rather than trusted."""
+    assert set(NIGHT_PATH) == set(STATES) - set(HOLD_STATES)
+    assert len(NIGHT_PATH) == len(set(NIGHT_PATH))
+    assert NIGHT_PATH[0] == INITIAL_STATE
+    assert NIGHT_PATH[-1] == "NIGHT_DONE"
+    # Ordered as the night runs: each stage reachable from an earlier one.
+    for i, state in enumerate(NIGHT_PATH[1:], start=1):
+        earlier = set(NIGHT_PATH[:i])
+        assert any(r.dst == state and (r.src in earlier or r.src == "*")
+                   for r in TRANSITIONS), f"{state} unreachable from earlier stages"
 
 
 def test_every_declared_event_appears_in_the_table():

@@ -100,6 +100,14 @@ class T:
 # of SAFE_HOLD would reintroduce the bug SAFE_HOLD exists to kill.
 HOLD_STATES = frozenset({"SAFE_HOLD", "FAULT_ROOF_UNKNOWN", "ESTOP"})
 
+# The night's progression, in order, for consoles that show "where the night
+# stands" (the website's Live tab). DERIVED from STATES' declaration order --
+# which is the night's order, and is asserted to be by tests -- so a console
+# rendering this list can never show a stage the machine does not have, and a
+# state added to the table appears without touching any console. The holds are
+# excluded: they are not stages of a night, they are where a night stops.
+NIGHT_PATH = tuple(s for s in STATES if s not in HOLD_STATES)
+
 TRANSITIONS = (
     # --- the day
     T("IDLE_DAY",     "NOON_TICK",           "PLANNING"),

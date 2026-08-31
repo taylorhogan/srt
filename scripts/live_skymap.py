@@ -533,8 +533,14 @@ def main() -> None:
                                     timeout=3) as r:
             _c = json.loads(r.read().decode("utf-8"))
         if _c.get("state"):
+            from iris.core.machine import HOLD_STATES, NIGHT_PATH
             status["machine_state"] = _c["state"]
             status["machine_shadow"] = bool(_c.get("shadow"))
+            # The night's stages, in order, straight from the machine table --
+            # so the page renders structure it was GIVEN rather than structure
+            # it hardcodes, and a new state appears there without a site edit.
+            status["machine_path"] = list(NIGHT_PATH)
+            status["machine_hold"] = _c["state"] in HOLD_STATES
             _dso = (_c.get("context") or {}).get("dso")
             if _dso:
                 status["machine_dso"] = _dso
@@ -560,12 +566,11 @@ def main() -> None:
         pushes.insert(1, (latest_jpg, "latest.jpg"))
     if stats_jpg is not None and stats_jpg.exists():
         pushes.insert(1, (stats_jpg, "stats.jpg"))
-    # The generated night-machine diagram rides along so the site renders the
-    # SAME structure CI enforces against the code -- the page never hardcodes
-    # a copy that could drift. Tiny file, harmless to re-push every cycle.
-    mmd = root / "docs" / "night_machine.mmd"
-    if "machine_state" in status and mmd.exists():
-        pushes.append((mmd, "night_machine.mmd"))
+    # No diagram file is pushed: the site's CSP is script-src 'self', so no
+    # external renderer (mermaid) can run there, and the stage list travels in
+    # status.json instead. Keeping the CSP tight is the right trade -- a
+    # public page should not load 900 KB of third-party script to draw
+    # thirteen labels.
     from scripts import live_push
     live_push.push(pushes)
     print("pushed", len(pushes), "file(s) to", live_push.HOST + ":" + live_push.DEST)
