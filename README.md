@@ -1,136 +1,131 @@
-# Iris Observatory — Social Robotic Telescope
+# Iris — a robotic telescope you talk to
 
-Iris is a fully autonomous deep-sky observatory. Users request objects through a chat interface; the system plans the night, controls the hardware, monitors safety, and delivers calibrated images — all without anyone in the observatory.
+Text Iris the name of a nebula from your phone. Some clear night — maybe tonight,
+maybe next week when the geometry is right — a roof in a backyard opens on its
+own, a half-ton telescope wakes up, finds the target, and spends the dark hours
+collecting photons that left their source before the pyramids were built. By
+breakfast there's a finished, denoised picture on your phone, captioned with how
+many frames survived the night's quality gate. Nobody was in the observatory.
+Nobody was awake.
 
----
+That's the whole idea: **a fully autonomous deep-sky observatory run by
+conversation**, built on one stubborn principle — *measure it, or it isn't
+true*. Every subsystem below exists because a measurement demanded it, and most
+of them have caught at least one thing that "looked fine."
 
-## What it does
-
-**Chat-driven requests**
-Users submit deep-sky object (DSO) requests through social media or a home-hosted private server — the latter offering a much richer experience including live imaging stats, frame previews, and interactive commands. Works very well from a phone. The system queues, prioritises, and schedules them automatically.
-
-**Nightly planning**
-Each day at noon the scheduler scores every queued target by visibility window, air mass, and priority, then selects the best object for that night.
-
-**Hardware control**
-Controls the roof motor, mount, focuser, and smart plugs. Sequences power-on, slew, autofocus, imaging, flats, park, and roof-close without human intervention.
-
-**Safety monitoring**
-Computer vision checks the indoor camera before every hardware move. If the scope isn't parked the roof won't move; if the roof isn't open the mount won't slew.
-
-**Live frame analysis**
-Every incoming FITS frame is analysed for FWHM, eccentricity, star count, and sky brightness. Results stream to the chat ticker in real time.
-
-**Image delivery**
-Finished frames are converted to JPEG and posted back to the chat. Per-session stats plots, convergence curves, and sky heatmaps are generated on demand.
+The pictures and the experiment write-ups live at
+**[irisscience.org](https://irisscience.org)** — including a live page showing
+what the observatory is doing *right now*, down to which state of its night
+state machine it's standing in.
 
 ---
 
-## A night in the life
+## Things Iris has actually done
 
-1. **Noon check** — The scheduler wakes up, recalculates visibility for every queued DSO, picks tonight's best target, and generates a N.I.N.A imaging sequence for it.
-
-2. **Pre-sunset checks** — Weather forecast, safety file, and camera snapshot are verified. A Sonos announcement warns anyone in the observatory that the roof is about to open.
-
-3. **Roof opens, prelude runs** — Vision safety confirms the scope is parked before toggling the roof motor. N.I.N.A runs a prelude sequence: cool camera, slew, plate-solve, and autofocus.
-
-4. **Main imaging sequence** — N.I.N.A captures light frames across all configured filters. The frame watcher analyses each sub as it arrives and streams quality metrics to the chat.
-
-5. **Flats and shutdown** — At the end of the imaging window, flat frames are captured for calibration. The mount parks, the roof closes, the dehumidifier turns on, and a summary is posted to chat.
+- **Detected an exoplanet.** A 7-hour photometric run on HAT-P-32 caught the
+  transit of HAT-P-32b; the blind search pipeline ranked it #1 out of 622 stars
+  by box-fit score, exactly where it belonged.
+- **Imaged for 12 hours across four nights, unattended, and knew when to
+  stop.** Iris measures each target's stack-convergence curve per filter and
+  stops scheduling a filter once more frames stop helping — the plan calls it
+  auto-stop, and it already flags finished targets the queue thinks are open.
+- **Trained a denoiser on its own sky.** A Noise2Noise U-Net (no clean
+  reference exists, so it learns from pairs of noisy stacks) trained on this
+  telescope's own frames, running nightly on a GPU box. Display only, by rule:
+  every number ever quoted comes from the calibrated linear stacks, never the
+  pretty picture.
+- **Caught its own tooling lying.** The FITS headers revealed the guider's
+  dither was silently dead in one axis for months — commands issued, motion
+  erased. The mount was exonerated by direct measurement (a cos(dec) trap made
+  a flawless offset look 45% short) and the dither now runs through the
+  mount's native API. Written up, with the measurements, on the lab site.
+- **Predicted rain before the forecast did.** The $25 sky camera's
+  central-sky motion detector called a real storm 25–40 minutes ahead of the
+  weather API on the night it mattered. The same camera has been
+  plate-solved to 1.5 px, so any pixel converts to alt/az and limiting
+  magnitude is a measurable, loggable quantity.
+- **Learned what actually predicts its seeing.** Nine nights of star-width
+  data against weather models: the jet stream barely correlates (ρ = +0.33);
+  850 hPa wind (ρ = +0.87) and humidity (ρ = −0.88, humid nights are *sharp*
+  here) run the show. The nightly plan report uses those, not folklore.
+- **Heard its roof failing before it failed.** Every roof move is
+  fingerprinted twice — a mel-spectrogram of its sound and a watt-by-watt
+  power trace. A live stall watchdog cut motor power on a real
+  gear-didn't-engage event; drift against golden reference moves is judged
+  every morning so slow degradation can't hide inside a rolling average.
 
 ---
 
-## Some chat commands
+## How a night works
 
-| Command | Description |
+1. **Noon** — the scheduler scores every queued target by visibility window,
+   air mass, priority, and *measured need*: filters are weighted by each
+   target's per-filter convergence record, so a channel that's never been
+   imaged gets the largest share and a converged one gets zero.
+2. **Pre-sunset** — weather, safety flag, and a camera snapshot are re-checked.
+   A Sonos announcement warns anyone inside that the roof is about to move.
+3. **Roof open** — only after computer vision confirms the scope is parked.
+   The two hardware laws are absolute and enforced in code: *the roof never
+   moves unless the scope is confirmed parked; the scope never moves unless
+   the roof is confirmed open.*
+4. **The run** — cool, slew, plate-solve, autofocus, then light frames all
+   night with a randomized dither between subs. Every incoming frame is
+   analysed (FWHM, eccentricity, star count, sky brightness) and streamed to
+   the chat ticker and the public live page in real time.
+5. **Dawn** — flats, park, roof close, dehumidifier on, summary posted. A GPU
+   box picks up the night's frames, stacks, denoises, and pushes the finished
+   picture to a phone.
+
+Meanwhile a second brain — a formally specified state machine, defined as a
+data table with every state × event pair tested (a 1,944-case sweep proves the
+roof invariant over the entire sensor-evidence space) — shadows the whole night
+read-only, journaling every transition and every decision the new safety guards
+*would* have made. When it has proven itself against enough real nights, it
+takes over. Deploys are gated the same way: the observatory pulls a `release`
+branch that only advances when CI is green, so a broken push can never reach
+the roof controls.
+
+---
+
+## Talking to it
+
+The chat runs on a self-hosted web server (excellent from a phone) with live
+job cards, frame previews, and cancellable long commands. A taste:
+
+| Command | What happens |
 |---|---|
-| `image <dso>` | Queue a DSO for imaging |
-| `best` | Best target for tonight |
-| `tonight` | Full tonight's plan |
-| `status` | Observatory status |
-| `latest` | Most recent image |
-| `stats` | Per-frame quality plots |
-| `active` | All DSOs with frame counts |
-| `calendar` | Imaging history |
-| `schedule` | Generate tonight's sequence |
-| `sequence <dso>` | Generate sequence for DSO |
-| `log` | Recent log entries |
-| `safe! / stop!` | Mark safe or abort |
+| `image <dso>` | Queue a target; it gets scheduled when its night comes |
+| `tonight` | Tonight's plan — target, hours, weather, moon, even visible ISS passes that cross the sky camera (which get recorded automatically) |
+| `stats` / `latest` | Per-frame quality plots; the most recent sub, annotated |
+| `snr <dso>` | Stack-convergence curves — is this target *done*? |
+| `optics` | Per-star Gaussian fits → FWHM heatmap, coma, tilt, and collimation scores from a single frame |
+| `filters <dso> ...` | Explicit per-filter exposure plan for a target |
+| `process <dso> <recipe>` | Calibrated LRGB / HOO / SHO stack on demand |
+| `transit <star>` | Photometric time series and box-fit transit search |
+| `audio <dir> <verdict>` | Label a roof-move spectrogram into the reference library |
+| `safe!` / `stop!` | The human veto, always |
 
 ---
 
-## Optical quality analysis
+## The parts
 
-The `optics` command runs a full per-star analysis on any LIGHT frame and posts diagnostic plots and a scalar scorecard to the chat. Each star is fitted with a 2-D Gaussian to extract its position, FWHM, eccentricity, and major-axis angle.
-
-**FWHM & field uniformity**
-Median full-width at half-maximum across all detected stars, in arcseconds. A grid heatmap shows whether sharpness degrades toward the edges — a sign of field curvature or focus tilt.
-
-**Eccentricity**
-How elongated each star is (0 = perfect circle, 1 = line). High eccentricity across the whole field indicates poor collimation, mirror shift, or tracking error.
-
-**Coma score**
-Pearson correlation between eccentricity and distance from the image centre. A high score means stars get progressively more elongated toward the edges — the classic signature of coma.
-
-**Collimation score**
-Measures whether elongated stars point radially outward from the centre (coma/collimation) or in a consistent direction across the frame (tilt or flexure). Uses the mean cos² of the angle between each star's elongation axis and its radial direction.
-
-**Tilt score**
-Fits a plane to the FWHM values across the sensor. The gradient magnitude, normalised by image diagonal and median FWHM, reveals focus-plane tilt — one side sharp, the other soft.
-
-**FWHM vs radius plot**
-Scatter plot of FWHM against distance from the image centre. Flat = good optics. A rising slope indicates field curvature; a U-shape suggests the best focus is off-axis.
-
----
-
-## Audio anomaly detection
-
-A microphone in the observatory runs a continuous listen loop. Any sound above the RMS threshold — a motor stall, a mechanical bang, an unexpected relay click — triggers a 10-second capture, which is converted to a mel spectrogram and compared against a library of known-good reference sounds.
-
-**Continuous listening**
-Audio is sampled at 44 100 Hz in 1 024-sample chunks. The RMS level of each chunk is checked against a configurable threshold. Below threshold the system is silent; above it a capture begins immediately.
-
-**Mel spectrogram fingerprint**
-Each 10-second capture is rendered as a 128-band mel spectrogram image using a fixed figure size, DPI, and colour map so all images are pixel-comparable regardless of when they were recorded.
-
-**Library matching**
-The new spectrogram is compared to every PNG in the reference library using mean-squared error. The closest match and its similarity score are identified. The library is built by saving spectrograms of known sounds — roof motor running, normal ambient noise, etc.
-
-**Push notification on new sounds**
-A Pushover notification is sent whenever a new distinct sound is detected — i.e. the best-match label differs from the previous event. Repeated instances of the same sound are suppressed to avoid alert fatigue. The spectrogram image is attached to the notification.
-
-**Hardware covered**
-The microphone is positioned to hear the roof motor, the mount drive, and the observatory roof. Unusual sounds during an imaging run — a motor stall mid-travel, a mechanical impact, or unexpected silence where motor noise should be — are flagged in real time.
-
-**Detected archive**
-Every triggered capture is saved as both a PNG spectrogram and a WAV file in `detected_spectrograms/`, creating a full audit trail of every acoustic event the observatory experienced during a run.
-
----
-
-## Key subsystems
-
-| Module | Role |
+| Subsystem | What it does |
 |---|---|
-| `scheduler_server.py` | State machine: noon check → pre-sunset → imaging → shutdown |
-| `social_server.py` | FastAPI/WebSocket chat server on port 8095 |
-| `nina_sequence_gen.py` | Patches N.I.N.A JSON templates with target coords and filter plans |
-| `vision_safety.py` | OpenCV template matching — parked / roof open / roof closed |
-| `frame_watcher.py` | Background thread: FWHM, eccentricity, sky brightness per frame |
-| `kasa_utils` / `pwi4` | TP-Link Kasa smart plugs, Shelly relay, PlaneWave mount |
-| `astro_dso_visibility.py` | Visibility windows, air mass, weather via Open-Meteo |
-| `pushover.py` | Rate-limited admin push notifications via Pushover |
-| `audio_classify.py` | Mel spectrogram anomaly detection — monitors roof motor, mount drive, and observatory roof |
+| Scheduler | Noon planning → pre-sunset checks → imaging → shutdown state machine |
+| `iris/core` | The next-generation machine-as-data + journal + guards, running in shadow |
+| Vision safety | OpenCV template matching: scope parked? roof open? — gates every move |
+| Frame watcher | Live FWHM / eccentricity / sky analysis of every sub as it lands |
+| Sequence generator | Patches N.I.N.A JSON templates with target, coordinates, and the need-weighted filter plan |
+| Stacker | Bias/dark/flat calibration, quality gate, astroalign registration, tiled sigma-clip that levels frames to a common sky (skipping that step measured **8× worse than the photon limit**) |
+| Audio + current sentry | Spectrogram matching and power-signature analysis of every roof move, plus the live stall watchdog |
+| Sky cameras | An all-sky fisheye and a plate-solved consumer cam: cloud cover, rain detection, star counts, limiting magnitude |
+| Publisher | Pushes the live page — skymap, latest sub, per-filter frame counts, and the night's state machine with the current state lit |
+| N2N | Noise2Noise training and nightly inference on a DGX Spark |
 
----
-
-## Future enhancements
-
-**CNN-based noise removal**
-Because Iris images the same targets repeatedly under consistent optics and sky conditions, it can train a dedicated convolutional neural network to remove noise from subframes using only noisy pairs — no clean reference needed. This approach, inspired by the [Noise2Noise paper](https://arxiv.org/abs/1803.04189) (Lehtinen et al., 2018), should outperform general-purpose AI denoisers that have never seen this telescope's specific PSF, sensor noise profile, or typical sky background.
-
----
-
-## Hardware block diagram
+Hardware: PlaneWave CDK on an L-500 direct-drive mount, 61 MP full-frame mono
+camera with a 7-filter wheel, a sliding roof driven by a gate-opener motor,
+TP-Link/Shelly switched power, cameras and a microphone as senses — all behind
+Tailscale, with the public face served through a Cloudflare tunnel.
 
 ![block diagram](doc/iris.png)
 
@@ -146,9 +141,11 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 git clone https://github.com/taylorhogan/srt.git
 cd srt
 
-# Create and activate virtualenv
-uv venv venv
-source venv/bin/activate
+# Create and activate virtualenv (Python 3.13+).
+# Use uv's default .venv path — `uv pip` auto-discovers it; a differently
+# named venv is silently ignored and parts of the pipeline degrade quietly.
+uv venv --python 3.13
+source .venv/bin/activate
 
 # Install dependencies
 uv pip install -r requirements.txt
@@ -161,7 +158,7 @@ cp configs/config_blank_private.py configs/config_private.py
 ## Running
 
 ```bash
-# Start both Social Server and Scheduler together
+# Start both the chat server and the scheduler together
 python end_points/start_srt.py
 
 # Or run individually:
@@ -174,12 +171,14 @@ python cmd_processing/social_server.py  # Web chat server
 ## Appreciation
 
 This work rests heavily on others:
-- [Astropy](https://www.astropy.org)
-- [Astroplan](https://astroplan.readthedocs.io)
+- [Astropy](https://www.astropy.org) / [Astroplan](https://astroplan.readthedocs.io)
 - [N.I.N.A](https://nighttime-imaging.eu)
+- [astroalign](https://astroalign.quatrope.org) / [SEP](https://sep.readthedocs.io)
+- [Noise2Noise](https://arxiv.org/abs/1803.04189) (Lehtinen et al., 2018)
 - [PixInsight](https://pixinsight.com)
 - [Allsky](https://github.com/thomasjacquin/allsky)
 
 ---
 
-*Iris Observatory · Social Robotic Telescope · fully unattended operation*
+*Iris Observatory · Social Robotic Telescope · nobody is awake, and the roof
+just opened anyway*
