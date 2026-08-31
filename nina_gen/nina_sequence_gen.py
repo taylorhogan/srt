@@ -1,4 +1,5 @@
 import json
+import logging
 import math
 from pathlib import Path
 from typing import Any, Optional
@@ -269,6 +270,46 @@ def _apply_filter_plan(sequence: Any, above_horizon_seconds: float, obj_type: st
         return plan
 
 
+def _need_plan(sequence: Any, dso_name: str, obj_type: str,
+               above_horizon_seconds: float) -> Optional[dict]:
+    """{filter: count} from measured convergence need (§2c), or None.
+
+    Sits between the explicit `filters` plan (which wins outright) and the
+    object-type default split (which applies when the DSO has no history).
+    Weights come from fits_processing.filter_need; they are converted to
+    exposure counts here — against the same 0.8 usable-night factor and the
+    template block's exposure time the automatic split uses — and then handed
+    to the EXPLICIT plan path, so need-weighting adds no new patching code.
+    """
+    try:
+        from fits_processing import filter_need as _fn
+        weights = _fn.filter_need_for_dso(dso_name, obj_type)
+    except Exception:
+        return None
+    if not weights:
+        # None = no history (fall back to type default). {} = every filter
+        # converged — also fall back, but say so: the planner should not have
+        # scheduled this target, and a silent zero-frame night would look
+        # exactly like the bug this module replaced.
+        if weights == {}:
+            logging.getLogger(__name__).warning(
+                "_need_plan: every %s filter for '%s' is converged; "
+                "falling back to the default split", obj_type, dso_name)
+        return None
+    smart_exposures = [se for se in _collect_smart_exposures(sequence)
+                       if _filter_node(se) is not None]
+    if len(smart_exposures) < len(weights):
+        return None                    # 2-block template: let the guard handle it
+    exposure_s = _get_exposure_time(smart_exposures[0])
+    counts = _fn.counts_from_weights(weights, above_horizon_seconds * 0.8,
+                                     exposure_s)
+    if not counts or not any(counts.values()):
+        return None
+    logging.getLogger(__name__).info(
+        "need-weighted filter plan for %s (%s): %s", dso_name, obj_type, counts)
+    return counts
+
+
 def _walk_and_replace(obj: Any, dso_name: str, coords: dict) -> None:
     """Recursively walk the JSON structure and replace target name and coordinates in-place."""
     if isinstance(obj, dict):
@@ -359,7 +400,14 @@ def generate_sequence(
                                          "explicit", explicit=explicit)
     elif above_horizon_seconds is not None and above_horizon_seconds > 0:
         obj_type = _classify_object_type(dso_name)
-        filter_plan = _apply_filter_plan(sequence, above_horizon_seconds, obj_type)
+        # §2c resolution order: explicit plan > need-weighted split (measured
+        # per-filter convergence) > object-type default split (no history).
+        need = _need_plan(sequence, dso_name, obj_type, above_horizon_seconds)
+        if need:
+            filter_plan = _apply_filter_plan(sequence, above_horizon_seconds,
+                                             obj_type, explicit=need)
+        else:
+            filter_plan = _apply_filter_plan(sequence, above_horizon_seconds, obj_type)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with open(output_path, "w", encoding="utf-8") as f:
