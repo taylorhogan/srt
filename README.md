@@ -1,5 +1,11 @@
 # Iris — a robotic telescope you talk to
 
+![IC 1396A, the Elephant's Trunk Nebula: a dark winding column of dust silhouetted against a red and gold field of glowing hydrogen, its rim burning where the ionization front eats into the cloud](doc/trunk_hero.jpg)
+
+*IC 1396A, the Elephant's Trunk — 12.1 hours across four nights: 145
+five-minute exposures through three narrowband filters. Nobody was in the
+observatory for any of them.*
+
 Text Iris the name of a nebula from your phone. Some clear night — maybe tonight,
 maybe next week when the geometry is right — a roof in a backyard opens on its
 own, a half-ton telescope wakes up, finds the target, and spends the dark hours
