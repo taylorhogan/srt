@@ -284,7 +284,11 @@ class PublicConfig():
         "nina": {
             "image_dir": "C:/Users/iriso/Documents/N.I.N.A/Targets",
             "sequence_output": "C:/Users/iriso/Documents/N.I.N.A/Sequences/full_for_tonight.json",
-            "sequence_input": "C:/Users/iriso/Documents/N.I.N.A/Sequences/cdk_full_sequence.json",
+            # 4-block expansion of cdk_full_sequence.json (expand_sequence_blocks.py):
+            # _apply_filter_plan needs >=4 SmartExposure blocks or it silently
+            # ignores every filter plan. Regenerate after editing the source
+            # template; revert by pointing back at cdk_full_sequence.json.
+            "sequence_input": "C:/Users/iriso/Documents/N.I.N.A/Sequences/cdk_full_sequence_4block.json",
             "sequence_input1": "/home/taylor/Documents/srt/nina_gen/nina_sequence_gen.py",
             "arc_sec_per_pixel": 0.26,
             # Filter wheel: name -> wheel position. Taken from the flats
