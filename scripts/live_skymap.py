@@ -521,6 +521,26 @@ def main() -> None:
     stats_jpg, stats_meta = _stats_chart(root, out_dir, latest_meta.get("latest_dso"))
     status.update(stats_meta)
 
+    # The conductor's machine state: one string naming the lit node of
+    # docs/night_machine.mmd, so the site can highlight it on the live state
+    # diagram. Distinct keys from "state", which already means the TARGET's
+    # visibility on this page. A down conductor publishes nothing and the
+    # panel hides -- absence is honest, a guess is not. The 3 s timeout
+    # matters: this whole script runs under live_skymap.bat's 4-minute kill.
+    try:
+        import urllib.request
+        with urllib.request.urlopen("http://127.0.0.1:8096/v1/state",
+                                    timeout=3) as r:
+            _c = json.loads(r.read().decode("utf-8"))
+        if _c.get("state"):
+            status["machine_state"] = _c["state"]
+            status["machine_shadow"] = bool(_c.get("shadow"))
+            _dso = (_c.get("context") or {}).get("dso")
+            if _dso:
+                status["machine_dso"] = _dso
+    except Exception:
+        pass
+
     js = out_dir / "live_status.json"
     js.write_text(json.dumps(status, indent=1))
     print("rendered", img.name, "->", status.get("target"), status.get("state"))
@@ -540,6 +560,12 @@ def main() -> None:
         pushes.insert(1, (latest_jpg, "latest.jpg"))
     if stats_jpg is not None and stats_jpg.exists():
         pushes.insert(1, (stats_jpg, "stats.jpg"))
+    # The generated night-machine diagram rides along so the site renders the
+    # SAME structure CI enforces against the code -- the page never hardcodes
+    # a copy that could drift. Tiny file, harmless to re-push every cycle.
+    mmd = root / "docs" / "night_machine.mmd"
+    if "machine_state" in status and mmd.exists():
+        pushes.append((mmd, "night_machine.mmd"))
     from scripts import live_push
     live_push.push(pushes)
     print("pushed", len(pushes), "file(s) to", live_push.HOST + ":" + live_push.DEST)
