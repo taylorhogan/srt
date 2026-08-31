@@ -321,10 +321,20 @@ def _stats_chart(root, out_dir, dso):
             return None, {}
         frames = ia.gather_dso_frames(cache.parent, latest_session_only=False)
         meta = {"stats_dso": dso, "stats_frames": len(frames)}
-        filts = sorted({str(f.get("filter", "")).strip()
-                        for f in frames if f.get("filter")})
-        if filts:
-            meta["stats_filters"] = filts
+        # Per-filter counts, not just the filter names: "Ha 42, O-III 78,
+        # S-II 54" is the number a visitor actually wants -- how much of each
+        # channel is in the bank -- and it is the same accounting the
+        # convergence gate works from. Ordered by count, biggest first, so the
+        # dominant channel reads first rather than alphabetically.
+        counts: dict = {}
+        for f in frames:
+            name = str(f.get("filter", "")).strip()
+            if name:
+                counts[name] = counts.get(name, 0) + 1
+        if counts:
+            meta["stats_by_filter"] = dict(sorted(counts.items(),
+                                                  key=lambda kv: -kv[1]))
+            meta["stats_filters"] = sorted(counts)      # kept: older readers
         # Nights, so the caption can say how much history the chart spans.
         # Counted off the frame timestamps rather than the day boundary,
         # because a session that runs past midnight is one night's work and
