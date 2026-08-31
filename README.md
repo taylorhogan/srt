@@ -131,6 +131,21 @@ Tailscale, with the public face served through a Cloudflare tunnel.
 
 ---
 
+## A word of honesty before you clone
+
+This is open source, but it is not (yet) a product. Iris is one specific
+observatory — one roof, one mount, one camera, one tree line, and a hundred
+constants measured against them. Paths, wheel positions, park coordinates,
+horizon profiles, and template-matching thresholds all assume *this* backyard.
+You could absolutely build your own from these pieces, and the code tries hard
+to keep its reasoning legible for exactly that reader — but expect to bring a
+measuring instinct rather than run an installer. Generality is on the roadmap:
+the ongoing re-architecture is separating the machine from the measurements,
+and each piece that crosses over becomes something another observatory could
+actually adopt.
+
+---
+
 ## Setup
 
 ```bash
