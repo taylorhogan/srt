@@ -202,7 +202,6 @@ This work rests heavily on others:
 - [PyTorch](https://pytorch.org) — Noise2Noise training and inference
 - [FastAPI](https://fastapi.tiangolo.com) / [uvicorn](https://www.uvicorn.org) — the chat server
 - [Noise2Noise](https://arxiv.org/abs/1803.04189) (Lehtinen et al., 2018)
-- [PixInsight](https://pixinsight.com)
 - [Allsky](https://github.com/thomasjacquin/allsky)
 - [Claude](https://claude.com/claude-code) (Anthropic) — pair programmer for much of what's described above, from the stacking mathematics to the state machines to this README
 
