@@ -133,8 +133,6 @@ camera with a 7-filter wheel, a sliding roof driven by a gate-opener motor,
 TP-Link/Shelly switched power, cameras and a microphone as senses — all behind
 Tailscale, with the public face served through a Cloudflare tunnel.
 
-![block diagram](doc/iris.png)
-
 ---
 
 ## A word of honesty before you clone
@@ -166,7 +164,8 @@ cd srt
 # Use uv's default .venv path — `uv pip` auto-discovers it; a differently
 # named venv is silently ignored and parts of the pipeline degrade quietly.
 uv venv --python 3.13
-source .venv/bin/activate
+source .venv/bin/activate      # Linux / macOS
+# .venv\Scripts\activate       # Windows (what the observatory itself runs)
 
 # Install dependencies
 uv pip install -r requirements.txt
@@ -192,12 +191,20 @@ python cmd_processing/social_server.py  # Web chat server
 ## Appreciation
 
 This work rests heavily on others:
-- [Astropy](https://www.astropy.org) / [Astroplan](https://astroplan.readthedocs.io)
+- [Astropy](https://www.astropy.org) / [Astroplan](https://astroplan.readthedocs.io) / [astroquery](https://astroquery.readthedocs.io) — and the [SIMBAD](https://simbad.cds.unistra.fr) service at CDS behind it
 - [N.I.N.A](https://nighttime-imaging.eu)
 - [astroalign](https://astroalign.quatrope.org) / [SEP](https://sep.readthedocs.io)
+- [python-kasa](https://github.com/python-kasa/python-kasa) — vendored in this very repo to switch the observatory's power
+- [Open-Meteo](https://open-meteo.com) — free weather forecasts, no key required, asked every single day
+- [Skyfield](https://rhodesmill.org/skyfield/) — satellite passes and ephemerides
+- [OpenCV](https://opencv.org) — the vision safety system's eyes
+- [librosa](https://librosa.org) — the roof sentry's ears (mel spectrograms)
+- [PyTorch](https://pytorch.org) — Noise2Noise training and inference
+- [FastAPI](https://fastapi.tiangolo.com) / [uvicorn](https://www.uvicorn.org) — the chat server
 - [Noise2Noise](https://arxiv.org/abs/1803.04189) (Lehtinen et al., 2018)
 - [PixInsight](https://pixinsight.com)
 - [Allsky](https://github.com/thomasjacquin/allsky)
+- [Claude](https://claude.com/claude-code) (Anthropic) — pair programmer for much of what's described above, from the stacking mathematics to the state machines to this README
 
 ---
 
