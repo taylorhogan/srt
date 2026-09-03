@@ -155,7 +155,7 @@ def _sky():
     return site, eph, ts
 
 
-def passes_tonight(hours=16.0, arm=True):
+def passes_tonight(hours=18.5, arm=True):
     """Visible-in-frame passes in the next *hours*; optionally arm the recorder.
 
     Returns a list of dicts {sat, rise, peak, set, peak_alt_deg} in local time
@@ -163,6 +163,11 @@ def passes_tonight(hours=16.0, arm=True):
     = above MIN_ALT_DEG while sunlit with the site dark for at least part of
     the pass. One station's TLE failing must not blank the other's passes, so
     each is computed under its own try.
+
+    18.5 hours, not 16: arming happens at the NOON check, and noon+16h only
+    reaches 04:00 -- a real 04:35 ISS pass on 2026-09-04 fell outside it.
+    Noon+18.5h reaches 06:30, past astronomical dawn year-round here, so the
+    window means what the docstring above always claimed: "until sunrise".
     """
     from skyfield.api import EarthSatellite
     site, eph, ts = _sky()
