@@ -662,10 +662,60 @@ def show_plots(dso: FixedTarget) -> tuple[Optional[str], Optional[str], Optional
         hz_r = [90 - a for a in hz_alt_closed]
         ax_sky.plot(hz_theta, hz_r, color='red', linewidth=2, linestyle='-', label='My Horizon', zorder=5)
         ax_sky.fill_between(hz_theta, hz_r, 90, color='red', alpha=0.15, zorder=4)
+        # Direction arrows: an arrowhead on the leading end of each track, so
+        # which way things MOVE reads straight off the chart. annotate (not a
+        # quiver) because it works in polar data coordinates as-is.
+        def _arrow(th0, r0, th1, r1, color):
+            ax_sky.annotate('', xy=(th1, r1), xytext=(th0, r0), zorder=8,
+                            arrowprops=dict(arrowstyle='-|>', color=color,
+                                            lw=2, mutation_scale=20))
+
+        # The DSO's own arrow: astroplan scatters dots with no direction, so
+        # recompute the night's alt/az and arrow the last above-horizon step.
+        try:
+            aa = my_observatory.altaz(observe_time, dso)
+            alts, azs = aa.alt.deg, aa.az.deg
+            up = np.where(alts > 0)[0]
+            if len(up) >= 2:
+                i0, i1 = up[-2], up[-1]
+                try:
+                    dso_color = ax_sky.collections[0].get_facecolor()[0]
+                except Exception:
+                    dso_color = 'C0'
+                _arrow(np.radians(azs[i0]), 90 - alts[i0],
+                       np.radians(azs[i1]), 90 - alts[i1], dso_color)
+        except Exception:
+            LOGGER.info("dso direction arrow skipped", exc_info=True)
+
+        # The Kasa sky camera's footprint, mapped through the LIVE plate
+        # solution (local/sky_solution.json): the frame's border pixels ->
+        # alt/az, so this is the true, slightly tilted rectangle the camera
+        # sees -- the region where an armed station pass actually gets
+        # recorded -- not an idealised circle. Redraws itself correctly if the
+        # camera is ever re-solved.
+        try:
+            import json as _json
+            from sentry import plate_solve as _ps
+            _sol = _json.load(open(os.path.join(
+                os.path.dirname(__file__), '..', 'local', 'sky_solution.json')))
+            w, h = 2 * _sol['cx'], 2 * _sol['cy']   # cx,cy = frame centre
+            n = 40
+            xs = np.concatenate([np.linspace(0, w, n), np.full(n, w),
+                                 np.linspace(w, 0, n), np.zeros(n)])
+            ys = np.concatenate([np.zeros(n), np.linspace(0, h, n),
+                                 np.full(n, h), np.linspace(h, 0, n)])
+            b_alt, b_az = _ps.pixel_to_altaz(_sol, xs, ys)
+            keep = b_alt > 0
+            ax_sky.plot(np.radians(b_az[keep]), 90 - b_alt[keep],
+                        color='goldenrod', linewidth=1.6, linestyle=':',
+                        label='sky camera frame', zorder=5)
+        except Exception:
+            LOGGER.info("sky camera frame overlay skipped", exc_info=True)
+
         # Armed station passes (ISS / Tiangong): the auto-recorder's own
-        # prediction drawn on the same chart, dashed, with a dot at the RISE
-        # end so the direction of travel reads at a glance. Best-effort -- the
-        # sky chart must never fail because of an optional overlay.
+        # prediction drawn on the same chart, dashed, dot at the RISE end and
+        # an arrowhead at the SET end. Best-effort -- the sky chart must never
+        # fail because of an optional overlay.
         try:
             from sentry import station_watch
             for trk in station_watch.armed_tracks():
@@ -676,6 +726,8 @@ def show_plots(dso: FixedTarget) -> tuple[Optional[str], Optional[str], Optional
                     label="%s pass %s" % (trk["sat"], trk["peak"][11:16]))
                 ax_sky.plot([th[0]], [r[0]], marker='o', markersize=6,
                             color=line.get_color(), zorder=7)
+                if len(th) >= 2:
+                    _arrow(th[-2], r[-2], th[-1], r[-1], line.get_color())
         except Exception:
             LOGGER.info("armed station track overlay skipped", exc_info=True)
         plt.legend(loc='center left', bbox_to_anchor=(1.25, 0.5))
