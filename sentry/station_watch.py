@@ -65,6 +65,12 @@ TLE_MAX_AGE_S = 12 * 3600
 MARKER = "local/iss_pass_armed.json"
 OUT_DIR = "local/iss"
 
+# Rolling cap on stored VIDEO, same shape as the roof-audio library's cap: a
+# pass is 10-40 MB and a few arrive per week, so 20 is under a GB and months
+# of lookback. Sidecar .json files are ~1 KB and are deliberately NOT pruned:
+# they remain a permanent log of every pass ever recorded, video or not.
+KEEP_VIDEOS = 20
+
 # The camera's usable floor. The plate solution puts the axis ~4 deg off
 # zenith with a 104 deg field, so the edge sits near alt 38; 40 keeps the
 # pass inside the frame rather than clipping its rise and set.
@@ -278,6 +284,24 @@ def check_and_spawn():
         _logger.exception("station_watch.check_and_spawn failed (ignored)")
 
 
+def _prune_videos(keep=KEEP_VIDEOS):
+    """Delete all but the newest *keep* .h264 bursts; sidecars are kept.
+
+    Runs after every successful recording, so the cap can never be exceeded
+    by more than one pass. Never raises -- a failed prune must not cost the
+    'pass recorded' post that follows it.
+    """
+    try:
+        vids = sorted((f for f in os.listdir(OUT_DIR) if f.endswith(".h264")),
+                      key=lambda f: os.path.getmtime(os.path.join(OUT_DIR, f)))
+        for f in vids[:-keep] if keep > 0 else vids:
+            with contextlib.suppress(OSError):
+                os.remove(os.path.join(OUT_DIR, f))
+                _logger.info("pruned old pass video %s (cap %d)", f, keep)
+    except Exception:  # noqa: BLE001
+        _logger.warning("video prune failed (ignored)", exc_info=True)
+
+
 def record(p):
     """Capture the pass as one uninterrupted burst and post the outcome.
 
@@ -310,6 +334,8 @@ def record(p):
             "capture_end": ended.isoformat(timespec="seconds")}
     json.dump(meta, open(os.path.join(OUT_DIR, "%s_%s.json" % (sat, stamp)), "w"),
               indent=1)
+
+    _prune_videos()
 
     msg = ("%s pass recorded: peak alt %.0f deg at %s, %s frames -> %s"
            % (p.get("sat", "ISS"), p["peak_alt_deg"], p["peak"][11:19], n, path))
