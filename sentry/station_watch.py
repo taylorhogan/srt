@@ -243,6 +243,51 @@ def _passes_for(name, sat, site, eph, ts, hours):
     return out
 
 
+def armed_tracks(step_s=15.0):
+    """Alt/az tracks for armed passes still in the future, for sky charts.
+
+    Returns [{sat, peak, pts: [(az_deg, alt_deg), ...]}, ...] recomputed from
+    the cached TLEs across each pass's rise..set. Empty list on any trouble --
+    a chart must never fail because of an optional overlay.
+    """
+    try:
+        passes = (json.load(open(MARKER)) or {}).get("passes") or []
+    except Exception:
+        return []
+    if not passes:
+        return []
+    out = []
+    try:
+        from skyfield.api import EarthSatellite
+        site, eph, ts = _sky()
+        now = datetime.now().astimezone()
+        for p in passes:
+            try:
+                t0 = datetime.fromisoformat(p["rise"])
+                t1 = datetime.fromisoformat(p["set"])
+                if t1 < now:
+                    continue
+                sat_def = next((s for s in SATELLITES
+                                if s["name"] == p.get("sat", "ISS")), None)
+                if sat_def is None:
+                    continue
+                l1, l2 = get_tle(sat_def)
+                sat = EarthSatellite(l1, l2, sat_def["name"], ts)
+                span = (t1 - t0).total_seconds()
+                n = max(2, int(span // step_s))
+                pts = []
+                for i in range(n + 1):
+                    tx = ts.from_datetime(t0 + timedelta(seconds=span * i / n))
+                    alt, az, _ = (sat - site).at(tx).altaz()
+                    pts.append((float(az.degrees), float(alt.degrees)))
+                out.append({"sat": sat_def["name"], "peak": p["peak"], "pts": pts})
+            except Exception:  # noqa: BLE001
+                _logger.warning("armed track skipped", exc_info=True)
+    except Exception:  # noqa: BLE001
+        _logger.warning("armed_tracks unavailable", exc_info=True)
+    return out
+
+
 def check_and_spawn():
     """sky_monitor hook: spawn the detached recorder for an imminent armed pass.
 

@@ -662,9 +662,28 @@ def show_plots(dso: FixedTarget) -> tuple[Optional[str], Optional[str], Optional
         hz_r = [90 - a for a in hz_alt_closed]
         ax_sky.plot(hz_theta, hz_r, color='red', linewidth=2, linestyle='-', label='My Horizon', zorder=5)
         ax_sky.fill_between(hz_theta, hz_r, 90, color='red', alpha=0.15, zorder=4)
+        # Armed station passes (ISS / Tiangong): the auto-recorder's own
+        # prediction drawn on the same chart, dashed, with a dot at the RISE
+        # end so the direction of travel reads at a glance. Best-effort -- the
+        # sky chart must never fail because of an optional overlay.
+        try:
+            from sentry import station_watch
+            for trk in station_watch.armed_tracks():
+                th = [np.radians(azd) for azd, altd in trk["pts"]]
+                r = [90 - altd for azd, altd in trk["pts"]]
+                line, = ax_sky.plot(
+                    th, r, linestyle='--', linewidth=2.2, zorder=6,
+                    label="%s pass %s" % (trk["sat"], trk["peak"][11:16]))
+                ax_sky.plot([th[0]], [r[0]], marker='o', markersize=6,
+                            color=line.get_color(), zorder=7)
+        except Exception:
+            LOGGER.info("armed station track overlay skipped", exc_info=True)
         plt.legend(loc='center left', bbox_to_anchor=(1.25, 0.5))
         sky_path = os.path.join(scratch_dir, "sky.png")
-        plt.savefig(sky_path)
+        # tight: the legend hangs outside the axes (bbox_to_anchor 1.25) and a
+        # plain savefig clips it -- fine when it only named the horizon, not
+        # now that it carries the station-pass times.
+        plt.savefig(sky_path, bbox_inches='tight')
         plt.close()
     except:
 
