@@ -1,9 +1,10 @@
 """
-iss_watch.py
+station_watch.py  (born iss_watch.py, renamed when Tiangong joined)
 Predict space-station passes that cross the sky camera's field, and record
-them. Watches the ISS and Tiangong (see SATELLITES); the module keeps its
-historical name because the marker, output dir, and callers all predate the
-second station.
+them. Watches the ISS and Tiangong (see SATELLITES). The DATA paths keep
+their historical names on purpose -- local/iss_pass_armed.json and local/iss/
+-- because an armed marker must survive a deploy that happens between arming
+and the pass, and nothing is gained by orphaning the existing archive.
 
 The sky camera's 104-degree field centred ~4 degrees off zenith reaches down
 to roughly 38 degrees altitude, so most passes never enter it, and a pass is
@@ -260,7 +261,7 @@ def check_and_spawn():
             _logger.info("%s pass imminent (rise %s) - spawning recorder",
                          launch.get("sat", "ISS"), launch["rise"])
             subprocess.Popen(
-                [sys.executable, "-m", "sentry.iss_watch", "record",
+                [sys.executable, "-m", "sentry.station_watch", "record",
                  json.dumps(launch)],
                 cwd=os.path.abspath(os.path.join(os.path.dirname(__file__), "..")),
                 creationflags=getattr(subprocess, "DETACHED_PROCESS", 0)
@@ -274,7 +275,7 @@ def check_and_spawn():
                 with contextlib.suppress(OSError):
                     os.remove(MARKER)
     except Exception:  # noqa: BLE001 -- observer beside the weather loop
-        _logger.exception("iss_watch.check_and_spawn failed (ignored)")
+        _logger.exception("station_watch.check_and_spawn failed (ignored)")
 
 
 def record(p):

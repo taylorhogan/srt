@@ -478,6 +478,10 @@ def noon_check_task() -> tuple[str, int, datetime, str]:
         social_server.post_social_message(
             f"Not enough good imaging hours tonight ({best_good_hours}h), skipping"
         )
+        # A skipped DSO night is not a skipped station night: a pass needs two
+        # clear minutes through a gap, not hours of good sky. tonight_cmd (the
+        # other branch) arms via the same call, so passes arm EVERY noon.
+        social_server._post_station_passes()
         obs_calendar.set_today_stat('weather', best_name)
         set_state(State.NOON_CHECK, best_name, False)
 

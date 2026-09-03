@@ -126,13 +126,13 @@ def main() -> int:
     # It needs only the marker file and the clock, guards internally, and
     # touches nothing on quiet ticks.
     try:
-        from sentry import iss_watch
-        iss_watch.check_and_spawn()
+        from sentry import station_watch
+        station_watch.check_and_spawn()
     except Exception as exc:
         # print, not logging: this file never imports logging, and the old
         # handler's logging.getLogger call would itself have raised NameError,
         # masking the real failure.
-        print("sky_monitor: iss check failed (ignored): %s: %s"
+        print("sky_monitor: station check failed (ignored): %s: %s"
               % (type(exc).__name__, exc))
 
     # --frame re-runs everything downstream of the camera against a file that

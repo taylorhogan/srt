@@ -180,6 +180,12 @@ def tonight_cmd(words: list[str], index: int, m: Mastodon, account: str) -> bool
     if grid_html:
         post_html_message(grid_html)
 
+    # Station passes arm here regardless of whether tonight has a target or
+    # the name resolves: a pass needs two clear minutes, not an imaging plan,
+    # and this used to sit behind BOTH conditions -- a SIMBAD hiccup at noon
+    # silently cost the night's recordings.
+    _post_station_passes()
+
     if best_name:
         obj = instructions.resolve_target_by_name(best_name)
         if obj is not None:
@@ -191,7 +197,6 @@ def tonight_cmd(words: list[str], index: int, m: Mastodon, account: str) -> bool
                 post_social_message(f"{best_name} — sky chart", sky)
             post_social_message(weather_msg)
             post_dso_preview(best_name)
-            _post_iss_passes()
             return weather_ok
         else:
             post_social_message(f"{best_name} not a known object")
@@ -199,22 +204,22 @@ def tonight_cmd(words: list[str], index: int, m: Mastodon, account: str) -> bool
 
 
 
-def _post_iss_passes() -> None:
-    """Append tonight's in-frame ISS passes to the report, arming the recorder.
+def _post_station_passes() -> None:
+    """Post tonight's in-frame station passes (ISS, Tiangong), arming the recorder.
 
     Best-effort: needs skyfield + network for a fresh TLE, and the tonight
     report must survive without either. Two independent tests per pass, both
-    requiring the ISS sunlit over a dark site: inside the sky camera's field
-    (a flat ~40 deg floor -- these arm the auto-record), and above the Iris
-    horizon (configs/my.hrz, the azimuth-shaped tree line the DSO scheduler
-    uses -- watchable from the observatory, but not recorded). Most nights
-    neither lines up, so this posts nothing rather than "no passes".
+    requiring the station sunlit over a dark site: inside the sky camera's
+    field (a flat ~40 deg floor -- these arm the auto-record), and above the
+    Iris horizon (configs/my.hrz, the azimuth-shaped tree line the DSO
+    scheduler uses -- watchable from the observatory, but not recorded). Most
+    nights neither lines up, so this posts nothing rather than "no passes".
     """
     try:
-        from sentry import iss_watch
-        passes = iss_watch.passes_tonight(arm=True)
+        from sentry import station_watch
+        passes = station_watch.passes_tonight(arm=True)
     except Exception:
-        logging.getLogger(__name__).warning("ISS pass check failed", exc_info=True)
+        logging.getLogger(__name__).warning("station pass check failed", exc_info=True)
         return
     if not passes:
         return
