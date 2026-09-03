@@ -180,6 +180,31 @@ def _dss2_rgb_preview(coord, fov_w_deg, fov_h_deg):
     return rgb, "DSS2 R/B composite"
 
 
+def resolve_coord(target_name: str) -> SkyCoord:
+    """Coordinates for a name: the instruction queue first, SIMBAD second.
+
+    Requestor-named targets (squid, bubble, gravwav...) have no catalogue
+    entry, so SIMBAD cannot resolve them -- but their queue record carries an
+    explicit ra_deg/dec_deg. Preferring the stored position also means the
+    preview frames EXACTLY what the sequence generator will point at, even for
+    catalogue names, instead of wherever SIMBAD centres the object today.
+    """
+    try:
+        from control import instructions
+        rec = instructions.get_instruction_by_dso(target_name)
+        if rec and rec.get("ra_deg") is not None and rec.get("dec_deg") is not None:
+            return SkyCoord(float(rec["ra_deg"]) * u.deg,
+                            float(rec["dec_deg"]) * u.deg)
+    except Exception:
+        pass          # not queued / queue unreadable: the catalogue may know it
+    result = Simbad.query_object(target_name)
+    if result is None:
+        raise ValueError(
+            f"Could not resolve '{target_name}': not in the queue with stored "
+            f"coordinates, and SIMBAD does not know the name")
+    return SkyCoord(result["ra"][0], result["dec"][0], unit=(u.deg, u.deg))
+
+
 def get_preview_image(target_name: str, sources=PREVIEW_SOURCES):
     """Best available preview of *target_name*: (array, survey_label, is_colour).
 
@@ -188,10 +213,7 @@ def get_preview_image(target_name: str, sources=PREVIEW_SOURCES):
     rather than to nothing.
     """
     fov_w, fov_h = field_of_view()
-    result = Simbad.query_object(target_name)
-    if result is None:
-        raise ValueError(f"Could not resolve '{target_name}' via SIMBAD")
-    coord = SkyCoord(result["ra"][0], result["dec"][0], unit=(u.deg, u.deg))
+    coord = resolve_coord(target_name)
     ra, dec = float(coord.ra.deg), float(coord.dec.deg)
 
     for name in sources:
@@ -217,11 +239,8 @@ def get_dso_image(target_name: str, survey="DSS2 Red", show=True):
     print(f"FOV: {fov_w * 60:.2f}' x {fov_h * 60:.2f}'")
     print(f"Image scale: {pixel_scale_arcsec():.3f} \"/px")
 
-    # Resolve name → coordinates
-    result = Simbad.query_object(target_name)
-    if result is None:
-        raise ValueError(f"Could not resolve '{target_name}' via SIMBAD")
-    coord = SkyCoord(result["ra"][0], result["dec"][0], unit=(u.deg, u.deg))
+    # Resolve name → coordinates (queue-stored position first, then SIMBAD)
+    coord = resolve_coord(target_name)
     print(f"Resolved {target_name}: RA={coord.ra.to_string(unit=u.hour)}, Dec={coord.dec:.4f}")
 
     # Fetch image from SkyView.
