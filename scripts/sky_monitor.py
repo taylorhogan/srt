@@ -113,6 +113,28 @@ def main() -> int:
     now = datetime.now(timezone.utc)
     status = {"generated": now.isoformat(timespec="seconds")}
 
+    # Armed ISS pass about to start? Spawns the detached recorder. FIRST,
+    # before the camera is touched, for two reasons learned on 2026-09-03
+    # (the 74-degree pass that never recorded despite three armings):
+    #   * it used to sit in the daylight branch below, and a visible pass is
+    #     BY THE ARMING GATE'S OWN DEFINITION at night -- the check literally
+    #     could not run when a real pass was due (its one success, the Aug 23
+    #     first-light test, was a daylight pass: the exception that proves it);
+    #   * a camera dropout returns early below, and this camera misses ~1 run
+    #     in 5 (worse in rain) -- a spawn window is 6 minutes wide and must
+    #     not gamble on the same camera the recorder is about to use.
+    # It needs only the marker file and the clock, guards internally, and
+    # touches nothing on quiet ticks.
+    try:
+        from sentry import iss_watch
+        iss_watch.check_and_spawn()
+    except Exception as exc:
+        # print, not logging: this file never imports logging, and the old
+        # handler's logging.getLogger call would itself have raised NameError,
+        # masking the real failure.
+        print("sky_monitor: iss check failed (ignored): %s: %s"
+              % (type(exc).__name__, exc))
+
     # --frame re-runs everything downstream of the camera against a file that
     # already exists. Needed to reprocess the archive when the detector
     # changes, which is the normal way a stored frame earns its keep.
@@ -178,14 +200,6 @@ def main() -> int:
         # is, and a task on this machine needs an elevation prompt nobody is
         # sitting in front of at dawn.
         _maybe_post_night_report()
-        # Armed ISS pass about to start? Spawns the detached recorder; the
-        # 5-minute cadence of this loop is exactly why the arm window is six.
-        # Never raises (guards internally) and touches nothing on quiet ticks.
-        try:
-            from sentry import iss_watch
-            iss_watch.check_and_spawn()
-        except Exception:
-            logging.getLogger(__name__).exception("iss check failed (ignored)")
     else:
         ann = None
         if "--annotate" in sys.argv:
