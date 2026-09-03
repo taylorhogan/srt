@@ -219,15 +219,16 @@ def _post_iss_passes() -> None:
     if not passes:
         return
     any_cam = any(p.get("in_camera") for p in passes)
-    lines = ["ISS passes tonight"
+    sats = sorted({p.get("sat", "ISS") for p in passes})
+    lines = ["%s passes tonight" % " / ".join(sats)
              + (" — sky camera auto-record armed:" if any_cam else ":")]
     for p in passes:
         where = " + ".join(w for w, on in
                            (("sky camera frame", p.get("in_camera")),
                             ("above the Iris horizon", p.get("above_horizon")))
                            if on)
-        lines.append("  rise %s  peak %s at %.0f°  set %s   [%s]"
-                     % (p["rise"][11:16], p["peak"][11:16],
+        lines.append("  %s  rise %s  peak %s at %.0f°  set %s   [%s]"
+                     % (p.get("sat", "ISS"), p["rise"][11:16], p["peak"][11:16],
                         p["peak_alt_deg"], p["set"][11:16], where))
     post_social_message("\n".join(lines))
 

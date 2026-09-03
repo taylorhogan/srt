@@ -1,6 +1,9 @@
 """
 iss_watch.py
-Predict ISS passes that cross the sky camera's field, and record them.
+Predict space-station passes that cross the sky camera's field, and record
+them. Watches the ISS and Tiangong (see SATELLITES); the module keeps its
+historical name because the marker, output dir, and callers all predate the
+second station.
 
 The sky camera's 104-degree field centred ~4 degrees off zenith reaches down
 to roughly 38 degrees altitude, so most passes never enter it, and a pass is
@@ -46,8 +49,17 @@ from utils import utils
 
 _logger = utils.set_logger()
 
-TLE_URL = ("https://celestrak.org/NORAD/elements/gp.php?CATNR=25544&FORMAT=TLE")
-TLE_CACHE = "local/iss_tle.json"
+# The stations worth recording. Tiangong (CSS core module TIANHE, NORAD
+# 48274) orbits at 41.5 deg inclination against this site's 41.8 deg
+# latitude -- the tangent geometry: its passes always culminate toward the
+# SOUTH, cluster in runs when the track's northern apex drifts across our
+# longitude, and can top 80 deg on the best of them. Same public TLEs, same
+# gates, one more catalogue number.
+SATELLITES = (
+    {"name": "ISS", "catnr": 25544, "cache": "local/iss_tle.json"},
+    {"name": "Tiangong", "catnr": 48274, "cache": "local/tiangong_tle.json"},
+)
+_TLE_URL = "https://celestrak.org/NORAD/elements/gp.php?CATNR=%d&FORMAT=TLE"
 TLE_MAX_AGE_S = 12 * 3600
 MARKER = "local/iss_pass_armed.json"
 OUT_DIR = "local/iss"
@@ -90,9 +102,9 @@ def _horizon_alt(azimuth, hz):
     return float(np.interp(azimuth % 360.0, hz[0], hz[1]))
 
 
-def _fetch_tle():
+def _fetch_tle(catnr):
     import requests
-    r = requests.get(TLE_URL, timeout=15)
+    r = requests.get(_TLE_URL % catnr, timeout=15)
     r.raise_for_status()
     lines = [l.strip() for l in r.text.splitlines() if l.strip()]
     if len(lines) < 3 or not lines[1].startswith("1 "):
@@ -100,50 +112,76 @@ def _fetch_tle():
     return lines[1], lines[2]
 
 
-def get_tle():
-    """(line1, line2), cached; stale cache beats a failed fetch."""
+def get_tle(sat_def):
+    """(line1, line2) for one satellite, cached; stale cache beats a failed fetch."""
+    cache = sat_def["cache"]
     cached = None
-    if os.path.exists(TLE_CACHE):
+    if os.path.exists(cache):
         try:
-            cached = json.load(open(TLE_CACHE))
+            cached = json.load(open(cache))
         except (OSError, ValueError):
             cached = None
     if cached and time.time() - cached.get("fetched", 0) < TLE_MAX_AGE_S:
         return cached["l1"], cached["l2"]
     try:
-        l1, l2 = _fetch_tle()
+        l1, l2 = _fetch_tle(sat_def["catnr"])
         os.makedirs("local", exist_ok=True)
         json.dump({"l1": l1, "l2": l2, "fetched": time.time()},
-                  open(TLE_CACHE, "w"))
+                  open(cache, "w"))
         return l1, l2
     except Exception as e:  # noqa: BLE001
         if cached:
-            _logger.warning("ISS TLE fetch failed (%r); using cache from %s",
-                            e, datetime.fromtimestamp(cached["fetched"]))
+            _logger.warning("%s TLE fetch failed (%r); using cache from %s",
+                            sat_def["name"], e,
+                            datetime.fromtimestamp(cached["fetched"]))
             return cached["l1"], cached["l2"]
         raise
 
 
 def _sky():
-    from skyfield.api import EarthSatellite, Loader, wgs84
+    from skyfield.api import Loader, wgs84
     loader = Loader("local/skyfield")
     eph = loader("de421.bsp")
     ts = loader.timescale()
-    l1, l2 = get_tle()
-    sat = EarthSatellite(l1, l2, "ISS", ts)
     loc = config.data()["location"]
     site = wgs84.latlon(loc["latitude"], loc["longitude"])
-    return sat, site, eph, ts
+    return site, eph, ts
 
 
 def passes_tonight(hours=16.0, arm=True):
     """Visible-in-frame passes in the next *hours*; optionally arm the recorder.
 
-    Returns a list of dicts {rise, peak, set, peak_alt_deg} in local time
-    ISO strings. "Visible in frame" = above MIN_ALT_DEG while sunlit with the
-    site dark for at least part of the pass.
+    Returns a list of dicts {sat, rise, peak, set, peak_alt_deg} in local time
+    ISO strings, all satellites merged and sorted by rise. "Visible in frame"
+    = above MIN_ALT_DEG while sunlit with the site dark for at least part of
+    the pass. One station's TLE failing must not blank the other's passes, so
+    each is computed under its own try.
     """
-    sat, site, eph, ts = _sky()
+    from skyfield.api import EarthSatellite
+    site, eph, ts = _sky()
+    out = []
+    for sat_def in SATELLITES:
+        try:
+            l1, l2 = get_tle(sat_def)
+            sat = EarthSatellite(l1, l2, sat_def["name"], ts)
+            out.extend(_passes_for(sat_def["name"], sat, site, eph, ts, hours))
+        except Exception:  # noqa: BLE001
+            _logger.warning("%s pass prediction failed (skipped)",
+                            sat_def["name"], exc_info=True)
+    out.sort(key=lambda p: p["rise"])
+    camera_passes = [p for p in out if p["in_camera"]]
+    if arm and camera_passes:
+        json.dump({"passes": camera_passes,
+                   "armed": datetime.now().astimezone().isoformat(timespec="seconds")},
+                  open(MARKER, "w"), indent=1)
+        _logger.info("recorder armed for %d camera pass(es); first peak %s (%s)",
+                     len(camera_passes), camera_passes[0]["peak"],
+                     camera_passes[0]["sat"])
+    return out
+
+
+def _passes_for(name, sat, site, eph, ts, hours):
+    """One satellite's qualifying passes, each tagged with its name."""
     sun, earth = eph["sun"], eph["earth"]
     hz = _horizon()
     t0 = ts.now()
@@ -186,6 +224,7 @@ def passes_tonight(hours=16.0, arm=True):
             if in_camera or above_horizon:
                 alt, _, _ = (sat - site).at(current["peak"]).altaz()
                 out.append({
+                    "sat": name,
                     "rise": current["rise"].utc_datetime().astimezone().isoformat(timespec="seconds"),
                     "peak": current["peak"].utc_datetime().astimezone().isoformat(timespec="seconds"),
                     "set": current["set"].utc_datetime().astimezone().isoformat(timespec="seconds"),
@@ -194,13 +233,6 @@ def passes_tonight(hours=16.0, arm=True):
                     "above_horizon": above_horizon,
                 })
             current = {}
-    camera_passes = [p for p in out if p["in_camera"]]
-    if arm and camera_passes:
-        json.dump({"passes": camera_passes,
-                   "armed": datetime.now().astimezone().isoformat(timespec="seconds")},
-                  open(MARKER, "w"), indent=1)
-        _logger.info("ISS recorder armed for %d camera pass(es); first peak %s",
-                     len(camera_passes), camera_passes[0]["peak"])
     return out
 
 
@@ -225,8 +257,8 @@ def check_and_spawn():
             else:
                 keep.append(p)
         if launch:
-            _logger.info("ISS pass imminent (rise %s) - spawning recorder",
-                         launch["rise"])
+            _logger.info("%s pass imminent (rise %s) - spawning recorder",
+                         launch.get("sat", "ISS"), launch["rise"])
             subprocess.Popen(
                 [sys.executable, "-m", "sentry.iss_watch", "record",
                  json.dumps(launch)],
@@ -264,20 +296,22 @@ def record(p):
     seconds = (setts - datetime.now().astimezone()).total_seconds() + lead
     seconds = max(30.0, min(seconds, 15 * 60))
 
+    # "ISS" default: a marker armed before satellites were tagged has no sat.
+    sat = str(p.get("sat", "ISS")).lower()
     os.makedirs(OUT_DIR, exist_ok=True)
     stamp = rise.strftime("%Y%m%d_%H%M%S")
-    out = os.path.join(OUT_DIR, "iss_%s.h264" % stamp)
+    out = os.path.join(OUT_DIR, "%s_%s.h264" % (sat, stamp))
     started = datetime.now().astimezone()
     path, n = sky_camera.capture_burst(seconds=seconds, out_path=out)
     ended = datetime.now().astimezone()
     meta = {"pass": p, "burst": str(path), "frames": n,
             "capture_start": started.isoformat(timespec="seconds"),
             "capture_end": ended.isoformat(timespec="seconds")}
-    json.dump(meta, open(os.path.join(OUT_DIR, "iss_%s.json" % stamp), "w"),
+    json.dump(meta, open(os.path.join(OUT_DIR, "%s_%s.json" % (sat, stamp)), "w"),
               indent=1)
 
-    msg = ("ISS pass recorded: peak alt %.0f deg at %s, %s frames -> %s"
-           % (p["peak_alt_deg"], p["peak"][11:19], n, path))
+    msg = ("%s pass recorded: peak alt %.0f deg at %s, %s frames -> %s"
+           % (p.get("sat", "ISS"), p["peak_alt_deg"], p["peak"][11:19], n, path))
     _logger.info(msg)
     try:
         import requests
@@ -293,14 +327,14 @@ def main():
         return 0
     passes = passes_tonight(arm="--arm" in sys.argv)
     if not passes:
-        print("no visible-in-frame ISS passes in the window")
+        print("no visible-in-frame station passes in the window")
         return 1
     for p in passes:
         tags = [t for t, on in (("camera", p.get("in_camera")),
                                 ("horizon", p.get("above_horizon"))) if on]
-        print("rise %s  peak %s (alt %.0f)  set %s  [%s]"
-              % (p["rise"][11:19], p["peak"][11:19], p["peak_alt_deg"],
-                 p["set"][11:19], "+".join(tags)))
+        print("%-9s rise %s  peak %s (alt %.0f)  set %s  [%s]"
+              % (p.get("sat", "ISS"), p["rise"][11:19], p["peak"][11:19],
+                 p["peak_alt_deg"], p["set"][11:19], "+".join(tags)))
     return 0
 
 
