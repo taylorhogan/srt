@@ -1,6 +1,8 @@
 # Observatory Upkeep
 
-Running log and checklist for observatory maintenance. Most of the roof problems
+Running log for observatory maintenance. The procedures and the dated inspection
+schedule now live in [MAINTENANCE.md](MAINTENANCE.md) — record here what was actually
+done and found, dated. Most of the roof problems
 share one root cause: **the roof is heavy**. Adding more wheels would lessen the
 strain on each wheel and reduce the track/guide issues below.
 

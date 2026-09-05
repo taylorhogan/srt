@@ -4,6 +4,20 @@
 convergence and auto-publish; multi-target nights; global state on the website; website
 ascendant over webchat.*
 
+*v3, 2026-08-30 adds: the night selection policy (§2c) — two operator priority pins,
+object+filter choice by priority each night, filter choice by object type and by the
+per-filter SNR history of the DSO — and the maintenance manual (§6, `docs/MAINTENANCE.md`):
+a dated, printable inspection schedule splitting every upkeep task into manual vs.
+autonomous.*
+
+*v3.1, 2026-08-30 adds §2d: the gallery publisher — the concrete design for auto-publish,
+decided after hand-publishing the Elephant's Trunk entry: manual `publish <dso>` command
+first, LLM-drafted prose behind a one-tap approval gate, time-travel box kept.*
+
+*v3.2, 2026-08-30 adds §2e: the capture endgame — NINA is scaffolding, not a keeper.
+Retirement is the stated direction, strangled in the order centering → autofocus → camera,
+each step A/B-validated against NINA with the FITS headers as judge.*
+
 ## Context
 
 Iris works, but its correctness lives in fragile places: the program counter of a Prefect
@@ -36,11 +50,12 @@ own documents.
 | State machine | **Authoritative machine + guards**; roof/mount are owned resources |
 | Formality | Machine **as data**; diagram *generated*; every transition + guard exhaustively tested; no FSM framework, no TLA+ |
 | Interconnect | Append-only **journal** + **small HTTP API**; files stop being interfaces; MQTT retired |
-| Capture | **Capture behind an interface**; NINA first implementation; autofocus stays NINA's longest |
+| Capture | **Capture behind an interface**; NINA first implementation; autofocus stays NINA's longest · **endgame: NINA retired** (v3.2, §2e) |
 | Migration | **Strangler fig** — never a lost night; each cutover shadowed one clean night first |
 | Autonomy | **Months unattended, heir-operable**; self-healing bounded to what half-exists; the rest is runbooks |
 | Legacy bar | Tests + CI deploy gate · architecture docs · succession audit · public-repo hygiene |
 | **New (v2)** | **Auto-stop at goodness, auto-publish** the denoised picture · **multiple targets per night** (small horizon: re-plan as targets rise/set) · **global state on the website** · over time **website grows, webchat shrinks** |
+| **New (v3)** | **Two operator priority pins** claim the night's slots first · nightly **object+filter selection by priority** · filter set by **object type**, weighted by the DSO's **per-filter SNR history** (need-based filters) · **maintenance manual**: dated, printable schedule of manual + autonomous inspections |
 
 ---
 
@@ -173,6 +188,141 @@ Publication is journaled like everything else; a chat note announces it, but no 
 the loop. (The existing manual science-note flow stays manual — prose is authored; gallery
 entries are generated.)
 
+### 2c. The night selection policy (v3) — which objects, which filters
+
+Owner requirements, 2026-08-30:
+
+1. The operator can **pin two queue items** as tonight's priorities.
+2. Filter set follows the **object type** (exists today: nebula → Ha/O-III/S-II,
+   galaxy/unknown → LRGB, in `nina_sequence_gen._apply_filter_plan`).
+3. Each night the planner **chooses objects and filters by priority**.
+4. Within a target, filters are chosen by **need**, measured from the SNR of the DSO's
+   past images — the per-filter convergence record.
+
+**Object choice.** `PLANNING` orders candidates: *pinned* → `priority` (existing 1–10
+field on the instruction) → per-target need (`frames_needed_estimate`) → horizon fit.
+CONVERGED targets are excluded (the auto-stop). Two pins matches the expected two-slot
+night under the small horizon; a pin that cannot fit tonight (below trees all night,
+already converged) is a journaled refusal with the reason, not a silent skip. Until the
+multi-slot planner exists, a pin degrades gracefully to `priority 1` on the instruction —
+the noon check already honors that ordering, so pinning works from day one for the single
+nightly target.
+
+**Filter choice — resolution order per slot:**
+
+1. **Explicit `filters` plan** (operator-set absolute counts) — wins outright. Exists.
+2. **Need-weighted split** (new): read `local/convergence.json` for the DSO. A filter at
+   its convergence gate gets zero share; a filter in the object type's set with *no
+   entries at all* gets the largest share — this rule alone would have caught the
+   zero-S-II archive; otherwise shares are proportional to `frames_needed_estimate`
+   computed per filter. The night's usable seconds then split by those weights through the
+   existing explicit-plan path (`_apply_explicit_plan`) — need-weighting reduces to
+   computing counts and handing them down machinery that already exists.
+3. **Object-type default split** (existing) when the DSO has no imaging history.
+
+**Implementation home:** a pure function `filter_need(dso) -> {filter: weight}` beside the
+convergence code in `science/` (testable against a convergence.json fixture, no hardware),
+called from sequence generation now and from `conductor/plan.py`'s slot fitter in Phase 7.
+Precondition: the ≥4-SmartExposure template fix (9fec695) must be activated first — the
+narrowband template silently no-ops explicit plans today.
+
+**Phasing:** the filter-need policy does *not* wait for multi-slot — it is a per-target
+computation the current single-slot sequence generation can consume, so it lands with the
+Target registry in **Phase 4** (the registry already exposes frames/filters accumulated;
+this is its first consumer). Pin-aware slot allocation is **Phase 7** planner work.
+
+### 2d. The gallery publisher (v3.1) — the concrete auto-publish design
+
+Decided 2026-08-30, immediately after hand-publishing the Elephant's Trunk gallery entry
+— the manual run is the spec. Owner's three calls: **prose option D** (LLM-drafted, human
+approval gate), **manual `publish <dso>` command first** (Target-machine trigger later),
+**time-travel box kept**.
+
+**What one publish produces** (the Trunk entry is the reference output): a `dso-section`
+article in the site's Images tab with — hero image (the Spark render) · meta line
+(distance, type, per-filter frame counts × exposure, hours, nights — computed from
+`frame_stats.json` + `convergence.json`) · two prose paragraphs (what it is; what the
+palette shows) · the 4-metric chart across the evenings
+(`gather_dso_frames` + `save_stats_plot_from_cache`) · per-filter SNR convergence curves
+· the time-travel box (distance → year the light left → historical anchor) · NEW sticker
+moved to this entry · Updated stamp bumped in the same commit · push · HTTP-verify live.
+
+**Mechanics:**
+
+- **Idempotent by anchors.** Each generated entry is wrapped in
+  `<!-- dso:<id>:start --> … <!-- dso:<id>:end -->` markers in `index.html`; re-publish
+  *replaces* the entry (a better render is a re-publish, not a duplicate). Hand-written
+  entries carry no markers and are never touched.
+- **Archive the SNR curves at convergence time.** The nightly `snr` run overwrites
+  `scratch/convergence_<filter>.jpg` on every run for every DSO — the publisher cannot
+  rely on scratch. When `CONVERGENCE_EVAL` marks a filter converged (or at publish time),
+  copy the curves to the DSO's `Iris/<dso>/` product directory alongside the renders.
+- **Prose = option D.** `site_gen.py` calls the Claude API with the facts (object type,
+  distance, palette mapping, frame accounting, convergence verdicts) and drafts the two
+  paragraphs **and the time-travel box**. The draft posts to a webchat card; one tap
+  approves and the publish proceeds; edit-then-approve is the fallback. Nothing reaches
+  the site without the tap — this is how "un-embarrassable" survives LLM prose. The
+  approval is journaled with the draft hash.
+- **Trigger, staged strangler-fig:** ship as the webchat command `publish <dso>` and
+  exercise it manually (the Trunk re-render is the first customer). In Phase 4 the
+  Target machine's `RENDERING → PUBLISHED` transition invokes the same code path, with
+  the approval card as the only human step; the command remains as the manual override.
+- **Time-travel box stays** in generated entries. Distance comes from the queue
+  record/SIMBAD; the drafted history paragraph rides the same approval gate as the rest
+  of the prose, which is the answer to it being the hardest part to do well mechanically.
+
+### 2e. The capture endgame (v3.2) — NINA is scaffolding, not a keeper
+
+Owner's call, 2026-08-30: NINA is not the long-term capture layer. This section makes the
+direction explicit so the capture interface (Phase 6) is understood as a *retirement
+vehicle*, not just an abstraction. It changes no phase ordering.
+
+**The case, from this observatory's own record — not taste:**
+
+- **The GUI's state is opaque to measurement**, and Iris's whole methodology is "measure it
+  or it isn't true." Sequences are 67 KB `$id`/`$ref` object graphs that cannot be usefully
+  diffed or hand-edited; the sequence editor does not even display the contents of a
+  trigger's `TriggerRunner`, so the script-dither reroute is invisible in NINA's own UI and
+  provable only from logs and FITS headers.
+- **Measured failures, all silent:** the Direct-Guider dither issued RA pulses that the
+  mount servo nulled — RA rms 0.1 px for months while Dec dithered fine (fixed by routing
+  around NINA via `scripts/dither_now.py` + PWI4 offsets); `_apply_filter_plan` returned
+  `{}` without a word on a 2-SmartExposure template, producing a **zero-S-II archive**;
+  six sequences/templates pointed at deleted script directories; a narrowband autofocus
+  sweep landed 12,000 steps off with no complaint.
+- **Windows-only** locks the observatory PC's OS to the capture tool. The analysis side
+  (Spark) is already Linux. PWI4's HTTP API is OS-agnostic from the client side; whether
+  the observatory PC itself ever leaves Windows is a separate decision this direction
+  merely unblocks.
+
+**What NINA still earns its keep on — the honest inventory.** Expose the camera (cooling
+management, 61 MP downloads that don't drop frames at 2 a.m., USB recovery), move the
+filter wheel, autofocus, plate-solve-and-center, and fire triggers on a cadence. Its real
+value was never the sequencer; it is years of other people's 2 a.m. camera bugs already
+fixed. That is why this is a strangle, not a rewrite — and why the camera goes last.
+
+**The strangle order — each step A/B-validated against NINA the way the dither was, with
+the FITS headers as judge:**
+
+1. **Centering** — plate solve (ASTAP CLI) + `PWI4 mount_offset`. Both halves already
+   validated in this repo (blind solves at 1.5 px residual; offsets held at 100%).
+   Smallest step, biggest confidence gain.
+2. **Autofocus** — a V-curve fit over `focuser move + expose + science/fwhm.py`, using the
+   Moffat FWHM machinery already validated against PixInsight, seeded and sanity-bounded
+   by the known-good per-filter FOCPOS values. ~200 lines, and every sample of every
+   V-curve finally gets logged. (This *is* the "until you choose to" moment of §7's
+   autofocus rule — chosen, and sequenced after centering.)
+3. **Camera + filter wheel — last.** QHY SDK via Python bindings (cross-platform). The
+   riskiest step because camera failures cost whole nights, not decorrelation; it ships
+   only after side-by-side smoke nights running the Python path against NINA's results.
+
+**End state:** `capture/qhy.py` fulfills the same `CaptureSession` protocol as
+`capture/nina.py`; sequencing/cadence already belong to the conductor by Phase 6; each
+replacement lands as a post-Phase-6 increment (6a/6b/6c) without blocking Phase 7 —
+centering and autofocus may precede multi-slot, the camera swap comes only on a proven
+spine. NINA is never ripped out; it evaporates, one validated organ at a time, and remains
+installed as the fallback path until an entire season has run without it.
+
 ### The machines as data
 
 ```python
@@ -302,10 +452,10 @@ throughout.*
 | **1** | **Journal + conductor in read-only shadow.** `iris/core` (both machine tables, guards, journal, API); conductor as third supervised process that **commands nothing** — tails existing files/NINA/vision, synthesizes events, builds the journal *and a shadow Target registry* derived from `my_instructions.json` + `convergence.json`. Machine tests + diagram generation land. | M | Journal timeline matches the real night exactly (shadow_report); registry matches the queue+convergence answers for every DSO |
 | **2** | **Guards centralized; conductor owns the roof.** All six enforcement sites rewired through `POST /v1/events`; conductor authoritative *for the roof only*. `end.py` fallback added. `FAULT_ROOF_UNKNOWN` real and persistent. | M | Full night incl. open+close via the new path; supervised daytime `cycle_roof`; deliberate guard-rejection |
 | **3** | **Scheduler absorbed; files retire; MQTT dies.** Prefect flow → transitions (noon-check math verbatim; **single-slot plans** — behavior identical to today). Replay = recovery; `ARMED` survives restart. NINA `.bat`s → `emit_event.bat`. Short-lived mirror release for legacy readers, then files + MQTT deleted. | **L** | **Two** decision-diffed shadow nights, then a supervised live night with zero touches, **plus a deliberate mid-night conductor restart that resumes correctly** |
-| **4** | **Target machine live: auto-stop + auto-publish.** Registry becomes authoritative (queue + convergence unify); planner excludes CONVERGED (auto-stop — formalizing today's overlay hack); Spark posts `RENDER_DONE`; `site_gen.py` auto-generates + commits gallery entries (auto-publish); site gains `/live/targets.json` + global state. | M | One target driven WISHED→PUBLISHED with no human touch (a converged target re-rendered end-to-end); target board live on the site |
+| **4** | **Target machine live: auto-stop + auto-publish.** Registry becomes authoritative (queue + convergence unify); planner excludes CONVERGED (auto-stop — formalizing today's overlay hack); Spark posts `RENDER_DONE`; `site_gen.py` auto-generates + commits gallery entries (auto-publish per §2d — the `publish <dso>` command ships earlier and this phase wires the Target machine to the same path); site gains `/live/targets.json` + global state. **Need-weighted filter plans (§2c) land here** — first consumer of the registry's per-filter record; activate 9fec695 first. | M | One target driven WISHED→PUBLISHED with no human touch (a converged target re-rendered end-to-end); target board live on the site; a generated sequence whose filter counts demonstrably follow convergence need |
 | **5** | **Chat decoupled; god file dismantled.** `notify.post` shim → 320-site migration; `*_cmd` → `chat/commands/`; cycles gone; `super_user_commands.py` deleted. | M | Normal night + full pass through the command vocabulary |
 | **6** | **Capture interface.** `CaptureSession` protocol; NINA impl wraps sequence gen/launch/events/teardown. Autofocus stays NINA's. The seam multi-slot needs. | M | Normal night through the interface; FakeNINA nights in CI |
-| **7** | **Multi-slot nights.** Slot-fitting planner (horizon windows × registry need × priorities); sequences restructured prelude-once/slot/flats-once; `REPLAN_REQUESTED` on weather or mid-night convergence. The largest functional build — lands last, on a proven spine. | **L** | A real two-target night: target A sets behind trees, machine re-slews, target B imaged; morning report shows both slots' frames correctly attributed |
+| **7** | **Multi-slot nights.** Slot-fitting planner (horizon windows × registry need × priorities, **two operator pins claim slots first — §2c**); sequences restructured prelude-once/slot/flats-once; `REPLAN_REQUESTED` on weather or mid-night convergence. The largest functional build — lands last, on a proven spine. | **L** | A real two-target night: target A sets behind trees, machine re-slews, target B imaged; morning report shows both slots' frames correctly attributed; two pinned targets take the night's slots over a higher-need unpinned one |
 | **8** | **Docs, succession, hygiene** — woven throughout, finalized here. ADRs written as decisions ship. | S | Done-definition audit against §6 |
 
 ---
@@ -321,12 +471,20 @@ throughout.*
 - **`docs/HANDBOOK.md`** — per-state operations: resolving `FAULT_ROOF_UNKNOWN`, reading
   the journal, the command vocabulary, cold-start, editing NINA sequences,
   pinning/rolling back `release`, re-opening a RETIRED target.
+- **`docs/MAINTENANCE.md` (v3, shipped 2026-08-30)** — the inspection manual + dated,
+  printable schedule. Every upkeep task classed **manual** (mirror, roof track, guide
+  wheels, gasket, desiccant, collimation…) or **autonomous** (the already-running
+  monitors: optics-trend `field_excess`, roof audio MSE, roof current stall watchdog,
+  vision confirmations, per-filter convergence, state backup) — with cadence, procedure,
+  and symptoms of neglect. Absorbs `docs/upkeep.md`'s procedures; upkeep.md stays the
+  running log of what was actually done. Later: autonomous inspections journal
+  `kind:"note"` results so a silent monitor is itself visible, and overdue manual tasks
+  surface on the site's Live tab.
 - **`docs/SUCCESSION.md`** — three ledgers: *accounts & money* (domain, web host + Caddy,
   Tailscale — and what dies when each lapses, Pushover, GitHub, API keys); *physical acts*
-  (collimation, filters, desiccant, roof lubrication, disks, camera reseating — frequency
-  and symptoms of neglect); *autonomy gaps as runbooks* (successor alerting, per-hardware
-  degraded behavior, who merges after the owner). Windows Scheduled Task definitions
-  exported (`schtasks /query /xml`) into `docs/`.
+  (points at `MAINTENANCE.md` rather than duplicating it); *autonomy gaps as runbooks*
+  (successor alerting, per-hardware degraded behavior, who merges after the owner).
+  Windows Scheduled Task definitions exported (`schtasks /query /xml`) into `docs/`.
 - **Public hygiene:** `local/` fully gitignored; root PNGs/logs out; secrets audit; a README
   for the stranger who inherits it; the site's raw.githubusercontent hotlinks noted as a
   succession risk.
@@ -339,11 +497,13 @@ throughout.*
   validated by years of sky; move, fix imports, stop. The injection suites are the net.
 - **Do not split repos. Do not add a broker.** SSE off the journal (or honest polling) is
   enough for a handful of clients on one tailnet.
-- **Do not touch NINA autofocus.** The capture interface exists so you never have to until
-  you choose to.
+- **Do not touch NINA autofocus** before the capture seam exists. The interface is there so
+  the choice is deliberate — and §2e now makes that choice: autofocus is replaced as
+  strangle step 2, after centering, never before Phase 6.
 - **Auto-publish must be un-embarrassable:** `site_gen.py` publishes only renders that pass
   the existing quality gates, and every publication is journaled + announced — an heir (or
-  you) can retract with one revert. Start with gallery entries only; prose notes stay human.
+  you) can retract with one revert. Gallery entries only; entry prose is LLM-drafted but
+  gated behind the one-tap approval card (§2d); the science notes stay human-written.
 - **Multi-slot is the riskiest functional change** — hence last, behind the capture seam,
   with single-slot nights proving the identical machinery first. A two-target night is
   *attempted* only after a deliberate one-slot night through the slot machinery.
@@ -363,6 +523,21 @@ throughout.*
    with zero human touches.
 4. Legacy bar: a stranger, given only `docs/`, can explain both state diagrams, operate the
    console, recover a fault, and list what breaks when each account lapses.
+
+## Projects in flight alongside this plan (owner's list, 2026-08-30)
+
+Four major efforts run concurrently; the plan should absorb, not collide with, the other three:
+
+1. **Architecture overhaul** — this document.
+2. **Roof limit switches** — decode + commissioning tool exist ahead of the hardware
+   (a5f7648). When wired, they become another input to the roof guards / `SensorSnapshot`
+   — a third independent roof-state sense beside vision and the current signature.
+3. **LRGB denoise confirmation** — N2N on the Spark; gates auto-publish quality (§2b's
+   RENDERING step publishes only what passes the science gate).
+4. **Dueling cameras/microphone decision for roof/mount state** — Iris cam vs safety cam
+   (+ mic) as the roof/mount sensor. Whichever wins, it lands behind
+   `iris/vision/safety.py`'s `confirm_roof_state()` seam, so the decision does not block
+   Phases 1–2.
 
 ## Open items for the owner (not blockers)
 
