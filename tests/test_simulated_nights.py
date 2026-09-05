@@ -13,11 +13,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from iris.core.machine import INITIAL_STATE, step
 from iris.core.snapshot import SensorSnapshot, Tri
 
-GO = SensorSnapshot(parked_vision=Tri.CONFIRMED, parked_pwi4=Tri.CONFIRMED,
+GO = SensorSnapshot(parked_vision=Tri.CONFIRMED, parked_kasa=Tri.CONFIRMED,
+                    parked_pwi4=Tri.CONFIRMED,
                     roof=Tri.DENIED, safety_armed=True, mode_auto=True,
                     weather_ok=True, slots_remaining=1, nina_alive=True)
 # Mid-slot reality: scope TRACKING (not parked), roof confirmed open.
-MID_SLOT = GO.replace(parked_vision=Tri.UNKNOWN, parked_pwi4=Tri.DENIED,
+MID_SLOT = GO.replace(parked_vision=Tri.UNKNOWN, parked_kasa=Tri.UNKNOWN,
+                      parked_pwi4=Tri.DENIED,
                       roof=Tri.CONFIRMED)
 
 
@@ -57,7 +59,9 @@ def test_nina_dies_mid_slot_and_the_night_closes_safely():
     assert out2.kind == "rejected"
     assert "parked" in out2.guard
     # once both sensors confirm, the close proceeds
-    parked = MID_SLOT.replace(parked_vision=Tri.CONFIRMED, parked_pwi4=Tri.CONFIRMED)
+    parked = MID_SLOT.replace(parked_vision=Tri.CONFIRMED,
+                                     parked_kasa=Tri.CONFIRMED,
+                                     parked_pwi4=Tri.CONFIRMED)
     _walk([
         ("MOUNT_PARK_CONFIRMED", parked, "CLOSING_ROOF"),
         ("ROOF_CLOSE_CONFIRMED", parked, "SHUTDOWN"),
@@ -71,7 +75,9 @@ def test_weather_abort_mid_imaging_takes_flats_then_closes():
         ("WEATHER_BAD", MID_SLOT, "FLATS"),
         ("NINA_FLATS_DONE", MID_SLOT, "PARKING"),
     ], start=s)
-    parked = MID_SLOT.replace(parked_vision=Tri.CONFIRMED, parked_pwi4=Tri.CONFIRMED)
+    parked = MID_SLOT.replace(parked_vision=Tri.CONFIRMED,
+                                     parked_kasa=Tri.CONFIRMED,
+                                     parked_pwi4=Tri.CONFIRMED)
     _walk([("MOUNT_PARK_CONFIRMED", parked, "CLOSING_ROOF")], start=s)
 
 

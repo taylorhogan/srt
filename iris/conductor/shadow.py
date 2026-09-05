@@ -40,13 +40,28 @@ _logger = logging.getLogger(__name__)
 # The permissive snapshot transitions are stepped with (see module docstring).
 # slots_remaining is patched per-event from the shadow's own slot counter.
 _PERMISSIVE = SensorSnapshot(parked_vision=Tri.CONFIRMED,
+                             parked_kasa=Tri.CONFIRMED,
                              parked_pwi4=Tri.CONFIRMED,
                              roof=Tri.DENIED, safety_armed=True,
                              mode_auto=True, weather_ok=True,
                              slots_remaining=1, nina_alive=True)
 
+# The scope-top webcam's verdict line. The trailing vote counts are optional
+# so lines written before they existed still parse, but when present they are
+# what makes the webcam's park reading three-valued rather than a bool:
+# "lit" is how many exposure rungs were bright enough to judge at all, so
+# lit == 0 is the camera saying "I cannot see", which is UNKNOWN and not
+# "not parked". vision_safety collapses both into parked=False.
 _VISION_RE = re.compile(
-    r"vision parked=(True|False) closed=(True|False) open=(True|False)")
+    r"vision parked=(True|False) closed=(True|False) open=(True|False)"
+    r"(?:.*?votes parked (\d+)/(\d+) lit)?")
+
+# The indoor Kasa camera's verdict line (sentry/kasa_state.kasa_status). Its
+# scope verdict is already three-valued at the source -- 'safe' / 'UNSAFE' /
+# 'unknown' from the AprilTag comparison against the recorded park pose -- and
+# was being written to the log and thrown away. Wording is coupled to that
+# logger call; change them together.
+_KASA_RE = re.compile(r"kasa_status: scope=(\w+) roof=(\w+)")
 # The log-only anchor toggle_roof() writes immediately before firing the
 # relay -- every roof move from every path passes it. Wording is coupled to
 # that line; change them together.
@@ -117,6 +132,11 @@ class ShadowConductor:
         self._slow_tick = 0
         self._limits = ("not_configured", "")
         self._evidence_ts = 0.0       # when a vision line last updated evidence
+        self._kasa_ts = 0.0           # ditto for the indoor camera, which can
+                                      # fail independently and must decay on
+                                      # its own clock rather than ride the
+                                      # webcam's freshness
+        self._cams_split = False      # last known camera (dis)agreement
         # last-seen values of the legacy sources, None = not yet read
         self._sched = None            # scheduler_state.json "state"
         self._will_image = None
@@ -226,13 +246,67 @@ class ShadowConductor:
         for ln in lines:
             m = _VISION_RE.search(ln)
             if m:
-                parked, closed, is_open = (x == "True" for x in m.groups())
+                parked, closed, is_open = (x == "True" for x in m.groups()[:3])
+                lit = m.group(5)
                 roof = (Tri.CONFIRMED if is_open
                         else Tri.DENIED if closed else Tri.UNKNOWN)
-                self.evidence = self.evidence.replace(
-                    parked_vision=Tri.CONFIRMED if parked else Tri.UNKNOWN,
-                    roof=roof)
+                if parked:
+                    pv = Tri.CONFIRMED
+                elif lit is None:
+                    # Pre-vote log line: cannot tell "saw it off park" from
+                    # "could not see", so claim the weaker of the two.
+                    pv = Tri.UNKNOWN
+                else:
+                    # The camera judged it: no lit rung means it could not see
+                    # anything, which is ignorance, not a negative verdict.
+                    pv = Tri.DENIED if int(lit) > 0 else Tri.UNKNOWN
+                self.evidence = self.evidence.replace(parked_vision=pv,
+                                                      roof=roof)
                 self._evidence_ts = time.time()
+
+            m = _KASA_RE.search(ln)
+            if m:
+                self.evidence = self.evidence.replace(
+                    parked_kasa={"safe": Tri.CONFIRMED,
+                                 "UNSAFE": Tri.DENIED}.get(m.group(1),
+                                                           Tri.UNKNOWN))
+                self._kasa_ts = time.time()
+
+        # Once per batch, never per line. The two cameras log about four
+        # seconds apart and the poll runs every five, so a per-line check
+        # would report a "split" on every single vision check purely because
+        # the webcam's line is read before the indoor camera's.
+        self._note_camera_split()
+
+    def _note_camera_split(self):
+        """Journal the moment the two park cameras CONTRADICT each other, and
+        the moment they stop.
+
+        Contradiction means both cameras have an opinion and the opinions
+        differ — one says parked, the other says not parked. That should never
+        happen, and it is what "log if they ever disagree" is asking for.
+
+        One camera reading UNKNOWN is deliberately NOT logged here. It is not a
+        disagreement, it is a camera declining to answer (dark, occluded, not
+        yet reported this cycle, or decayed), and it is already visible in the
+        journal as the guard's own refusal on any move attempted while it
+        lasts. Logging it here as well would bury the real contradictions in
+        thousands of routine lines.
+
+        Edge-triggered: the transition is the event, not the polls either side
+        of it. Frequency and duration of these are exactly the evidence a
+        later decision to soften the two-camera rule would need.
+        """
+        e = self.evidence
+        split = (e.parked_vision is not e.parked_kasa
+                 and Tri.UNKNOWN not in (e.parked_vision, e.parked_kasa))
+        if split == self._cams_split:
+            return
+        self._cams_split = split
+        self.journal.append(
+            "note", "PARK_CAMERAS_SPLIT" if split else "PARK_CAMERAS_AGREE",
+            "shadow",
+            data={"webcam": e.parked_vision.name, "kasa": e.parked_kasa.name})
 
     def _poll_slow_sensors(self):
         """PWI4 park state and roof limit switches, every _slow_every polls.
@@ -266,8 +340,14 @@ class ShadowConductor:
         # Vision evidence decays: a verdict quoted against an hours-old
         # snapshot is a lie. The legacy system runs vision seconds before any
         # roof move, so at decision moments this is always fresh.
-        if time.time() - self._evidence_ts > EVIDENCE_MAX_AGE_S:
+        now = time.time()
+        if now - self._evidence_ts > EVIDENCE_MAX_AGE_S:
             e = e.replace(parked_vision=Tri.UNKNOWN, roof=Tri.UNKNOWN)
+        # The indoor camera decays separately: it can stop reporting while the
+        # webcam keeps going, and a stale AprilTag reading standing in as the
+        # second confirmation would defeat the point of having two.
+        if now - self._kasa_ts > EVIDENCE_MAX_AGE_S:
+            e = e.replace(parked_kasa=Tri.UNKNOWN)
         return e.replace(
             roof=self._roof_from_limits_and_vision(e.roof),
             safety_armed=bool(self._safety),
@@ -437,6 +517,7 @@ class ShadowConductor:
                     data={"direction": m.group(1),
                           "guard_would": would,     # None == would have allowed
                           "evidence": {"parked_vision": ev.parked_vision.name,
+                                       "parked_kasa": ev.parked_kasa.name,
                                        "parked_pwi4": ev.parked_pwi4.name,
                                        "roof": ev.roof.name,
                                        "limits": self._limits[0]}})

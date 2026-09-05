@@ -194,14 +194,55 @@ def find_markers(img, dict_name=DEFAULT_DICT):
     return {int(i): c[0] for c, i in zip(corners, ids.ravel())}
 
 
-def compare(found, parked):
-    """(verdict, detail). Verdict is 'safe', 'UNSAFE' or 'unknown'."""
+def compare(found, parked, ref_pose=None, now_pose=None):
+    """(verdict, detail). Verdict is 'safe', 'UNSAFE' or 'unknown'.
+
+    *ref_pose* is the camera pan/tilt position recorded alongside the parked
+    corners; *now_pose* is where the camera is pointing now. Both are (x, y)
+    or None.
+
+    The corner comparison below is pure pixel space, so it cannot tell a scope
+    that moved from a CAMERA that moved. That matters in both directions.
+    Pointed away and not restored, every corner shifts and a stationary scope
+    is reported UNSAFE -- safe, but it blames the wrong thing and costs a
+    night. Worse, restored badly it can still pass: the same coordinate
+    re-entered from the opposite side put the frame 121 px out (kasa_ptz's
+    backlash note), which quietly eats two thirds of a %.0f px budget that
+    exists to describe how far the SCOPE may drift, not how badly the camera
+    was parked. Re-entered from a consistent side it repeats to 5 px, which is
+    why kasa_ptz.goto re-approaches and why a restored pose is trustworthy.
+
+    So a pose mismatch is UNKNOWN, not UNSAFE: the reference does not describe
+    this view, and that is ignorance rather than a finding.
+
+    A reference recorded before poses were stored has ref_pose None. The check
+    is then skipped and said so in the detail, so this lands without
+    invalidating the reference in use -- it arms itself the next time
+    --set-parked runs, which is exactly when the pose is known good.
+    """
+    pose_note = None
+    if ref_pose is None:
+        pose_note = ("parked reference predates pose recording; camera "
+                     "pointing NOT verified -- re-run --set-parked to arm it")
+    else:
+        if now_pose is None:
+            return "unknown", {"why": "camera pose unknown; the parked "
+                                      "reference is tied to pose %s"
+                                      % (tuple(ref_pose),)}
+        if tuple(now_pose) != tuple(ref_pose):
+            return "unknown", {"why": "camera has been pointed elsewhere",
+                               "ref_pose": tuple(ref_pose),
+                               "now_pose": tuple(now_pose),
+                               "fix": "kasa_ptz.py goto '<cam>' %d %d"
+                                      % (ref_pose[0], ref_pose[1])}
+
     missing = [i for i in parked if i not in found]
     if missing:
         # A marker that cannot be seen is not evidence that the scope moved --
         # it could be occluded, or the camera could be off. Unknown, not MOVED:
         # the caller refuses either way, but the two need different fixes.
-        return "unknown", {"missing_ids": missing, "found_ids": sorted(found)}
+        return "unknown", {"missing_ids": missing, "found_ids": sorted(found),
+                           "pose_note": pose_note}
     worst = 0.0
     per_id = {}
     for i, ref in parked.items():
@@ -209,7 +250,8 @@ def compare(found, parked):
         per_id[i] = {"max_px": float(d.max()), "mean_px": float(d.mean())}
         worst = max(worst, float(d.max()))
     return ("safe" if worst <= TOLERANCE_PX else "UNSAFE",
-            {"worst_corner_px": worst, "per_id": per_id})
+            {"worst_corner_px": worst, "per_id": per_id,
+             "pose_note": pose_note})
 
 
 def main():
@@ -218,6 +260,9 @@ def main():
     ap.add_argument("--set-parked", action="store_true",
                     help="record the current marker corners as the parked pose")
     ap.add_argument("--label", default="check")
+    ap.add_argument("--camera", default="Iris cam",
+                    help="pan/tilt camera whose pose ties this reference to a "
+                         "view (default: %(default)r)")
     ap.add_argument("--dict", default=None, choices=sorted(DICTS),
                     help="marker dictionary; defaults to the one recorded in "
                          "the parked file, else %s" % DEFAULT_DICT)
@@ -239,8 +284,28 @@ def main():
         if not found:
             print("no marker visible; cannot record a parked pose")
             return 1
+        # Record WHERE THE CAMERA WAS LOOKING alongside the corners. Without
+        # it the corners are coordinates with no frame of reference, and a
+        # later comparison cannot tell a scope that moved from a camera that
+        # was pointed elsewhere. Read from the cloud here (imported lazily) --
+        # this is an interactive operator command, unlike the verdict path,
+        # which must never wait on the internet.
+        ptz_pose = None
+        try:
+            from scripts import kasa_ptz, kasa_pose
+            dev = kasa_ptz._device(args.camera)
+            ptz_pose = [int(v) for v in kasa_ptz.position(dev)]
+            kasa_pose.record(args.camera, ptz_pose)
+            print("  camera %r pose %s recorded with the reference"
+                  % (args.camera, tuple(ptz_pose)))
+        except Exception as exc:        # noqa: BLE001
+            print("  WARNING: could not read the camera pose (%s: %s)."
+                  % (type(exc).__name__, exc))
+            print("  The reference will be saved WITHOUT a pose, so pointing "
+                  "stays unverified. Fix the camera link and re-run.")
         data = {"when": datetime.now().astimezone().isoformat(timespec="seconds"),
                 "tolerance_px": TOLERANCE_PX, "dict": dict_name,
+                "camera": args.camera, "ptz": ptz_pose,
                 "markers": {str(i): np.asarray(c).tolist() for i, c in found.items()}}
         with open(PARKED_PATH, "w") as fh:
             json.dump(data, fh, indent=2)
@@ -255,7 +320,10 @@ def main():
         return 1
     stored = json.load(open(PARKED_PATH))
     parked = {int(k): np.array(v) for k, v in stored["markers"].items()}
-    verdict, detail = compare(found, parked)
+    ref_pose = stored.get("ptz")
+    from scripts import kasa_pose
+    now_pose = kasa_pose.last(stored.get("camera", args.camera))
+    verdict, detail = compare(found, parked, ref_pose, now_pose)
 
     print("\nverdict: %s" % verdict)
     if verdict == "unknown":

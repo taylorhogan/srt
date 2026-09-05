@@ -38,7 +38,9 @@ from iris.core.snapshot import SensorSnapshot, Tri
 FIXTURE = Path(__file__).parent / "replay" / "imaging_state_2026-08-28.log"
 LIVE = Path(__file__).resolve().parent.parent / "imaging_state.log"
 
-PERMISSIVE = SensorSnapshot(parked_vision=Tri.CONFIRMED, parked_pwi4=Tri.CONFIRMED,
+PERMISSIVE = SensorSnapshot(parked_vision=Tri.CONFIRMED,
+                            parked_kasa=Tri.CONFIRMED,
+                            parked_pwi4=Tri.CONFIRMED,
                             roof=Tri.DENIED, safety_armed=True, mode_auto=True,
                             weather_ok=True, slots_remaining=1, nina_alive=True)
 

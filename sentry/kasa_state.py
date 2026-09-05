@@ -135,14 +135,24 @@ def _grab(retries=RETRIES, timeout=20):
 
 
 def _scope_verdict(img):
-    """'safe' / 'UNSAFE' / 'unknown' from the AprilTag, plus detail."""
+    """'safe' / 'UNSAFE' / 'unknown' from the AprilTag, plus detail.
+
+    The stored corners describe the scope AS SEEN FROM ONE CAMERA POSE, so the
+    pose is checked before the corners mean anything. It is read from the local
+    file kasa_ptz writes on every move, never from the cloud: this runs in the
+    path of a decision about whether the roof may move, and an internet round
+    trip has no business there.
+    """
     from scripts.scope_marker_check import PARKED_PATH, compare, find_markers
+    from scripts import kasa_pose
     if not os.path.exists(PARKED_PATH):
         return "unknown", {"why": "no parked reference on file"}
     found = find_markers(img)
     stored = json.load(open(PARKED_PATH))
     parked = {int(k): np.array(v) for k, v in stored["markers"].items()}
-    return compare(found, parked)
+    ref_pose = stored.get("ptz")
+    now_pose = kasa_pose.last(stored.get("camera", "Iris cam"))
+    return compare(found, parked, ref_pose, now_pose)
 
 
 def _roof_verdict(img):

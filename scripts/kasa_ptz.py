@@ -30,6 +30,7 @@ if __package__ is None or __package__ == "":
         sys.path.insert(0, project_root)
 
 from hardware_control import kasa_cloud as kc
+from scripts import kasa_pose
 
 PTZ = "smartlife.cam.ipcamera.ptz"
 
@@ -345,6 +346,11 @@ def main(argv):
         for _ in range(count):
             print("  -> %s" % str(step(dev, rest[1], speed)))
         stop(dev)
+        # Record where we left it. A pose-dependent detector (the scope park
+        # marker) reads this file instead of asking the cloud, so a move that
+        # goes unrecorded degrades that verdict to "unknown" rather than
+        # silently comparing against a view that no longer exists.
+        kasa_pose.record(name, position(dev))
         return 0
     if action == "goto":
         _guard(name, force)
@@ -354,6 +360,7 @@ def main(argv):
         want = (int(rest[1]), int(rest[2]))
         print("%s from %s to %s" % (name, position(dev), want))
         final = goto(dev, want[0], want[1])
+        kasa_pose.record(name, final)
         print("%s final %s  %s"
               % (name, final, "OK" if final == want else "OFF TARGET"))
         return 0 if final == want else 2

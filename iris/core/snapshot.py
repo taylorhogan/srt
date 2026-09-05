@@ -27,11 +27,20 @@ class Tri(str, Enum):
 class SensorSnapshot:
     """Everything a guard may consult, at one instant.
 
-    parked_vision / parked_pwi4: the two independent park sensors. They can
+    parked_vision / parked_kasa / parked_pwi4: the three independent park
+        sensors. parked_vision is the scope-top webcam's template ladder;
+        parked_kasa is the indoor camera's AprilTag comparison against the
+        recorded park pose; parked_pwi4 is the mount's own opinion. They can
         legitimately disagree — a mount power cycle destroys PWI4's home
-        reference while the visual marker still sits at park — which is why
-        both are carried rather than pre-merged: the MERGE POLICY is a guard's
-        decision, visible in guards.py, not buried in a collector.
+        reference while both markers still sit at park — which is why all
+        three are carried rather than pre-merged: the MERGE POLICY is a
+        guard's decision, visible in guards.py, not buried in a collector.
+
+        Each is genuinely three-valued. A camera that can see the scope and
+        judges it off park says DENIED; a camera that cannot see (dark frame,
+        occlusion, stale reading) says UNKNOWN. Collapsing those two into one
+        "false" is what made the old bool unable to tell a broken camera from
+        a moved scope.
     roof: CONFIRMED means confirmed OPEN; DENIED means confirmed CLOSED;
         UNKNOWN means exactly that (mid-travel, post-stall, camera down).
     safety_armed: the operator's standing permission (safety.txt today,
@@ -42,6 +51,7 @@ class SensorSnapshot:
     nina_alive: the capture process exists (liveness probe, never authority).
     """
     parked_vision: Tri = Tri.UNKNOWN
+    parked_kasa: Tri = Tri.UNKNOWN
     parked_pwi4: Tri = Tri.UNKNOWN
     roof: Tri = Tri.UNKNOWN
     safety_armed: bool = False
@@ -63,18 +73,20 @@ SLOT_VALUES = (0, 1, 3)          # zero / last / several — the behavioural cla
 
 
 def enumerate_snapshots():
-    """Yield every behaviourally distinct SensorSnapshot (~1,944)."""
+    """Yield every behaviourally distinct SensorSnapshot (3,888)."""
     for pv in TRI_VALUES:
-        for pp in TRI_VALUES:
-            for roof in TRI_VALUES:
-                for safe in BOOL_VALUES:
-                    for auto in BOOL_VALUES:
-                        for wx in BOOL_VALUES:
-                            for slots in SLOT_VALUES:
-                                for nina in BOOL_VALUES:
-                                    yield SensorSnapshot(
-                                        parked_vision=pv, parked_pwi4=pp,
-                                        roof=roof, safety_armed=safe,
-                                        mode_auto=auto, weather_ok=wx,
-                                        slots_remaining=slots,
-                                        nina_alive=nina)
+        for pk in TRI_VALUES:
+            for pp in TRI_VALUES:
+                for roof in TRI_VALUES:
+                    for safe in BOOL_VALUES:
+                        for auto in BOOL_VALUES:
+                            for wx in BOOL_VALUES:
+                                for slots in SLOT_VALUES:
+                                    for nina in BOOL_VALUES:
+                                        yield SensorSnapshot(
+                                            parked_vision=pv, parked_kasa=pk,
+                                            parked_pwi4=pp,
+                                            roof=roof, safety_armed=safe,
+                                            mode_auto=auto, weather_ok=wx,
+                                            slots_remaining=slots,
+                                            nina_alive=nina)

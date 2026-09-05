@@ -18,7 +18,8 @@ from iris.core.snapshot import SensorSnapshot, Tri
 
 # A snapshot in which every guard passes: night is go, scope parked and
 # confirmed both ways, roof confirmed CLOSED (known), plan has slots.
-ALL_GO = SensorSnapshot(parked_vision=Tri.CONFIRMED, parked_pwi4=Tri.CONFIRMED,
+ALL_GO = SensorSnapshot(parked_vision=Tri.CONFIRMED, parked_kasa=Tri.CONFIRMED,
+                        parked_pwi4=Tri.CONFIRMED,
                         roof=Tri.DENIED, safety_armed=True, mode_auto=True,
                         weather_ok=True, slots_remaining=2, nina_alive=True)
 # Its complement: nothing confirmed, nothing permitted.
@@ -138,9 +139,14 @@ def test_invariant_a_dynamic_no_snapshot_unparked_reaches_roof_motion():
     """Dynamic complement of the structural check: sweep every source state and
     every event under snapshots where the scope is NOT confirmed parked, and
     assert the machine never lands in a roof-moving state."""
-    unparked = [ALL_GO.replace(parked_vision=v, parked_pwi4=p)
-                for v in Tri for p in Tri
-                if not (v is Tri.CONFIRMED and p is Tri.CONFIRMED)]
+    # The guard itself is the oracle for "not confirmed parked", so this stays
+    # true across policy changes instead of restating the policy in a second
+    # place and drifting from it.
+    unparked = [s for s in (ALL_GO.replace(parked_vision=v, parked_kasa=k,
+                                           parked_pwi4=p)
+                            for v in Tri for k in Tri for p in Tri)
+                if G.mount_parked(s) is not None]
+    assert unparked, "oracle produced no unparked snapshots"
     for snap in unparked:
         for state in STATES:
             if state in ROOF_MOVING_STATES:

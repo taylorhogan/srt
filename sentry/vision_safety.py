@@ -562,6 +562,54 @@ def _unresolved_reason():
     return None
 
 
+_KASA_EMIT_MIN_INTERVAL_S = 10.0
+_kasa_emit_last = 0.0
+
+
+def _emit_indoor_camera_reading():
+    """Make the indoor camera's park verdict land in iris.log beside this
+    vision check, on a daemon thread that can never delay a roof decision.
+
+    The conductor's mount_parked guard takes its positive evidence from BOTH
+    park cameras, and it reads them out of the log. Before this, the indoor
+    camera only reported on paths routed through
+    super_user_commands.get_status_with_lights() — so end.py's close, which
+    calls visual_status() directly, produced a webcam reading with no partner.
+    Measured on the real 2026-09-05 close: the guard saw vision=CONFIRMED and
+    kasa=UNKNOWN and refused a move both cameras in fact agreed on.
+
+    This function sits in visual_status() because that is documented as the
+    single vision entry point for every mount/roof safety decision, which
+    makes it the one place a future caller cannot forget.
+
+    Best-effort by construction: a daemon thread, everything swallowed, no
+    return value. It informs the observer; it never gates the roof. Throttled
+    because several callers poll vision in quick succession and the camera
+    does not need fetching three times to answer one question.
+    """
+    global _kasa_emit_last
+    now = time.time()
+    if now - _kasa_emit_last < _KASA_EMIT_MIN_INTERVAL_S:
+        return
+    _kasa_emit_last = now
+
+    def _run():
+        try:
+            from sentry import kasa_state
+            kasa_state.kasa_status(quick=True)   # logs "kasa_status: scope=..."
+        except Exception:       # noqa: BLE001 -- observer, never surfaces
+            _logger.debug("indoor-camera reading failed (ignored)",
+                          exc_info=True)
+
+    try:
+        import threading
+        threading.Thread(target=_run, name="kasa-park-reading",
+                         daemon=True).start()
+    except Exception:           # noqa: BLE001
+        _logger.debug("indoor-camera thread failed to start (ignored)",
+                      exc_info=True)
+
+
 def visual_status(retries: int = 2, delay: float = 2.0):
     """Report (parked, closed, open, mod_date) from the inside camera, retrying
     to ride out a garbage webcam frame.
@@ -594,6 +642,7 @@ def visual_status(retries: int = 2, delay: float = 2.0):
     roof-move preconditions are unchanged per frame — we simply stop acting on
     the first unreadable one.
     """
+    _emit_indoor_camera_reading()
     parked, closed, open, mod_date = _visual_status_once()
     for attempt in range(1, retries + 1):
         reason = _unresolved_reason()

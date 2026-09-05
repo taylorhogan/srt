@@ -15,6 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from iris.conductor.shadow import ShadowConductor
 from iris.core.journal import Journal
+from iris.core.snapshot import Tri
 
 
 def _mkroot(tmp_path):
@@ -219,7 +220,7 @@ def test_noon_while_mid_night_resyncs_and_tracks_the_new_day(tmp_path):
 def test_guard_counterfactual_is_recorded(tmp_path):
     """The transition into OPENING_ROOF fires permissively, but the entry must
     carry what the guards WOULD have said given observed evidence — with no
-    vision lines seen yet, that is a refusal mentioning vision."""
+    camera lines seen yet, that is a refusal naming the park cameras."""
     root = _mkroot(tmp_path)
     sh = _shadow(root)
     _sched(root, "NOON_CHECK"); sh.poll()
@@ -228,7 +229,7 @@ def test_guard_counterfactual_is_recorded(tmp_path):
     _imaging(root, "IN_PRELUDE"); sh.poll()
     entries = {e.event: e for e in sh.journal.replay() if e.kind == "transition"}
     would = entries["CHECKS_PASSED"].data.get("guard_would")
-    assert would and "vision" in would
+    assert would and "camera" in would
 
 
 def _log(root, line):
@@ -241,12 +242,13 @@ def _fire_notes(sh):
 
 
 def test_roof_fire_with_full_evidence_would_be_allowed(tmp_path):
-    """The decision-diff happy path: vision parked+closed, PWI4 parked --
-    Invariant A's guards would have permitted the move legacy made."""
+    """The decision-diff happy path: BOTH cameras parked, roof closed, PWI4
+    parked -- Invariant A's guards would have permitted the move legacy made."""
     root = _mkroot(tmp_path)
     sh = _shadow(root)
     sh.pwi4_probe = lambda: "parked"
     _log(root, "08/30/2026 vision parked=True closed=True open=False x")
+    _log(root, "08/30/2026 kasa_status: scope=safe roof=shut (day)")
     _log(root, "08/30/2026 roof relay fire: direction=open")
     sh.poll()
     notes = _fire_notes(sh)
@@ -254,6 +256,57 @@ def test_roof_fire_with_full_evidence_would_be_allowed(tmp_path):
     assert notes[0].data["direction"] == "open"
     assert notes[0].data["guard_would"] is None
     assert notes[0].data["evidence"]["parked_pwi4"] == "CONFIRMED"
+    assert notes[0].data["evidence"]["parked_kasa"] == "CONFIRMED"
+
+
+def test_roof_fire_with_unpowered_mount_would_be_allowed(tmp_path):
+    """The 2026-09-04 regression as a shadow test. The mount is off at every
+    roof open, so PWI4 reads unreachable; two agreeing cameras must carry the
+    decision on their own."""
+    root = _mkroot(tmp_path)
+    sh = _shadow(root)
+    sh.pwi4_probe = lambda: "unreachable"
+    _log(root, "09/04/2026 vision parked=True closed=True open=False — "
+               "votes parked 7/8 lit (10 rungs), closed 4, open 0")
+    _log(root, "09/04/2026 kasa_status: scope=safe roof=shut (day)")
+    _log(root, "09/04/2026 roof relay fire: direction=open")
+    sh.poll()
+    note = _fire_notes(sh)[0]
+    assert note.data["evidence"]["parked_pwi4"] == "UNKNOWN"
+    assert note.data["guard_would"] is None, note.data["guard_would"]
+
+
+def test_one_camera_alone_would_be_refused_and_the_split_is_journaled(tmp_path):
+    """A single confirming camera is never enough, and the disagreement is
+    recorded rather than merely causing a silent refusal."""
+    root = _mkroot(tmp_path)
+    sh = _shadow(root)
+    sh.pwi4_probe = lambda: "parked"
+    _log(root, "09/04/2026 vision parked=True closed=True open=False x")
+    _log(root, "09/04/2026 kasa_status: scope=UNSAFE roof=shut (day)")
+    _log(root, "09/04/2026 roof relay fire: direction=open")
+    sh.poll()
+    note = _fire_notes(sh)[0]
+    assert note.data["evidence"]["parked_kasa"] == "DENIED"
+    assert "disagree" in (note.data["guard_would"] or "")
+    splits = [e for e in sh.journal.replay() if e.event == "PARK_CAMERAS_SPLIT"]
+    assert len(splits) == 1
+    assert splits[0].data == {"webcam": "CONFIRMED", "kasa": "DENIED"}
+
+
+def test_webcam_distinguishes_cannot_see_from_sees_it_off_park(tmp_path):
+    """The third state, which the old bool could not express: no lit rung is
+    the camera saying it cannot see, not a negative verdict."""
+    root = _mkroot(tmp_path)
+    sh = _shadow(root)
+    _log(root, "09/04/2026 vision parked=False closed=True open=False — "
+               "votes parked 0/6 lit (10 rungs), closed 4, open 0")
+    sh.poll()
+    assert sh.evidence.parked_vision is Tri.DENIED
+    _log(root, "09/04/2026 vision parked=False closed=True open=False — "
+               "votes parked 0/0 lit (10 rungs), closed 4, open 0")
+    sh.poll()
+    assert sh.evidence.parked_vision is Tri.UNKNOWN
 
 
 def test_roof_fire_with_unparked_mount_would_be_refused(tmp_path):

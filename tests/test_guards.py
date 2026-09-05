@@ -17,18 +17,54 @@ from iris.core.snapshot import SensorSnapshot, Tri, enumerate_snapshots
 
 def test_space_is_the_size_the_docstring_claims():
     n = sum(1 for _ in enumerate_snapshots())
-    assert n == 3 * 3 * 3 * 2 * 2 * 2 * 3 * 2, n
+    assert n == 3 * 3 * 3 * 3 * 2 * 2 * 2 * 3 * 2, n
 
 
-def test_invariant_a_mount_parked_requires_both_confirmations():
-    """No snapshot passes mount_parked unless BOTH park sensors say CONFIRMED.
-    UNKNOWN counts as refusal — a sensor declining to answer is exactly when
-    the roof must not move."""
+def test_invariant_a_mount_parked_requires_both_cameras_and_no_mount_veto():
+    """Positive evidence comes from the two cameras, which must AGREE and both
+    read CONFIRMED. PWI4 only vetoes: DENIED refuses, UNKNOWN abstains because
+    the mount is unpowered at every roof open and has no opinion to give."""
     for s in enumerate_snapshots():
         passed = G.mount_parked(s) is None
         should = (s.parked_vision is Tri.CONFIRMED
-                  and s.parked_pwi4 is Tri.CONFIRMED)
+                  and s.parked_kasa is Tri.CONFIRMED
+                  and s.parked_pwi4 is not Tri.DENIED)
         assert passed == should, s
+
+
+def test_a_single_camera_can_never_authorise_a_roof_move():
+    """The property the two-camera rule exists to provide: one camera saying
+    CONFIRMED is never enough, whatever the other says or fails to say."""
+    for other in Tri:
+        if other is Tri.CONFIRMED:
+            continue
+        assert G.mount_parked(SensorSnapshot(
+            parked_vision=Tri.CONFIRMED, parked_kasa=other)) is not None
+        assert G.mount_parked(SensorSnapshot(
+            parked_vision=other, parked_kasa=Tri.CONFIRMED)) is not None
+
+
+def test_camera_split_reads_as_unknown():
+    """Disagreement is equivalent to unknown: it refuses, and it refuses for
+    every combination, never resolving in favour of one camera."""
+    for a in Tri:
+        for b in Tri:
+            if a is b:
+                continue
+            s = SensorSnapshot(parked_vision=a, parked_kasa=b,
+                               parked_pwi4=Tri.CONFIRMED)
+            assert G.parked_by_cameras(s) is Tri.UNKNOWN, (a, b)
+            assert G.mount_parked(s) is not None, (a, b)
+
+
+def test_unpowered_mount_does_not_block_a_confirmed_park():
+    """The 2026-09-04 regression, as a test: PWI4 UNKNOWN is the every-night
+    state at a roof open, and it must not refuse when both cameras confirm."""
+    s = SensorSnapshot(parked_vision=Tri.CONFIRMED, parked_kasa=Tri.CONFIRMED,
+                       parked_pwi4=Tri.UNKNOWN)
+    assert G.mount_parked(s) is None
+    # ...but a POWERED mount contradicting both cameras still refuses.
+    assert G.mount_parked(s.replace(parked_pwi4=Tri.DENIED)) is not None
 
 
 def test_invariant_b_roof_open_requires_positive_confirmation():
