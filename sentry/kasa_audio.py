@@ -111,8 +111,15 @@ def generate_spectrogram(audio_np, save_path):
     plt.close()
 
 
-def capture_pcm(seconds, host=HOST):
-    """Pull `seconds` of microphone audio off the camera as int16 PCM."""
+def capture_av(seconds, host=HOST):
+    """Pull `seconds` off the camera as (int16 PCM, part times, H.264 bytes).
+
+    The camera serves ONE multipart stream with audio and video interleaved,
+    so the video costs nothing extra -- it is already on the wire. It used to
+    be discarded here; sentry/kasa_roof_frames.py now turns it into labelled
+    stills of the roof. Grabbing those from a second connection would have
+    risked colliding with this capture for no gain.
+    """
     from configs import config
     from scripts import iriscam_record as ir
     from sentry.sky_camera import credentials
@@ -120,8 +127,14 @@ def capture_pcm(seconds, host=HOST):
     user, pw = credentials(config.data())
     with contextlib.redirect_stdout(io.StringIO()):
         buf, checkpoints, t0 = ir.capture(host, user, pw, seconds)
-        audio, _video, times, _n = ir.split(buf, checkpoints, t0, b"--data-boundary--")
-    return ir.ulaw_to_pcm16(audio), times
+        audio, video, times, _n = ir.split(buf, checkpoints, t0, b"--data-boundary--")
+    return ir.ulaw_to_pcm16(audio), times, video
+
+
+def capture_pcm(seconds, host=HOST):
+    """Pull `seconds` of microphone audio off the camera as int16 PCM."""
+    pcm, times, _video = capture_av(seconds, host)
+    return pcm, times
 
 
 def record(direction, seconds=45, host=HOST, status="unlabeled"):
@@ -324,7 +337,16 @@ def start_capture_async(direction=None, seconds=CAPTURE_S, host=HOST,
 
     def _run():
         try:
-            pcm, _t = capture_pcm(seconds, host)
+            pcm, _t, video = capture_av(seconds, host)
+            # Labelled stills of the roof, decoded from the video half of the
+            # same stream. Filed FIRST and in its own try: it is independent of
+            # whether the audio turns out to contain a usable move, and one
+            # observer must not be able to cost the other its data.
+            try:
+                from sentry import kasa_roof_frames
+                kasa_roof_frames.save_move_frames(video, direction)
+            except Exception as e:        # noqa: BLE001 - shadow observer
+                _log("kasa roof frames: failed (ignored): %r" % (e,))
             if pcm.size == 0:
                 _log("kasa roof audio: no audio arrived")
                 return

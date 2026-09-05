@@ -74,3 +74,4 @@ openscad/grace_*.scad
 # macOS
 .DS_Store
 docs/M92_HR_Report.pdf
+sentry/roof_frames_kasa/
