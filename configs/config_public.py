@@ -420,7 +420,7 @@ class PublicConfig():
             # NOT_CONFIGURED and nothing changes behaviour. The switches gain
             # a vote in roof-state decisions only after the commissioning
             # drills pass (scripts/roof_limits_check.py).
-            "roof_limit_shelly_ip": "",
+            "roof_limit_shelly_ip": "192.168.87.36",
         },
 
         "calibration": {
