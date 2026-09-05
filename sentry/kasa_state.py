@@ -134,14 +134,18 @@ def _grab(retries=RETRIES, timeout=20):
     return None
 
 
-def _scope_verdict(img):
+def _scope_verdict(img, pose=None):
     """'safe' / 'UNSAFE' / 'unknown' from the AprilTag, plus detail.
 
     The stored corners describe the scope AS SEEN FROM ONE CAMERA POSE, so the
-    pose is checked before the corners mean anything. It is read from the local
-    file kasa_ptz writes on every move, never from the cloud: this runs in the
-    path of a decision about whether the roof may move, and an internet round
-    trip has no business there.
+    pose has to be established before the corners mean anything.
+
+    *pose* is a VERIFIED position -- the caller drove the camera there and the
+    move confirmed. Pass it whenever the verdict will inform a decision. With
+    it absent this falls back to the local record of the last commanded pose,
+    which is a hint and not knowledge: it read (-123, 363) on 2026-09-05 while
+    the camera sat at (-666, 306) after a move from the phone app. Good enough
+    to flag an obvious drift in shadow sampling; never good enough to gate on.
     """
     from scripts.scope_marker_check import PARKED_PATH, compare, find_markers
     from scripts import kasa_pose
@@ -151,8 +155,10 @@ def _scope_verdict(img):
     stored = json.load(open(PARKED_PATH))
     parked = {int(k): np.array(v) for k, v in stored["markers"].items()}
     ref_pose = stored.get("ptz")
-    now_pose = kasa_pose.last(stored.get("camera", "Iris cam"))
-    return compare(found, parked, ref_pose, now_pose)
+    now_pose = pose or kasa_pose.last(stored.get("camera", "Iris cam"))
+    verdict, detail = compare(found, parked, ref_pose, now_pose)
+    detail["pose_verified"] = pose is not None
+    return verdict, detail
 
 
 def _roof_verdict(img):
@@ -202,8 +208,36 @@ def _roof_verdict(img):
     return "unknown", detail
 
 
-def kasa_status(quick=False):
+def _required_pose():
+    """(camera name, (x, y)) the park reference was recorded at, or None."""
+    try:
+        from scripts.scope_marker_check import PARKED_PATH
+        with open(PARKED_PATH) as fh:
+            st = json.load(fh)
+        ptz = st.get("ptz")
+        return (st.get("camera", "Iris cam"), tuple(ptz)) if ptz else None
+    except Exception:       # noqa: BLE001
+        return None
+
+
+def kasa_status(quick=False, verify_pose=False):
     """(safe, closed, is_open, when) -- vision_safety.visual_status()'s shape.
+
+    verify_pose=True DRIVES the camera to the pose the park reference was
+    recorded at before grabbing the frame, and refuses if it cannot get there.
+    Pass it for any reading that will inform a decision; leave it off for
+    shadow sampling.
+
+    The order matters and is the whole point: position, THEN look. Grabbing
+    first and checking the pose afterwards would judge an image taken from
+    somewhere else. And the check is a MOVE, not a lookup, because a record of
+    where the camera was last put is not knowledge of where it is -- measured
+    2026-09-05, the local record read (-123, 363) while the camera sat at
+    (-666, 306) after being driven from the phone app.
+
+    It is off by default because it costs a cloud round trip and this is
+    called every few seconds by the vision path's shadow emitter. Nothing
+    gates on this camera yet; when something does, that caller passes True.
 
     safe means "the scope is within tolerance of the recorded park pose", the
     Kasa system's sharper version of parked. Any failure anywhere returns
@@ -218,13 +252,32 @@ def kasa_status(quick=False):
     """
     global last_detail
     when = datetime.now().astimezone()
+
+    verified = None
+    if verify_pose:
+        from scripts import kasa_pose
+        need = _required_pose()
+        if need is None:
+            last_detail = {"camera": False,
+                           "why": "park reference records no camera pose; "
+                                  "re-run scope_marker_check.py --set-parked"}
+            _logger.warning("kasa_status: %s", last_detail["why"])
+            return False, False, False, when
+        verified = kasa_pose.ensure_at(need[0], need[1])
+        if verified is None:
+            last_detail = {"camera": False,
+                           "why": "could not place %r at %s; pose unknown"
+                                  % (need[0], need[1])}
+            _logger.warning("kasa_status: %s", last_detail["why"])
+            return False, False, False, when
+
     img = _grab(retries=1, timeout=8) if quick else _grab()
     if img is None:
         last_detail = {"camera": False}
         _logger.warning("kasa_status: no frame from the camera")
         return False, False, False, when
 
-    scope, sdet = _scope_verdict(img)
+    scope, sdet = _scope_verdict(img, pose=verified)
     roof, rdet = _roof_verdict(img)
     last_detail = {"camera": True, "scope": scope, "scope_detail": sdet,
                    "roof": roof, "roof_detail": rdet}
