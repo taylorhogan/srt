@@ -37,7 +37,6 @@ STATES = (
     "PRELUDE",           # once per night: cooling, initial focus
     "SLOT_SETUP",        # slew / sequence launch for the current slot
     "SLOT_IMAGING",      # main sequence for the current slot
-    "FLATS",             # once per night
     "PARKING",           # mount parking before any roof close. Exists because
                          #   reality parks the scope AS PART OF closing (end.py
                          #   does exactly this); an entry guard of "already
@@ -47,6 +46,17 @@ STATES = (
                          #   the PARKING -> CLOSING_ROOF edge: between the park
                          #   CONFIRMATION and the relay fire.
     "CLOSING_ROOF",      # park confirmed, relay fired, awaiting confirmed closed
+    "FLATS",             # once per night, AFTER the roof is shut. This order
+                         #   is not a preference, it is what end.py does and
+                         #   what the 2026-09-04 night did: relay fired closed
+                         #   at 02:26:38, flats ran 02:29:46 to 04:02:47
+                         #   against a panel. The machine used to place FLATS
+                         #   before PARKING, which no real night could match,
+                         #   and that inversion is also what made the close
+                         #   cascade fire twice -- imaging.txt legitimately
+                         #   passes through NONE between the main sequence and
+                         #   the flats, and the old mapping read that NONE as
+                         #   the end of the night.
     "SHUTDOWN",          # dehumidifier, summary, handoff marker
     "NIGHT_DONE",        # terminal for the night
     "SAFE_HOLD",         # operator cleared safety; only an operator exits
@@ -116,8 +126,24 @@ TRANSITIONS = (
     T("ARMED",        "PRE_SUNSET_TICK",     "PRE_FLIGHT"),
     T("ARMED",        "WEATHER_BAD",         "IDLE_DAY"),
 
-    # --- arming and opening. The whole of Invariant A rides on this row.
+    # --- arming and opening. The whole of Invariant A rides on these rows.
     T("PRE_FLIGHT",   "CHECKS_PASSED",       "OPENING_ROOF",
+      guards=(G.safety_armed, G.mount_parked, G.roof_state_known, G.weather_ok)),
+    # A manual `image!!` opens the roof without waiting for the pre-sunset
+    # tick, so the night starts from ARMED rather than PRE_FLIGHT. On
+    # 2026-09-04 that run began at 17:45 and the machine, having no row here,
+    # ignored the whole night: four events dropped before the scheduler even
+    # woke, and it sat in PRE_FLIGHT until noon the next day.
+    #
+    # IDENTICAL GUARDS, deliberately. The operator choosing the moment does
+    # not change what has to be true before a roof moves, and the evidence
+    # rule is the guards' job in both cases. What the operator replaces is the
+    # CLOCK, not the safety case.
+    #
+    # Only from ARMED: a manual run with no plan at all still lands in
+    # IDLE_DAY as an ignored note, which is Phase 3's dataset for modelling
+    # unplanned runs and is asserted by tests/test_shadow.py.
+    T("ARMED",        "CHECKS_PASSED",       "OPENING_ROOF",
       guards=(G.safety_armed, G.mount_parked, G.roof_state_known, G.weather_ok)),
     T("PRE_FLIGHT",   "CHECKS_FAILED",       "IDLE_DAY"),
     T("PRE_FLIGHT",   "WEATHER_BAD",         "IDLE_DAY"),
@@ -133,27 +159,30 @@ TRANSITIONS = (
     T("SLOT_SETUP",   "SLOT_STARTED",        "SLOT_IMAGING"),
     T("SLOT_IMAGING", "NINA_SLOT_DONE",      "SLOT_SETUP",
       guards=(G.slots_remaining,)),
-    T("SLOT_IMAGING", "NINA_SLOT_DONE",      "FLATS",
+    T("SLOT_IMAGING", "NINA_SLOT_DONE",      "PARKING",
       guards=(G.plan_exhausted,)),
     T("SLOT_IMAGING", "SLOT_WINDOW_END",     "SLOT_SETUP",
       guards=(G.slots_remaining,)),
-    T("SLOT_IMAGING", "SLOT_WINDOW_END",     "FLATS",
+    T("SLOT_IMAGING", "SLOT_WINDOW_END",     "PARKING",
       guards=(G.plan_exhausted,)),
     T("SLOT_IMAGING", "REPLAN_REQUESTED",    "SLOT_SETUP"),
     T("SLOT_IMAGING", "CAPTURE_LOST",        "PARKING"),
-    T("SLOT_IMAGING", "WEATHER_BAD",         "FLATS"),
+    T("SLOT_IMAGING", "WEATHER_BAD",         "PARKING"),
 
     # --- closing out the night. The close DECISION is unguarded (deciding to
     # go home must always be possible); the roof MOTION is where Invariant A
     # bites, on the single PARKING -> CLOSING_ROOF edge.
-    T("FLATS",        "NINA_FLATS_DONE",     "PARKING"),
-    T("FLATS",        "CAPTURE_LOST",        "PARKING"),
     T("PARKING",      "MOUNT_PARK_CONFIRMED", "CLOSING_ROOF",
       guards=(G.mount_parked, G.roof_state_known)),
     T("PARKING",      "VISION_CONTRADICTION", "FAULT_ROOF_UNKNOWN"),
-    T("CLOSING_ROOF", "ROOF_CLOSE_CONFIRMED", "SHUTDOWN"),
+    T("CLOSING_ROOF", "ROOF_CLOSE_CONFIRMED", "FLATS"),
     T("CLOSING_ROOF", "ROOF_STALL",          "FAULT_ROOF_UNKNOWN"),
     T("CLOSING_ROOF", "ROOF_TIMEOUT",        "FAULT_ROOF_UNKNOWN"),
+    # Flats run shut, so nothing here can move the roof and every way out of
+    # FLATS leads to SHUTDOWN. A capture failure during flats costs the flats,
+    # not the night's safety: the observatory is already closed.
+    T("FLATS",        "NINA_FLATS_DONE",     "SHUTDOWN"),
+    T("FLATS",        "CAPTURE_LOST",        "SHUTDOWN"),
     T("SHUTDOWN",     "SHUTDOWN_DONE",       "NIGHT_DONE"),
     T("NIGHT_DONE",   "DAY_TICK",            "IDLE_DAY"),
 
@@ -162,7 +191,9 @@ TRANSITIONS = (
     T("PRELUDE",      "NIGHT_END_REQUESTED", "PARKING"),
     T("SLOT_SETUP",   "NIGHT_END_REQUESTED", "PARKING"),
     T("SLOT_IMAGING", "NIGHT_END_REQUESTED", "PARKING"),
-    T("FLATS",        "NIGHT_END_REQUESTED", "PARKING"),
+    # From FLATS the roof is already shut, so ending early is just skipping
+    # the rest of the flats.
+    T("FLATS",        "NIGHT_END_REQUESTED", "SHUTDOWN"),
 
     # --- contradiction between roof sensors, noticed at rest. IDLE_DAY,
     # ARMED and NIGHT_DONE are included: those states CLAIM the roof is

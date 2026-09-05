@@ -118,6 +118,21 @@ class ShadowConductor:
     _MID_NIGHT = {"OPENING_ROOF", "PRELUDE", "SLOT_SETUP", "SLOT_IMAGING",
                   "FLATS", "PARKING", "CLOSING_ROOF", "SHUTDOWN"}
 
+    # States the machine can still be sitting in when imaging.txt reaches
+    # IN_FLATS -- i.e. the walk to FLATS has not happened yet and the events
+    # that would have driven it need synthesizing.
+    _BEFORE_FLATS = {"SLOT_IMAGING", "PARKING", "CLOSING_ROOF"}
+
+    # How many consecutive NONE polls to wait, sitting in FLATS, before
+    # concluding the flats are not coming. imaging.txt cannot distinguish "the
+    # roof just shut and the flats start in a minute" from "the night ended
+    # without flats" -- both read NONE. Measured 2026-09-05, the real gap was
+    # 54 s (NONE at 02:28:58, IN_FLATS at 02:29:52), so at the 5 s cadence 60
+    # polls is five minutes: far past any real launch, and it only ever
+    # ADVANCES a night that is already over. Injectable so tests need not
+    # spin.
+    _flats_grace_polls = 60
+
     def __init__(self, repo_root: Path, journal: Journal):
         self.root = Path(repo_root)
         self.journal = journal
@@ -137,6 +152,7 @@ class ShadowConductor:
                                       # its own clock rather than ride the
                                       # webcam's freshness
         self._cams_split = False      # last known camera (dis)agreement
+        self._flats_none_streak = 0   # polls sat in FLATS reading NONE
         # last-seen values of the legacy sources, None = not yet read
         self._sched = None            # scheduler_state.json "state"
         self._will_image = None
@@ -277,6 +293,36 @@ class ShadowConductor:
         # would report a "split" on every single vision check purely because
         # the webcam's line is read before the indoor camera's.
         self._note_camera_split()
+
+    def _offer_clock(self, event, sched):
+        """Offer a SCHEDULER CLOCK event, unless a night is already running.
+
+        The scheduler is a separate state machine that keeps ticking whether or
+        not it is the thing driving the night. When a manual `image!!` owns the
+        night its ticks are commentary, and translating them into night
+        lifecycle events reports a night that is not happening.
+
+        Measured on 2026-09-04, both from that one manual run: the pre-sunset
+        tick arrived at 19:09 with the main sequence already imaging since
+        17:50, and a DAY_TICK arrived 30 s later because the scheduler had
+        touched IMAGING for three seconds and stood down ("Mode is manual --
+        skipping auto imaging"). Neither described the observatory. The second
+        is the worse of the two: DAY_TICK means "a night ended", and no night
+        had ended -- none had been started by the scheduler at all.
+
+        So mid-night these are journaled with their reason and not offered.
+        Not silently dropped: a note keeps them in the record, which is what
+        Phase 3 will need when the scheduler is absorbed and this ambiguity
+        has to be designed away rather than sidestepped.
+        """
+        if self.state in self._MID_NIGHT:
+            self.journal.append(
+                "note", event, "shadow",
+                data={"sched": sched, "suppressed_in_state": self.state,
+                      "why": "a night is already running; the scheduler's "
+                             "clock does not describe it"})
+            return
+        self.offer(event, "shadow", {"sched": sched})
 
     def _note_camera_split(self):
         """Journal the moment the two park cameras CONTRADICT each other, and
@@ -429,9 +475,9 @@ class ShadowConductor:
             elif sched == "WAITING_FOR_NOON" and prev == "NOON_CHECK":
                 self.offer("PLAN_BAD", "shadow", {"sched": sched})
             elif sched == "PRE_SUNSET_CHECK":
-                self.offer("PRE_SUNSET_TICK", "shadow", {"sched": sched})
+                self._offer_clock("PRE_SUNSET_TICK", sched)
             elif sched == "WAITING_FOR_NOON" and prev in ("IMAGING", "WAITING_FOR_BOOT"):
-                self.offer("DAY_TICK", "shadow", {"sched": sched})
+                self._offer_clock("DAY_TICK", sched)
             self._sched, self._will_image = sched, will
 
         # --- imaging.txt transitions -> capture events
@@ -461,33 +507,65 @@ class ShadowConductor:
             elif img == "IN_MAIN":
                 self.offer("SLOT_STARTED", "shadow", {"imaging": img})
             elif img == "IN_FLATS":
-                # Deliberately prev-agnostic: reaching flats means the main
-                # slot ended, whatever intermediate value the 5 s poll missed.
-                # (Requiring prev == IN_MAIN was one of the two gaps behind
-                # the 2026-08-28 wedge.)
+                # The roof is ALREADY SHUT by now -- end.py parks and closes
+                # before launching the flats, which run against a panel. So by
+                # this point the machine should have been walked to FLATS by
+                # the NONE branch below, and there is nothing left to offer.
+                #
+                # It used to map to NINA_SLOT_DONE, from a model where flats
+                # preceded the close. That is why the same night produced the
+                # close cascade twice: once on the NONE that really is the
+                # end of the main sequence, and again on the NONE that ends
+                # the flats.
+                #
+                # Anything still due gets synthesized, tagged, so a night that
+                # skipped straight from IN_MAIN without the intervening NONE
+                # (a poll that lands badly, a torn read that survives the
+                # debounce) still reaches FLATS rather than stalling.
                 self.slots = 0
-                self.offer("NINA_SLOT_DONE", "shadow", {"imaging": img})
+                for ev in ("NINA_SLOT_DONE", "MOUNT_PARK_CONFIRMED",
+                           "ROOF_CLOSE_CONFIRMED"):
+                    if self.state in self._BEFORE_FLATS:
+                        self.offer(ev, "shadow",
+                                   {"imaging": img, "synthesized": True})
             elif img == "DONE_FLATS":
                 self.offer("NINA_FLATS_DONE", "shadow", {"imaging": img})
-            elif img == "NONE" and prev in ("DONE_FLATS", "IN_FLATS", "IN_MAIN"):
-                # end.py's last act is clearing the state. Its real sequence is
-                # park -> close -> clear, so the shadow emits that order; the
-                # park and close confirmations' true timings are in iris.log
-                # for the morning report to compare. If the file skipped states
-                # on the way out (ended straight from IN_MAIN or IN_FLATS),
-                # the completions it never showed are synthesized first --
-                # tagged, so the report can tell observed from inferred.
-                if prev == "IN_MAIN":
-                    self.slots = 0
-                    self.offer("NINA_SLOT_DONE", "shadow",
-                               {"imaging": img, "synthesized": True})
-                if prev in ("IN_MAIN", "IN_FLATS"):
-                    self.offer("NINA_FLATS_DONE", "shadow",
-                               {"imaging": img, "synthesized": True})
+            elif img == "NONE" and prev == "IN_MAIN":
+                # The main sequence ended and end.py ran: park, then close,
+                # then clear the file. Measured 2026-09-05 -- "Begin End
+                # Sequence" 02:24:36, relay closed 02:26:38, imaging.txt NONE
+                # 02:28:58, flats launched 02:29:46. So this NONE is the roof
+                # CLOSING, not the night ending, and the flats follow it.
+                self.slots = 0
+                self.offer("NINA_SLOT_DONE", "shadow", {"imaging": img})
                 self.offer("MOUNT_PARK_CONFIRMED", "shadow", {"imaging": img})
                 self.offer("ROOF_CLOSE_CONFIRMED", "shadow", {"imaging": img})
+            elif img == "NONE" and prev in ("IN_FLATS", "DONE_FLATS"):
+                # NOW the night is over. A run that never showed DONE_FLATS --
+                # last night's flats were killed by the stall watchdog -- has
+                # its completion synthesized and tagged.
+                if prev == "IN_FLATS":
+                    self.offer("NINA_FLATS_DONE", "shadow",
+                               {"imaging": img, "synthesized": True})
                 self.offer("SHUTDOWN_DONE", "shadow", {"imaging": img})
             self._imaging = img
+
+        # --- flats that never came. Sitting in FLATS with the state file long
+        # since cleared means end.py finished without running any, so close the
+        # night out rather than leaving the machine parked in a stage reality
+        # has already left. Tagged synthesized: nothing observed these.
+        if self.state == "FLATS" and img == "NONE":
+            self._flats_none_streak += 1
+            if self._flats_none_streak >= self._flats_grace_polls:
+                self._flats_none_streak = 0
+                self.offer("NINA_FLATS_DONE", "shadow",
+                           {"imaging": img, "synthesized": True,
+                            "why": "no flats after %d polls"
+                                   % self._flats_grace_polls})
+                self.offer("SHUTDOWN_DONE", "shadow",
+                           {"imaging": img, "synthesized": True})
+        else:
+            self._flats_none_streak = 0
 
         # --- safety flag edges -> operator events
         safe = self._read_safety()

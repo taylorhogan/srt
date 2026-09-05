@@ -66,10 +66,13 @@ def test_full_legacy_night_produces_the_canonical_timeline(tmp_path):
     _imaging(root, "IN_PRELUDE"); sh.poll()      # roof opened + prelude begins
     _imaging(root, "DONE_PRELUDE"); sh.poll()
     _imaging(root, "IN_MAIN"); sh.poll()
-    _imaging(root, "IN_FLATS"); sh.poll()
+    _imaging(root, "NONE"); sh.poll(); sh.poll()  # end.py parks + closes the
+                                                  # roof; NONE must survive two
+                                                  # polls (debounce)
+    _imaging(root, "IN_FLATS"); sh.poll()         # flats run behind a shut roof
     _imaging(root, "DONE_FLATS"); sh.poll()
-    _imaging(root, "NONE"); sh.poll(); sh.poll()  # end.py finished; NONE must
-    _sched(root, "WAITING_FOR_NOON"); sh.poll()   # survive two polls (debounce)
+    _imaging(root, "NONE"); sh.poll(); sh.poll()  # now the night is over
+    _sched(root, "WAITING_FOR_NOON"); sh.poll()
 
     got = _transitions(sh)
     expected = [
@@ -80,10 +83,10 @@ def test_full_legacy_night_produces_the_canonical_timeline(tmp_path):
         ("ROOF_OPEN_CONFIRMED", "OPENING_ROOF", "PRELUDE"),
         ("NINA_PRELUDE_DONE",   "PRELUDE",      "SLOT_SETUP"),
         ("SLOT_STARTED",        "SLOT_SETUP",   "SLOT_IMAGING"),
-        ("NINA_SLOT_DONE",      "SLOT_IMAGING", "FLATS"),
-        ("NINA_FLATS_DONE",     "FLATS",        "PARKING"),
+        ("NINA_SLOT_DONE",      "SLOT_IMAGING", "PARKING"),
         ("MOUNT_PARK_CONFIRMED", "PARKING",     "CLOSING_ROOF"),
-        ("ROOF_CLOSE_CONFIRMED", "CLOSING_ROOF", "SHUTDOWN"),
+        ("ROOF_CLOSE_CONFIRMED", "CLOSING_ROOF", "FLATS"),
+        ("NINA_FLATS_DONE",     "FLATS",        "SHUTDOWN"),
         ("SHUTDOWN_DONE",       "SHUTDOWN",     "NIGHT_DONE"),
         ("DAY_TICK",            "NIGHT_DONE",   "IDLE_DAY"),
     ]
@@ -180,12 +183,17 @@ def test_main_ending_straight_to_none_still_closes_the_night(tmp_path):
     synthesize the completions the file never showed, tagged as such."""
     root = _mkroot(tmp_path)
     sh = _shadow(root)
+    sh._flats_grace_polls = 2        # do not spin out the real five minutes
     _to_in_main(root, sh)
     _imaging(root, "NONE"); sh.poll(); sh.poll()
+    # The NONE is the roof closing, so the machine lands in FLATS and waits to
+    # see whether any arrive.
+    assert sh.state == "FLATS"
+    sh.poll(); sh.poll()             # none arrive: close the night out
     assert sh.state == "NIGHT_DONE"
     entries = [e for e in sh.journal.replay() if e.kind == "transition"]
     synth = {e.event for e in entries if e.data.get("synthesized")}
-    assert synth == {"NINA_SLOT_DONE", "NINA_FLATS_DONE"}
+    assert synth == {"NINA_FLATS_DONE", "SHUTDOWN_DONE"}
 
 
 def test_flats_reached_from_an_unexpected_prev_still_ends_the_slot(tmp_path):

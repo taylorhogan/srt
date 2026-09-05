@@ -73,10 +73,13 @@ def _night_events(states):
             ev.append(("NINA_PRELUDE_DONE", 1))
             ev.append(("SLOT_STARTED", 1))        # imaging.txt -> IN_MAIN
         elif s == "DONE_FLATS":
-            ev.append(("NINA_SLOT_DONE", 0))      # imaging.txt -> IN_FLATS
-            ev.append(("NINA_FLATS_DONE", 0))
+            # The real order, corrected 2026-09-05: end.py parks and closes
+            # the roof and THEN shoots flats against a panel, so the close
+            # precedes the flats rather than following them.
+            ev.append(("NINA_SLOT_DONE", 0))      # imaging.txt -> NONE
             ev.append(("MOUNT_PARK_CONFIRMED", 0))
             ev.append(("ROOF_CLOSE_CONFIRMED", 0))
+            ev.append(("NINA_FLATS_DONE", 0))     # imaging.txt -> IN_FLATS
             ev.append(("SHUTDOWN_DONE", 0))
     ev.append(("DAY_TICK", 0))
     return ev

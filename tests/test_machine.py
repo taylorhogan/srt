@@ -232,10 +232,10 @@ def test_a_full_two_slot_night_walks_the_table():
         ("SLOT_STARTED", go2, "SLOT_IMAGING"),        # slot 1 running
         ("NINA_SLOT_DONE", go1, "SLOT_SETUP"),        # slot 1 done, one left
         ("SLOT_STARTED", go1, "SLOT_IMAGING"),        # slot 2 running
-        ("NINA_SLOT_DONE", go0, "FLATS"),             # plan exhausted
-        ("NINA_FLATS_DONE", go0, "PARKING"),
+        ("NINA_SLOT_DONE", go0, "PARKING"),           # plan exhausted
         ("MOUNT_PARK_CONFIRMED", go0, "CLOSING_ROOF"),
-        ("ROOF_CLOSE_CONFIRMED", go0, "SHUTDOWN"),
+        ("ROOF_CLOSE_CONFIRMED", go0, "FLATS"),       # flats run behind a shut roof
+        ("NINA_FLATS_DONE", go0, "SHUTDOWN"),
         ("SHUTDOWN_DONE", go0, "NIGHT_DONE"),
         ("DAY_TICK", go0, "IDLE_DAY"),
     ]

@@ -64,21 +64,26 @@ def test_nina_dies_mid_slot_and_the_night_closes_safely():
                                      parked_pwi4=Tri.CONFIRMED)
     _walk([
         ("MOUNT_PARK_CONFIRMED", parked, "CLOSING_ROOF"),
-        ("ROOF_CLOSE_CONFIRMED", parked, "SHUTDOWN"),
+        ("ROOF_CLOSE_CONFIRMED", parked, "FLATS"),
+        ("NINA_FLATS_DONE", parked, "SHUTDOWN"),
         ("SHUTDOWN_DONE", parked, "NIGHT_DONE"),
     ], start="PARKING")
 
 
-def test_weather_abort_mid_imaging_takes_flats_then_closes():
+def test_weather_abort_mid_imaging_parks_closes_then_takes_flats():
+    """Weather ends the imaging, not the flats: the roof shuts first and the
+    flats are shot against a panel behind it, which is the order end.py runs
+    and the order a real night was measured in on 2026-09-05."""
     s = _to_mid_slot()
     s = _walk([
-        ("WEATHER_BAD", MID_SLOT, "FLATS"),
-        ("NINA_FLATS_DONE", MID_SLOT, "PARKING"),
+        ("WEATHER_BAD", MID_SLOT, "PARKING"),
     ], start=s)
     parked = MID_SLOT.replace(parked_vision=Tri.CONFIRMED,
                                      parked_kasa=Tri.CONFIRMED,
                                      parked_pwi4=Tri.CONFIRMED)
-    _walk([("MOUNT_PARK_CONFIRMED", parked, "CLOSING_ROOF")], start=s)
+    _walk([("MOUNT_PARK_CONFIRMED", parked, "CLOSING_ROOF"),
+           ("ROOF_CLOSE_CONFIRMED", parked, "FLATS"),
+           ("NINA_FLATS_DONE", parked, "SHUTDOWN")], start=s)
 
 
 def test_estop_mid_slot_holds_until_resolved():
@@ -119,10 +124,10 @@ def test_two_slot_night_with_window_end_reslew():
         ("SLOT_STARTED", go2, "SLOT_IMAGING"),
         ("SLOT_WINDOW_END", go1, "SLOT_SETUP"),      # target set; one slot left
         ("SLOT_STARTED", go1, "SLOT_IMAGING"),
-        ("NINA_SLOT_DONE", go0, "FLATS"),
-        ("NINA_FLATS_DONE", go0, "PARKING"),
+        ("NINA_SLOT_DONE", go0, "PARKING"),
         ("MOUNT_PARK_CONFIRMED", go0, "CLOSING_ROOF"),
-        ("ROOF_CLOSE_CONFIRMED", go0, "SHUTDOWN"),
+        ("ROOF_CLOSE_CONFIRMED", go0, "FLATS"),
+        ("NINA_FLATS_DONE", go0, "SHUTDOWN"),
         ("SHUTDOWN_DONE", go0, "NIGHT_DONE"),
         ("DAY_TICK", go0, "IDLE_DAY"),
     ])
