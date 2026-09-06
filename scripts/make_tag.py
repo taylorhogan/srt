@@ -87,11 +87,15 @@ def write_pdf(png, out, mm, tag_id, dict_name):
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
-    import matplotlib.image as mpimg
 
     PAGE_W, PAGE_H = 215.9, 279.4          # US Letter, mm
     fig = plt.figure(figsize=(PAGE_W / 25.4, PAGE_H / 25.4))
-    img = mpimg.imread(png)
+    # cv2, NOT matplotlib.image.imread: the latter normalises an 8-bit PNG to
+    # floats in 0..1, and combined with the explicit vmin/vmax below every
+    # pixel then mapped to the bottom of the scale and the tag printed as a
+    # solid black square. Reading as uint8 keeps the data in the same units
+    # the limits are written in.
+    img = cv2.imread(png, cv2.IMREAD_GRAYSCALE)
 
     # Axes placed in FIGURE FRACTIONS that work out to exact millimetres.
     x0 = (PAGE_W - mm) / 2.0
@@ -121,10 +125,26 @@ def write_pdf(png, out, mm, tag_id, dict_name):
              "%.2f mm square including its white quiet zone -- do not trim the white"
              % mm, ha="center", va="bottom", fontsize=8)
     axr.text(PAGE_W / 2, ry - 16,
-             "Print at 100%% / Actual Size. Matte, not glossy. Dense black.",
+             "Print at 100% / Actual Size. Matte, not glossy. Dense black.",
              ha="center", va="top", fontsize=8)
     fig.savefig(out)
+    # Render the SAME figure to a raster and put it through the detector. A
+    # PDF whose geometry is right but whose image is unreadable still fails,
+    # and that is precisely the failure this function shipped with once.
+    png_proof = os.path.splitext(out)[0] + "_proof.png"
+    fig.savefig(png_proof, dpi=200)
     plt.close(fig)
+    proof = cv2.imread(png_proof, cv2.IMREAD_GRAYSCALE)
+    det = cv2.aruco.ArucoDetector(
+        cv2.aruco.getPredefinedDictionary(DICTS[dict_name]))
+    _, ids, _ = det.detectMarkers(proof)
+    got = None if ids is None else ids.ravel().tolist()
+    ok = got == [tag_id]
+    print("  page proof: detector reads %s  %s"
+          % (got, "OK" if ok else "*** THE PAGE IS NOT READABLE, DO NOT PRINT ***"))
+    if ok:
+        os.remove(png_proof)
+    return ok
 
 
 def main():
