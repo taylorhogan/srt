@@ -106,7 +106,35 @@ def write_pdf(png, out, mm, tag_id, dict_name):
     for sp in ax.spines.values():
         sp.set_visible(False)
 
-    ry = y0 - 22.0
+    # WHERE TO CUT. The quiet zone is white on white paper, so the edge of the
+    # sticker is invisible and the 76.20 mm cannot be found by eye. Two marks,
+    # for two different jobs:
+    #
+    #   a hairline ON the boundary, so the size is visible and measurable;
+    #   corner crop marks OUTSIDE it, which survive the cut and are what you
+    #   actually align scissors to once the hairline is being removed.
+    #
+    # The hairline sits a full module (7.62 mm at this size) clear of the tag's
+    # black border, so it cannot merge with it or be read as part of the
+    # pattern. Cut ON the hairline: the pocket in the plate is sized for
+    # 76.20 mm, so trimming wide will not fit and trimming narrow eats the
+    # quiet zone the detector needs.
+    axc = fig.add_axes([0, 0, 1, 1], facecolor="none")
+    axc.set_xlim(0, PAGE_W); axc.set_ylim(0, PAGE_H); axc.axis("off")
+    axc.add_patch(plt.Rectangle((x0, y0), mm, mm, fill=False,
+                                edgecolor="0.55", lw=0.4))
+    GAP, LEN = 2.0, 9.0
+    for cx_, cy_, sx, sy in ((x0, y0, -1, -1), (x0 + mm, y0, 1, -1),
+                             (x0, y0 + mm, -1, 1), (x0 + mm, y0 + mm, 1, 1)):
+        axc.plot([cx_ + sx * GAP, cx_ + sx * (GAP + LEN)], [cy_, cy_],
+                 color="black", lw=0.6)
+        axc.plot([cx_, cx_], [cy_ + sy * GAP, cy_ + sy * (GAP + LEN)],
+                 color="black", lw=0.6)
+    axc.text(x0 + mm / 2, y0 - 13.0,
+             "cut on the thin line / crop marks -- %.2f mm square" % mm,
+             ha="center", va="top", fontsize=7.5, color="0.35")
+
+    ry = y0 - 30.0
     rl = 100.0
     rx = (PAGE_W - rl) / 2.0
     axr = fig.add_axes([0, 0, 1, 1], facecolor="none")
@@ -118,10 +146,10 @@ def write_pdf(png, out, mm, tag_id, dict_name):
         axr.plot([rx + t, rx + t], [ry, ry + h], color="black", lw=1.0)
     axr.text(PAGE_W / 2, ry - 6, "this line is exactly 100 mm -- measure it before you cut",
              ha="center", va="top", fontsize=8)
-    axr.text(PAGE_W / 2, y0 + mm + 12,
+    axr.text(PAGE_W / 2, y0 + mm + 21,
              "AprilTag %s  id %d" % (dict_name, tag_id),
              ha="center", va="bottom", fontsize=13)
-    axr.text(PAGE_W / 2, y0 + mm + 5,
+    axr.text(PAGE_W / 2, y0 + mm + 14,
              "%.2f mm square including its white quiet zone -- do not trim the white"
              % mm, ha="center", va="bottom", fontsize=8)
     axr.text(PAGE_W / 2, ry - 16,
