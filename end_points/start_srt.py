@@ -24,6 +24,30 @@ def _imaging_state_at_crash() -> str:
         return "unknown"
 
 
+# The shadow conductor (architecture plan, Phase 1). Read-only towards the
+# observatory -- it watches the legacy state files and builds the journal;
+# it commands nothing. Behind a config flag so it can be turned off without
+# a code change if it ever misbehaves during the shadow period.
+#
+# MODULE LEVEL ON PURPOSE. Windows multiprocessing spawns a fresh interpreter
+# that re-imports this file as __mp_main__ with the __main__ block skipped, then
+# unpickles the target by name. From 2026-08-28 to 2026-09-06 these two lived
+# inside the __main__ block: the parent pickled them happily, the child could
+# not find them and died with exit 1 before a line of conductor code ran. The
+# only symptom was 8096 not listening, and nothing was looking.
+def _conductor_enabled() -> bool:
+    try:
+        from configs import config
+        return bool(config.data().get("conductor", {}).get("shadow_enabled", True))
+    except Exception:
+        return False
+
+
+def _conductor_target():
+    from iris.conductor import main as conductor_main
+    conductor_main.main()
+
+
 if __name__ == "__main__":
     os.environ.setdefault("PREFECT_API_URL", "")
 
@@ -37,21 +61,6 @@ if __name__ == "__main__":
     CRASH_WINDOW_SECS = 600     # 10 minutes
     MAX_CRASHES = 5             # within the window before giving up
     crash_times: list[float] = []
-
-    # The shadow conductor (architecture plan, Phase 1). Read-only towards the
-    # observatory -- it watches the legacy state files and builds the journal;
-    # it commands nothing. Behind a config flag so it can be turned off without
-    # a code change if it ever misbehaves during the shadow period.
-    def _conductor_enabled() -> bool:
-        try:
-            from configs import config
-            return bool(config.data().get("conductor", {}).get("shadow_enabled", True))
-        except Exception:
-            return False
-
-    def _conductor_target():
-        from iris.conductor import main as conductor_main
-        conductor_main.main()
 
     while True:
         p1 = Process(target=social_server.main)

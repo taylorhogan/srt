@@ -36,24 +36,38 @@ if __package__ is None or __package__ == "":
         sys.path.insert(0, project_root)
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 
-# port -> (label, directories whose newest file that service is running)
-SERVICES = {
-    8095: ("web chat / social server", ["cmd_processing", "sentry", "hardware_control"]),
-    8096: ("shadow conductor",         ["iris"]),
-    8442: ("scheduler (prefect)",      ["end_points", "iris_astronomy"]),
+# label -> directories whose newest .py that service is running
+SOURCES = {
+    "web chat / social server": ["cmd_processing", "sentry", "hardware_control"],
+    "shadow conductor":         ["iris"],
+    "scheduler":                ["end_points", "iris_astronomy"],
 }
+SOCIAL_PORT = 8095
+CONDUCTOR_PORT = 8096
+# The scheduler has no fixed port: PREFECT_API_URL is blank, so Prefect starts
+# an ephemeral server on a random loopback port each run (8169 on 2026-09-06).
+# It is found by family instead -- the sibling of the web chat under start_srt.
 
 PS = r"""
 $ErrorActionPreference = 'SilentlyContinue'
-$c = Get-NetTCPConnection -State Listen | Where-Object { $_.LocalPort -eq %d }
-if (-not $c) { Write-Output "DOWN"; exit }
-$pid_ = $c.OwningProcess | Select-Object -First 1
-$p = Get-CimInstance Win32_Process -Filter "ProcessId=$pid_"
-if (-not $p) { Write-Output "DOWN"; exit }
-$par = Get-CimInstance Win32_Process -Filter "ProcessId=$($p.ParentProcessId)"
-$parent = if ($par) { "alive" } else { "ORPHAN" }
-Write-Output "$pid_|$($p.CreationDate.ToString('yyyy-MM-dd HH:mm:ss'))|$parent"
+Get-CimInstance Win32_Process | Where-Object { $_.Name -like 'python*' } |
+  ForEach-Object { "P|$($_.ProcessId)|$($_.ParentProcessId)|$($_.CreationDate.ToString('yyyy-MM-dd HH:mm:ss'))" }
+Get-NetTCPConnection -State Listen | ForEach-Object { "L|$($_.LocalPort)|$($_.OwningProcess)" }
 """
+
+
+def snapshot():
+    """({pid: (ppid, started)}, {port: pid}) for every python process."""
+    out = subprocess.run(["powershell", "-NoProfile", "-Command", PS],
+                         capture_output=True, text=True, timeout=60).stdout
+    procs, ports = {}, {}
+    for line in out.splitlines():
+        f = line.strip().split("|")
+        if f[0] == "P":
+            procs[int(f[1])] = (int(f[2]), datetime.strptime(f[3], "%Y-%m-%d %H:%M:%S"))
+        elif f[0] == "L":
+            ports.setdefault(int(f[1]), int(f[2]))
+    return procs, ports
 
 
 def newest_source(dirs):
@@ -76,26 +90,39 @@ def newest_source(dirs):
     return best
 
 
-def probe(port):
-    out = subprocess.run(["powershell", "-NoProfile", "-Command", PS % port],
-                         capture_output=True, text=True, timeout=60).stdout.strip()
-    if not out or out.startswith("DOWN"):
-        return None
-    pid, started, parent = out.splitlines()[-1].split("|")
-    return int(pid), datetime.strptime(started, "%Y-%m-%d %H:%M:%S"), parent
-
-
 def main():
+    procs, ports = snapshot()
+
+    def info(pid):
+        if pid is None or pid not in procs:
+            return None
+        ppid, started = procs[pid]
+        return pid, started, ("alive" if ppid in procs else "ORPHAN"), ppid
+
+    social = info(ports.get(SOCIAL_PORT))
+    conductor = info(ports.get(CONDUCTOR_PORT))
+    scheduler = None
+    if social and social[2] == "alive":
+        # start_srt's other children; the conductor (if any) is excluded by pid
+        for pid, (ppid, _) in procs.items():
+            if ppid == social[3] and pid != social[0] and pid != (conductor or (None,))[0]:
+                scheduler = info(pid)
+                break
+    found = {"web chat / social server": social,
+             "shadow conductor": conductor,
+             "scheduler": scheduler}
+
     print("%-28s %-8s %-20s %-9s %s" % ("service", "pid", "started", "parent", "code"))
     bad = 0
-    for port, (label, dirs) in SERVICES.items():
-        info = probe(port)
+    for label, dirs in SOURCES.items():
         mtime, newest = newest_source(dirs)
-        if info is None:
-            print("%-28s %-8s %-20s %-9s %s" % (label, "-", "NOT LISTENING", "-", "-"))
+        hit = found[label]
+        if hit is None:
+            why = "NOT LISTENING" if label != "scheduler" else "NOT FOUND"
+            print("%-28s %-8s %-20s %-9s %s" % (label, "-", why, "-", "-"))
             bad += 1
             continue
-        pid, started, parent = info
+        pid, started, parent, _ = hit
         stale = started.timestamp() < mtime
         code = "STALE" if stale else "current"
         print("%-28s %-8d %-20s %-9s %s"
@@ -111,7 +138,9 @@ def main():
     print()
     if bad:
         print("%d problem(s). An ORPHAN must be stopped before a restart can "
-              "replace it; a STALE service needs a restart to load what is on disk." % bad)
+              "replace it; a STALE service needs a restart to load what is on disk; "
+              "a service that is NOT LISTENING died at start -- check start_srt."
+              % bad)
     else:
         print("all three up, supervised, and running the code that is on disk.")
     return 1 if bad else 0
