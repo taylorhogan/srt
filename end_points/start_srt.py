@@ -49,7 +49,12 @@ def _conductor_target():
 
 
 if __name__ == "__main__":
-    os.environ.setdefault("PREFECT_API_URL", "")
+    # No Prefect server: run against the ephemeral one. UNSET, not "" -- Prefect
+    # reads an empty string as "a running server is configured" and builds an
+    # events client for it, which rejects the empty URL. Every heartbeat (180s)
+    # and state change then logged "Service 'EventsWorker' failed" from April
+    # to 2026-09-06. Unset, events go to the ephemeral server like everything else.
+    os.environ.pop("PREFECT_API_URL", None)
 
     import threading
     import time
