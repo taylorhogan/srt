@@ -71,6 +71,62 @@ def build(tag_id, mm, dpi, dict_name=DEFAULT_DICT, quiet_modules=1):
     return img, actual_mm, ppm / dpi * 25.4
 
 
+def write_pdf(png, out, mm, tag_id, dict_name):
+    """A page with the tag at an exact physical size, and a ruler to prove it.
+
+    A PNG carries no physical size unless something writes one, so every
+    viewer and print dialog is free to guess -- and they guess differently,
+    which is why "print at 100%" so often does not. A PDF has no such freedom:
+    the page is a physical object and the image is placed on it in millimetres.
+
+    The ruler is not decoration. It is the only way to find a scaling error
+    AFTER printing and BEFORE the tag is glued to a plate and lifted onto a
+    roof. If the 100 mm line does not measure 100 mm, nothing else on the page
+    is the size it claims either.
+    """
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    import matplotlib.image as mpimg
+
+    PAGE_W, PAGE_H = 215.9, 279.4          # US Letter, mm
+    fig = plt.figure(figsize=(PAGE_W / 25.4, PAGE_H / 25.4))
+    img = mpimg.imread(png)
+
+    # Axes placed in FIGURE FRACTIONS that work out to exact millimetres.
+    x0 = (PAGE_W - mm) / 2.0
+    y0 = PAGE_H - 45.0 - mm
+    ax = fig.add_axes([x0 / PAGE_W, y0 / PAGE_H, mm / PAGE_W, mm / PAGE_H])
+    ax.imshow(img, cmap="gray", vmin=0, vmax=255, interpolation="nearest")
+    ax.set_xticks([]); ax.set_yticks([])
+    for sp in ax.spines.values():
+        sp.set_visible(False)
+
+    ry = y0 - 22.0
+    rl = 100.0
+    rx = (PAGE_W - rl) / 2.0
+    axr = fig.add_axes([0, 0, 1, 1], facecolor="none")
+    axr.set_xlim(0, PAGE_W); axr.set_ylim(0, PAGE_H)
+    axr.axis("off")
+    axr.plot([rx, rx + rl], [ry, ry], color="black", lw=1.0)
+    for t in range(0, 101, 10):
+        h = 3.5 if t % 50 else 6.0
+        axr.plot([rx + t, rx + t], [ry, ry + h], color="black", lw=1.0)
+    axr.text(PAGE_W / 2, ry - 6, "this line is exactly 100 mm -- measure it before you cut",
+             ha="center", va="top", fontsize=8)
+    axr.text(PAGE_W / 2, y0 + mm + 12,
+             "AprilTag %s  id %d" % (dict_name, tag_id),
+             ha="center", va="bottom", fontsize=13)
+    axr.text(PAGE_W / 2, y0 + mm + 5,
+             "%.2f mm square including its white quiet zone -- do not trim the white"
+             % mm, ha="center", va="bottom", fontsize=8)
+    axr.text(PAGE_W / 2, ry - 16,
+             "Print at 100%% / Actual Size. Matte, not glossy. Dense black.",
+             ha="center", va="top", fontsize=8)
+    fig.savefig(out)
+    plt.close(fig)
+
+
 def main():
     ap = argparse.ArgumentParser(
         description=__doc__,
@@ -81,6 +137,9 @@ def main():
     ap.add_argument("--dpi", type=int, default=600)
     ap.add_argument("--dict", default=DEFAULT_DICT, choices=sorted(DICTS))
     ap.add_argument("-o", "--out", default=None)
+    ap.add_argument("--pdf", default=None,
+                    help="also write a Letter page with the tag at exact size "
+                         "and a 100 mm ruler to verify the print")
     args = ap.parse_args()
 
     img, actual_mm, module_mm = build(args.id, args.mm, args.dpi, args.dict)
@@ -94,6 +153,22 @@ def main():
 
     # Read it back through the observatory's own detector. A tag that does not
     # survive this round trip must never reach the roof.
+    # Stamp the physical size into the PNG too (pHYs). Not a substitute for
+    # the PDF -- plenty of software ignores it -- but it stops the viewers
+    # that DO read it from inventing 72 or 96 dpi.
+    try:
+        from PIL import Image
+        im = Image.open(out)
+        im.save(out, dpi=(args.dpi, args.dpi))
+        print("  stamped %d dpi into the PNG" % args.dpi)
+    except Exception as exc:              # noqa: BLE001
+        print("  (could not stamp dpi: %s)" % type(exc).__name__)
+
+    if args.pdf:
+        write_pdf(out, args.pdf, actual_mm, args.id, args.dict)
+        print("  wrote %s  (Letter page, tag at %.2f mm, with a 100 mm ruler)"
+              % (args.pdf, actual_mm))
+
     check = cv2.imread(out, cv2.IMREAD_GRAYSCALE)
     det = cv2.aruco.ArucoDetector(
         cv2.aruco.getPredefinedDictionary(DICTS[args.dict]))
