@@ -11,6 +11,8 @@ the one that has been shown to work against the actual camera.
 
 Usage:  python sentry/sky_camera.py [out.jpg]
 """
+import contextlib
+import logging
 import os
 import sys
 from datetime import datetime, timezone
@@ -23,6 +25,8 @@ if __package__ is None or __package__ == "":
 
 from configs import config
 from scripts.probe_kasa_camera import probe_kc_stream
+
+_logger = logging.getLogger(__name__)
 
 
 def credentials(cfg=None):
@@ -143,9 +147,23 @@ def capture_burst(seconds=None, out_path=None, cfg=None):
         if delim == b"--":
             resp.close()
             return None, 0
-        buf = bytearray()
-        first = None
-        deadline = None
+    except Exception as exc:
+        _logger.warning("burst: could not open stream: %s: %s",
+                        type(exc).__name__, str(exc)[:120])
+        return None, 0
+
+    # Once the stream is open, whatever arrives is KEPT. On 2026-09-06 the
+    # Tiangong recorder streamed 127 s of a 170 s pass -- rise and peak -- and
+    # the connection broke 40 s before set. The old code discarded the whole
+    # buffer on that exception and reported "0 frames"; the night before, the
+    # same code kept 2588 frames because the stream happened to hold. A burst
+    # that dies early is a shorter burst, not a missing one. The exception text
+    # also used to go to print(), i.e. nowhere from a child process, which is
+    # why the cause of the 09-06 drop is unknown.
+    buf = bytearray()
+    first = None
+    deadline = None
+    try:
         for chunk in resp.iter_content(chunk_size=64 * 1024):
             if chunk:
                 if first is None:
@@ -156,10 +174,13 @@ def capture_burst(seconds=None, out_path=None, cfg=None):
                 break
             if len(buf) > 32 * 1024 * 1024:
                 break
-        resp.close()
     except Exception as exc:
-        print("burst: capture raised " + type(exc).__name__ + ": " + str(exc)[:120])
-        return None, 0
+        got = (time.monotonic() - first) if first else 0.0
+        _logger.warning("burst: stream dropped after %.0f s of %.0f s (%d bytes kept): %s: %s",
+                        got, seconds, len(buf), type(exc).__name__, str(exc)[:120])
+    finally:
+        with contextlib.suppress(Exception):
+            resp.close()
 
     video = bytearray()
     audio = bytearray()
