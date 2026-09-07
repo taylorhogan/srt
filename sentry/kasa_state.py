@@ -311,6 +311,27 @@ def _annotate(img, found, parked_ref, shut_ref, scope, roof):
         cx, cy = int(c[:, 0, 0].mean()), int(c[:, 0, 1].mean())
         label = "scope tag" if tid == SCOPE_ID else "roof tag" if tid == ROOF_ID else "tag %d" % tid
         cv2.putText(out, label, (cx - 60, cy - 70), cv2.FONT_HERSHEY_SIMPLEX, 1.4, col, 3)
+    # The roof has no OPEN marker: open is the roof tag being ABSENT from its
+    # shut position while the scope tag proves the camera can see. Draw where
+    # the tag would be, so an open picture shows the evidence, not just the
+    # witness. (The old webcam had a gold star that appeared when open; this
+    # camera reads the absence of a thing that is present when shut.)
+    if shut_ref and ROOF_ID not in found:
+        try:
+            q = np.asarray(shut_ref["markers"][str(ROOF_ID)], dtype=np.int32).reshape(-1, 1, 2)
+            col = colour.get(roof, (200, 200, 200))
+            for k in range(4):
+                a, b_ = tuple(q[k, 0]), tuple(q[(k + 1) % 4, 0])
+                # dashed edge: 8 segments per side
+                for t in range(0, 8, 2):
+                    p0 = (int(a[0] + (b_[0] - a[0]) * t / 8), int(a[1] + (b_[1] - a[1]) * t / 8))
+                    p1 = (int(a[0] + (b_[0] - a[0]) * (t + 1) / 8), int(a[1] + (b_[1] - a[1]) * (t + 1) / 8))
+                    cv2.line(out, p0, p1, col, 3)
+            cx, cy = int(q[:, 0, 0].mean()), int(q[:, 0, 1].mean())
+            what = "roof tag absent = open" if roof == "open" else "roof tag not seen"
+            cv2.putText(out, what, (cx - 150, cy - 70), cv2.FONT_HERSHEY_SIMPLEX, 1.2, col, 3)
+        except Exception:  # noqa: BLE001 -- annotation must never cost a picture
+            pass
     banner = "scope %s | roof %s | %s" % (scope, roof,
                                          datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
     cv2.rectangle(out, (0, out.shape[0] - 70), (out.shape[1], out.shape[0]), (0, 0, 0), -1)
