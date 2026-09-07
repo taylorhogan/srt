@@ -220,6 +220,14 @@ class ShadowConductor:
 
     # ------------------------------------------------------------ readers
 
+    def _read_slot_count(self):
+        import json
+        try:
+            d = json.loads((self.root / "scheduler_state.json").read_text())
+            return len(d.get("slots") or [])
+        except Exception:
+            return 0
+
     def _read_sched(self):
         import json
         try:
@@ -507,8 +515,11 @@ class ShadowConductor:
                     self.state, self.slots = INITIAL_STATE, 0
                 self.offer("NOON_TICK", "shadow", {"sched": sched})
             elif sched == "WAITING_FOR_PRE_SUNSET":
-                self.slots = 1
-                self.offer("PLAN_GOOD", "shadow", {"sched": sched, "dso": will})
+                # One slot unless the plan says otherwise (scheduler_state
+                # "slots", written by the noon check since 2026-09-07).
+                self.slots = max(1, self._read_slot_count())
+                self.offer("PLAN_GOOD", "shadow", {"sched": sched, "dso": will,
+                                                   "slots": self.slots})
             elif sched == "WAITING_FOR_NOON" and prev == "NOON_CHECK":
                 self.offer("PLAN_BAD", "shadow", {"sched": sched})
             elif sched == "PRE_SUNSET_CHECK":
@@ -543,6 +554,15 @@ class ShadowConductor:
                 self.offer("NINA_PRELUDE_DONE", "shadow", {"imaging": img})
             elif img == "IN_MAIN":
                 self.offer("SLOT_STARTED", "shadow", {"imaging": img})
+            elif img == "DONE_MAIN":
+                # The hand-over between two slots: the two-target sequence
+                # writes DONE_MAIN as the first target's block ends and IN_MAIN
+                # as the second begins imaging (nina_sequence_gen.
+                # generate_slots_sequence). One slot consumed; with one left
+                # the table walks SLOT_IMAGING -> SLOT_SETUP, and the IN_MAIN
+                # that follows is SLOT_STARTED again.
+                self.slots = max(0, self.slots - 1)
+                self.offer("NINA_SLOT_DONE", "shadow", {"imaging": img})
             elif img == "IN_FLATS":
                 # The roof is ALREADY SHUT by now -- end.py parks and closes
                 # before launching the flats, which run against a panel. So by

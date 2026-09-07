@@ -284,6 +284,12 @@ class PublicConfig():
         "nina": {
             "image_dir": "C:/Users/iriso/Documents/N.I.N.A/Targets",
             "sequence_output": "C:/Users/iriso/Documents/N.I.N.A/Sequences/full_for_tonight.json",
+            # Two-slot nights (control/slot_plan, since 2026-09-07): a second
+            # target may take the dark hours the first leaves. max_slots=1
+            # restores one-target nights; min_slot_hours is the least a second
+            # slot must offer to be worth the slew, centering and refocus.
+            "max_slots": 2,
+            "min_slot_hours": 2.0,
             # 4-block expansion of cdk_full_sequence.json (expand_sequence_blocks.py):
             # _apply_filter_plan needs >=4 SmartExposure blocks or it silently
             # ignores every filter plan. Regenerate after editing the source

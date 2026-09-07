@@ -181,7 +181,18 @@ def message_handling(client, userdata, msg):
 # sequence-generation time can quote it. Prefect tasks do not share locals.
 _LAST_BEST_START: dict = {}
 
-def set_state(state: State, dso=None, will_image_tonight=None):
+def _slots_record(slots) -> list:
+    """The slot plan as plain JSON for scheduler_state.json."""
+    out = []
+    for s in slots or []:
+        out.append({"dso": s.name,
+                    "start": s.start.isoformat(timespec="minutes"),
+                    "end": s.end.isoformat(timespec="minutes"),
+                    "hours": int(s.good_hours)})
+    return out
+
+
+def set_state(state: State, dso=None, will_image_tonight=None, slots=None):
     """Update the in-memory ``observatory_state`` dict and log the transition.
 
     The dict is serialised to JSON and broadcast over MQTT on the next
@@ -200,6 +211,10 @@ def set_state(state: State, dso=None, will_image_tonight=None):
         observatory_state["dso"] = dso
     if will_image_tonight is not None:
         observatory_state["will image tonight"] = will_image_tonight
+    if slots is not None:
+        # The night's slot plan (control/slot_plan). The shadow conductor reads
+        # its length as the number of slots; the chat reads it for the plan.
+        observatory_state["slots"] = _slots_record(slots)
     LOGGER.info("State: %s", state.name)
     print(f"State: {state.name}")
     # Persist so social_server can read it without MQTT.
@@ -355,6 +370,49 @@ def _push_imaging_plan(dso_name: str, good_hours: float, best_start, output_path
     social_server.post_social_message("\n".join(lines))
 
 
+def _second_slot_message(slots) -> str:
+    """'\nThen <dso> HH:MM-HH:MM (Nh)' when the plan has a second slot."""
+    if len(slots or []) < 2:
+        return ""
+    try:
+        from zoneinfo import ZoneInfo
+        tz = ZoneInfo(CFG["location"]["timezone"])
+        s = slots[1]
+        return "\nThen %s %s-%s (%dh) — second slot" % (
+            s.name, s.start.astimezone(tz).strftime("%H:%M"),
+            s.end.astimezone(tz).strftime("%H:%M"), s.good_hours)
+    except Exception:
+        return "\nThen %s — second slot" % slots[1].name
+
+
+def _generate_nina_slots_sequence(slots):
+    """Write a two-target sequence for *slots* (control.slot_plan.Slot list).
+
+    Same resolution as the one-target path per slot; the template's target
+    container is cloned per slot (nina_sequence_gen.generate_slots_sequence).
+    Falls back to the one-target path if a slot cannot be resolved, so a bad
+    second pick costs the second slot and never the night.
+    """
+    specs = []
+    for s in slots:
+        dso = instructions.resolve_target_by_name(s.name)
+        if dso is None:
+            LOGGER.error("Could not resolve coordinates for slot %s; single-slot night", s.name)
+            first = slots[0]
+            return _generate_nina_sequence(first.name, first.good_hours)
+        specs.append({"name": s.name, "ra_hours": dso.coord.ra.hour,
+                      "dec_degrees": dso.coord.dec.deg, "seconds": s.seconds,
+                      "start": s.start, "end": s.end})
+    template_path = Path(os.path.join(_PROJECT_ROOT, CFG["nina"]["sequence_input"]))
+    output_path = Path(CFG["nina"]["sequence_output"])
+    state_script = os.path.join(_PROJECT_ROOT, "scripts", "set_imaging_state.bat")
+    plans = nina_sequence_gen.generate_slots_sequence(template_path, specs, output_path,
+                                                      state_script=state_script)
+    LOGGER.info("Generated two-slot Nina sequence: %s",
+                "; ".join("%s %s" % (s.name, p) for s, p in zip(slots, plans)))
+    return plans, output_path
+
+
 def _generate_nina_sequence(dso_name: str, good_hours: float = 0.0):
     """Resolve DSO coordinates and write a N.I.N.A sequence file to disk.
 
@@ -466,12 +524,14 @@ def noon_check_task() -> tuple[str, int, datetime, str]:
     social_server.post_social_message(f"Imaging mode: {mode}")
 
     if best_good_hours >= _MIN_GOOD_HOURS:
+        slots = list(astro_dso_visibility.last_slots)
         social_server.tonight_cmd(["me", "tonight", best_name], 2, "", "")
         social_server.post_social_message(
             f"Planning to image tonight\n{_imaging_plan_message(best_name, best_good_hours, best_start)}"
+            + _second_slot_message(slots)
         )
         obs_calendar.set_today_stat('image', best_name)
-        set_state(State.NOON_CHECK, best_name, True)
+        set_state(State.NOON_CHECK, best_name, True, slots=slots)
     else:
         if grid_html:
             social_server.post_html_message(grid_html)
@@ -517,11 +577,13 @@ def pre_sunset_check_task() -> tuple[str, int]:
     social_server.post_social_message(f"Imaging mode: {mode}")
 
     if best_good_hours >= _MIN_GOOD_HOURS:
+        slots = list(astro_dso_visibility.last_slots)
         social_server.post_social_message(
             f"Confirmed — generating sequence\n{_imaging_plan_message(best_name, best_good_hours, best_start)}"
+            + _second_slot_message(slots)
         )
         social_server.post_dso_preview(best_name)
-        set_state(State.PRE_SUNSET_CHECK, best_name, True)
+        set_state(State.PRE_SUNSET_CHECK, best_name, True, slots=slots)
     else:
         social_server.post_social_message(
             f"Conditions not good enough at sunset ({best_good_hours}h), skipping tonight"
@@ -533,8 +595,18 @@ def pre_sunset_check_task() -> tuple[str, int]:
 
 @task(name="generate-nina-sequence")
 def generate_sequence_task(dso_name: str, good_hours: float = 0.0, notify: bool = True):
-    """Write the N.I.N.A sequence, and say what tonight will actually be."""
-    got = _generate_nina_sequence(dso_name, good_hours)
+    """Write the N.I.N.A sequence, and say what tonight will actually be.
+
+    Two slots in the plan (astro_dso_visibility.last_slots) write a
+    two-target sequence; otherwise the single-target path is unchanged.
+    """
+    slots = list(astro_dso_visibility.last_slots)
+    if len(slots) >= 2:
+        got = _generate_nina_slots_sequence(slots)
+        dso_name = " + ".join(s.name for s in slots)
+        good_hours = float(sum(s.good_hours for s in slots))
+    else:
+        got = _generate_nina_sequence(dso_name, good_hours)
     if got and notify:
         _plan, output_path = got
         _push_imaging_plan(dso_name, good_hours, _LAST_BEST_START.get("t"), output_path)

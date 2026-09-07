@@ -1224,6 +1224,11 @@ def rank_targets_tonight(instructions_path: Path | str, verbose: bool = False):
     return rows, dark_hours, weather_by_hour
 
 
+# The slot plan computed by the last best_object_tonight() call: a list of
+# control.slot_plan.Slot in running order (empty = nothing usable).
+last_slots: list = []
+
+
 def best_object_tonight(instructions_path: Path | str) -> tuple[str, Optional[datetime.datetime], int, str]:
     """
     Read a list of DSO objects from a JSON file, compute how many hours of
@@ -1235,8 +1240,23 @@ def best_object_tonight(instructions_path: Path | str) -> tuple[str, Optional[da
     name should use rank_targets_tonight directly — it has no side effects.
     """
     rows, dark_hours, weather_by_hour = rank_targets_tonight(instructions_path, verbose=True)
+    global last_slots
+    last_slots = []
     if not rows or not dark_hours:
         return "", None, 0, ""
+    # The night's slot plan, from the same ranking (control/slot_plan): slot 1
+    # is the pick below; a second target may take the dark hours slot 1
+    # leaves. Kept beside the pick rather than in the return so the chat
+    # callers of this function are untouched.
+    try:
+        from control import slot_plan as _sp
+        _n = config.data().get("nina", {})
+        last_slots = _sp.plan_slots(rows, dark_hours, weather_by_hour,
+                                    min_slot_hours=float(_n.get("min_slot_hours", 2.0)),
+                                    max_slots=int(_n.get("max_slots", 2)))
+    except Exception:
+        LOGGER.exception("slot plan failed; single slot")
+        last_slots = []
 
     # Build table data shared by both the console print and the PNG
     col = 3

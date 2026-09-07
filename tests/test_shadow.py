@@ -452,3 +452,32 @@ def test_a_good_night_passes_the_weather_guard_at_checks_passed(tmp_path):
     sh.poll()
     note = _fire_notes(sh)[0]
     assert note.data["guard_would"] is None, note.data
+
+
+def test_two_slot_night_walks_both_slots(tmp_path):
+    """The two-target sequence writes DONE_MAIN / IN_MAIN at the hand-over;
+    the plan's slot count comes from scheduler_state.json."""
+    root = _mkroot(tmp_path)
+    sh = _shadow(root)
+    sh._flats_grace_polls = 2
+    _sched(root, "NOON_CHECK"); sh.poll()
+    (root / "scheduler_state.json").write_text(json.dumps(
+        {"state": "WAITING_FOR_PRE_SUNSET", "dso": "squid", "will image tonight": True,
+         "slots": [{"dso": "squid", "hours": 5}, {"dso": "ngc7380", "hours": 2}]}))
+    sh.poll()
+    assert sh.state == "ARMED" and sh.slots == 2
+    _sched(root, "PRE_SUNSET_CHECK"); sh.poll()
+    _imaging(root, "IN_PRELUDE"); sh.poll()
+    _imaging(root, "DONE_PRELUDE"); sh.poll()
+    _imaging(root, "IN_MAIN"); sh.poll()
+    assert sh.state == "SLOT_IMAGING"
+    _imaging(root, "DONE_MAIN"); sh.poll()          # slot 1 ends
+    assert sh.state == "SLOT_SETUP" and sh.slots == 1
+    _imaging(root, "IN_MAIN"); sh.poll()            # slot 2 begins
+    assert sh.state == "SLOT_IMAGING"
+    _imaging(root, "NONE"); sh.poll(); sh.poll()    # end.py: park + close
+    assert sh.state == "FLATS"
+    got = [(e.event, e.from_state, e.to_state) for e in sh.journal.replay() if e.kind == "transition"]
+    assert got.count(("SLOT_STARTED", "SLOT_SETUP", "SLOT_IMAGING")) == 2
+    assert ("NINA_SLOT_DONE", "SLOT_IMAGING", "SLOT_SETUP") in got
+    assert ("NINA_SLOT_DONE", "SLOT_IMAGING", "PARKING") in got

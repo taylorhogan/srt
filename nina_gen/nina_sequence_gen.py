@@ -343,6 +343,217 @@ def _walk_and_replace(obj: Any, dso_name: str, coords: dict) -> None:
             _walk_and_replace(item, dso_name, coords)
 
 
+def _plan_for(container: Any, dso_name: str, seconds: Optional[float]) -> dict[str, int]:
+    """Size the SmartExposure blocks under *container* for *dso_name*.
+
+    §2c resolution order: explicit `filters` plan > need-weighted split
+    (measured per-filter convergence) > object-type default split. An explicit
+    plan applies even when the hours are unknown: its counts are absolute.
+    *container* may be the whole sequence or one target's container.
+    """
+    explicit = None
+    try:
+        from control import instructions as _instr
+        explicit = _instr.get_filter_plan(dso_name)
+    except Exception:
+        explicit = None
+    if explicit:
+        return _apply_filter_plan(container, seconds or 0.0, "explicit", explicit=explicit)
+    if seconds is not None and seconds > 0:
+        obj_type = _classify_object_type(dso_name)
+        need = _need_plan(container, dso_name, obj_type, seconds)
+        if need:
+            return _apply_filter_plan(container, seconds, obj_type, explicit=need)
+        return _apply_filter_plan(container, seconds, obj_type)
+    return {}
+
+
+# --------------------------------------------------------------------------- #
+# Multi-slot nights: one target container per slot
+# --------------------------------------------------------------------------- #
+
+def _short_type(node: dict) -> str:
+    return str(node.get("$type", "")).split(",")[0].split(".")[-1]
+
+
+def _find_target_area(sequence: Any) -> Optional[dict]:
+    if isinstance(sequence, dict):
+        if _short_type(sequence) == "TargetAreaContainer":
+            return sequence
+        for v in sequence.values():
+            got = _find_target_area(v)
+            if got is not None:
+                return got
+    elif isinstance(sequence, list):
+        for v in sequence:
+            got = _find_target_area(v)
+            if got is not None:
+                return got
+    return None
+
+
+def _items_of(container: dict) -> list:
+    items = container.get("Items")
+    return items.get("$values", []) if isinstance(items, dict) else (items or [])
+
+
+def _max_id(node: Any, best: int = 0) -> int:
+    if isinstance(node, dict):
+        v = node.get("$id")
+        if isinstance(v, str) and v.isdigit():
+            best = max(best, int(v))
+        for c in node.values():
+            best = _max_id(c, best)
+    elif isinstance(node, list):
+        for c in node:
+            best = _max_id(c, best)
+    return best
+
+
+def _clone_with_fresh_ids(node: Any, next_id: list) -> Any:
+    """Deep-copy *node*, giving every $id inside it a fresh number and
+    remapping every $ref that pointed at one of those ids. $refs to objects
+    outside the copy (shared filter definitions, the parent area) are kept:
+    N.I.N.A's JSON uses Newtonsoft reference tracking, and a duplicated $id
+    would make the loader silently alias two objects into one.
+    """
+    import copy
+    clone = copy.deepcopy(node)
+    mapping: dict[str, str] = {}
+
+    def assign(n):
+        if isinstance(n, dict):
+            if "$id" in n:
+                new = str(next_id[0]); next_id[0] += 1
+                mapping[n["$id"]] = new
+                n["$id"] = new
+            for c in n.values():
+                assign(c)
+        elif isinstance(n, list):
+            for c in n:
+                assign(c)
+
+    def remap(n):
+        if isinstance(n, dict):
+            if "$ref" in n and n["$ref"] in mapping:
+                n["$ref"] = mapping[n["$ref"]]
+            for c in n.values():
+                remap(c)
+        elif isinstance(n, list):
+            for c in n:
+                remap(c)
+
+    assign(clone)
+    remap(clone)
+    return clone
+
+
+def _set_times(container: Any, start, end) -> None:
+    """Point every WaitForTime under *container* at *start* and every
+    TimeCondition at *end* (local wall-clock datetimes). The template's
+    values are static (21:13 / 04:03); per-slot times are what make a slot
+    hand over on time whatever its counts say."""
+    if isinstance(container, dict):
+        t = _short_type(container)
+        if t == "WaitForTime" and start is not None:
+            container["Hours"], container["Minutes"], container["Seconds"] = start.hour, start.minute, 0
+            container["MinutesOffset"] = 0
+        elif t == "TimeCondition" and end is not None:
+            container["Hours"], container["Minutes"], container["Seconds"] = end.hour, end.minute, 0
+            container["MinutesOffset"] = 0
+        for v in container.values():
+            _set_times(v, start, end)
+    elif isinstance(container, list):
+        for v in container:
+            _set_times(v, start, end)
+
+
+def _find_first(node: Any, short_type: str) -> Optional[dict]:
+    if isinstance(node, dict):
+        if _short_type(node) == short_type:
+            return node
+        for v in node.values():
+            got = _find_first(v, short_type)
+            if got is not None:
+                return got
+    elif isinstance(node, list):
+        for v in node:
+            got = _find_first(v, short_type)
+            if got is not None:
+                return got
+    return None
+
+
+def _script_item(prototype: dict, script: str, parent_id: str, next_id: list) -> dict:
+    item = _clone_with_fresh_ids(prototype, next_id)
+    item["Script"] = script
+    item["Parent"] = {"$ref": parent_id}
+    return item
+
+
+def generate_slots_sequence(template_path: Path, slots: list, output_path: Path,
+                            state_script: Optional[str] = None) -> list:
+    """Write a sequence with one target container per slot.
+
+    *slots* is a list of dicts: ``name, ra_hours, dec_degrees, seconds, start,
+    end`` (start/end local datetimes, may be None). The template's single
+    DeepSkyObjectContainer is cloned once per slot with fresh object ids, each
+    clone patched for its target, timed for its window and sized for its
+    hours -- the same planning as a one-slot night, applied per slot. One roof
+    open, one prelude, one set of flats: only the main section changes.
+
+    Every slot after the first gets two ExternalScript steps around its setup
+    (*state_script*, i.e. scripts/set_imaging_state.bat): DONE_MAIN as the
+    previous slot ends and IN_MAIN as this one begins imaging. That is the
+    hand-over signal the conductor's shadow turns into NINA_SLOT_DONE /
+    SLOT_STARTED, and it costs the run nothing.
+
+    Returns the per-slot filter plans, in slot order.
+    """
+    with open(template_path, "r", encoding="utf-8") as f:
+        sequence = json.load(f)
+    area = _find_target_area(sequence)
+    if area is None:
+        raise ValueError("template has no TargetAreaContainer")
+    items = _items_of(area)
+    idx = next((i for i, it in enumerate(items)
+                if _short_type(it) == "DeepSkyObjectContainer"), None)
+    if idx is None:
+        raise ValueError("template has no DeepSkyObjectContainer to clone")
+    proto = items[idx]
+    script_proto = _find_first(sequence, "ExternalScript")
+    next_id = [_max_id(sequence) + 1]
+
+    clones, plans = [], []
+    for k, slot in enumerate(slots):
+        c = proto if k == 0 else _clone_with_fresh_ids(proto, next_id)
+        ra_h, ra_m, ra_s = _decompose_ra(slot["ra_hours"])
+        dec_neg, dec_d, dec_m, dec_s = _decompose_dec(slot["dec_degrees"])
+        coords = {"RAHours": ra_h, "RAMinutes": ra_m, "RASeconds": round(ra_s, 5),
+                  "NegativeDec": dec_neg, "DecDegrees": dec_d, "DecMinutes": dec_m,
+                  "DecSeconds": round(dec_s, 5)}
+        _walk_and_replace(c, slot["name"], coords)
+        _set_times(c, slot.get("start"), slot.get("end"))
+        plans.append(_plan_for(c, slot["name"], slot.get("seconds")))
+        if k > 0 and state_script and script_proto is not None:
+            setup = next((it for it in _items_of(c)
+                          if _short_type(it) == "SequentialContainer"), None)
+            if setup is not None:
+                sitems = _items_of(setup)
+                pid = setup.get("$id")
+                sitems.insert(0, _script_item(script_proto,
+                                              '"%s" DONE_MAIN' % state_script, pid, next_id))
+                sitems.append(_script_item(script_proto,
+                                           '"%s" IN_MAIN' % state_script, pid, next_id))
+        clones.append(c)
+    items[idx:idx + 1] = clones
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(output_path, "w", encoding="utf-8") as f:
+        json.dump(sequence, f, indent=2)
+    return plans
+
+
 def generate_sequence(
     template_path: Path,
     dso_name: str,
@@ -384,30 +595,7 @@ def generate_sequence(
 
     _walk_and_replace(sequence, dso_name, coords)
 
-    # An explicit plan set by the `filters` command applies even when the hours
-    # above horizon are unknown: the counts are absolute, not a share of the
-    # night, so there is nothing to scale them against.
-    explicit = None
-    try:
-        from control import instructions as _instr
-        explicit = _instr.get_filter_plan(dso_name)
-    except Exception:
-        explicit = None
-
-    filter_plan: dict[str, int] = {}
-    if explicit:
-        filter_plan = _apply_filter_plan(sequence, above_horizon_seconds or 0.0,
-                                         "explicit", explicit=explicit)
-    elif above_horizon_seconds is not None and above_horizon_seconds > 0:
-        obj_type = _classify_object_type(dso_name)
-        # §2c resolution order: explicit plan > need-weighted split (measured
-        # per-filter convergence) > object-type default split (no history).
-        need = _need_plan(sequence, dso_name, obj_type, above_horizon_seconds)
-        if need:
-            filter_plan = _apply_filter_plan(sequence, above_horizon_seconds,
-                                             obj_type, explicit=need)
-        else:
-            filter_plan = _apply_filter_plan(sequence, above_horizon_seconds, obj_type)
+    filter_plan = _plan_for(sequence, dso_name, above_horizon_seconds)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with open(output_path, "w", encoding="utf-8") as f:

@@ -177,6 +177,16 @@ def tonight_cmd(words: list[str], index: int, m: Mastodon, account: str) -> bool
 
     best_name, best_start, best_good_hours, grid_html = astro_dso_visibility.best_object_tonight(instructions_path)
     post_social_message(f"Tonight's best object: {best_name} ({best_good_hours}h good imaging)")
+    # The night's slot plan when a second target fits the hours the first
+    # leaves (control/slot_plan): one line per slot, in running order.
+    slots = list(getattr(astro_dso_visibility, "last_slots", []) or [])
+    if len(slots) >= 2:
+        try:
+            from zoneinfo import ZoneInfo
+            from control import slot_plan as _sp
+            post_social_message("Two slots tonight:" + chr(10) + _sp.describe(slots, ZoneInfo(cfg["location"]["timezone"])))
+        except Exception:
+            logging.getLogger(__name__).exception("slot plan post failed")
     if grid_html:
         post_html_message(grid_html)
 
