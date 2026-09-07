@@ -56,11 +56,22 @@ DPI = 100                       # Fixed DPI → consistent pixel size (1000×600
 CMAP = 'magma'                  # Consistent colormap (common for spectrograms)
 
 # classify(): a new move counts as "good" if its best similarity to a known-good
-# spectrogram reaches GOOD_MARGIN × the good library's own worst pairwise
-# similarity — i.e. it must look at least about as normal as good moves look to
-# each other. Self-tuning, so no absolute threshold to hand-tune as the library
-# grows. MIN_GOOD_REFS mirrors roof_current_signature.compare()'s ≥2 rule.
+# spectrogram reaches GOOD_MARGIN × the GOOD_PERCENTILE-th percentile of the
+# good library's own pairwise similarities — i.e. it must look at least about
+# as normal as good moves look to each other. Self-tuning, so no absolute
+# threshold to hand-tune as the library grows. MIN_GOOD_REFS mirrors
+# roof_current_signature.compare()'s ≥2 rule.
+#
+# A PERCENTILE, NOT THE MINIMUM. Until 2026-09-07 the bar was the library's
+# single worst pair × margin, so one odd reference disarmed the detector for
+# every move after it: the Kasa open library held a 640x480 render from a
+# different renderer and a pre-alignment capture, and the threshold sat at
+# 0.065 against typical pairwise similarities of 0.3-0.7 -- nothing could ever
+# read "bad". The 10th percentile still tracks the library's own spread but
+# needs several odd references, not one, to move it. Provisional: no bad Kasa
+# move has been recorded yet to set it against.
 GOOD_MARGIN = 0.9
+GOOD_PERCENTILE = 10
 MIN_GOOD_REFS = 2
 # Cap the auto-filed good library. classify() does an O(n^2) pairwise image-MSE
 # over the whole good library on every roof move, so an unbounded library would
@@ -166,7 +177,7 @@ def classify(png_path, direction, root=None):
 
         pairwise = [_similarity(refs[i][1], refs[j][1])
                     for i in range(len(refs)) for j in range(i + 1, len(refs))]
-        result["threshold"] = min(pairwise) * GOOD_MARGIN
+        result["threshold"] = float(np.percentile(pairwise, GOOD_PERCENTILE)) * GOOD_MARGIN
         result["verdict"] = "good" if result["best_score"] >= result["threshold"] else "bad"
 
         # Golden distance. good/ ROLLS (newest 40), so its threshold follows
@@ -181,7 +192,7 @@ def classify(png_path, direction, root=None):
             result["golden_score"] = max(_similarity(new_arr, a) for a in grefs)
             gpair = [_similarity(grefs[i], grefs[j])
                      for i in range(len(grefs)) for j in range(i + 1, len(grefs))]
-            result["golden_threshold"] = min(gpair) * GOOD_MARGIN
+            result["golden_threshold"] = float(np.percentile(gpair, GOOD_PERCENTILE)) * GOOD_MARGIN
             result["golden_ok"] = result["golden_score"] >= result["golden_threshold"]
             _record_drift({"kind": "audio", "direction": direction,
                            "rolling_ok": result["verdict"] == "good",
