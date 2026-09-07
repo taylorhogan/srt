@@ -48,6 +48,7 @@ def _shadow(root):
     # tests override these to stage evidence.
     sh.pwi4_probe = lambda: "unreachable"
     sh.limits_probe = lambda: ("not_configured", "")
+    sh.sun_probe = lambda: None          # no sky in a temp dir
     return sh
 
 
@@ -397,3 +398,27 @@ def test_vision_log_lines_update_evidence(tmp_path):
         fh.write("08/28/2026 vision parked=True closed=False open=True x\n")
     sh.poll()
     assert sh.evidence.roof is Tri.CONFIRMED
+
+
+def test_sunrise_ends_a_finished_night(tmp_path):
+    """NIGHT_DONE's only exit was the scheduler's DAY_TICK, which manual mode
+    fires before the night rather than after it. Sunrise is the day clock."""
+    root = _mkroot(tmp_path)
+    sh = _shadow(root)
+    sh._flats_grace_polls = 2
+    _to_in_main(root, sh)
+    _imaging(root, "NONE"); sh.poll(); sh.poll()
+    sh.poll(); sh.poll()
+    assert sh.state == "NIGHT_DONE"
+    sh.sun_probe = lambda: -3.0          # still dark: nothing happens
+    sh.poll()
+    assert sh.state == "NIGHT_DONE"
+    sh.sun_probe = lambda: 0.4           # up
+    sh.poll()
+    assert sh.state == "IDLE_DAY"
+    tick = [e for e in sh.journal.replay() if e.event == "DAY_TICK"][-1]
+    assert tick.kind == "transition" and tick.data["clock"] == "sunrise"
+    # and it is a one-shot: the sun staying up does not keep ticking
+    n = sh.journal.head()
+    sh.poll()
+    assert sh.journal.head() == n

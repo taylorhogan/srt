@@ -110,6 +110,21 @@ def _read_roof_limits():
         return "unreachable", f"{type(exc).__name__}: {exc}"
 
 
+def _read_sun_altitude():
+    """Sun altitude in degrees at the observatory, or None. Never raises."""
+    try:
+        from datetime import datetime
+        import pytz
+        from astral import LocationInfo
+        from astral.sun import elevation
+        from configs import config
+        loc = config.data()["location"]
+        li = LocationInfo("obs", "", loc["timezone"], loc["latitude"], loc["longitude"])
+        return float(elevation(li.observer, datetime.now(pytz.timezone(loc["timezone"]))))
+    except Exception:
+        return None
+
+
 class ShadowConductor:
     # States that mean "a night is in progress on the hardware". Recovering
     # into one of these while imaging.txt reads NONE and NINA is gone means
@@ -143,6 +158,7 @@ class ShadowConductor:
         # Injectable so tests drive them without a mount or a Shelly.
         self.pwi4_probe = _read_pwi4_park
         self.limits_probe = _read_roof_limits
+        self.sun_probe = _read_sun_altitude
         self._slow_every = 6          # ~30 s at the 5 s cadence
         self._slow_tick = 0
         self._limits = ("not_configured", "")
@@ -451,6 +467,19 @@ class ShadowConductor:
         lines = self._read_new_log_lines()
         self._update_evidence_from_log(lines)
         self._poll_slow_sensors()
+
+        # --- sunrise ends a finished night. NIGHT_DONE's only exit is
+        # DAY_TICK, and the scheduler's version of that (IMAGING ->
+        # WAITING_FOR_NOON) fires at the wrong moment in manual mode: 19:06 on
+        # 2026-09-06, BEFORE the night, where it was rightly suppressed. The
+        # real night ended 03:42 with nothing left for the scheduler to say,
+        # so the machine sat in NIGHT_DONE until the noon resync flagged a
+        # clean night as a divergence. The sun is the honest day clock.
+        if self.state == "NIGHT_DONE":
+            alt = self.sun_probe()
+            if alt is not None and alt > 0.0:
+                self.offer("DAY_TICK", "shadow", {"clock": "sunrise",
+                                                  "sun_alt": round(alt, 1)})
 
         # --- scheduler transitions -> planner events
         sched, will = self._read_sched()
