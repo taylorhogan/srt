@@ -414,6 +414,14 @@ class ShadowConductor:
             roof=self._roof_from_limits_and_vision(e.roof),
             safety_armed=bool(self._safety),
             mode_auto=self._read_mode_auto(),
+            # The planner's weather verdict is the scheduler's "will image
+            # tonight": set True only when the noon / pre-sunset check found
+            # enough good hours (visibility x forecast), False when it did not,
+            # "Unknown" between days. Until 2026-09-07 nothing set this and the
+            # snapshot default (False) made the weather guard refuse every open
+            # in the counterfactuals -- the one blemish on the first CLEAN
+            # night. Day-scoped, so no freshness decay.
+            weather_ok=(self._will_image in ("true", "yes")),
             slots_remaining=self.slots,
             nina_alive=bool(self._nina))
 

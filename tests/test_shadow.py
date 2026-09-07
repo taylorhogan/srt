@@ -422,3 +422,33 @@ def test_sunrise_ends_a_finished_night(tmp_path):
     n = sh.journal.head()
     sh.poll()
     assert sh.journal.head() == n
+
+
+def test_weather_evidence_is_the_schedulers_will_image_verdict(tmp_path):
+    """weather_ok follows scheduler_state.json's "will image tonight": the
+    planner's verdict, True only after a check found enough good hours."""
+    root = _mkroot(tmp_path)
+    sh = _shadow(root)
+    assert sh._current_evidence().weather_ok is False      # "Unknown"
+    _sched(root, "NOON_CHECK", will=True); sh.poll()
+    assert sh._current_evidence().weather_ok is True
+    _sched(root, "PRE_SUNSET_CHECK", will=False); sh.poll()
+    assert sh._current_evidence().weather_ok is False
+
+
+def test_a_good_night_passes_the_weather_guard_at_checks_passed(tmp_path):
+    """The 2026-09-06 blemish: a CLEAN night whose only counterfactual was
+    'weather is not acceptable' because nothing sourced the evidence."""
+    root = _mkroot(tmp_path)
+    sh = _shadow(root)
+    sh.pwi4_probe = lambda: "parked"
+    _sched(root, "NOON_CHECK", will=True); sh.poll()
+    _sched(root, "WAITING_FOR_PRE_SUNSET", will=True); sh.poll()
+    _sched(root, "PRE_SUNSET_CHECK", will=True); sh.poll()
+    _log(root, "09/06/2026 vision parked=True closed=True open=False -- "
+               "votes parked 3/3 lit (3 frames), closed 3, open 0")
+    _log(root, "09/06/2026 kasa_status: scope=safe roof=shut (day)")
+    _log(root, "09/06/2026 roof relay fire: direction=open")
+    sh.poll()
+    note = _fire_notes(sh)[0]
+    assert note.data["guard_would"] is None, note.data
