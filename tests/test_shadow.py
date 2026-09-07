@@ -297,8 +297,10 @@ def test_roof_fire_with_unpowered_mount_would_be_allowed(tmp_path):
 
 
 def test_one_camera_alone_would_be_refused_and_the_split_is_journaled(tmp_path):
-    """A single confirming camera is never enough, and the disagreement is
-    recorded rather than merely causing a silent refusal."""
+    """A gating read that says parked is vetoed by a raw camera line that
+    decoded the scope OFF park, and the disagreement is recorded rather than
+    merely causing a silent refusal. (Before 2026-09-07 these two lines were
+    two cameras; now they are the same camera's verified and raw reads.)"""
     root = _mkroot(tmp_path)
     sh = _shadow(root)
     sh.pwi4_probe = lambda: "parked"
@@ -308,7 +310,7 @@ def test_one_camera_alone_would_be_refused_and_the_split_is_journaled(tmp_path):
     sh.poll()
     note = _fire_notes(sh)[0]
     assert note.data["evidence"]["parked_kasa"] == "DENIED"
-    assert "disagree" in (note.data["guard_would"] or "")
+    assert "OFF park" in (note.data["guard_would"] or "")
     splits = [e for e in sh.journal.replay() if e.event == "PARK_CAMERAS_SPLIT"]
     assert len(splits) == 1
     assert splits[0].data == {"webcam": "CONFIRMED", "kasa": "DENIED"}

@@ -111,6 +111,28 @@ def generate_spectrogram(audio_np, save_path):
     plt.close()
 
 
+# THE CAMERA SERVES ONE STREAM. While a roof-move capture holds it (CAPTURE_S
+# seconds from just before the relay fires), a snapshot grab for the vision
+# check fails outright. Since 2026-09-07 that vision check reads THIS camera
+# -- the webcam it replaced was a separate USB device and never collided --
+# and the post-move confirmation lands ~30 s after the fire, inside the
+# window. So the capture announces itself here and the vision grab waits for
+# it (kasa_state._grab -> wait_stream_free) instead of reading a busy camera
+# as "unknown" and costing a five-minute retry on every single roof move.
+_stream_free = threading.Event()
+_stream_free.set()
+
+
+def wait_stream_free(timeout):
+    """Block until no capture holds the camera's stream, or *timeout* s.
+
+    True if the stream is free. False means a capture is still running past
+    the timeout: the caller may try the grab anyway (it will most likely fail
+    and read as unknown) or give up; it must not assume the camera is free.
+    """
+    return _stream_free.wait(timeout)
+
+
 def capture_av(seconds, host=HOST):
     """Pull `seconds` off the camera as (int16 PCM, part times, H.264 bytes).
 
@@ -125,9 +147,13 @@ def capture_av(seconds, host=HOST):
     from sentry.sky_camera import credentials
 
     user, pw = credentials(config.data())
-    with contextlib.redirect_stdout(io.StringIO()):
-        buf, checkpoints, t0 = ir.capture(host, user, pw, seconds)
-        audio, video, times, _n = ir.split(buf, checkpoints, t0, b"--data-boundary--")
+    _stream_free.clear()
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            buf, checkpoints, t0 = ir.capture(host, user, pw, seconds)
+            audio, video, times, _n = ir.split(buf, checkpoints, t0, b"--data-boundary--")
+    finally:
+        _stream_free.set()
     return ir.ulaw_to_pcm16(audio), times, video
 
 

@@ -30,7 +30,6 @@ from cmd_processing import jobs
 from utils import utils, pushover
 from sentry import vision_safety
 from sentry import roof_current_signature as rcs
-from sentry import audio_classify as roof_audio
 from sentry import kasa_audio
 from end_points import end
 from iris_astronomy import astro_dso_visibility
@@ -111,11 +110,10 @@ def _roof_stall_abort(dev_map: dict, direction: Optional[str],
         social_server.post_social_message(msg)
     except Exception:  # noqa: BLE001
         _logger.exception("roof stall: social post failed")
-    # Bank the evidence: the current trace and audio of the stalled move are
-    # exactly what post-mortem needs. Both helpers swallow their own errors.
+    # Bank the evidence: the current trace of the stalled move is exactly what
+    # post-mortem needs (the Kasa audio capture files itself regardless).
     if capture is not None:
         rcs.finish_background_capture(capture, status="unlabeled")
-    roof_audio.finish_background_capture(audio_capture, status="unlabeled")
     raise RoofStallError(msg)
 
 
@@ -156,6 +154,44 @@ def _wait_for_roof_travel(dev_map: dict, capture_direction: Optional[str],
         time.sleep(1)
 
 
+def _post_kasa_roof_audio(direction, base, detail, verdict) -> None:
+    """Surface a roof move's audio (spectrogram + WAV) with its verdict.
+
+    Runs on the capture thread ~50 s after the relay fired, so it arrives
+    after the vision confirmation posts rather than before. A "bad" verdict
+    also goes to the phone: an unattended observatory with a chattering roof
+    gear must not bury that in the chat.
+    """
+    try:
+        caption = f"Roof {direction or 'move'} audio (Kasa mic)"
+        v = verdict.get("verdict")
+        if v == "good":
+            caption += (f": sounds normal (score {verdict['best_score']:.3f} ≥ "
+                        f"{verdict['threshold']:.3f}, best match {verdict['best_match']})"
+                        " — filed to known-good library")
+            png = os.path.join(kasa_audio.KASA_AUDIO_ROOT, "good", direction or "unknown",
+                               os.path.basename(base) + ".png")
+            wav = png[:-4] + ".wav"
+        elif v == "bad":
+            caption = (f"⚠️ {caption}: does NOT match known-good "
+                       f"(score {verdict['best_score']:.3f} < {verdict['threshold']:.3f})")
+            png, wav = base + ".png", base + ".wav"
+            try:
+                pushover.push_message(caption)
+            except Exception as e:  # noqa: BLE001
+                _logger.error("Failed to push roof audio anomaly: %s", e)
+        else:
+            caption += f" — {verdict.get('note') or 'not classified'}"
+            png, wav = base + ".png", base + ".wav"
+        social_server.post_social_message(
+            caption,
+            image=png if os.path.exists(png) else None,
+            audio=wav if os.path.exists(wav) else None,
+        )
+    except Exception as e:  # noqa: BLE001
+        _logger.error("Failed to post roof audio: %s", e)
+
+
 def toggle_roof(dev_map: dict, capture_direction: Optional[str] = None) -> None:
     """Power the roof motor, trigger the Shelly relay to move the roof, then power off.
 
@@ -177,28 +213,24 @@ def toggle_roof(dev_map: dict, capture_direction: Optional[str] = None) -> None:
     capture = None
     if config.data()["hardware"].get("current_monitor_url"):
         capture = rcs.start_background_capture(direction=capture_direction, seconds=48)
-    # Also bank the roof-move audio (spectrogram + WAV), filed by direction. The
-    # mic captures fast mechanical chatter (e.g. a bent wheel) that the 1 Hz
-    # current signature cannot resolve. Best-effort: the helper swallows its own
-    # errors and the stream is closed before the post-move vision check, so mic
-    # capture never overlaps a webcam snapshot.
-    audio_capture = roof_audio.start_background_capture(direction=capture_direction)
-    # The same move, heard through the inside Kasa cam, into the parallel
-    # library being built to replace this microphone (see sentry/kasa_audio.py:
-    # the two mics are 44.1 kHz and 8 kHz, so their spectrograms cannot be
-    # compared and must not share a tree).
+    # Bank the roof-move audio through the inside Kasa camera's microphone
+    # (sentry/kasa_audio; library sentry/roof_audio_kasa). The mic hears fast
+    # mechanical chatter (a bent wheel) that the 1 Hz current signature cannot
+    # resolve. The webcam's USB mic that used to do this was retired with the
+    # webcam on 2026-09-07; the Kasa library had self-labelled 24 good opens
+    # and 18 good closes beside it by then.
     #
-    # Fire-and-forget, and it deliberately does NOT get a finish/join below.
-    # The camera hands over a fixed-length stream that cannot be ended early,
-    # so anything that waits on it would park the roof flow at the post-move
-    # vision check. This is a shadow observer: nothing reads it, nothing gates
-    # on it, and it must be unable to slow or break a roof move.
-    #
-    # It also cannot collide with the vision ladder, which runs on the USB
-    # camera behind inside_camera_server's _camera_lock -- a different device
-    # entirely from the Kasa stream opened here.
+    # Fire-and-forget: the camera hands over a fixed-length stream that cannot
+    # be ended early, so nothing here waits on it. It files and classifies
+    # itself and posts through _post_kasa_roof_audio when done. The post-move
+    # vision read on this same one-stream camera waits for the capture to
+    # release the stream (kasa_state._grab -> kasa_audio.wait_stream_free).
+    audio_capture = None
     try:
-        kasa_audio.start_capture_async(direction=capture_direction)
+        kasa_audio.start_capture_async(
+            direction=capture_direction,
+            on_done=lambda base, det, ver: _post_kasa_roof_audio(
+                capture_direction, base, det, ver))
     except Exception:  # noqa: BLE001 — observer must never touch the roof flow
         _logger.exception("kasa roof audio: failed to start (ignored)")
 
@@ -212,56 +244,10 @@ def toggle_roof(dev_map: dict, capture_direction: Optional[str] = None) -> None:
         _logger.error("Failed to trigger relay in toggle_roof")
         if capture is not None:
             rcs.finish_background_capture(capture, save=False)
-        roof_audio.finish_background_capture(audio_capture, save=False)
         raise RuntimeError("toggle_roof: roof relay trigger failed")
     _wait_for_roof_travel(dev_map, capture_direction, capture, audio_capture)
     inst = {"Roof motor": 'off'}
     asyncio.run(ku.kasa_do(dev_map, inst))
-
-    # Finish + surface the roof-move audio spectrogram, with a verdict from the
-    # known-good library. A move that classify()'s judges "good" is auto-filed
-    # into the good library (the library is now mature enough to self-extend);
-    # "bad"/"unknown" stay in unlabeled/ for a human to review with
-    # `audio <open|close> <good|bad>`. classify() never raises (returns "unknown").
-    audio_result = roof_audio.finish_background_capture(audio_capture, status="unlabeled")
-    if audio_result and audio_result.get("spectrogram"):
-        cls = roof_audio.classify(audio_result["spectrogram"],
-                                  audio_result.get("direction"))
-        caption = f"Roof {capture_direction or 'move'} audio"
-        if cls["verdict"] == "good":
-            caption += (f": sounds normal (score {cls['best_score']:.3f} ≥ "
-                        f"{cls['threshold']:.3f}, best match {cls['best_match']})")
-            # Auto-file to the good library. This MOVES the PNG + WAV out of
-            # unlabeled/, so repoint audio_result at the new paths before the
-            # chat post below reads them.
-            promo = roof_audio.promote_to_good(audio_result)
-            if promo and promo.get("moved"):
-                caption += " — filed to known-good library"
-                for m in promo["moved"]:
-                    if m.lower().endswith(".png"):
-                        audio_result["spectrogram"] = m
-                    elif m.lower().endswith(".wav"):
-                        audio_result["wav"] = m
-        elif cls["verdict"] == "bad":
-            caption = (f"⚠️ {caption}: does NOT match known-good "
-                       f"(score {cls['best_score']:.3f} < {cls['threshold']:.3f})")
-            try:
-                pushover.push_message(caption)
-            except Exception as e:  # noqa: BLE001
-                _logger.error("Failed to push roof audio anomaly: %s", e)
-        else:
-            caption += f" — {cls['note'] or 'not classified'}"
-        try:
-            # Attach the WAV alongside the spectrogram: the webchat renders an
-            # inline player plus download links for both files, so a move's raw
-            # audio can be pulled for offline analysis.
-            social_server.post_social_message(
-                caption,
-                image=audio_result["spectrogram"],
-                audio=audio_result.get("wav"),
-            )
-        except Exception as e:  # noqa: BLE001
-            _logger.error("Failed to post roof audio spectrogram: %s", e)
 
     if capture is not None:
         sig = rcs.finish_background_capture(capture, status="unlabeled")
@@ -307,52 +293,15 @@ def announce_roof_movement(text: str, speaker_name: str = "Observatory", volume:
 
 
 def get_status_with_lights() -> tuple[bool, bool, bool, Any]:
-    """Take a camera snapshot and return (parked, closed, open, mod_date) via vision safety.
+    """Read (parked, closed, open, mod_date) via vision safety and push the picture.
 
-    visual_status() retries internally on a garbage (torn/starved/unreadable)
-    webcam frame, so a single corrupt snapshot doesn't block a roof move on its
-    own — it reads as untrusted ("not parked") and gets a couple more chances to
-    resolve before we act on it.
+    Since 2026-09-07 vision_safety answers from the inside Kasa camera
+    (AprilTags, pose-verified, several frames per read); the name is kept
+    because the read still switches the inside light on, as it always did.
     """
     parked, closed, open, mod_date = vision_safety.visual_status()
     _post_vision_decision_image(parked, closed, open)
-    _shadow_compare_kasa(parked, closed, open)
     return parked, closed, open, mod_date
-
-
-def _shadow_compare_kasa(parked: bool, closed: bool, is_open: bool) -> None:
-    """Log what the Kasa camera would have said, next to what the webcam said.
-
-    Shadow only: runs on a daemon thread so the roof flow pays nothing, gates
-    nothing, and swallows everything. The point is the disagreement count --
-    the Kasa system is not allowed to decide anything until weeks of these
-    lines show zero unexplained splits (docs: the cutover plan, 2026-08-20).
-    A DISAGREE here is data, not an alarm.
-    """
-    import threading
-
-    def _run():
-        try:
-            from sentry import kasa_state
-            k_safe, k_closed, k_open, _ = kasa_state.kasa_status(quick=True)
-            det = kasa_state.last_detail or {}
-            roof_web = "closed" if closed else ("open" if is_open else "unknown")
-            roof_kasa = "closed" if k_closed else ("open" if k_open else "unknown")
-            agree = (roof_web == roof_kasa) and (parked == k_safe)
-            _logger.info(
-                "SHADOW kasa-vs-webcam %s: webcam scope=%s roof=%s | kasa scope=%s "
-                "roof=%s regime=%s",
-                "AGREE" if agree else "DISAGREE",
-                "parked" if parked else "not-parked", roof_web,
-                det.get("scope"), roof_kasa,
-                (det.get("roof_detail") or {}).get("regime"))
-        except Exception:  # noqa: BLE001 -- shadow observer, never surfaces
-            _logger.exception("kasa shadow compare failed (ignored)")
-
-    try:
-        threading.Thread(target=_run, name="kasa-shadow", daemon=True).start()
-    except Exception:  # noqa: BLE001
-        _logger.exception("kasa shadow thread failed to start (ignored)")
 
 
 def _post_vision_decision_image(parked: bool, closed: bool, is_open: bool) -> None:
@@ -381,13 +330,16 @@ def _post_vision_decision_image(parked: bool, closed: bool, is_open: bool) -> No
             for name in suspects
             if lm.get(name, {}).get("verdict") not in (None, "ok")
         )
+        votes = lm.get("votes") or {}
         caption = (
             f"Vision: roof={roof} scope={'parked' if parked else 'unparked'} | "
-            f"conf c={lm.get('closed', {}).get('conf', 0):.2f} "
-            f"o={lm.get('open', {}).get('conf', 0):.2f} "
-            f"p={lm.get('parked', {}).get('conf', 0):.2f} "
-            f"luma={lm.get('frame_luma', 0):.0f} trusted={lm.get('trusted')}"
+            f"scope tag {lm.get('parked', {}).get('error', 0):.0f}px off park, "
+            f"roof tag {lm.get('closed', {}).get('error', 0):.0f}px off shut | "
+            f"frames parked {votes.get('parked', 0)} closed {votes.get('closed', 0)} "
+            f"open {votes.get('open', 0)} of {lm.get('rungs', 0)}; "
+            f"pose {'verified' if lm.get('pose_verified') else 'UNVERIFIED'}"
             + (f" | {fails}" if fails else "")
+            + (f" | {lm['error']}" if lm.get("error") else "")
         )
         pushover.push_message(caption, img)
     except Exception:
@@ -1812,72 +1764,35 @@ def update_cmd(words: list[str], account: str) -> None:
 
 
 def live_cmd(words: list[str], account: str) -> None:
-    """Post a live, no-light view of the sky from the scope-top webcam.
+    """Post a live view of the sky from the Kasa sky camera.
 
-    Takes TWO dark-sky passes and posts both, because one exposure can't serve
-    both goals: a low-gain, long-exposure pass records STARS (at max gain the
-    longest sub blows out and the scorer falls to a ~15 ms starless frame), and a
-    high-gain pass favours diffuse SKYGLOW / clouds. Both use the same USB camera
-    as the park/roof vision-safety check but leave the inside light OFF. Safe to
-    run while imaging: read-only, serialized against the safety snapshot by the
-    camera lock, never moves hardware or touches the lights. Runs in a background
-    job (two sweeps ~ 30-40 s).
-
-    An optional frame count averages that many frames at the chosen exposure to
-    pull faint sky detail out of the noise; omit it for a single frame.
-    examples:  live   |   live 8
+    Used to take dark-sky passes on the scope-top webcam; that camera was
+    retired on 2026-09-07. The sky camera is the plate-solved one the sky
+    monitor already reads (sentry/sky_camera), so this is one fresh frame from
+    it plus the current live sky map render when one is recent. Read-only:
+    never moves hardware or touches the lights. Safe while imaging.
     """
-    # Optional trailing integer = frames to average-stack (default 1 = one frame).
-    stack_frames = 1
-    if len(words) > 2:
-        try:
-            stack_frames = int(words[2])
-        except ValueError:
-            social_server.post_social_message(
-                "Usage: live [frames] — frames must be a positive integer (e.g. live 8)")
-            return
-        if stack_frames < 1:
-            social_server.post_social_message("Usage: live [frames] — frames must be >= 1")
-            return
-        stack_frames = min(stack_frames, 25)  # cap so a typo can't tie up the camera
-
     def _run() -> None:
-        from sentry import inside_camera_server  # local import: avoids import cycle
+        from sentry import sky_camera
         cfg = config.data()
-        cams = cfg["camera safety"]
-        note = f", stacking {stack_frames} frames each" if stack_frames > 1 else ""
-        stacked = f" — {stack_frames} frames stacked" if stack_frames > 1 else ""
-        # (tag, output path, no-light gain, caption) — low gain for stars, high for skyglow.
-        passes = [
-            ("stars", cams["sky_view_stars"], cams.get("sky_stars_gain", 30),
-             "Live sky — stars (low gain, long exposure)"),
-            ("skyglow", cams["sky_view"], cams.get("sky_skyglow_gain", 100),
-             "Live sky — skyglow / clouds (high gain)"),
-        ]
-        social_server.post_social_message(
-            f"Capturing sky view — two passes (stars + skyglow), lights stay off{note}…")
-        posted = 0
-        for tag, out_path, gain, caption in passes:
-            try:
-                ok = inside_camera_server.take_snapshot(
-                    light=False,
-                    out_path=out_path,
-                    scorer=inside_camera_server.dark_sky_score,
-                    stack_frames=stack_frames,
-                    gain=gain,
-                )
-            except Exception as e:  # noqa: BLE001
-                _logger.exception("live %s capture failed", tag)
-                social_server.post_social_message(f"Sky view [{tag}] capture failed: {e}")
-                continue
-            if not ok or not os.path.exists(out_path):
-                social_server.post_social_message(
-                    f"Sky view [{tag}] capture failed (no frame from the camera).")
-                continue
-            social_server.post_social_message(caption + stacked, image=out_path)
-            posted += 1
-        if posted == 0:
-            social_server.post_social_message("Sky view capture failed for both passes.")
+        out_path = cfg["camera safety"]["sky_view"]
+        social_server.post_social_message("Capturing sky view from the sky camera…")
+        try:
+            got = sky_camera.capture(out_path=out_path)
+        except Exception as e:  # noqa: BLE001
+            _logger.exception("live capture failed")
+            social_server.post_social_message(f"Sky view capture failed: {e}")
+            return
+        if not got or not os.path.exists(out_path):
+            social_server.post_social_message("Sky view capture failed (no frame from the sky camera).")
+            return
+        social_server.post_social_message("Live sky — sky camera", image=out_path)
+        skymap = os.path.join(os.path.dirname(_SCRIPTS_DIR), "local", "live_skymap.jpg")
+        try:
+            if os.path.exists(skymap) and time.time() - os.path.getmtime(skymap) < 15 * 60:
+                social_server.post_social_message("Live sky map (last render)", image=skymap)
+        except Exception:  # noqa: BLE001
+            pass
 
     jobs.spawn(_run)
 
@@ -3068,7 +2983,7 @@ def audio_cmd(words: list[str], account: str) -> None:
     Moves that classify cleanly are auto-filed to good/ by the roof flow, so this
     command is now mainly for the leftovers — captures that came back "bad" or
     "unknown" and were parked in unlabeled/ for a human call. Labeling moves the
-    capture's spectrogram + WAV from roof_audio/unlabeled/ to the good/bad library
+    capture's spectrogram + WAV from roof_audio_kasa/unlabeled/ to the good/bad library
     that classify() judges future moves against, and files the motor-current
     signature from the same move (same direction, within ±10 minutes) under the
     same verdict — one verdict per roof move.
@@ -3080,12 +2995,12 @@ def audio_cmd(words: list[str], account: str) -> None:
     args = words[2:]
 
     if not args:
-        entries = roof_audio.list_unlabeled()
+        entries = kasa_audio.list_unlabeled()
         lines = [f"{len(entries)} unlabeled roof audio capture(s):"]
         lines += [f"  {e['base']}" for e in entries[:20]]
         if len(entries) > 20:
             lines.append(f"  …and {len(entries) - 20} more")
-        counts = roof_audio.library_counts()
+        counts = kasa_audio.counts()
         lines.append("Library:")
         lines += [f"  {status}/{d}: {n}"
                   for status, dirs in counts.items() for d, n in dirs.items()] or ["  (empty)"]
@@ -3099,7 +3014,7 @@ def audio_cmd(words: list[str], account: str) -> None:
     direction, verdict = args[0], args[1]
     name = args[2] if len(args) > 2 else None
 
-    res = roof_audio.label(direction, verdict, name=name)
+    res = kasa_audio.label(direction, verdict, name=name)
     if res is None:
         social_server.post_social_message(
             f"No unlabeled {direction} audio capture"

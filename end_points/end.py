@@ -43,7 +43,16 @@ def determine_roof_state_visually(account):
         reply = "Scope is not parked"
 
     lm = vision_safety.last_match
-    if lm and "min_conf" in lm:
+    if lm and lm.get("source") == "kasa" and "votes" in lm:
+        v = lm["votes"]
+        reply += (
+            f"\n━━ Kasa camera ({lm['lit_rungs']}/{lm['rungs']} frames decoded a tag, "
+            f"pose {'verified' if lm.get('pose_verified') else 'UNVERIFIED'}) ━━\n"
+            f"Scope tag : {lm['parked']['error']:.0f} px off park ({lm['parked']['verdict']})\n"
+            f"Roof tag  : {lm['closed']['error']:.0f} px off shut ({lm['closed']['verdict']})\n"
+            f"Frames    : parked {v['parked']}, closed {v['closed']}, open {v['open']}"
+        )
+    elif lm and "min_conf" in lm:
         reply += (
             f"\n━━ Match confidence (≥ {lm['min_conf']:.2f}) ━━\n"
             f"Parked : {lm['parked']['conf']:.2f}\n"

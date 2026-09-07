@@ -20,50 +20,46 @@ def test_space_is_the_size_the_docstring_claims():
     assert n == 3 * 3 * 3 * 3 * 2 * 2 * 2 * 3 * 2, n
 
 
-def test_invariant_a_mount_parked_requires_both_cameras_and_no_mount_veto():
-    """Positive evidence comes from the two cameras, which must AGREE and both
-    read CONFIRMED. PWI4 only vetoes: DENIED refuses, UNKNOWN abstains because
-    the mount is unpowered at every roof open and has no opinion to give."""
+def test_invariant_a_mount_parked_requires_the_park_camera_and_no_veto():
+    """Since 2026-09-07 there is one park camera. Positive evidence is its
+    pose-verified gating read (parked_vision = CONFIRMED). Its raw line
+    (parked_kasa) and PWI4 are vetoes: DENIED refuses, UNKNOWN abstains."""
     for s in enumerate_snapshots():
         passed = G.mount_parked(s) is None
         should = (s.parked_vision is Tri.CONFIRMED
-                  and s.parked_kasa is Tri.CONFIRMED
+                  and s.parked_kasa is not Tri.DENIED
                   and s.parked_pwi4 is not Tri.DENIED)
         assert passed == should, s
 
 
-def test_a_single_camera_can_never_authorise_a_roof_move():
-    """The property the two-camera rule exists to provide: one camera saying
-    CONFIRMED is never enough, whatever the other says or fails to say."""
+def test_the_raw_camera_line_cannot_confirm_on_its_own():
+    """A kasa_status line is written by every read of the camera, verified or
+    not. It may veto; it never authorises."""
     for other in Tri:
         if other is Tri.CONFIRMED:
             continue
         assert G.mount_parked(SensorSnapshot(
-            parked_vision=Tri.CONFIRMED, parked_kasa=other)) is not None
-        assert G.mount_parked(SensorSnapshot(
             parked_vision=other, parked_kasa=Tri.CONFIRMED)) is not None
 
 
-def test_camera_split_reads_as_unknown():
-    """Disagreement is equivalent to unknown: it refuses, and it refuses for
-    every combination, never resolving in favour of one camera."""
-    for a in Tri:
-        for b in Tri:
-            if a is b:
-                continue
-            s = SensorSnapshot(parked_vision=a, parked_kasa=b,
-                               parked_pwi4=Tri.CONFIRMED)
-            assert G.parked_by_cameras(s) is Tri.UNKNOWN, (a, b)
-            assert G.mount_parked(s) is not None, (a, b)
+def test_an_off_park_read_anywhere_vetoes():
+    """UNSAFE decoded in any frame of any read refuses, whatever the gating
+    read says."""
+    for v in Tri:
+        s = SensorSnapshot(parked_vision=v, parked_kasa=Tri.DENIED,
+                           parked_pwi4=Tri.CONFIRMED)
+        assert G.parked_by_cameras(s) is Tri.DENIED, v
+        assert G.mount_parked(s) is not None, v
 
 
 def test_unpowered_mount_does_not_block_a_confirmed_park():
     """The 2026-09-04 regression, as a test: PWI4 UNKNOWN is the every-night
-    state at a roof open, and it must not refuse when both cameras confirm."""
+    state at a roof open, and it must not refuse when the camera confirms."""
     s = SensorSnapshot(parked_vision=Tri.CONFIRMED, parked_kasa=Tri.CONFIRMED,
                        parked_pwi4=Tri.UNKNOWN)
     assert G.mount_parked(s) is None
-    # ...but a POWERED mount contradicting both cameras still refuses.
+    assert G.mount_parked(s.replace(parked_kasa=Tri.UNKNOWN)) is None
+    # ...but a POWERED mount contradicting the camera still refuses.
     assert G.mount_parked(s.replace(parked_pwi4=Tri.DENIED)) is not None
 
 

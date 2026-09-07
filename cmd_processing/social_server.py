@@ -281,16 +281,25 @@ def status_cmd(words: list[str], index: int, m: Mastodon, account: str) -> None:
     )
 
     # Attach a short live audio clip of the observatory to the status report,
-    # plus a mel spectrogram of the same clip.
+    # plus a mel spectrogram of the same clip. Heard through the inside Kasa
+    # camera's microphone since 2026-09-07 (the webcam's USB mic was retired
+    # with it); 8 kHz G.711, so the spectrogram tops out under 4 kHz.
     try:
-        from sentry import audio_classify
+        import wave
+        import numpy as np
+        from sentry import kasa_audio
         _project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
         scratch_dir = os.path.join(_project_root, cfg["scratch"]["directory"])
+        os.makedirs(scratch_dir, exist_ok=True)
         wav_path = os.path.join(scratch_dir, "status_audio.wav")
         spec_path = os.path.join(scratch_dir, "status_spectrogram.png")
-        recorded = audio_classify.record_wav(15, wav_path, spectrogram_path=spec_path)
-        if recorded:
-            post_social_message("Observatory audio (15s)", audio=recorded)
+        pcm, _times = kasa_audio.capture_pcm(15)
+        if pcm is not None and pcm.size:
+            with wave.open(wav_path, "wb") as w:
+                w.setnchannels(1); w.setsampwidth(2); w.setframerate(kasa_audio.RATE)
+                w.writeframes(pcm.astype(np.int16).tobytes())
+            kasa_audio.generate_spectrogram(pcm.astype(np.float32) / 32768.0, spec_path)
+            post_social_message("Observatory audio (15s, Kasa mic)", audio=wav_path)
             if os.path.exists(spec_path):
                 post_social_message("Audio spectrogram", spec_path)
         else:

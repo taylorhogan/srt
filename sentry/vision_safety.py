@@ -1,3 +1,26 @@
+"""
+vision_safety.py -- the single vision entry point for every mount/roof decision.
+
+    parked, closed, is_open, when = vision_safety.visual_status()
+
+SINCE 2026-09-07 THE ANSWER COMES FROM THE INSIDE KASA CAMERA (sentry/
+kasa_state: AprilTags on the scope and the roof panel, pose-verified,
+several frames per read). The scope-top webcam and its microphone were
+retired that day. A slight bump to that camera on 2026-09-06 shifted every
+marker ~110 px, the open star fell outside its window while the parked and
+closed markers stayed inside theirs, and the roof-open confirmation failed
+five times with the roof truly open; the Kasa camera read it right on every
+check. The template ladder below (find_template_rectangle, _evaluate_rung,
+_decide_from_rungs, _score_exposure_set) is RETAINED ONLY so the archived
+exposure sets under base_images/exposure_sets can still be replayed
+(scripts/replay_ladder_verdicts.py); nothing live calls it.
+
+The contract every caller relies on is unchanged: a 4-tuple, a module-level
+``last_match`` with per-state conf/error/verdict, and the
+"vision parked=... closed=... open=... -- votes parked N/M lit" log line the
+conductor's shadow reads. Any failure reads parked=False, closed=False,
+open=False -- unconfirmed on every axis -- and ``last_match["error"]`` says why.
+"""
 # https://stackoverflow.com/questions/52509316/opencv-rectangle-filled
 import os,sys
 import time
@@ -10,7 +33,6 @@ if __package__ is None or __package__ == "":
     if project_root not in sys.path:
         sys.path.insert(0, project_root)
 
-from sentry import  inside_camera_server
 from configs import config
 from utils import pushover
 
@@ -459,6 +481,8 @@ def _write_annotated(rung, image_path):
 
 
 def _visual_status_once():
+    # Retired webcam path, kept for replaying archived ladders only.
+    from sentry import inside_camera_server  # noqa: F401
     global last_match
 
     # Snapshot and read must be atomic: take_snapshot() clobbers scope_view.jpg
@@ -562,112 +586,143 @@ def _unresolved_reason():
     return None
 
 
-_KASA_EMIT_MIN_INTERVAL_S = 10.0
-_kasa_emit_last = 0.0
+def _with_inside_light(fn):
+    """Run *fn* with the inside light on, restoring its prior state after.
 
-
-def _emit_indoor_camera_reading():
-    """Make the indoor camera's park verdict land in iris.log beside this
-    vision check, on a daemon thread that can never delay a roof decision.
-
-    The conductor's mount_parked guard takes its positive evidence from BOTH
-    park cameras, and it reads them out of the log. Before this, the indoor
-    camera only reported on paths routed through
-    super_user_commands.get_status_with_lights() — so end.py's close, which
-    calls visual_status() directly, produced a webcam reading with no partner.
-    Measured on the real 2026-09-05 close: the guard saw vision=CONFIRMED and
-    kasa=UNKNOWN and refused a move both cameras in fact agreed on.
-
-    This function sits in visual_status() because that is documented as the
-    single vision entry point for every mount/roof safety decision, which
-    makes it the one place a future caller cannot forget.
-
-    Best-effort by construction: a daemon thread, everything swallowed, no
-    return value. It informs the observer; it never gates the roof. Throttled
-    because several callers poll vision in quick succession and the camera
-    does not need fetching three times to answer one question.
+    The light is switched exactly as the webcam ladder switched it, because
+    that is the lighting every existing reading was taken under. The tags
+    decode in the camera's IR mode too (2026-09-06 21:26, lights off: scope
+    tag read 1076 px off park), so a light that cannot be controlled is a
+    warning, not a refusal.
     """
-    global _kasa_emit_last
-    now = time.time()
-    if now - _kasa_emit_last < _KASA_EMIT_MIN_INTERVAL_S:
-        return
-    _kasa_emit_last = now
-
-    def _run():
-        try:
-            from sentry import kasa_state
-            kasa_state.kasa_status(quick=True)   # logs "kasa_status: scope=..."
-        except Exception:       # noqa: BLE001 -- observer, never surfaces
-            _logger.debug("indoor-camera reading failed (ignored)",
-                          exc_info=True)
-
+    dev_map = None
+    prior = None
     try:
-        import threading
-        threading.Thread(target=_run, name="kasa-park-reading",
-                         daemon=True).start()
-    except Exception:           # noqa: BLE001
-        _logger.debug("indoor-camera thread failed to start (ignored)",
-                      exc_info=True)
+        import asyncio
+        from cmd_processing import super_user_commands as suc
+        from hardware_control import kasa_utils as ku
+        dev_map = asyncio.run(ku.make_discovery_map())
+        prior = suc.is_inside_light_on(dev_map)
+        if not prior:
+            suc.turn_inside_light_on(dev_map)
+    except Exception:  # noqa: BLE001
+        _logger.warning("inside light could not be switched for the vision read", exc_info=True)
+        dev_map = None
+    try:
+        return fn()
+    finally:
+        if dev_map is not None and not prior:
+            try:
+                from cmd_processing import super_user_commands as suc
+                suc.turn_inside_light_off(dev_map)
+            except Exception:  # noqa: BLE001
+                _logger.warning("inside light could not be restored", exc_info=True)
 
 
-def visual_status(retries: int = 2, delay: float = 2.0):
-    """Report (parked, closed, open, mod_date) from the inside camera, retrying
-    to ride out a garbage webcam frame.
+def _match_from_detail(det, parked, closed, is_open):
+    """Shape kasa_state.last_detail into the last_match the callers read."""
+    sd = det.get("scope_detail") or {}
+    rd = det.get("roof_detail") or {}
+    per = det.get("per_frame") or []
+    n = int(det.get("frames") or len(per) or 1)
+    lit = sum(1 for f in per if f.get("tags"))
+    scope_seen = any(0 in (f.get("tags") or []) for f in per)
+    roof_seen = any(1 in (f.get("tags") or []) for f in per)
 
-    This is the single vision entry point for every mount/roof safety decision
-    (roof open/close, end-of-night shutdown, pre-flats check, ``status``). A
-    single torn/starved/unreadable snapshot reports ``parked=False`` with
-    ``last_match["trusted"] == False`` even when the scope is really parked —
-    which once wrongly blocked the end-of-night roof close (the mount was
-    confirmed parked by PWI4, but one corrupt frame said otherwise, so the roof
-    was left open all night). A fresh snapshot almost always comes back clean,
-    so re-take it up to *retries* extra times whenever the read is untrusted,
-    and return the first trusted result.
+    parked_verdict = ("ok" if parked else "position" if det.get("scope") == "UNSAFE"
+                      else "pose" if "pose" in str(sd.get("why", "")) else "not seen")
+    closed_verdict = ("ok" if closed else "position" if rd.get("tag_elsewhere")
+                      else "not seen")
+    open_verdict = ("ok" if is_open else "tag present" if roof_seen
+                    else "aperture veto" if rd.get("aperture") == "shut" and scope_seen
+                    else "not seen")
+    return {
+        "source": "kasa",
+        "min_conf": 1.0,
+        "accuracy": 187.0,
+        "frame_luma": 0.0,
+        "trusted": bool(parked),
+        "rungs": n,
+        "lit_rungs": lit,
+        "votes": {"parked": sum(1 for f in per if f.get("scope") == "safe"),
+                  "closed": sum(1 for f in per if f.get("roof") == "shut"),
+                  "open": sum(1 for f in per if f.get("roof") == "open")},
+        "pose_verified": bool(det.get("pose_verified")),
+        "is_parked": bool(parked),
+        "is_closed": bool(closed),
+        "is_open": bool(is_open),
+        "parked": {"conf": 1.0 if scope_seen else 0.0,
+                   "error": float(sd.get("worst_corner_px", 0.0) or 0.0),
+                   "verdict": parked_verdict},
+        "closed": {"conf": 1.0 if roof_seen else 0.0,
+                   "error": float(rd.get("worst_corner_px", 0.0) or 0.0),
+                   "verdict": closed_verdict},
+        "open": {"conf": 1.0 if (scope_seen and not roof_seen) else 0.0,
+                 "error": 0.0,
+                 "verdict": open_verdict},
+        "why": rd.get("why") or sd.get("why"),
+    }
 
-    A parked scope whose roof reads neither closed NOR open is retried for the
-    same reason (see :func:`_unresolved_reason`): the roof is always in one of
-    those states, so "neither" is a failure to read the frame, not a finding.
-    That case bit us on 2026-08-04 — the roof had just closed (audio and motor
-    current both nominal) but the confirming frame came back ~35 luma brighter
-    than the exposure the ladder scored, which puts the closed marker ~610px
-    off its expected position. It reported "roof is NOT closed", and because
-    the scope WAS parked the read counted as trusted and was never re-taken.
-    The very next snapshot, 72s later, read closed at 0.89 confidence.
 
-    A genuinely-unresolvable read stays unresolved through every retry and the
-    (still-safe) all-False result is returned unchanged — callers fail safe
-    exactly as before, just after having given a garbage frame a few more
-    chances. Retrying never fabricates a state: each attempt is an independent
-    snapshot subject to the same position/confidence/luma gates, so the
-    roof-move preconditions are unchanged per frame — we simply stop acting on
-    the first unreadable one.
+def visual_status(retries: int = 1, delay: float = 3.0, frames: int | None = None):
+    """(parked, closed, open, mod_date) from the inside Kasa camera.
+
+    This is the single vision entry point for every mount/roof safety
+    decision (roof open/close, end-of-night shutdown, pre-flats check,
+    ``status``). Each read drives the camera to the reference pose, switches
+    the inside light on as the old ladder did, takes ``frames`` frames
+    (kasa_state.GATE_FRAMES by default) and combines them: UNSAFE in any
+    frame is not parked; OPEN needs every frame; SHUT needs one decoded roof
+    tag at its shut position and none elsewhere. The whole read is retried
+    once if the camera returned no frame at all.
+
+    Never fabricates a state: every failure returns all-False with
+    ``last_match["error"]`` explaining, and callers refuse exactly as before.
     """
-    _emit_indoor_camera_reading()
-    parked, closed, open, mod_date = _visual_status_once()
-    for attempt in range(1, retries + 1):
-        reason = _unresolved_reason()
-        if reason is None:
+    global last_match
+    from sentry import kasa_state
+    n = kasa_state.GATE_FRAMES if frames is None else max(1, int(frames))
+
+    def _read():
+        return kasa_state.kasa_status(verify_pose=True, frames=n)
+
+    parked = closed = is_open = False
+    when = None
+    for attempt in range(retries + 1):
+        parked, closed, is_open, when = _with_inside_light(_read)
+        det = dict(kasa_state.last_detail or {})
+        if det.get("camera"):
             break
-        _logger.warning(
-            "vision read unresolved (%s) — retrying snapshot %d/%d",
-            reason, attempt, retries,
-        )
-        time.sleep(delay)
-        parked, closed, open, mod_date = _visual_status_once()
-    return parked, closed, open, mod_date
+        _logger.warning("vision read got no frame (%s) -- retry %d/%d",
+                        det.get("why", "camera"), attempt + 1, retries)
+        if attempt < retries:
+            time.sleep(delay)
+    det = dict(kasa_state.last_detail or {})
+    if not det.get("camera"):
+        last_match = {"source": "kasa", "error": det.get("why") or "no frame from the camera",
+                      "trusted": False, "is_parked": False, "is_closed": False,
+                      "is_open": False}
+        _logger.warning("vision parked=False closed=False open=False -- votes parked 0/0 lit "
+                        "(0 frames); %s", last_match["error"])
+        return False, False, False, time.ctime()
+
+    last_match = _match_from_detail(det, parked, closed, is_open)
+    v = last_match["votes"]
+    resolved = parked and (closed or is_open)
+    why = ("; " + str(last_match["why"])) if last_match.get("why") and not resolved else ""
+    # Wording coupled to _VISION_RE in iris/conductor/shadow.py; change together.
+    _logger.info(
+        "vision parked=%s closed=%s open=%s -- votes parked %d/%d lit (%d frames), "
+        "closed %d, open %d; kasa pose %s%s",
+        parked, closed, is_open, v["parked"], last_match["lit_rungs"], last_match["rungs"],
+        v["closed"], v["open"],
+        "verified" if last_match["pose_verified"] else "UNVERIFIED", why,
+    )
+    mod_date = when.strftime("%a %b %d %H:%M:%S %Y") if when else time.ctime()
+    return parked, closed, is_open, mod_date
 
 
 if __name__ == '__main__':
-    cfg = config.data()
-    inside_view = cfg["camera safety"]["scope_view"]
-
-    just_finding_template = False
-    if just_finding_template:
-
-        inside_camera_server.take_snapshot()
-        image =  img_rgb = cv.imread(cfg["camera safety"]["scope_view"], cv.IMREAD_COLOR)
-        test_find_template(image, cfg['camera safety']['open template'])
-    else:
-        parked, closed, open, mod_date = visual_status()
-        print (parked, closed, open, mod_date)
-        pushover.push_message("roof is not closed, stopping", inside_view)
+    parked, closed, open, mod_date = visual_status()
+    print(parked, closed, open, mod_date)
+    print(last_match)
