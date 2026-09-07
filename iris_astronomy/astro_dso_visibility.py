@@ -866,8 +866,16 @@ def smoke_advisory(pm25_aqi: float | None) -> str | None:
 
 
 def map_az_to_horizon() -> tuple[list[float], list[float]]:
-    ax = plt.gca()
-    data = []
+    """Read the horizon profile (azimuth, altitude) from configs/my.hrz.
+
+    A pure reader. Until 2026-09-07 this also plotted the profile onto
+    whatever pyplot figure was CURRENT, saved that figure to scratch/h.png
+    (which nothing read) and closed it. The frame watcher renders each new sub
+    with pyplot on another thread, so when the two overlapped the watcher's
+    frame went to h.png and the horizon plot was saved as latest_imaging.jpg:
+    a white line chart in the webchat's Live card. Two callers had grown
+    plt.clf() workarounds for the same side effect.
+    """
     az = []
     al = []
     dir_name = os.path.dirname(__file__)
@@ -884,13 +892,6 @@ def map_az_to_horizon() -> tuple[list[float], list[float]]:
                 col2 = float(columns[1])
                 az.append(col1)
                 al.append(col2)
-
-    plt.plot(az, al)
-
-    sky_path = root / "scratch" / "h.png"
-
-    plt.savefig(sky_path)
-    plt.close()
     return az, al
 
 

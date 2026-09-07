@@ -405,7 +405,10 @@ def save_fwhm(
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     plt.tight_layout()
-    plt.savefig(output_path, format="jpeg", dpi=150, bbox_inches="tight", facecolor=fig.get_facecolor())
+    # fig.savefig, never plt.savefig: the latter writes the CURRENT figure,
+    # which on the frame-watcher thread can be another thread's plot
+    # (the horizon profile ended up in the Live card, 2026-09-07).
+    fig.savefig(output_path, format="jpeg", dpi=150, bbox_inches="tight", facecolor=fig.get_facecolor())
     plt.close(fig)
     return output_path, mean_px, mean_ecc
 
@@ -489,7 +492,7 @@ def save_fwhm_heatmaps(
         ax.set_ylabel("Y (pixels)")
         out_path.parent.mkdir(parents=True, exist_ok=True)
         plt.tight_layout()
-        plt.savefig(out_path, format="jpeg", dpi=150, bbox_inches="tight", facecolor=fig.get_facecolor())
+        fig.savefig(out_path, format="jpeg", dpi=150, bbox_inches="tight", facecolor=fig.get_facecolor())
         plt.close(fig)
 
     if not stars:
@@ -501,7 +504,7 @@ def save_fwhm_heatmaps(
             ax.set_title(f"{fits_path.name}  |  {label} grid heatmap  |  no stars detected")
             out_path.parent.mkdir(parents=True, exist_ok=True)
             plt.tight_layout()
-            plt.savefig(out_path, format="jpeg", dpi=150, bbox_inches="tight", facecolor=fig.get_facecolor())
+            fig.savefig(out_path, format="jpeg", dpi=150, bbox_inches="tight", facecolor=fig.get_facecolor())
             plt.close(fig)
         return fwhm_output_path, ecc_output_path
 
@@ -587,7 +590,7 @@ def save_fwhm_vs_distance(
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     plt.tight_layout()
-    plt.savefig(output_path, format="jpeg", dpi=150, bbox_inches="tight", facecolor=fig.get_facecolor())
+    fig.savefig(output_path, format="jpeg", dpi=150, bbox_inches="tight", facecolor=fig.get_facecolor())
     plt.close(fig)
     return output_path
 
@@ -652,7 +655,7 @@ def save_eccentricity_angle_map(
     ax.set_ylabel("Y (pixels)")
     output_path.parent.mkdir(parents=True, exist_ok=True)
     plt.tight_layout()
-    plt.savefig(output_path, format="jpeg", dpi=150, bbox_inches="tight", facecolor=fig.get_facecolor())
+    fig.savefig(output_path, format="jpeg", dpi=150, bbox_inches="tight", facecolor=fig.get_facecolor())
     plt.close(fig)
     return output_path
 
@@ -1126,7 +1129,7 @@ def save_optical_metrics_table(metrics: dict, output_path: Path) -> Path:
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     plt.tight_layout()
-    plt.savefig(output_path, format="jpeg", dpi=150, bbox_inches="tight", facecolor=fig.get_facecolor())
+    fig.savefig(output_path, format="jpeg", dpi=150, bbox_inches="tight", facecolor=fig.get_facecolor())
     plt.close(fig)
     return output_path
 
@@ -1332,7 +1335,7 @@ def save_stats_plot(
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     plt.tight_layout()
-    plt.savefig(output_path, format="jpeg", dpi=150, bbox_inches="tight", facecolor=fig.get_facecolor())
+    fig.savefig(output_path, format="jpeg", dpi=150, bbox_inches="tight", facecolor=fig.get_facecolor())
     plt.close(fig)
     return output_path, len(fwhms)
 
@@ -1501,7 +1504,7 @@ def save_stats_plot_from_cache(
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     plt.tight_layout()
-    plt.savefig(output_path, format="jpeg", dpi=150,
+    fig.savefig(output_path, format="jpeg", dpi=150,
                 bbox_inches="tight", facecolor=fig.get_facecolor())
     plt.close(fig)
     return output_path, len(fwhms)
