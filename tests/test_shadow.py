@@ -9,6 +9,7 @@ against real nights.
 """
 import json
 import sys
+import pytest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -28,6 +29,17 @@ def _mkroot(tmp_path):
     (tmp_path / "iris.log").write_text("")
     (tmp_path / "local").mkdir()
     return tmp_path
+
+
+@pytest.fixture(autouse=True)
+def _no_real_nina(monkeypatch):
+    """Hermetic: the shadow asks the real tasklist whether NINA.exe is running,
+    and it does that during __init__ (wedge recovery), before a test can set
+    anything on the instance. On the observatory this made
+    test_recovering_a_wedged_state_resyncs_to_idle fail on every imaging night
+    (first seen 2026-09-06 21:20, NINA mid-run) while passing in CI and by day.
+    """
+    monkeypatch.setattr(ShadowConductor, "_nina_running", lambda self: False)
 
 
 def _shadow(root):
