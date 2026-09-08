@@ -48,6 +48,8 @@ def _template():
                     {"$id": "28", "$type": f"{NS}.SequenceItem.Utility.WaitForTime, {NS}",
                      "Hours": 21, "Minutes": 13, "Seconds": 0, "MinutesOffset": -10,
                      "SelectedProvider": {"$id": "60", "$type": f"{NS}.Utility.DateTimeProvider.NauticalDuskProvider, {NS}"},
+                     "Parent": {"$ref": "26"}},
+                    {"$id": "61", "$type": f"{NS}.SequenceItem.Autofocus.RunAutofocus, {NS}",
                      "Parent": {"$ref": "26"}}]},
                 "Parent": {"$ref": "20"}},
                {"$id": "29", "$type": f"{NS}.Container.SequentialContainer, {NS}", "Name": "IMAGING",
@@ -197,3 +199,15 @@ def test_no_reference_points_forward(tmp_path):
             for v in n:
                 walk(v)
     walk(seq)
+
+
+def test_explicit_autofocus_only_in_the_first_slot(tmp_path):
+    seq, _ = _gen(tmp_path, SLOTS)
+    dsos = [it for it in g._items_of(g._find_target_area(seq))
+            if g._short_type(it) == "DeepSkyObjectContainer"]
+    def types(d):
+        return [g._short_type(i) for i in g._items_of(g._items_of(d)[0])]
+    assert "RunAutofocus" in types(dsos[0])
+    assert "RunAutofocus" not in types(dsos[1])
+    # the hand-over scripts still bracket the second slot's setup
+    assert types(dsos[1])[0] == "ExternalScript" and types(dsos[1])[-1] == "ExternalScript"

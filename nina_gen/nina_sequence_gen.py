@@ -587,6 +587,18 @@ def generate_slots_sequence(template_path: Path, slots: list, output_path: Path,
         if k < len(slots) - 1:
             _set_hard_end(c, slot.get("end"), next_id)
         plans.append(_plan_for(c, slot["name"], slot.get("seconds")))
+        if k > 0:
+            # No explicit autofocus after the first slot. Focus follows
+            # temperature and filter, and both already have triggers inside
+            # every block; the slot's first exposure changes filter anyway
+            # (S-II -> L on the 09-08 plan), so the explicit run would only
+            # add a second pass -- through the filter this rig focuses worst
+            # on -- before the trigger's own.
+            setup0 = next((it for it in _items_of(c)
+                           if _short_type(it) == "SequentialContainer"), None)
+            if setup0 is not None:
+                vals = _items_of(setup0)
+                vals[:] = [it for it in vals if _short_type(it) != "RunAutofocus"]
         if k > 0 and state_script and script_proto is not None:
             setup = next((it for it in _items_of(c)
                           if _short_type(it) == "SequentialContainer"), None)
