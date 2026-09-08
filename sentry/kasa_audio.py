@@ -371,6 +371,7 @@ def start_capture_async(direction=None, seconds=CAPTURE_S, host=HOST,
             try:
                 from sentry import kasa_roof_frames
                 kasa_roof_frames.save_move_frames(video, direction)
+                kasa_roof_frames.save_move_clip(video, pcm, direction, rate=RATE)
             except Exception as e:        # noqa: BLE001 - shadow observer
                 _log("kasa roof frames: failed (ignored): %r" % (e,))
             if pcm.size == 0:

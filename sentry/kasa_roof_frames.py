@@ -67,6 +67,50 @@ def _log(msg):
         pass
 
 
+# Whole-move clips, kept since 2026-09-08 so a move can be WATCHED after the
+# fact. The question that prompted it: every close since 5 Sep draws ~500 W
+# for exactly its first second and takes one second longer, and the stops
+# have not moved -- so is the panel standing still for that second while the
+# motor strains? Sound says when the motor starts; the picture says when the
+# panel moves; the same stream carries both, so their clocks agree.
+# scripts/roof_move_motion.py measures the gap. Rolling cap: the newest
+# CLIP_KEEP moves, ~8 MB of H.264 plus 800 KB of 8 kHz audio each.
+CLIP_DIR = os.path.join(ROOT, "clips")
+CLIP_KEEP = 16
+
+
+def save_move_clip(video_bytes, pcm_int16, direction, rate=8000, root=CLIP_DIR, keep=CLIP_KEEP):
+    """Keep the raw H.264 and the full-window audio of one move. Never raises."""
+    try:
+        import wave
+        os.makedirs(root, exist_ok=True)
+        stamp = datetime.now().strftime("%Y%m%dT%H-%M-%S")
+        base = os.path.join(root, "%s_%s" % (stamp, direction or "unknown"))
+        if video_bytes:
+            with open(base + ".h264", "wb") as fh:
+                fh.write(video_bytes)
+        if pcm_int16 is not None and getattr(pcm_int16, "size", 0):
+            with wave.open(base + ".wav", "wb") as w:
+                w.setnchannels(1); w.setsampwidth(2); w.setframerate(rate)
+                w.writeframes(pcm_int16.tobytes())
+        # prune to the newest `keep` moves (a move is one stamp)
+        stamps = sorted({f.rsplit("_", 1)[0] for f in os.listdir(root)
+                         if f.endswith((".h264", ".wav"))})
+        for old in stamps[:-keep] if keep > 0 else []:
+            for f in os.listdir(root):
+                if f.startswith(old):
+                    try:
+                        os.remove(os.path.join(root, f))
+                    except OSError:
+                        pass
+        _log("kasa roof clip %s: kept %s (%d KB video)" % (direction, os.path.basename(base),
+                                                           len(video_bytes or b"") // 1024))
+        return base
+    except Exception as e:              # noqa: BLE001 - shadow observer
+        _log("kasa roof clip failed: %r" % (e,))
+        return None
+
+
 def save_move_frames(video_bytes, direction, root=ROOT, fps_hint=FPS_HINT):
     """Write the first and last frame of a roof-move capture, labelled.
 
