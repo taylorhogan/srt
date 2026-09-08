@@ -205,12 +205,34 @@ def resolve_coord(target_name: str) -> SkyCoord:
     return SkyCoord(result["ra"][0], result["dec"][0], unit=(u.deg, u.deg))
 
 
+# A tiled survey (Legacy, SDSS) stitches bricks with their own sky levels. On
+# a small faint target that is invisible; across a bright forty-arcminute
+# galaxy it is a patchwork of rectangles -- M33 on 2026-09-08 was unusable.
+# The tell is the spread of the background between coarse cells: measured
+# 160 grey levels on M33's Legacy cutout against 1 on NGC 5907's. Above this
+# the cutout is rejected and the walk falls through to the plate surveys,
+# which cover the field in one piece.
+PATCHWORK_SPREAD = 25.0
+
+
+def _patchwork_spread(img) -> float:
+    """p90-p10 of the per-cell (100 px) background median of a colour cutout."""
+    lum = np.asarray(img).max(axis=2).astype(float)
+    h, w = lum.shape
+    cells = [np.median(lum[y:y + 100, x:x + 100])
+             for y in range(0, h - 100, 100) for x in range(0, w - 100, 100)]
+    if len(cells) < 6:
+        return 0.0
+    return float(np.percentile(cells, 90) - np.percentile(cells, 10))
+
+
 def get_preview_image(target_name: str, sources=PREVIEW_SOURCES):
     """Best available preview of *target_name*: (array, survey_label, is_colour).
 
     Walks PREVIEW_SOURCES and takes the first that actually returns sky, so a
     colour survey being down or not covering the target degrades to the next one
-    rather than to nothing.
+    rather than to nothing. A tiled survey's cutout that reads as a patchwork
+    (see PATCHWORK_SPREAD) is skipped the same way.
     """
     fov_w, fov_h = field_of_view()
     coord = resolve_coord(target_name)
@@ -229,6 +251,12 @@ def get_preview_image(target_name: str, sources=PREVIEW_SOURCES):
         else:
             continue
         if got is not None:
+            if name in ("legacy", "sdss"):
+                spread = _patchwork_spread(got[0])
+                if spread > PATCHWORK_SPREAD:
+                    print(f"{got[1]} cutout of {target_name} is a tile patchwork "
+                          f"(spread {spread:.0f}); trying the next survey")
+                    continue
             return got[0], got[1], True
     raise RuntimeError(f"No survey returned an image for {target_name}")
 
