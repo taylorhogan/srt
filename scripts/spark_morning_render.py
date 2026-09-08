@@ -173,7 +173,10 @@ def main() -> int:
     ap.add_argument("--exptime", type=int, default=300)
     ap.add_argument("--rerender", action="store_true",
                     help="render even if the frame counts are unchanged")
-    ap.add_argument("--max-targets", type=int, default=2)
+    # Three, not two: a two-slot night (2026-09-08 onward) fills two by itself,
+    # and a cap that exactly fits the normal case defers any incidental third
+    # target to the next morning for no reason.
+    ap.add_argument("--max-targets", type=int, default=3)
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
 

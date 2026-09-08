@@ -73,8 +73,14 @@ def determine_roof_state_visually(account):
         social_server.post_social_message(reply)
 
 
-def _post_imaging_summary(imaging_start: datetime) -> None:
-    """Post end-of-night quality metrics, reading from the frame_watcher cache first."""
+def _post_imaging_summary(imaging_start: datetime, dso: "str | None" = None) -> None:
+    """Post end-of-night quality metrics, reading from the frame_watcher cache first.
+
+    With *dso* None this runs once per target the night imaged (in the order
+    they were shot -- control/tonight_dsos), so a two-slot night reports
+    both. Before 2026-09-08 it scoped itself to the DSO of the newest frame,
+    which after NGC 7380 then M33 would have reported M33 and nothing else.
+    """
     import json as _json
 
     logger = utils.set_logger()
@@ -83,8 +89,19 @@ def _post_imaging_summary(imaging_start: datetime) -> None:
     arcsec_per_pixel = cfg["nina"]["arc_sec_per_pixel"]
     start_ts = imaging_start.timestamp()
 
+    if dso is None:
+        from control import tonight_dsos
+        names = tonight_dsos.imaged(image_dir, since=start_ts)
+        if len(names) > 1:
+            social_server.post_social_message(
+                "Imaging complete — %d targets tonight: %s" % (len(names), ", ".join(names)))
+        for name in names or [None]:
+            _post_imaging_summary(imaging_start, dso=name or "")
+        return
+
     social_server.post_social_message(
         f"Scanning for FITS since {imaging_start.strftime('%Y-%m-%d %H:%M')}"
+        + (f" — {dso}" if dso else "")
     )
 
     def _is_light(f: Path) -> bool:
@@ -117,7 +134,10 @@ def _post_imaging_summary(imaging_start: datetime) -> None:
     # so without this any *other* target's frames whose mtime falls in the window
     # (e.g. a dataset imported mid-day for transit analysis) would be written into
     # this DSO's frame_stats.json and pollute its stats graph.
-    dso_dir = _dso_dir(fits_files[-1])
+    if dso:
+        dso_dir = image_dir / dso
+    else:
+        dso_dir = _dso_dir(fits_files[-1])
     if dso_dir is not None:
         fits_files = [f for f in fits_files if dso_dir in f.parents]
     if not fits_files:

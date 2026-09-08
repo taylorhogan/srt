@@ -3401,23 +3401,29 @@ def doit_cmd(words: list[str], account: str) -> None:
         _kill_nina()
         do_flats()
 
-        # Report on what was actually imaged: the DSO the grid published when it
-        # planned the night. Re-running the selector here would rank against the
-        # COMING night's dark hours and weather and could name a different DSO
-        # than the one just shot. Falls back to the live queue if unpublished.
-        from control import tonight_target
-        eon_dso = tonight_target.read()
-        if not eon_dso:
-            instr = instructions.get_dso_object_tonight()
-            eon_dso = instr.get("dso") if instr else None
-        eon_words = ["snr", eon_dso] if eon_dso else ["snr"]
-        social_server.post_social_message(
-            f"End of night: SNR analysis for {eon_dso or 'most recent DSO'}…"
-        )
-        try:
-            _snr_run(eon_words)
-        except Exception:
-            _logger.exception("End-of-night SNR failed")
+        # Report on what was actually imaged: every DSO that received LIGHT
+        # frames since the run started, in the order they were shot
+        # (control/tonight_dsos), so a two-slot night gets a curve per target.
+        # Falls back to the grid's published pick, then the live queue, if the
+        # frame scan finds nothing.
+        from control import tonight_dsos, tonight_target
+        eon_dsos = tonight_dsos.imaged(cfg["nina"]["image_dir"],
+                                       since=tonight_dsos.imaging_start(_root))
+        if not eon_dsos:
+            one = tonight_target.read()
+            if not one:
+                instr = instructions.get_dso_object_tonight()
+                one = instr.get("dso") if instr else None
+            eon_dsos = [one] if one else [None]
+        for eon_dso in eon_dsos:
+            eon_words = ["snr", eon_dso] if eon_dso else ["snr"]
+            social_server.post_social_message(
+                f"End of night: SNR analysis for {eon_dso or 'most recent DSO'}…"
+            )
+            try:
+                _snr_run(eon_words)
+            except Exception:
+                _logger.exception("End-of-night SNR failed for %s", eon_dso)
 
 
 def _newest_fits_mtime(image_dir: Path) -> float:
@@ -3657,8 +3663,10 @@ def _snr_run_locked(words: list[str]) -> None:
         social_server.post_social_message("No LIGHT frames found for the requested target")
         return
 
+    from control import tonight_dsos as _tn
     social_server.post_social_message(
         f"Convergence for {dso_dir.name}: {len(fits_files)} light frames — computing…"
+        + ("" if dso_arg else _tn.others_hint(image_dir, dso_dir.name, os.path.join(os.path.dirname(__file__), ".."), "snr"))
     )
 
     by_filter = stacker.group_by_filter(fits_files)
