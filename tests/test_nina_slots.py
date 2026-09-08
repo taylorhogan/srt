@@ -46,7 +46,9 @@ def _template():
                {"$id": "26", "$type": f"{NS}.Container.SequentialContainer, {NS}", "Name": "Wait",
                 "Items": {"$id": "27", "$type": "x", "$values": [
                     {"$id": "28", "$type": f"{NS}.SequenceItem.Utility.WaitForTime, {NS}",
-                     "Hours": 21, "Minutes": 13, "Seconds": 0, "MinutesOffset": -10, "Parent": {"$ref": "26"}}]},
+                     "Hours": 21, "Minutes": 13, "Seconds": 0, "MinutesOffset": -10,
+                     "SelectedProvider": {"$id": "60", "$type": f"{NS}.Utility.DateTimeProvider.NauticalDuskProvider, {NS}"},
+                     "Parent": {"$ref": "26"}}]},
                 "Parent": {"$ref": "20"}},
                {"$id": "29", "$type": f"{NS}.Container.SequentialContainer, {NS}", "Name": "IMAGING",
                 "Items": {"$id": "30", "$type": "x", "$values": [_se(31, "Ha", 20), _se(40, "O-III", 30)]},
@@ -107,16 +109,24 @@ def test_two_slots_give_two_target_containers_with_sound_references(tmp_path):
     assert len(plans) == 2
 
 
-def test_each_clone_carries_its_own_window_and_coordinates(tmp_path):
+def test_only_non_last_slots_get_a_hard_end_and_starts_are_untouched(tmp_path):
     seq, _ = _gen(tmp_path, SLOTS)
     dsos = [it for it in g._items_of(g._find_target_area(seq))
             if g._short_type(it) == "DeepSkyObjectContainer"]
-    for d, slot in zip(dsos, SLOTS):
+    first, last = dsos
+    # first slot: hard end at its boundary through the fixed Time provider
+    tc = g._find_first(first, "TimeCondition")
+    assert (tc["Hours"], tc["Minutes"]) == (SLOTS[0]["end"].hour, SLOTS[0]["end"].minute)
+    assert "TimeProvider" in tc["SelectedProvider"]["$type"]
+    # last slot: the template's own end condition, untouched (dawn)
+    tc2 = g._find_first(last, "TimeCondition")
+    assert (tc2["Hours"], tc2["Minutes"]) == (4, 3)
+    assert "TimeProvider" not in tc2.get("SelectedProvider", {}).get("$type", "")
+    # WaitForTime keeps the template's provider and offset in both slots
+    for d in dsos:
         wt = g._find_first(d, "WaitForTime")
-        tc = g._find_first(d, "TimeCondition")
-        assert (wt["Hours"], wt["Minutes"]) == (slot["start"].hour, slot["start"].minute)
-        assert (tc["Hours"], tc["Minutes"]) == (slot["end"].hour, slot["end"].minute)
-        assert wt["MinutesOffset"] == 0
+        assert wt["MinutesOffset"] == -10
+    for d, slot in zip(dsos, SLOTS):
         ic = g._find_first(d, "InputCoordinates")
         assert ic["RAHours"] == int(slot["ra_hours"])
         assert ic["DecDegrees"] == int(slot["dec_degrees"])
@@ -144,3 +154,46 @@ def test_one_slot_is_the_plain_template_shape(tmp_path):
             if g._short_type(it) == "DeepSkyObjectContainer"]
     assert len(dsos) == 1 and dsos[0]["Name"] == "squid" and len(plans) == 1
     assert not [i for i in g._items_of(g._items_of(dsos[0])[0]) if g._short_type(i) == "ExternalScript"]
+
+
+def test_singleton_providers_are_referenced_not_duplicated(tmp_path):
+    """N.I.N.A hands back ONE instance of each date-time provider; a second
+    $id for it fails the load ("A different Id has already been assigned",
+    2026-09-08). The clone must point back at the original."""
+    seq, _ = _gen(tmp_path, SLOTS)
+    providers, refs_to_60 = [], 0
+    def walk(n):
+        nonlocal refs_to_60
+        if isinstance(n, dict):
+            if "$id" in n and "DateTimeProvider" in n.get("$type", ""):
+                providers.append(n["$id"])
+            if n.get("$ref") == "60":
+                refs_to_60 += 1
+            for v in n.values():
+                walk(v)
+        elif isinstance(n, list):
+            for v in n:
+                walk(v)
+    walk(seq)
+    # one NauticalDuskProvider definition (the template's), the clone refers to it;
+    # plus exactly one TimeProvider definition for the first slot's hard end
+    assert providers.count("60") == 1 and len(providers) == 2
+    assert refs_to_60 == 1
+
+
+def test_no_reference_points_forward(tmp_path):
+    """Newtonsoft resolves $ref against objects already read."""
+    seq, _ = _gen(tmp_path, SLOTS)
+    seen = set()
+    def walk(n):
+        if isinstance(n, dict):
+            if "$id" in n:
+                seen.add(n["$id"])
+            if "$ref" in n:
+                assert n["$ref"] in seen, "forward reference " + n["$ref"]
+            for v in n.values():
+                walk(v)
+        elif isinstance(n, list):
+            for v in n:
+                walk(v)
+    walk(seq)

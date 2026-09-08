@@ -410,6 +410,47 @@ def _max_id(node: Any, best: int = 0) -> int:
     return best
 
 
+# Object types N.I.N.A hands back as ONE instance however many times they
+# appear: the date-time providers behind WaitForTime / TimeCondition
+# (TimeProvider, NauticalDuskProvider, DawnProvider, ...). Newtonsoft's
+# reference resolver refuses to register the same instance under a second
+# $id -- "A different Id has already been assigned for value 'NINA.Sequencer.
+# Utility.DateTimeProvider.NauticalDuskProvider'" was the load failure on
+# 2026-09-08 -- so after all edits, _dedupe_singletons keeps the FIRST
+# occurrence of each provider type as the definition and turns every later
+# one into a $ref to it.
+_SINGLETON_TYPE_MARKERS = ("DateTimeProvider",)
+# The fixed-clock provider: with it, a WaitForTime / TimeCondition's Hours,
+# Minutes and Seconds ARE the time. With any other provider (nautical dusk,
+# dawn, ...) N.I.N.A computes the time and those fields are display only --
+# which is why the first two-slot file loaded with both targets ending "at
+# astronomical dawn" whatever the JSON said.
+TIME_PROVIDER_TYPE = "NINA.Sequencer.Utility.DateTimeProvider.TimeProvider, NINA.Sequencer"
+
+
+def _dedupe_singletons(sequence: Any) -> None:
+    """First occurrence of each singleton type defines it; later ones $ref it."""
+    first: dict[str, str] = {}
+
+    def walk(n):
+        if isinstance(n, dict):
+            t = str(n.get("$type", ""))
+            if "$id" in n and any(m in t for m in _SINGLETON_TYPE_MARKERS):
+                if t in first:
+                    ref = {"$ref": first[t]}
+                    n.clear()
+                    n.update(ref)
+                    return
+                first[t] = n["$id"]
+            for c in list(n.values()):
+                walk(c)
+        elif isinstance(n, list):
+            for c in n:
+                walk(c)
+
+    walk(sequence)
+
+
 def _clone_with_fresh_ids(node: Any, next_id: list) -> Any:
     """Deep-copy *node*, giving every $id inside it a fresh number and
     remapping every $ref that pointed at one of those ids. $refs to objects
@@ -448,24 +489,28 @@ def _clone_with_fresh_ids(node: Any, next_id: list) -> Any:
     return clone
 
 
-def _set_times(container: Any, start, end) -> None:
-    """Point every WaitForTime under *container* at *start* and every
-    TimeCondition at *end* (local wall-clock datetimes). The template's
-    values are static (21:13 / 04:03); per-slot times are what make a slot
-    hand over on time whatever its counts say."""
+def _set_hard_end(container: Any, end, next_id: list) -> None:
+    """Make every TimeCondition under *container* end at *end* (local
+    wall-clock) by switching its provider to the fixed Time provider.
+
+    Only the END is pinned, and only on slots that have a successor. The
+    WaitForTime stays the template's nautical dusk: for the first slot that is
+    the dark start anyway, and for a later slot it has already passed, so the
+    slot begins the moment the one before it ends -- early if that one ran out
+    of counts early -- and "wait until above horizon" covers the rise. The
+    last slot keeps the template's TimeCondition, astronomical dawn.
+    """
     if isinstance(container, dict):
-        t = _short_type(container)
-        if t == "WaitForTime" and start is not None:
-            container["Hours"], container["Minutes"], container["Seconds"] = start.hour, start.minute, 0
-            container["MinutesOffset"] = 0
-        elif t == "TimeCondition" and end is not None:
+        if _short_type(container) == "TimeCondition" and end is not None:
             container["Hours"], container["Minutes"], container["Seconds"] = end.hour, end.minute, 0
             container["MinutesOffset"] = 0
+            container["SelectedProvider"] = {"$id": str(next_id[0]), "$type": TIME_PROVIDER_TYPE}
+            next_id[0] += 1
         for v in container.values():
-            _set_times(v, start, end)
+            _set_hard_end(v, end, next_id)
     elif isinstance(container, list):
         for v in container:
-            _set_times(v, start, end)
+            _set_hard_end(v, end, next_id)
 
 
 def _find_first(node: Any, short_type: str) -> Optional[dict]:
@@ -498,9 +543,10 @@ def generate_slots_sequence(template_path: Path, slots: list, output_path: Path,
     *slots* is a list of dicts: ``name, ra_hours, dec_degrees, seconds, start,
     end`` (start/end local datetimes, may be None). The template's single
     DeepSkyObjectContainer is cloned once per slot with fresh object ids, each
-    clone patched for its target, timed for its window and sized for its
-    hours -- the same planning as a one-slot night, applied per slot. One roof
-    open, one prelude, one set of flats: only the main section changes.
+    clone patched for its target and sized for its hours -- the same planning
+    as a one-slot night, applied per slot -- and every slot but the last given
+    a hard end at its boundary (_set_hard_end). One roof open, one prelude,
+    one set of flats: only the main section changes.
 
     Every slot after the first gets two ExternalScript steps around its setup
     (*state_script*, i.e. scripts/set_imaging_state.bat): DONE_MAIN as the
@@ -523,17 +569,23 @@ def generate_slots_sequence(template_path: Path, slots: list, output_path: Path,
     proto = items[idx]
     script_proto = _find_first(sequence, "ExternalScript")
     next_id = [_max_id(sequence) + 1]
+    # Clone from a PRISTINE copy: the first slot edits the original in place
+    # (name, coordinates, hard end), and a clone taken after that would carry
+    # the first slot's end time into the second.
+    import copy
+    pristine = copy.deepcopy(proto)
 
     clones, plans = [], []
     for k, slot in enumerate(slots):
-        c = proto if k == 0 else _clone_with_fresh_ids(proto, next_id)
+        c = proto if k == 0 else _clone_with_fresh_ids(pristine, next_id)
         ra_h, ra_m, ra_s = _decompose_ra(slot["ra_hours"])
         dec_neg, dec_d, dec_m, dec_s = _decompose_dec(slot["dec_degrees"])
         coords = {"RAHours": ra_h, "RAMinutes": ra_m, "RASeconds": round(ra_s, 5),
                   "NegativeDec": dec_neg, "DecDegrees": dec_d, "DecMinutes": dec_m,
                   "DecSeconds": round(dec_s, 5)}
         _walk_and_replace(c, slot["name"], coords)
-        _set_times(c, slot.get("start"), slot.get("end"))
+        if k < len(slots) - 1:
+            _set_hard_end(c, slot.get("end"), next_id)
         plans.append(_plan_for(c, slot["name"], slot.get("seconds")))
         if k > 0 and state_script and script_proto is not None:
             setup = next((it for it in _items_of(c)
@@ -547,6 +599,7 @@ def generate_slots_sequence(template_path: Path, slots: list, output_path: Path,
                                            '"%s" IN_MAIN' % state_script, pid, next_id))
         clones.append(c)
     items[idx:idx + 1] = clones
+    _dedupe_singletons(sequence)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with open(output_path, "w", encoding="utf-8") as f:
