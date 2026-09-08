@@ -855,6 +855,14 @@ def start_interface() -> None:
         except Exception:
             logging.getLogger(__name__).exception("Failed to start Mastodon listener")
 
+    # A loopback-only squatter on our port takes every localhost client from
+    # us (Prefect's temporary server did, 2026-09-07). `update` relaunches
+    # this process, not start_srt, so the eviction lives here too.
+    try:
+        from utils import ports as _ports
+        _ports.evict_loopback_squatters((port,), log=logging.getLogger(__name__).warning)
+    except Exception:  # noqa: BLE001
+        logging.getLogger(__name__).exception("squatter eviction failed (continuing)")
     uvicorn.run(web_server.app, host=host, port=port, log_level="info", loop="asyncio")
 
 

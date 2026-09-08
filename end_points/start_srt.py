@@ -38,33 +38,12 @@ def _kill_tree(proc) -> None:
 
 
 def _evict_loopback_squatters(ports=OUR_PORTS) -> None:
-    """Kill any process listening on 127.0.0.1:<one of our ports>.
-
-    Our services bind 0.0.0.0; a loopback-only binder on the same port can
-    only be a stray (Prefect's temporary server drew 8095 on 2026-09-07) and
-    it steals every localhost client from us. This runs in the services'
-    own session, which is the one place it can be killed from: an operator
-    shell is refused with Access is denied.
-    """
-    ps = ("Get-NetTCPConnection -State Listen | Where-Object { $_.LocalAddress "
-          "-eq '127.0.0.1' -and $_.LocalPort -in (%s) } | ForEach-Object { "
-          "\"$($_.LocalPort)|$($_.OwningProcess)\" }" % ",".join(str(p) for p in ports))
+    """Kill any process listening on 127.0.0.1:<one of our ports>; see utils/ports.py."""
     try:
-        out = subprocess.run(["powershell", "-NoProfile", "-Command", ps],
-                             capture_output=True, text=True, timeout=60).stdout
+        from utils import ports as _ports
+        _ports.evict_loopback_squatters(ports)
     except Exception:  # noqa: BLE001
-        return
-    for line in out.splitlines():
-        try:
-            port, pid = line.strip().split("|")
-            pid = int(pid)
-        except ValueError:
-            continue
-        if pid == os.getpid():
-            continue
-        print(f"evicting pid {pid} squatting on 127.0.0.1:{port}")
-        subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"],
-                       capture_output=True, text=True, timeout=30)
+        pass
 
 
 def _imaging_state_at_crash() -> str:
