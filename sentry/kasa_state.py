@@ -435,10 +435,16 @@ def kasa_status(quick=False, verify_pose=False, frames=1):
                    "pose_verified": verified is not None}
     _write_view(img, found, parked_ref, shut_ref, scope, roof)
     # Wording coupled to _KASA_RE in iris/conductor/shadow.py; change together.
-    _logger.info("kasa_status: scope=%s roof=%s (%s; %d/%d frames decoded a tag; pose %s)",
+    # The offsets ride on the line so the stops' repeatability accumulates in
+    # the log for free: the roof tag is 1.2 px/mm, so a shut-stop drift shows
+    # here long before anyone would notice it by eye.
+    _logger.info("kasa_status: scope=%s roof=%s (%s; %d/%d frames decoded a tag; pose %s; "
+                 "scope tag %.1f px off park; roof tag %s)",
                  scope, roof, rdet.get("regime", "?"),
                  sum(1 for f in per_frame if f.get("tags")), n,
-                 "verified" if verified is not None else "unverified")
+                 "verified" if verified is not None else "unverified",
+                 float(sdet.get("worst_corner_px", 0.0) or 0.0),
+                 ("%.1f px off shut" % rdet["worst_corner_px"]) if "worst_corner_px" in rdet else "not seen")
     return scope == "safe", roof == "shut", roof == "open", when
 
 
