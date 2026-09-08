@@ -376,6 +376,42 @@ def set_filter_plan_db(dso_name: str, plan) -> bool:
     return False
 
 
+def set_rotation_db(dso_name: str, degrees) -> bool:
+    """Store (or with None, remove) a camera position angle for a DSO.
+
+    Degrees, sky position angle of the frame's long side (0 = east-west, 90 =
+    north-south). The sequence generator sets the target's PositionAngle and
+    swaps Center for Center And Rotate so the rotator goes there before the
+    slot images. M33 (major axis PA 23) at 90 gets ~60% of its length in the
+    frame against ~40% at 0. Matches the first non-completed instruction.
+    """
+    normalized = _normalize_dso(dso_name)
+    with open(_INSTRUCTIONS_PATH, 'r') as f:
+        instructions = json.load(f)
+    for instruction in instructions:
+        if (_normalize_dso(instruction["dso"]) == normalized
+                and instruction["status"] != "completed"):
+            if degrees is None:
+                instruction.pop("rotation", None)
+            else:
+                instruction["rotation"] = float(degrees) % 360.0
+            with open(_INSTRUCTIONS_PATH, 'w') as f:
+                f.writelines(json.dumps(instructions, indent=4))
+            return True
+    return False
+
+
+def get_rotation(dso_name: str):
+    """The stored position angle (degrees) for a DSO, or None."""
+    record = get_instruction_by_dso(dso_name)
+    if not record or record.get("rotation") is None:
+        return None
+    try:
+        return float(record["rotation"])
+    except (TypeError, ValueError):
+        return None
+
+
 def get_filter_plan(dso_name: str):
     """The stored {filter: exposures} plan for a DSO, or None."""
     record = get_instruction_by_dso(dso_name)

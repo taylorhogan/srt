@@ -529,6 +529,51 @@ def _find_first(node: Any, short_type: str) -> Optional[dict]:
     return None
 
 
+CENTER_AND_ROTATE_TYPE = "NINA.Sequencer.SequenceItem.Platesolving.CenterAndRotate, NINA.Sequencer"
+
+
+def _apply_rotation(container: Any, degrees) -> bool:
+    """Give *container*'s target a position angle and rotate to it.
+
+    Sets InputTarget.PositionAngle and turns the setup's Center into Center
+    And Rotate (same node, retyped, PositionAngle added), which N.I.N.A
+    inherits from the target. The start sequence still parks the rotator at
+    mechanical 0, so a target without a rotation images at 0 as before. True
+    if a Center was found to convert.
+    """
+    if degrees is None:
+        return False
+    deg = float(degrees) % 360.0
+    done = False
+
+    def walk(n):
+        nonlocal done
+        if isinstance(n, dict):
+            t = _short_type(n)
+            if t == "InputTarget":
+                n["PositionAngle"] = deg
+            elif t == "Center":
+                n["$type"] = CENTER_AND_ROTATE_TYPE
+                n["PositionAngle"] = deg
+                done = True
+            for v in n.values():
+                walk(v)
+        elif isinstance(n, list):
+            for v in n:
+                walk(v)
+
+    walk(container)
+    return done
+
+
+def _rotation_for(dso_name: str):
+    try:
+        from control import instructions as _instr
+        return _instr.get_rotation(dso_name)
+    except Exception:
+        return None
+
+
 def _script_item(prototype: dict, script: str, parent_id: str, next_id: list) -> dict:
     item = _clone_with_fresh_ids(prototype, next_id)
     item["Script"] = script
@@ -584,6 +629,7 @@ def generate_slots_sequence(template_path: Path, slots: list, output_path: Path,
                   "NegativeDec": dec_neg, "DecDegrees": dec_d, "DecMinutes": dec_m,
                   "DecSeconds": round(dec_s, 5)}
         _walk_and_replace(c, slot["name"], coords)
+        _apply_rotation(c, slot.get("rotation", _rotation_for(slot["name"])))
         if k < len(slots) - 1:
             _set_hard_end(c, slot.get("end"), next_id)
         plans.append(_plan_for(c, slot["name"], slot.get("seconds")))
@@ -659,6 +705,7 @@ def generate_sequence(
     }
 
     _walk_and_replace(sequence, dso_name, coords)
+    _apply_rotation(sequence, _rotation_for(dso_name))
 
     filter_plan = _plan_for(sequence, dso_name, above_horizon_seconds)
 

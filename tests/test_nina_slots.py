@@ -36,7 +36,8 @@ def _se(idn, filt_id, iters):
 def _template():
     dso = {"$id": "20", "$type": f"{NS}.Container.DeepSkyObjectContainer, {NS}",
            "Name": "M 94",
-           "Target": {"$id": "21", "$type": "x", "TargetName": "M 94",
+           "Target": {"$id": "21", "$type": "NINA.Astrometry.InputTarget, NINA.Astrometry",
+                      "TargetName": "M 94", "PositionAngle": 0.0,
                       "InputCoordinates": {"$id": "22", "$type": "NINA.Astrometry.InputCoordinates, NINA.Astrometry",
                                            "RAHours": 12, "RAMinutes": 50, "RASeconds": 0,
                                            "NegativeDec": False, "DecDegrees": 41, "DecMinutes": 0, "DecSeconds": 0}},
@@ -49,6 +50,8 @@ def _template():
                      "Hours": 21, "Minutes": 13, "Seconds": 0, "MinutesOffset": -10,
                      "SelectedProvider": {"$id": "60", "$type": f"{NS}.Utility.DateTimeProvider.NauticalDuskProvider, {NS}"},
                      "Parent": {"$ref": "26"}},
+                    {"$id": "62", "$type": f"{NS}.SequenceItem.Platesolving.Center, {NS}",
+                     "Inherited": True, "Parent": {"$ref": "26"}},
                     {"$id": "61", "$type": f"{NS}.SequenceItem.Autofocus.RunAutofocus, {NS}",
                      "Parent": {"$ref": "26"}}]},
                 "Parent": {"$ref": "20"}},
@@ -211,3 +214,18 @@ def test_explicit_autofocus_only_in_the_first_slot(tmp_path):
     assert "RunAutofocus" not in types(dsos[1])
     # the hand-over scripts still bracket the second slot's setup
     assert types(dsos[1])[0] == "ExternalScript" and types(dsos[1])[-1] == "ExternalScript"
+
+
+def test_rotation_turns_center_into_center_and_rotate_for_that_slot_only(tmp_path):
+    slots = [dict(SLOTS[0]), dict(SLOTS[1], rotation=90)]
+    seq, _ = _gen(tmp_path, slots)
+    dsos = [it for it in g._items_of(g._find_target_area(seq))
+            if g._short_type(it) == "DeepSkyObjectContainer"]
+    first, second = dsos
+    assert g._find_first(first, "Center") is not None
+    assert g._find_first(first, "CenterAndRotate") is None
+    assert first["Target"]["PositionAngle"] == 0
+    car = g._find_first(second, "CenterAndRotate")
+    assert car is not None and car["PositionAngle"] == 90 and car["Inherited"] is True
+    assert g._find_first(second, "Center") is None
+    assert second["Target"]["PositionAngle"] == 90

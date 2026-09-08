@@ -1338,6 +1338,51 @@ def prioritize_cmd(words: list[str], account: str) -> None:
         social_server.post_social_message(f"{dso_name} not found in waiting instructions")
 
 
+def rotate_cmd(words: list[str], account: str) -> None:
+    """
+    Set the camera position angle for a DSO, used when its sequence is generated.
+
+    Usage: rotate <dso> <degrees>   (0 = long side east-west, 90 = north-south)
+           rotate <dso> clear       (image at the rotator's park angle, 0)
+           rotate <dso>             (show the current setting)
+
+    e.g.   rotate m33 90
+    The sequence then uses Center And Rotate for that target, so the rotator
+    goes to the angle before the slot images. Flats are shot at the end of the
+    night at whatever angle the rotator is left at.
+    """
+    args = words[2:]
+    if not args:
+        social_server.post_social_message("Usage: rotate <dso> <degrees> | rotate <dso> clear | rotate <dso>")
+        return
+    last = args[-1].lower()
+    if last in ("clear", "none", "off"):
+        dso_name = " ".join(args[:-1])
+        ok = instructions.set_rotation_db(dso_name, None) if dso_name else False
+        social_server.post_social_message(
+            f"{dso_name}: rotation cleared, images at the park angle" if ok
+            else f"{dso_name or '?'} not found in waiting instructions")
+        return
+    try:
+        degrees = float(last)
+        dso_name = " ".join(args[:-1])
+    except ValueError:
+        degrees = None
+        dso_name = " ".join(args)
+    if not dso_name:
+        social_server.post_social_message("Usage: rotate <dso> <degrees>")
+        return
+    if degrees is None:
+        cur = instructions.get_rotation(dso_name)
+        social_server.post_social_message(
+            f"{dso_name} rotation: " + (f"{cur:g}°" if cur is not None else "none (park angle, 0°)"))
+        return
+    ok = instructions.set_rotation_db(dso_name, degrees)
+    social_server.post_social_message(
+        f"{dso_name}: rotation set to {degrees % 360:g}° — applies when the sequence is next generated"
+        if ok else f"{dso_name} not found in waiting instructions")
+
+
 def filters_cmd(words: list[str], account: str) -> None:
     """
     Set an explicit filter plan for a DSO, used when its sequence is generated.
@@ -3052,6 +3097,7 @@ def get_super_user_commands() -> dict[str, Callable]:
         "mode": mode_cmd,
         "prioritize": prioritize_cmd,
         "filters": filters_cmd,
+        "rotate": rotate_cmd,
         "doflats": doflats_cmd,
         "todo": todo_cmd,
         "active": active_cmd,
