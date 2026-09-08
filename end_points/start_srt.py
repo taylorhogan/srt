@@ -14,6 +14,59 @@ from cmd_processing.social_server import RESTART_EXIT_CODE
 import scheduler_server
 
 
+OUR_PORTS = (8095, 8096)
+
+
+def _kill_tree(proc) -> None:
+    """Terminate *proc* and everything under it.
+
+    Process.terminate() takes the child alone. The scheduler's Prefect server
+    is a grandchild, and it survived every restart: the 13:30 update on
+    2026-09-06 left one on 8169, and the noon flow on 2026-09-07 left one on
+    127.0.0.1:8095 shadowing the web chat. taskkill /T takes the tree.
+    """
+    if proc is None or not proc.is_alive():
+        return
+    try:
+        subprocess.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"],
+                       capture_output=True, text=True, timeout=30)
+    except Exception:  # noqa: BLE001
+        pass
+    if proc.is_alive():
+        proc.terminate()
+    proc.join(timeout=10)
+
+
+def _evict_loopback_squatters(ports=OUR_PORTS) -> None:
+    """Kill any process listening on 127.0.0.1:<one of our ports>.
+
+    Our services bind 0.0.0.0; a loopback-only binder on the same port can
+    only be a stray (Prefect's temporary server drew 8095 on 2026-09-07) and
+    it steals every localhost client from us. This runs in the services'
+    own session, which is the one place it can be killed from: an operator
+    shell is refused with Access is denied.
+    """
+    ps = ("Get-NetTCPConnection -State Listen | Where-Object { $_.LocalAddress "
+          "-eq '127.0.0.1' -and $_.LocalPort -in (%s) } | ForEach-Object { "
+          "\"$($_.LocalPort)|$($_.OwningProcess)\" }" % ",".join(str(p) for p in ports))
+    try:
+        out = subprocess.run(["powershell", "-NoProfile", "-Command", ps],
+                             capture_output=True, text=True, timeout=60).stdout
+    except Exception:  # noqa: BLE001
+        return
+    for line in out.splitlines():
+        try:
+            port, pid = line.strip().split("|")
+            pid = int(pid)
+        except ValueError:
+            continue
+        if pid == os.getpid():
+            continue
+        print(f"evicting pid {pid} squatting on 127.0.0.1:{port}")
+        subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"],
+                       capture_output=True, text=True, timeout=30)
+
+
 def _imaging_state_at_crash() -> str:
     """Best-effort read of imaging.txt so a crash alert can say whether a run
     was in progress. Returns 'unknown' if it can't be read."""
@@ -68,6 +121,7 @@ if __name__ == "__main__":
     crash_times: list[float] = []
 
     while True:
+        _evict_loopback_squatters()
         p1 = Process(target=social_server.main)
         p2 = Process(target=scheduler_server.main)
         p3 = Process(target=_conductor_target) if _conductor_enabled() else None
@@ -83,13 +137,10 @@ if __name__ == "__main__":
         # Capture imaging state before the scheduler relaunch can clear it.
         imaging_state = _imaging_state_at_crash()
 
-        # Always clean up the siblings when the social server exits
-        if p2.is_alive():
-            p2.terminate()
-            p2.join(timeout=10)
-        if p3 is not None and p3.is_alive():
-            p3.terminate()
-            p3.join(timeout=10)
+        # Always clean up the siblings when the social server exits -- whole
+        # trees, so a Prefect server under the scheduler goes with it.
+        _kill_tree(p2)
+        _kill_tree(p3)
 
         if exit_code == RESTART_EXIT_CODE:
             # Deliberate restart (the `update` command): deploy the last GREEN

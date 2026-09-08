@@ -52,7 +52,7 @@ PS = r"""
 $ErrorActionPreference = 'SilentlyContinue'
 Get-CimInstance Win32_Process | Where-Object { $_.Name -like 'python*' } |
   ForEach-Object { "P|$($_.ProcessId)|$($_.ParentProcessId)|$($_.CreationDate.ToString('yyyy-MM-dd HH:mm:ss'))" }
-Get-NetTCPConnection -State Listen | ForEach-Object { "L|$($_.LocalPort)|$($_.OwningProcess)" }
+Get-NetTCPConnection -State Listen | ForEach-Object { "L|$($_.LocalPort)|$($_.OwningProcess)|$($_.LocalAddress)" }
 """
 
 
@@ -60,13 +60,24 @@ def snapshot():
     """({pid: (ppid, started)}, {port: pid}) for every python process."""
     out = subprocess.run(["powershell", "-NoProfile", "-Command", PS],
                          capture_output=True, text=True, timeout=60).stdout
-    procs, ports = {}, {}
+    procs, ports, loopback = {}, {}, {}
     for line in out.splitlines():
         f = line.strip().split("|")
         if f[0] == "P":
             procs[int(f[1])] = (int(f[2]), datetime.strptime(f[3], "%Y-%m-%d %H:%M:%S"))
         elif f[0] == "L":
-            ports.setdefault(int(f[1]), int(f[2]))
+            port, pid, addr = int(f[1]), int(f[2]), (f[3] if len(f) > 3 else "")
+            # Our services bind 0.0.0.0. A 127.0.0.1-only binder on the same
+            # port is a squatter that takes every localhost client from us
+            # (Prefect's temporary server did, 2026-09-07); it must not be
+            # mistaken for the service, and it must be reported.
+            if addr == "127.0.0.1":
+                loopback.setdefault(port, pid)
+            else:
+                ports[port] = pid
+    for port, pid in loopback.items():
+        ports.setdefault(port, pid)
+    snapshot.loopback = loopback
     return procs, ports
 
 
@@ -114,6 +125,12 @@ def main():
 
     print("%-28s %-8s %-20s %-9s %s" % ("service", "pid", "started", "parent", "code"))
     bad = 0
+    for port, pid in getattr(snapshot, "loopback", {}).items():
+        if ports.get(port) != pid:
+            print("%-28s %s" % ("", "   SHADOWED: pid %d also listens on 127.0.0.1:%d -- every "
+                                    "localhost client reaches it instead; `update` evicts it"
+                                    % (pid, port)))
+            bad += 1
     for label, dirs in SOURCES.items():
         mtime, newest = newest_source(dirs)
         hit = found[label]

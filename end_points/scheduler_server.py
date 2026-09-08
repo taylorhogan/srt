@@ -82,6 +82,20 @@ from pathlib import Path
 import numpy as np
 from prefect import flow, task
 
+# Prefect starts a temporary API server for each flow run on a RANDOM port in
+# 8000-9000, and tests the port by binding 127.0.0.1 only. The web chat listens
+# on 0.0.0.0:8095, which Windows does not count as a conflict, so on 2026-09-07
+# the noon flow drew 8095: its server sat on 127.0.0.1:8095 shadowing the web
+# chat for every localhost client (the preview worker, the recorder's notice,
+# in-process posts all got Prefect's 404), the flow itself failed on its own
+# health check, and the stray server outlived the flow. The conductor's 8096
+# is in the same range. Keep Prefect well clear of anything of ours.
+try:
+    from prefect.server.api.server import SubprocessASGIServer as _PrefectASGI
+    _PrefectASGI._port_range = range(8700, 8999)
+except Exception:  # noqa: BLE001 -- a Prefect layout change must not stop the scheduler
+    pass
+
 if __package__ is None or __package__ == "":
     project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
     if project_root not in sys.path:
