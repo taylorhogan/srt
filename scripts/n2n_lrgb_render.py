@@ -282,7 +282,8 @@ def compose(args) -> int:
         raw_ch = {ch: raw_ch[mapping[ch]] for ch in ("L", "R", "G", "B")
                   if ch in mapping and mapping[ch] in raw_ch}
         opts = color_process.effective_options(
-            white_pct=args.white_pct, black_pct=args.black_pct)
+            white_pct=args.white_pct, black_pct=args.black_pct,
+        **({"softening": args.soft} if args.soft is not None else {}))
         log(f"compose: {color_process.describe_options(opts)}")
         subbed, white = color_process._prepare(
             raw_ch, opts["subtract_background"], opts["mesh"], opts["white_pct"])
@@ -352,7 +353,8 @@ def compose(args) -> int:
     # pair appears to show about sharpness at the default stretch is the
     # stretch, not the model.
     opts = color_process.effective_options(
-        white_pct=args.white_pct, black_pct=args.black_pct)
+        white_pct=args.white_pct, black_pct=args.black_pct,
+        **({"softening": args.soft} if args.soft is not None else {}))
     log(f"compose: {color_process.describe_options(opts)}")
 
     # ONE stretch, taken from the raw channels and applied unchanged to both.
@@ -551,7 +553,8 @@ def routine(args) -> int:
                 if ch in mapping and mapping[ch] in d}
 
     opts = color_process.effective_options(
-        white_pct=args.white_pct, black_pct=args.black_pct)
+        white_pct=args.white_pct, black_pct=args.black_pct,
+        **({"softening": args.soft} if args.soft is not None else {}))
     log(f"compose: {color_process.describe_options(opts)}")
 
     # ONE stretch, from the raw, applied to both sets — so the channel JPEGs and
@@ -654,6 +657,9 @@ def main() -> int:
     # landed 0.36 sigma above sky, so raw sky pixels were dithered above it and
     # denoised ones fell below, and the render looked as though the model had
     # eaten the nebulosity (it had not — flux retention measured 104-117%).
+    ap.add_argument("--soft", type=float, default=None,
+                    help="asinh softening; lower = harder stretch "
+                         f"(compose default {0.025})")
     ap.add_argument("--black-sigma", type=float, default=0.5,
                     help="black point at sky_median - N*sigma, measured from the "
                          "raw; 0 or less restores the --black-pct percentile")
