@@ -450,27 +450,37 @@ def _fit_for_push(src: Path, work: Path) -> Path:
 
 
 def push_render(args, out_dir: Path, written: list, meta: dict, log=print) -> bool:
-    """Pushover the denoised composite. Never raises — a render must not fail
-    because a notification did."""
+    """Pushover the raw and the denoised composite, as a pair. Never raises --
+    a render must not fail because a notification did.
+
+    A PAIR, since 2026-09-08. Whether the denoised version is the better
+    image depends on surface brightness, not object class (module docstring:
+    NGC 6888 yes, ic1396 no), and that call needs an eye on both. Pushover
+    takes one attachment per message, so the pair is two messages, raw first
+    so they read top-down in the order the pipeline made them. Returns True
+    if at least one was accepted.
+    """
     try:
         from utils import pushover
-        pick = [p for p in written
-                if p.name == f"{args.dso}_{args.recipe}_denoised.jpg"]
-        if not pick:
-            log("  push: no denoised composite to send")
-            return False
-        img = _fit_for_push(pick[0], out_dir)
         chans = (meta or {}).get("channels", {}) or {}
         parts = [f"{k} {v.get('accepted', '?')}/{v.get('frames', '?')}"
                  for k, v in sorted(chans.items())]
         total = sum(int(v.get("accepted", 0)) for v in chans.values())
-        msg = (f"{args.dso} {args.recipe} denoised - "
-               + ", ".join(parts)
-               + (f" ({total} frames x {args.exptime}s)" if total else ""))
-        ok = pushover.push_message_with_picture(msg, str(img))
-        log(f"  push: {'sent' if ok else 'NOT ACCEPTED'} ({img.name}, "
-            f"{img.stat().st_size / 1024:.0f} KB)")
-        return ok
+        tail = (", ".join(parts)
+                + (f" ({total} frames x {args.exptime}s)" if total else ""))
+        sent = 0
+        for tag in ("raw", "denoised"):
+            pick = [p for p in written if p.name == f"{args.dso}_{args.recipe}_{tag}.jpg"]
+            if not pick:
+                log(f"  push: no {tag} composite to send")
+                continue
+            img = _fit_for_push(pick[0], out_dir)
+            msg = f"{args.dso} {args.recipe} {tag} - {tail}"
+            ok = pushover.push_message_with_picture(msg, str(img))
+            log(f"  push {tag}: {'sent' if ok else 'NOT ACCEPTED'} ({img.name}, "
+                f"{img.stat().st_size / 1024:.0f} KB)")
+            sent += bool(ok)
+        return sent > 0
     except Exception as e:  # noqa: BLE001
         log(f"  push failed: {e}")
         return False
