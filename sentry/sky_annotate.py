@@ -81,68 +81,83 @@ def compass_positions(sol, shape, margin=90):
     return out, zenith
 
 
-def imaging_target():
-    """(name, ra_deg, dec_deg) for the DSO being imaged, or None.
+def _imaging_active(root):
+    """True while a run is in progress, from imaging.txt. Never raises."""
+    try:
+        with open(os.path.join(root, "imaging.txt"), encoding="utf-8") as fh:
+            v = fh.read().strip().upper()
+        return bool(v) and not v.endswith("NONE")
+    except Exception:
+        return False
 
-    Two sources, in order of authority:
 
-    1. An instruction marked ``in process``. That is the queue saying so
-       outright, but nothing currently sets it -- as of 2026-08-26 the live
-       queue holds only ``waiting`` and ``completed`` -- so it is tried first
-       and expected to miss.
-    2. The generated sequence N.I.N.A actually runs. It carries the target name
-       AND the resolved coordinates that were patched into it, so it needs no
-       name lookup and cannot disagree with what the camera is pointed at.
+def _newest_frame_target(root):
+    """(name, ra_deg, dec_deg) from the newest LIGHT frame's header, or None.
+
+    Ground truth while imaging: the OBJECT and RA/DEC N.I.N.A wrote into the
+    last sub are where the camera actually was, whichever slot of a two-slot
+    night is running.
+    """
+    try:
+        from astropy.io import fits as _fits
+        from configs import config
+        from fits_processing import fitstojpg
+        latest = fitstojpg.get_latest_file(config.data()["nina"]["image_dir"], "fits")
+        if latest is None:
+            return None
+        hdr = _fits.getheader(str(latest))
+        name = str(hdr.get("OBJECT", "")).strip() or None
+        ra, dec = hdr.get("RA"), hdr.get("DEC")
+        if ra is None or dec is None:
+            return None
+        return name, float(ra), float(dec)
+    except Exception:
+        _logger.debug("newest-frame target lookup failed", exc_info=True)
+        return None
+
+
+def _planned_target():
+    """(name, ra_deg, dec_deg) for the target the grid last published, or None."""
+    try:
+        from control import instructions, tonight_target
+        name = tonight_target.read()
+        if not name:
+            return None
+        tgt = instructions.resolve_target_by_name(name)
+        if tgt is None:
+            return None
+        return name, float(tgt.coord.ra.deg), float(tgt.coord.dec.deg)
+    except Exception:
+        _logger.debug("planned target lookup failed", exc_info=True)
+        return None
+
+
+def imaging_target(with_mode=False):
+    """(name, ra_deg, dec_deg[, mode]) for the target to mark, or None.
+
+    ONE RULE FOR EVERY PANEL (2026-09-07). Until then the all-sky dot came
+    from the last generated N.I.N.A sequence and the polar chart re-ranked
+    the queue, so the two disagreed whenever the plan changed without a
+    sequence being written -- a cloudy day with a new pin showed squid on
+    one panel and NGC 7380 on the other -- and the sequence source would have
+    named the first target all through a two-slot night.
+
+      imaging   -> the newest LIGHT frame's OBJECT and RA/DEC: where the
+                   camera actually is, whichever slot is running.
+      otherwise -> the target the grid last published (local/
+                   tonight_target.json): the plan, labelled as such.
 
     Returns None rather than guessing. A dot in the wrong place is worse than
     no dot: it would be read as a plate-solve error.
     """
-    try:
-        from control import instructions
-        for row in instructions.get_sorted_instructions(apply_convergence=False):
-            if str(row.get("status", "")).lower() == "in process":
-                ra, dec = row.get("ra_deg"), row.get("dec_deg")
-                if ra is not None and dec is not None:
-                    return row.get("dso"), float(ra), float(dec)
-                tgt = instructions.resolve_target_by_name(row.get("dso"))
-                if tgt is not None:
-                    return (row.get("dso"), float(tgt.coord.ra.deg),
-                            float(tgt.coord.dec.deg))
-    except Exception:
-        _logger.debug("in-process lookup failed", exc_info=True)
-
-    try:
-        import json
-        from configs import config
-        path = config.data()["nina"]["sequence_output"]
-        with open(path, encoding="utf-8-sig") as fh:
-            doc = json.load(fh)
-
-        def walk(o):
-            if isinstance(o, dict):
-                yield o
-                for v in o.values():
-                    yield from walk(v)
-            elif isinstance(o, list):
-                for v in o:
-                    yield from walk(v)
-
-        for node in walk(doc):
-            if "InputTarget" not in str(node.get("$type", "")):
-                continue
-            c = node.get("InputCoordinates") or {}
-            if not c:
-                continue
-            ra = (float(c.get("RAHours", 0)) + float(c.get("RAMinutes", 0)) / 60.0
-                  + float(c.get("RASeconds", 0)) / 3600.0) * 15.0
-            dec = (abs(float(c.get("DecDegrees", 0)))
-                   + float(c.get("DecMinutes", 0)) / 60.0
-                   + float(c.get("DecSeconds", 0)) / 3600.0)
-            if c.get("NegativeDec") or float(c.get("DecDegrees", 0)) < 0:
-                dec = -dec
-            return node.get("TargetName"), ra, dec
-    except Exception:
-        _logger.debug("sequence target lookup failed", exc_info=True)
+    root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    if _imaging_active(root):
+        got = _newest_frame_target(root)
+        if got is not None:
+            return (*got, "imaging") if with_mode else got
+    got = _planned_target()
+    if got is not None:
+        return (*got, "planned") if with_mode else got
     return None
 
 
@@ -314,9 +329,9 @@ def annotate(src, dst, sol=None, shape=None, profile=None, when=None):
     # inside it. The whole point is to let someone check the dot really is on
     # the object.
     try:
-        tgt = imaging_target()
+        tgt = imaging_target(with_mode=True)
         if tgt is not None:
-            name, ra_deg, dec_deg = tgt
+            name, ra_deg, dec_deg, mode = tgt
             hit = target_pixel(sol, ra_deg, dec_deg, (h, w), when=when)
             if hit is not None:
                 tx, ty, alt, az = hit
@@ -331,7 +346,8 @@ def annotate(src, dst, sol=None, shape=None, profile=None, when=None):
                            outline=cyan, width=wdt)
                 dot = max(2, int(3 * k))
                 dr.ellipse([tx - dot, ty - dot, tx + dot, ty + dot], fill=cyan)
-                label = "%s  %.0f° alt" % (name or "target", alt)
+                label = "%s  %.0f° alt%s" % (name or "target", alt,
+                                            "" if mode == "imaging" else "  (planned)")
                 lfont = font
                 for cand in ("arialbd.ttf", "arial.ttf", "seguisb.ttf"):
                     try:

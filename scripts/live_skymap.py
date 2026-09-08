@@ -188,22 +188,29 @@ def _draw_camera_fov(ax):
 
 
 def _top_target(root: Path):
-    """(name, ra_deg, dec_deg, good_hours) for the current best target, or None."""
-    from iris_astronomy import astro_dso_visibility as adv
-    from control import instructions as instr
-    cfg = config.data()
-    path = os.path.join(root, cfg["location"]["instructions"])
+    """(name, ra_deg, dec_deg, good_hours, mode) for the target to mark, or None.
+
+    The same rule as the all-sky dot (sentry.sky_annotate.imaging_target):
+    the newest frame while imaging, the published plan otherwise. This used
+    to re-rank the queue itself (a SIMBAD round of ~78 s every 5 minutes)
+    and could disagree with the other panels; now the panels cannot differ.
+    """
+    from sentry import sky_annotate
+    got = sky_annotate.imaging_target(with_mode=True)
+    if got is None:
+        return None
+    name, ra, dec, mode = got
+    good_hours = 0
     try:
-        rows, _dark, _wx = adv.rank_targets_tonight(path)
+        import json as _json
+        with open(os.path.join(root, config.data()["location"]["tonight_target"]),
+                  encoding="utf-8") as fh:
+            d = _json.load(fh)
+        if d.get("dso") == name:
+            good_hours = int(d.get("good_hours") or 0)
     except Exception:
-        return None
-    if not rows:
-        return None
-    name, good_hours = rows[0][0], rows[0][1]
-    obj = instr.resolve_target_by_name(name)
-    if obj is None:
-        return None
-    return name, float(obj.coord.ra.deg), float(obj.coord.dec.deg), int(good_hours)
+        pass
+    return name, ra, dec, good_hours, mode
 
 
 
@@ -453,7 +460,7 @@ def main() -> None:
     if bodies:
         status["bodies"] = ", ".join(bodies)
     if tgt:
-        name, ra, dec, good_hours = tgt
+        name, ra, dec, good_hours, mode = tgt
         tc = SkyCoord(ra=ra * u.deg, dec=dec * u.deg).transform_to(frame)
         talt, taz = float(tc.alt.deg), float(tc.az.deg)
         # haz is ALREADY normalised and sorted, with a wrap point appended as
@@ -472,13 +479,14 @@ def main() -> None:
             state = "observable now"
         status.update(target=name, ra_deg=round(ra, 4), dec_deg=round(dec, 4),
                       alt_deg=round(talt, 1), az_deg=round(taz, 1),
-                      good_hours=good_hours, state=state)
+                      good_hours=good_hours, state=state, target_mode=mode)
         if talt > 0:
             tth, tr = np.radians(taz), 90.0 - talt
             ax.scatter([tth], [tr], s=340, facecolors="none", edgecolors=TARGET,
                        linewidths=2.0, zorder=6)
             ax.scatter([tth], [tr], s=26, c=TARGET, zorder=7)
-            ax.annotate(name + "\nalt " + ("%.1f" % talt) + "°  az "
+            ax.annotate(name + ("" if mode == "imaging" else " (planned)")
+                        + "\nalt " + ("%.1f" % talt) + "°  az "
                         + ("%.1f" % taz) + "°\n" + state,
                         xy=(tth, tr), xytext=(tth + np.radians(22), 96),
                         color=TARGET, fontsize=9, ha="center", va="center",
