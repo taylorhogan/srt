@@ -1392,6 +1392,12 @@ def filters_cmd(words: list[str], account: str) -> None:
            filters <dso>            (show the current plan)
 
     e.g.   filters bubble O-III=40 Ha=10
+
+    The counts are a RATIO (since 2026-09-10): the generator splits the
+    target's good hours times cfg["nina"]["efficiency"] between the filters
+    in that proportion, so one pass fits the night's window. They are only
+    literal when the hours are unknown (a hand-made sequence for a target
+    that is not in tonight's ranking).
     """
     cfg = config.data()
     wheel = cfg.get("nina", {}).get("filter_wheel", {}) or {}

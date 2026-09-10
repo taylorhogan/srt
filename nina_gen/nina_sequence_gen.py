@@ -175,19 +175,48 @@ def _wheel() -> dict:
     return config.data().get("nina", {}).get("filter_wheel", {}) or {}
 
 
+DEFAULT_EFFICIENCY = 0.75
+
+
+def _efficiency() -> float:
+    """Fraction of a target's good hours that goes into exposures.
+
+    The rest is centering, autofocus (per filter and per temperature step),
+    filter changes, dither settles and the odd plate-solve. cfg["nina"]
+    ["efficiency"], 0.75 by default; the split below sizes its counts to
+    hours * efficiency so one pass fits the window. Before 2026-09-10 this
+    was a literal 0.8 in two places, and the explicit `filters` plan ignored
+    the hours entirely.
+    """
+    try:
+        from configs import config
+        e = float(config.data().get("nina", {}).get("efficiency", DEFAULT_EFFICIENCY))
+    except Exception:
+        e = DEFAULT_EFFICIENCY
+    return e if 0.0 < e <= 1.0 else DEFAULT_EFFICIENCY
+
+
 def max_explicit_filters(sequence: Any) -> int:
     """How many filters an explicit plan can name for this template."""
     return sum(1 for se in _collect_smart_exposures(sequence)
                if _filter_node(se) is not None)
 
 
-def _apply_explicit_plan(smart_exposures: list, plan: dict) -> dict[str, int]:
+def _apply_explicit_plan(smart_exposures: list, plan: dict,
+                         usable_seconds: Optional[float] = None) -> dict[str, int]:
     """Honour a user-set {filter: exposures} plan.
 
-    Counts are taken literally -- the user asked for that many frames, so this
-    does not scale them to the hours available the way the automatic split does.
-    Blocks that cannot be renamed, and any left over, are zeroed so nothing from
-    the template runs by accident.
+    With *usable_seconds* (the window's good hours times the efficiency) the
+    plan is a RATIO: the seconds are split between the filters in proportion
+    to the counts and each block gets the whole frames that fit, at least one
+    for any filter with a share. Without it the counts are literal -- a
+    hand-made sequence for a target that is not in tonight's ranking.
+
+    The ratio reading is what the operator means. ngc7380's plan of 36/24/12
+    at 300 s is six hours; the blocks run in sequence, so in a three-hour
+    window the old literal reading spent all of it on Ha and never reached
+    O-III or S-II (2026-09-10). Blocks that cannot be renamed, and any left
+    over, are zeroed so nothing from the template runs by accident.
     """
     wheel = _wheel()
     usable = [se for se in smart_exposures if _filter_node(se) is not None]
@@ -195,11 +224,17 @@ def _apply_explicit_plan(smart_exposures: list, plan: dict) -> dict[str, int]:
         if se not in usable:
             _update_smart_exposure(se, iterations=0)
 
+    total = float(sum(max(0, int(v)) for v in plan.values()))
+    scale = usable_seconds is not None and usable_seconds > 0 and total > 0
     applied: dict[str, int] = {}
     for se, (name, count) in zip(usable, plan.items()):
-        _update_smart_exposure(se, iterations=int(count), filter_name=name,
+        count = max(0, int(count))
+        if scale and count > 0:
+            exp_s = _get_exposure_time(se) or 1.0
+            count = max(1, int(usable_seconds * count / total // exp_s))
+        _update_smart_exposure(se, iterations=count, filter_name=name,
                                position=wheel.get(name))
-        applied[name] = int(count)
+        applied[name] = count
     for se in usable[len(applied):]:
         _update_smart_exposure(se, iterations=0)
     return applied
@@ -211,10 +246,12 @@ def _apply_filter_plan(sequence: Any, above_horizon_seconds: float, obj_type: st
     Compute per-filter iteration counts, patch all SmartExposure blocks in the
     sequence in-place, and return the plan as {filter_name: iterations}.
 
-    An explicit plan from the `filters` command wins outright; without one the
-    automatic split by object type applies as before.
+    An explicit plan from the `filters` command wins outright, read as a
+    ratio over the hours; without one the automatic split by object type
+    applies. Either way the counts consume hours * cfg["nina"]["efficiency"]
+    (_efficiency) so one pass fits the target's window.
     """
-    actual_seconds = above_horizon_seconds * 0.8
+    actual_seconds = above_horizon_seconds * _efficiency()
     smart_exposures = _collect_smart_exposures(sequence)
 
     # Template order is L, R, G, B (4 blocks)
@@ -222,7 +259,9 @@ def _apply_filter_plan(sequence: Any, above_horizon_seconds: float, obj_type: st
         return {}
 
     if explicit:
-        return _apply_explicit_plan(smart_exposures, explicit)
+        return _apply_explicit_plan(
+            smart_exposures, explicit,
+            usable_seconds=actual_seconds if above_horizon_seconds > 0 else None)
 
     se_l, se_r, se_g, se_b = smart_exposures[:4]
     exp_l = _get_exposure_time(se_l)
@@ -277,9 +316,11 @@ def _need_plan(sequence: Any, dso_name: str, obj_type: str,
     Sits between the explicit `filters` plan (which wins outright) and the
     object-type default split (which applies when the DSO has no history).
     Weights come from fits_processing.filter_need; they are converted to
-    exposure counts here — against the same 0.8 usable-night factor and the
+    exposure counts here — against the same efficiency factor and the
     template block's exposure time the automatic split uses — and then handed
-    to the EXPLICIT plan path, so need-weighting adds no new patching code.
+    to the EXPLICIT plan path (which, given the hours, scales them again to
+    the same total: a no-op on already-fitted counts), so need-weighting adds
+    no new patching code.
     """
     try:
         from fits_processing import filter_need as _fn
@@ -301,7 +342,7 @@ def _need_plan(sequence: Any, dso_name: str, obj_type: str,
     if len(smart_exposures) < len(weights):
         return None                    # 2-block template: let the guard handle it
     exposure_s = _get_exposure_time(smart_exposures[0])
-    counts = _fn.counts_from_weights(weights, above_horizon_seconds * 0.8,
+    counts = _fn.counts_from_weights(weights, above_horizon_seconds * _efficiency(),
                                      exposure_s)
     if not counts or not any(counts.values()):
         return None
@@ -347,9 +388,11 @@ def _plan_for(container: Any, dso_name: str, seconds: Optional[float]) -> dict[s
     """Size the SmartExposure blocks under *container* for *dso_name*.
 
     §2c resolution order: explicit `filters` plan > need-weighted split
-    (measured per-filter convergence) > object-type default split. An explicit
-    plan applies even when the hours are unknown: its counts are absolute.
-    *container* may be the whole sequence or one target's container.
+    (measured per-filter convergence) > object-type default split. Every
+    path sizes its counts to hours * efficiency (_efficiency). An explicit
+    plan applies even when the hours are unknown: then its counts are
+    literal, otherwise they are the ratio. *container* may be the whole
+    sequence or one target's container.
     """
     explicit = None
     try:

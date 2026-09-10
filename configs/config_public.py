@@ -290,6 +290,12 @@ class PublicConfig():
             # slot must offer to be worth the slew, centering and refocus.
             "max_slots": 2,
             "min_slot_hours": 2.0,
+            # Fraction of a target's good hours that becomes exposures; the
+            # rest is centering, autofocus, filter changes and dither settles.
+            # Every filter split (explicit `filters` ratio, need-weighted,
+            # object-type default) sizes ONE pass to hours * efficiency, and
+            # the container's hard end (slot window) stops the run.
+            "efficiency": 0.75,
             # 4-block expansion of cdk_full_sequence.json (expand_sequence_blocks.py):
             # _apply_filter_plan needs >=4 SmartExposure blocks or it silently
             # ignores every filter plan. Regenerate after editing the source
