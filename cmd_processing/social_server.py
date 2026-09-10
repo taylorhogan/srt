@@ -457,6 +457,10 @@ def schedule_cmd(words: list[str], index: int, m: Mastodon, account: str) -> Non
 
     template_path = Path(os.path.join(_project_root, cfg["nina"]["sequence_input"]))
     output_path = Path(cfg["nina"]["sequence_output"])
+    # best_object_tonight just planned the night; its first slot's end is the
+    # hard stop (horizon, dawn or weather, whichever comes first).
+    slots = list(getattr(astro_dso_visibility, "last_slots", []) or [])
+    end = slots[0].end if slots and slots[0].name == best_name else None
 
     try:
         filter_plan = nina_sequence_gen.generate_sequence(
@@ -466,10 +470,12 @@ def schedule_cmd(words: list[str], index: int, m: Mastodon, account: str) -> Non
             dec_degrees=dso.coord.dec.deg,
             output_path=output_path,
             above_horizon_seconds=above_horizon_seconds,
+            end=end,
         )
         plan_str = "  ".join(f"{f}×{n}" for f, n in filter_plan.items()) if filter_plan else "no filter plan"
+        end_str = ("ends %s" % end.strftime("%H:%M")) if end is not None else "ends at dawn"
         post_social_message(
-            f"Schedule generated for {best_name} ({best_good_hours:.1f}h above horizon)\n"
+            f"Schedule generated for {best_name} ({best_good_hours:.1f}h above horizon, {end_str})\n"
             f"{plan_str}\n→ {output_path.name}"
         )
     except Exception as e:

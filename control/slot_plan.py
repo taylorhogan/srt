@@ -76,6 +76,22 @@ def _window(flags, dark_hours, lo=None, hi=None):
     return start, end, len(idx)
 
 
+def window_for(row, dark_hours, weather_by_hour) -> Optional[Slot]:
+    """One target's whole usable window tonight as a Slot, or None.
+
+    The end is the hour after the last GOOD hour -- above the treeline, inside
+    the dark hours and forecast clear -- so it is the earliest of horizon,
+    dawn and weather. This is the hard end a sequence gets for that target
+    whether it runs alone or last in a two-slot night.
+    """
+    if not dark_hours:
+        return None
+    w = _window(_good_flags(row, dark_hours, weather_by_hour), dark_hours)
+    if w is None:
+        return None
+    return Slot(row[0], w[0], w[1], w[2], int(row[6]))
+
+
 def plan_slots(rows, dark_hours, weather_by_hour, min_slot_hours: float = 2.0,
                max_slots: int = 2) -> list:
     """The night's slots, in the order they run. Empty if nothing is usable."""
@@ -83,10 +99,9 @@ def plan_slots(rows, dark_hours, weather_by_hour, min_slot_hours: float = 2.0,
         return []
     flags = {r[0]: _good_flags(r, dark_hours, weather_by_hour) for r in rows}
     first = rows[0]
-    w1 = _window(flags[first[0]], dark_hours)
-    if w1 is None:
+    slot1 = window_for(first, dark_hours, weather_by_hour)
+    if slot1 is None:
         return []
-    slot1 = Slot(first[0], w1[0], w1[1], w1[2], int(first[6]))
     if max_slots < 2 or len(rows) < 2:
         return [slot1]
 

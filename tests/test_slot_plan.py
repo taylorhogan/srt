@@ -10,7 +10,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from control.slot_plan import plan_slots, Slot  # noqa: E402
+from control.slot_plan import plan_slots, window_for, Slot  # noqa: E402
 
 T0 = datetime(2026, 9, 6, 21, 0)
 HOURS = [T0 + timedelta(hours=i) for i in range(8)]          # 21..04
@@ -115,3 +115,17 @@ def test_two_pins_split_in_whichever_order_yields_more_hours():
     assert [x.name for x in s] == ["squid", "wizard"]
     assert s[0].good_hours + s[1].good_hours == 7
     assert s[0].end <= s[1].start
+
+
+def test_window_for_ends_at_the_earliest_of_horizon_dawn_and_weather():
+    """The hard end every sequence gets for its last target."""
+    # horizon: sets after hour 5 -> end 03:00
+    assert window_for(row("a", "++++++--"), HOURS, WX_ALL).end == T0 + timedelta(hours=6)
+    # dawn: up all night -> end = end of dark hours
+    assert window_for(row("b", "++++++++"), HOURS, WX_ALL).end == T0 + timedelta(hours=8)
+    # weather: cloud from 01:00 (the 09-10 night) -> end 01:00 though up till 04
+    wx = {**WX_ALL, 1: False, 2: False, 3: False, 4: False}
+    w = window_for(row("ngc7380", "-++++++-"), HOURS, wx)
+    assert w.start == T0 + timedelta(hours=1) and w.end == T0 + timedelta(hours=4) and w.good_hours == 3
+    # nothing usable
+    assert window_for(row("m33", "----++++"), HOURS, wx) is None

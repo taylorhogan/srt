@@ -114,19 +114,24 @@ def test_two_slots_give_two_target_containers_with_sound_references(tmp_path):
     assert len(plans) == 2
 
 
-def test_only_non_last_slots_get_a_hard_end_and_starts_are_untouched(tmp_path):
+def test_every_slot_gets_a_hard_end_and_starts_are_untouched(tmp_path):
+    """The last slot ends at its window end too (2026-09-10). The window end
+    is the planner's: earliest of horizon, dawn and weather. Before this the
+    last container kept the template's dawn and looped past the plan."""
     seq, _ = _gen(tmp_path, SLOTS)
     dsos = [it for it in g._items_of(g._find_target_area(seq))
             if g._short_type(it) == "DeepSkyObjectContainer"]
-    first, last = dsos
-    # first slot: hard end at its boundary through the fixed Time provider
-    tc = g._find_first(first, "TimeCondition")
-    assert (tc["Hours"], tc["Minutes"]) == (SLOTS[0]["end"].hour, SLOTS[0]["end"].minute)
-    assert "TimeProvider" in tc["SelectedProvider"]["$type"]
-    # last slot: the template's own end condition, untouched (dawn)
-    tc2 = g._find_first(last, "TimeCondition")
-    assert (tc2["Hours"], tc2["Minutes"]) == (4, 3)
-    assert "TimeProvider" not in tc2.get("SelectedProvider", {}).get("$type", "")
+    prov_ids = set()
+    for d, slot in zip(dsos, SLOTS):
+        tc = g._find_first(d, "TimeCondition")
+        assert (tc["Hours"], tc["Minutes"]) == (slot["end"].hour, slot["end"].minute)
+        prov = tc["SelectedProvider"]
+        # the fixed Time provider: defined once, the second slot $refs it
+        if "$type" in prov:
+            assert "TimeProvider" in prov["$type"]
+            prov_ids.add(prov["$id"])
+        else:
+            assert prov["$ref"] in prov_ids
     # WaitForTime keeps the template's provider and offset in both slots
     for d in dsos:
         wt = g._find_first(d, "WaitForTime")
@@ -135,6 +140,37 @@ def test_only_non_last_slots_get_a_hard_end_and_starts_are_untouched(tmp_path):
         ic = g._find_first(d, "InputCoordinates")
         assert ic["RAHours"] == int(slot["ra_hours"])
         assert ic["DecDegrees"] == int(slot["dec_degrees"])
+
+
+def test_a_slot_without_an_end_keeps_the_templates_dawn(tmp_path):
+    slots = [dict(SLOTS[0], end=None)]
+    seq, _ = _gen(tmp_path, slots)
+    d = g._find_first(g._find_target_area(seq), "DeepSkyObjectContainer")
+    tc = g._find_first(d, "TimeCondition")
+    assert (tc["Hours"], tc["Minutes"]) == (4, 3)
+    assert "TimeProvider" not in tc.get("SelectedProvider", {}).get("$type", "")
+
+
+def test_single_target_generate_sequence_takes_an_end(tmp_path):
+    """The one-target path (scheduler single-slot night, webchat `sequence`)
+    pins the same hard end; without end= it is the template's dawn."""
+    tpl = tmp_path / "tpl.json"
+    tpl.write_text(json.dumps(_template()))
+    out = tmp_path / "out.json"
+    end = datetime(2026, 9, 11, 1, 0)
+    g.generate_sequence(tpl, "ngc7380", 22.79, 58.1, out, end=end)
+    seq = json.loads(out.read_text())
+    d = g._find_first(g._find_target_area(seq), "DeepSkyObjectContainer")
+    tc = g._find_first(d, "TimeCondition")
+    assert (tc["Hours"], tc["Minutes"]) == (1, 0)
+    assert "TimeProvider" in tc["SelectedProvider"]["$type"]
+    ids, refs = [], []
+    _ids_refs(seq, ids, refs)
+    assert len(ids) == len(set(ids)) and set(refs) <= set(ids)
+    g.generate_sequence(tpl, "ngc7380", 22.79, 58.1, out)
+    seq = json.loads(out.read_text())
+    tc = g._find_first(g._find_first(g._find_target_area(seq), "DeepSkyObjectContainer"), "TimeCondition")
+    assert (tc["Hours"], tc["Minutes"]) == (4, 3)
 
 
 def test_hand_over_scripts_bracket_the_second_slots_setup_only(tmp_path):
@@ -181,7 +217,7 @@ def test_singleton_providers_are_referenced_not_duplicated(tmp_path):
                 walk(v)
     walk(seq)
     # one NauticalDuskProvider definition (the template's), the clone refers to it;
-    # plus exactly one TimeProvider definition for the first slot's hard end
+    # plus exactly one TimeProvider definition shared by both slots' hard ends
     assert providers.count("60") == 1 and len(providers) == 2
     assert refs_to_60 == 1
 

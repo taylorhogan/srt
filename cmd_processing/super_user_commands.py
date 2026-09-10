@@ -1505,6 +1505,17 @@ def sequence_cmd(words: list[str], account: str) -> None:
     template_path = Path(os.path.join(_project_root, cfg["nina"]["sequence_input"]))
     output_path = Path(cfg["nina"]["sequence_output"])
 
+    # The hard end the scheduler would give this target tonight: the hour
+    # after its last good hour (horizon, dawn, weather -- whichever first).
+    # Without it the container loops until dawn whatever the forecast says.
+    end = None
+    try:
+        window = astro_dso_visibility.window_tonight(
+            os.path.join(_project_root, cfg["location"]["instructions"]), dso_name)
+        end = window.end if window is not None else None
+    except Exception:
+        _logger.exception("sequence_cmd: no window for %s; ending at dawn", dso_name)
+
     try:
         filter_plan = nina_sequence_gen.generate_sequence(
             template_path=template_path,
@@ -1513,14 +1524,18 @@ def sequence_cmd(words: list[str], account: str) -> None:
             dec_degrees=dec_degrees,
             output_path=output_path,
             above_horizon_seconds=above_horizon_seconds,
+            end=end,
         )
         plan_str = "  ".join(f"{f}×{n}" for f, n in filter_plan.items()) if filter_plan else "no filter plan"
+        end_str = ("ends %s" % end.strftime("%H:%M")) if end is not None \
+            else "ends at dawn (not in tonight's ranking)"
         social_server.post_social_message(
             f"Sequence generated for {dso_name} "
             f"(RA {ra_hours:.4f}h  Dec {dec_degrees:+.4f}°) → {output_path.name}\n"
-            f"{plan_str}"
+            f"{plan_str}  {end_str}"
         )
-        _logger.info("sequence_cmd: generated sequence for %s  plan=%s", dso_name, filter_plan)
+        _logger.info("sequence_cmd: generated sequence for %s  plan=%s  end=%s",
+                     dso_name, filter_plan, end)
     except Exception as e:
         _logger.exception("sequence_cmd: failed for %s", dso_name)
         social_server.post_social_message(f"Failed to generate sequence for {dso_name}: {e}")

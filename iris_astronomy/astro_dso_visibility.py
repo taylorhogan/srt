@@ -1229,6 +1229,27 @@ def rank_targets_tonight(instructions_path: Path | str, verbose: bool = False):
 last_slots: list = []
 
 
+def _same_target(a: str, b: str) -> bool:
+    return "".join(str(a).lower().split()) == "".join(str(b).lower().split())
+
+
+def window_tonight(instructions_path: Path | str, dso_name: str):
+    """*dso_name*'s usable window tonight as a control.slot_plan.Slot, or None.
+
+    For the manual `sequence <dso>` path: the same ranking the scheduler
+    uses, read for one target, so a hand-made sequence ends where the
+    planner's would -- at the earliest of horizon, dawn and weather -- rather
+    than at the template's dawn. None when the target is not in tonight's
+    ranking (not queued, or no good hour), and the caller keeps dawn.
+    """
+    from control import slot_plan as _sp
+    rows, dark_hours, weather_by_hour = rank_targets_tonight(instructions_path, verbose=False)
+    for r in rows:
+        if _same_target(r[0], dso_name):
+            return _sp.window_for(r, dark_hours, weather_by_hour)
+    return None
+
+
 def best_object_tonight(instructions_path: Path | str) -> tuple[str, Optional[datetime.datetime], int, str]:
     """
     Read a list of DSO objects from a JSON file, compute how many hours of

@@ -413,7 +413,7 @@ def _generate_nina_slots_sequence(slots):
         if dso is None:
             LOGGER.error("Could not resolve coordinates for slot %s; single-slot night", s.name)
             first = slots[0]
-            return _generate_nina_sequence(first.name, first.good_hours)
+            return _generate_nina_sequence(first.name, first.good_hours, end=first.end)
         specs.append({"name": s.name, "ra_hours": dso.coord.ra.hour,
                       "dec_degrees": dso.coord.dec.deg, "seconds": s.seconds,
                       "start": s.start, "end": s.end})
@@ -427,8 +427,15 @@ def _generate_nina_slots_sequence(slots):
     return plans, output_path
 
 
-def _generate_nina_sequence(dso_name: str, good_hours: float = 0.0):
+def _generate_nina_sequence(dso_name: str, good_hours: float = 0.0, end=None):
     """Resolve DSO coordinates and write a N.I.N.A sequence file to disk.
+
+    *end* is the planner's window end for the target (control/slot_plan.Slot
+    .end): the hour after its last hour that is above the treeline, inside
+    the dark hours AND forecast clear -- i.e. the earliest of horizon, dawn
+    and weather. It becomes the target container's hard TimeCondition, so
+    the sequence stops when the plan says the useful hours are over instead
+    of looping the container until dawn. None keeps the template's dawn.
 
     Resolves *dso_name* via ``instructions.resolve_target_by_name`` — stored
     RA/Dec from the queued record wins, falling back to a Simbad name lookup —
@@ -471,8 +478,10 @@ def _generate_nina_sequence(dso_name: str, good_hours: float = 0.0):
         dec_degrees=dec_degrees,
         output_path=output_path,
         above_horizon_seconds=(good_hours or 0) * 3600.0,
+        end=end,
     )
-    LOGGER.info("Generated Nina sequence for %s: %s", dso_name, plan)
+    LOGGER.info("Generated Nina sequence for %s: %s (ends %s)", dso_name, plan,
+                end.strftime("%H:%M") if end is not None else "at dawn")
     return plan, output_path
 
 
@@ -612,7 +621,10 @@ def generate_sequence_task(dso_name: str, good_hours: float = 0.0, notify: bool 
     """Write the N.I.N.A sequence, and say what tonight will actually be.
 
     Two slots in the plan (astro_dso_visibility.last_slots) write a
-    two-target sequence; otherwise the single-target path is unchanged.
+    two-target sequence; otherwise the single-target path, with the one
+    slot's window end as the hard stop. Either way the LAST target ends
+    when the planner's good hours end (horizon, dawn or weather, whichever
+    comes first), not at dawn regardless.
     """
     slots = list(astro_dso_visibility.last_slots)
     if len(slots) >= 2:
@@ -620,7 +632,8 @@ def generate_sequence_task(dso_name: str, good_hours: float = 0.0, notify: bool 
         dso_name = " + ".join(s.name for s in slots)
         good_hours = float(sum(s.good_hours for s in slots))
     else:
-        got = _generate_nina_sequence(dso_name, good_hours)
+        end = slots[0].end if slots and slots[0].name == dso_name else None
+        got = _generate_nina_sequence(dso_name, good_hours, end=end)
     if got and notify:
         _plan, output_path = got
         _push_imaging_plan(dso_name, good_hours, _LAST_BEST_START.get("t"), output_path)

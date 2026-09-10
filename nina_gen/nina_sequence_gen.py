@@ -493,12 +493,21 @@ def _set_hard_end(container: Any, end, next_id: list) -> None:
     """Make every TimeCondition under *container* end at *end* (local
     wall-clock) by switching its provider to the fixed Time provider.
 
-    Only the END is pinned, and only on slots that have a successor. The
-    WaitForTime stays the template's nautical dusk: for the first slot that is
-    the dark start anyway, and for a later slot it has already passed, so the
-    slot begins the moment the one before it ends -- early if that one ran out
-    of counts early -- and "wait until above horizon" covers the rise. The
-    last slot keeps the template's TimeCondition, astronomical dawn.
+    Only the END is pinned, on EVERY slot. The WaitForTime stays the
+    template's nautical dusk: for the first slot that is the dark start
+    anyway, and for a later slot it has already passed, so the slot begins
+    the moment the one before it ends -- early if that one ran out of counts
+    early -- and "wait until above horizon" covers the rise.
+
+    The end of a slot is the planner's window end (control/slot_plan): the
+    hour after its last GOOD hour, where good = above the treeline AND the
+    forecast accepts that hour AND it is inside the dark hours. So it is the
+    earliest of horizon, dawn and weather. Until 2026-09-10 the last slot kept
+    the template's condition (astronomical dawn) and the imaging container
+    looped past its planned hours: on 09-10 the plan said ngc7380 22:00-01:00
+    with 100% cloud forecast from 01:00, and the sequence would have kept the
+    roof open under that overcast until the target set at 04:00. The counts
+    inside the container size ONE pass; only this condition stops the next.
     """
     if isinstance(container, dict):
         if _short_type(container) == "TimeCondition" and end is not None:
@@ -589,9 +598,9 @@ def generate_slots_sequence(template_path: Path, slots: list, output_path: Path,
     end`` (start/end local datetimes, may be None). The template's single
     DeepSkyObjectContainer is cloned once per slot with fresh object ids, each
     clone patched for its target and sized for its hours -- the same planning
-    as a one-slot night, applied per slot -- and every slot but the last given
-    a hard end at its boundary (_set_hard_end). One roof open, one prelude,
-    one set of flats: only the main section changes.
+    as a one-slot night, applied per slot -- and every slot given a hard end
+    at its window end (_set_hard_end; None leaves the template's dawn). One
+    roof open, one prelude, one set of flats: only the main section changes.
 
     Every slot after the first gets two ExternalScript steps around its setup
     (*state_script*, i.e. scripts/set_imaging_state.bat): DONE_MAIN as the
@@ -630,8 +639,7 @@ def generate_slots_sequence(template_path: Path, slots: list, output_path: Path,
                   "DecSeconds": round(dec_s, 5)}
         _walk_and_replace(c, slot["name"], coords)
         _apply_rotation(c, slot.get("rotation", _rotation_for(slot["name"])))
-        if k < len(slots) - 1:
-            _set_hard_end(c, slot.get("end"), next_id)
+        _set_hard_end(c, slot.get("end"), next_id)
         plans.append(_plan_for(c, slot["name"], slot.get("seconds")))
         if k > 0:
             # No explicit autofocus after the first slot. Focus follows
@@ -672,6 +680,7 @@ def generate_sequence(
     dec_degrees: float,
     output_path: Path,
     above_horizon_seconds: Optional[float] = None,
+    end=None,
 ) -> dict[str, int]:
     """
     Generate a NINA imaging sequence from a template with a new target.
@@ -684,6 +693,10 @@ def generate_sequence(
         output_path:            Destination path for the generated sequence file.
         above_horizon_seconds:  Seconds the DSO is above the horizon tonight. When provided,
                                 filter iteration counts are derived automatically based on object type.
+        end:                    Local wall-clock datetime at which the target's imaging must
+                                stop (the planner's window end: earliest of horizon, dawn and
+                                weather -- see _set_hard_end). None keeps the template's
+                                condition, astronomical dawn.
 
     Returns:
         Dict mapping filter name to iteration count (empty if above_horizon_seconds not given).
@@ -706,6 +719,16 @@ def generate_sequence(
 
     _walk_and_replace(sequence, dso_name, coords)
     _apply_rotation(sequence, _rotation_for(dso_name))
+    if end is not None:
+        # Only the target's own container: the template's start and end
+        # sections keep whatever clocks they carry.
+        area = _find_target_area(sequence)
+        targets = [it for it in _items_of(area)
+                   if _short_type(it) == "DeepSkyObjectContainer"] if area else []
+        next_id = [_max_id(sequence) + 1]
+        for t in targets:
+            _set_hard_end(t, end, next_id)
+        _dedupe_singletons(sequence)
 
     filter_plan = _plan_for(sequence, dso_name, above_horizon_seconds)
 
