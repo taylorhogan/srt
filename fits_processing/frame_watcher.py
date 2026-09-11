@@ -69,6 +69,13 @@ def start(image_dir: Path, arcsec_per_pixel: float) -> None:
 
     _stop_event = threading.Event()
     _write_ticker(True)
+    # A new session starts with no artifacts. The Live card shows whatever
+    # latest_imaging.jpg is on disk the moment imaging goes active, and that
+    # is the LAST session's final render until the first sub of this one
+    # lands -- on 2026-09-10 that was the horizon-profile chart from the
+    # 2026-09-07 pyplot race, three nights stale, back on the card for the
+    # hour NINA spent waiting for the target to clear the trees.
+    _clear_artifacts()
     threading.Thread(
         target=_run,
         args=(Path(image_dir), arcsec_per_pixel, _stop_event),
@@ -308,6 +315,20 @@ def _images_output_dir() -> Optional[Path]:
         return out
     except Exception:
         return None
+
+
+def _clear_artifacts() -> None:
+    """Delete the previous session's rendered artifacts. Derived files only:
+    both are rebuilt from the FITS on the first sub."""
+    from fits_processing import imaging_artifacts as _ia
+    out_dir = _images_output_dir()
+    if out_dir is None:
+        return
+    for name in (_ia.LATEST_IMAGE_NAME, _ia.STATS_PLOT_NAME):
+        try:
+            (out_dir / name).unlink(missing_ok=True)
+        except Exception:
+            pass
 
 
 def _artifact_worker() -> None:

@@ -706,8 +706,11 @@
       .then((d) => {
         if (!d || !d.ok) return;
         let changed = false;
-        if (d.image_url && d.image_url !== latestImageUrl) { latestImageUrl = d.image_url; changed = true; }
-        if (d.stats_url && d.stats_url !== statsImageUrl) { statsImageUrl = d.stats_url; changed = true; }
+        // No artifact on disk (a new session clears the last one) drops the
+        // stale URL too, or a page left open across sessions keeps showing it.
+        const imageUrl = d.image_url || null, statsUrl = d.stats_url || null;
+        if (imageUrl !== latestImageUrl) { latestImageUrl = imageUrl; changed = true; }
+        if (statsUrl !== statsImageUrl) { statsImageUrl = statsUrl; changed = true; }
         lastImageFrameCount = atCount;
         if (changed) {
           renderPanel();

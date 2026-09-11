@@ -70,6 +70,37 @@ def test_nina_dies_mid_slot_and_the_night_closes_safely():
     ], start="PARKING")
 
 
+def test_nina_dies_in_the_prelude_and_the_night_closes_safely():
+    """2026-09-10: the Pegasus switch connect failed after mount power-up,
+    NINA quit in the prelude, roof open, nothing driving. The machine had no
+    row for it and sat in PRELUDE all night. Same shape as mid-slot: the
+    close decision is free, the roof motion waits for a confirmed park."""
+    s = _walk([
+        ("NOON_TICK", GO, "PLANNING"), ("PLAN_GOOD", GO, "ARMED"),
+        ("PRE_SUNSET_TICK", GO, "PRE_FLIGHT"),
+        ("CHECKS_PASSED", GO, "OPENING_ROOF"),
+        ("ROOF_OPEN_CONFIRMED", GO, "PRELUDE"),
+    ])
+    # In the prelude the mount has only just been powered: PWI4 does not
+    # know where it is, vision still sees it on the park pose.
+    prelude = GO.replace(parked_pwi4=Tri.UNKNOWN, roof=Tri.CONFIRMED,
+                         nina_alive=False)
+    out = step(s, "CAPTURE_LOST", prelude)
+    assert (out.kind, out.state) == ("transition", "PARKING")
+    # A powered mount saying it is NOT at park vetoes the close, whatever
+    # the camera thinks (the prelude may have died after the slew).
+    tracking = prelude.replace(parked_pwi4=Tri.DENIED)
+    out2 = step("PARKING", "MOUNT_PARK_CONFIRMED", tracking)
+    assert out2.kind == "rejected" and "parked" in out2.guard
+    # PWI4 abstaining with the camera confirming is the every-night case
+    # (the guard's own rule), and the close proceeds on it.
+    parked = prelude
+    _walk([
+        ("MOUNT_PARK_CONFIRMED", parked, "CLOSING_ROOF"),
+        ("ROOF_CLOSE_CONFIRMED", parked, "FLATS"),
+    ], start="PARKING")
+
+
 def test_weather_abort_mid_imaging_parks_closes_then_takes_flats():
     """Weather ends the imaging, not the flats: the roof shuts first and the
     flats are shot against a panel behind it, which is the order end.py runs

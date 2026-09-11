@@ -148,7 +148,7 @@ class ShadowConductor:
     # spin.
     _flats_grace_polls = 60
 
-    def __init__(self, repo_root: Path, journal: Journal):
+    def __init__(self, repo_root: Path, journal: Journal, sun_probe=None):
         self.root = Path(repo_root)
         self.journal = journal
         self.state = INITIAL_STATE
@@ -158,7 +158,9 @@ class ShadowConductor:
         # Injectable so tests drive them without a mount or a Shelly.
         self.pwi4_probe = _read_pwi4_park
         self.limits_probe = _read_roof_limits
-        self.sun_probe = _read_sun_altitude
+        # Injectable at construction because _recover() consults it, before
+        # a caller can reassign the attribute.
+        self.sun_probe = sun_probe or _read_sun_altitude
         self._slow_every = 6          # ~30 s at the 5 s cadence
         self._slow_tick = 0
         self._limits = ("not_configured", "")
@@ -210,13 +212,76 @@ class ShadowConductor:
         # same discrepancy as a FAULT, not a shrug.
         if (self.state in self._MID_NIGHT and self._imaging == "NONE"
                 and not self._nina):
-            self.journal.append(
-                "note", "SHADOW_RESYNC", "shadow",
-                data={"from_state": self.state,
-                      "reason": "recovered mid-night state with no capture activity"})
-            self.state, self.slots = INITIAL_STATE, 0
+            self._reseat("recovered mid-night state with no capture activity")
+        # The other way round: the shadow was down while the run moved on, so
+        # the journal's last transition is behind the capture state on disk.
+        # 2026-09-10 a restart mid-run would have recovered to PRELUDE (the
+        # last transition, from an attempt that died) with imaging.txt at
+        # IN_MAIN, and then waited in PRELUDE for events that had already
+        # happened. Walk the two steps the state file proves, tagged.
+        if self._imaging == "IN_MAIN" and self._nina:
+            if self.state == "PRELUDE":
+                self.offer("NINA_PRELUDE_DONE", "shadow",
+                           {"imaging": self._imaging, "synthesized": True,
+                            "why": "recovered behind the capture state"})
+            if self.state == "SLOT_SETUP":
+                self.offer("SLOT_STARTED", "shadow",
+                           {"imaging": self._imaging, "synthesized": True,
+                            "why": "recovered behind the capture state"})
         _logger.info("shadow recovered: state=%s slots=%d journal head=%d",
                      self.state, self.slots, self.journal.head())
+
+    def _live_plan_slots(self):
+        """Slots of the night plan still in force per the journal, or None.
+
+        PLAN_GOOD sets it; any transition back to IDLE_DAY or into PLANNING
+        (a new day, a cancelled plan, an operator resolve) clears it. A plan
+        older than a day is stale whatever the journal says: the scheduler
+        was down through a noon and never re-planned.
+        """
+        from datetime import datetime, timedelta
+        slots, when = None, None
+        for e in self.journal.replay():
+            if e.kind != "transition":
+                continue
+            if e.event == "PLAN_GOOD":
+                slots = max(1, int(e.data.get("slots") or e.data.get("slots_after") or 1))
+                when = e.ts
+            elif e.to_state in ("IDLE_DAY", "PLANNING"):
+                slots, when = None, None
+        if slots is None:
+            return None
+        try:
+            planned = datetime.fromisoformat(when)
+            if datetime.now(planned.tzinfo) - planned > timedelta(hours=24):
+                return None
+        except (TypeError, ValueError):
+            return None
+        return slots
+
+    def _reseat(self, reason, night=None):
+        """Abandon the current state (journaled as a SHADOW_RESYNC note).
+
+        Re-seats to ARMED when the night's plan is still in force and it is
+        night -- the state a retry of the run starts from, and the one that
+        has a CHECKS_PASSED row -- else to IDLE_DAY. Until 2026-09-10 this
+        always went to IDLE_DAY, from which a run has no table path, so the
+        retry after a lost prelude was ignored for the whole night and the
+        site showed idle while the scope imaged. `night` None consults the
+        sun; an unknown sun is treated as day (the conservative old answer).
+        """
+        slots = self._live_plan_slots()
+        if night is None:
+            alt = self.sun_probe()
+            night = alt is not None and alt < 0.0
+        to_state, to_slots = INITIAL_STATE, 0
+        if slots is not None and night:
+            to_state, to_slots = "ARMED", slots
+        self.journal.append(
+            "note", "SHADOW_RESYNC", "shadow",
+            data={"from_state": self.state, "to_state": to_state,
+                  "reason": reason})
+        self.state, self.slots = to_state, to_slots
 
     # ------------------------------------------------------------ readers
 
@@ -544,6 +609,16 @@ class ShadowConductor:
         if img != self._imaging:
             prev = self._imaging
             if img == "IN_PRELUDE":
+                # A prelude beginning while the machine still holds a night
+                # in progress is a RETRY: the previous attempt died (NINA
+                # quit in the prelude 2026-09-10, twice) and the operator
+                # closed up and ran image!! again. The table has no row for
+                # that from any mid-night state, so re-arm first: the plan
+                # is unchanged and the roof was shut for the retry to open.
+                if self.state in self._MID_NIGHT:
+                    self._reseat("prelude restarted while the machine was "
+                                 "mid-night: the previous attempt was lost",
+                                 night=True)
                 # The legacy run opens the roof between the checks and the
                 # prelude; the shadow sees only the prelude begin, so the two
                 # machine steps are synthesized back to back. Their true

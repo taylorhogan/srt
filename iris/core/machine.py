@@ -168,6 +168,13 @@ TRANSITIONS = (
     T("SLOT_IMAGING", "REPLAN_REQUESTED",    "SLOT_SETUP"),
     T("SLOT_IMAGING", "CAPTURE_LOST",        "PARKING"),
     T("SLOT_IMAGING", "WEATHER_BAD",         "PARKING"),
+    # NINA can die in the prelude too: 2026-09-10 the Pegasus switch connect
+    # failed 16 s after mount power-up and NINA quit with the roof open and
+    # nothing driving. Without this row the machine sat in PRELUDE, every
+    # later event of the night (two retries, one of them clean) was ignored,
+    # and the site showed idle through a night of imaging. Same answer as
+    # mid-slot: the close decision is unguarded, the motion after it is not.
+    T("PRELUDE",      "CAPTURE_LOST",        "PARKING"),
 
     # --- closing out the night. The close DECISION is unguarded (deciding to
     # go home must always be possible); the roof MOTION is where Invariant A

@@ -42,13 +42,14 @@ def _no_real_nina(monkeypatch):
     monkeypatch.setattr(ShadowConductor, "_nina_running", lambda self: False)
 
 
-def _shadow(root):
-    sh = ShadowConductor(root, Journal(root / "local" / "journal"))
+def _shadow(root, sun=None):
     # Hermetic: no real mount or Shelly round-trips from tests. Individual
-    # tests override these to stage evidence.
+    # tests override these to stage evidence. The sun is injected at
+    # construction because recovery consults it: None = no sky in a temp dir.
+    sh = ShadowConductor(root, Journal(root / "local" / "journal"),
+                         sun_probe=lambda: sun)
     sh.pwi4_probe = lambda: "unreachable"
     sh.limits_probe = lambda: ("not_configured", "")
-    sh.sun_probe = lambda: None          # no sky in a temp dir
     return sh
 
 
@@ -227,6 +228,79 @@ def test_recovering_a_wedged_state_resyncs_to_idle(tmp_path):
     assert sh2.state == "IDLE_DAY"
     notes = [e for e in sh2.journal.replay() if e.event == "SHADOW_RESYNC"]
     assert notes and notes[-1].data["from_state"] == "SLOT_IMAGING"
+
+
+def _to_prelude(root, sh):
+    _sched(root, "NOON_CHECK"); sh.poll()
+    _sched(root, "WAITING_FOR_PRE_SUNSET"); sh.poll()
+    _sched(root, "PRE_SUNSET_CHECK"); sh.poll()
+    _imaging(root, "IN_PRELUDE"); sh.poll()
+    assert sh.state == "PRELUDE"
+
+
+def test_prelude_lost_then_retried_is_tracked_from_armed(tmp_path):
+    """2026-09-10, as it happened: NINA died in the prelude, the operator
+    closed up and ran image!! again. The first attempt's death must land in
+    PARKING (the roof is open with nothing driving), and the retry must be
+    tracked -- it was the run that imaged all night."""
+    root = _mkroot(tmp_path)
+    sh = _shadow(root)
+    _to_prelude(root, sh)
+    sh._nina = True                              # NINA was seen alive...
+    sh.poll()                                    # ...and now is not
+    assert sh.state == "PARKING"
+    assert any(e.event == "CAPTURE_LOST" and e.kind == "transition"
+               for e in sh.journal.replay())
+    # image!! sat out its timeout, the operator closed the roof, retried
+    _imaging(root, "NONE"); sh.poll(); sh.poll()
+    _imaging(root, "IN_PRELUDE"); sh.poll()
+    assert sh.state == "PRELUDE"
+    notes = [e for e in sh.journal.replay() if e.event == "SHADOW_RESYNC"]
+    assert notes and notes[-1].data["from_state"] == "PARKING"
+    assert notes[-1].data["to_state"] == "ARMED"
+    _imaging(root, "DONE_PRELUDE"); sh.poll()
+    _imaging(root, "IN_MAIN"); sh.poll()
+    assert sh.state == "SLOT_IMAGING"
+    assert sh.slots == 1
+
+
+def test_recovering_a_wedge_at_night_with_a_live_plan_rearms(tmp_path):
+    """The restart on 2026-09-10 20:32 recovered PRELUDE (from the dead
+    attempt) with nothing running and re-seated to IDLE_DAY, so the retry
+    that followed had no path. At night, with the plan still in force, the
+    honest seat is ARMED: same plan, roof shut, run not started."""
+    root = _mkroot(tmp_path)
+    sh = _shadow(root)
+    _to_prelude(root, sh)
+    _imaging(root, "NONE")                       # the attempt is dead on disk
+    sh2 = _shadow(root, sun=-20.0)               # restart, at night
+    assert sh2.state == "ARMED" and sh2.slots == 1
+    _imaging(root, "IN_PRELUDE"); sh2.poll()     # the retry
+    assert sh2.state == "PRELUDE"
+
+
+def test_recovering_a_wedge_by_day_still_resyncs_to_idle(tmp_path):
+    root = _mkroot(tmp_path)
+    sh = _shadow(root)
+    _to_prelude(root, sh)
+    _imaging(root, "NONE")
+    sh2 = _shadow(root, sun=30.0)                # the night is over
+    assert sh2.state == "IDLE_DAY"
+
+
+def test_recovering_behind_the_capture_state_catches_up(tmp_path, monkeypatch):
+    """A restart while NINA is in the main sequence must not resume at the
+    journal's last transition and then wait for events already past."""
+    root = _mkroot(tmp_path)
+    sh = _shadow(root)
+    _to_prelude(root, sh)
+    _imaging(root, "IN_MAIN")                    # the run moved on meanwhile
+    monkeypatch.setattr(ShadowConductor, "_nina_running", lambda self: True)
+    sh2 = _shadow(root)
+    assert sh2.state == "SLOT_IMAGING"
+    synth = [e for e in sh2.journal.replay()
+             if e.kind == "transition" and e.data.get("synthesized")]
+    assert [e.event for e in synth] == ["NINA_PRELUDE_DONE", "SLOT_STARTED"]
 
 
 def test_noon_while_mid_night_resyncs_and_tracks_the_new_day(tmp_path):
