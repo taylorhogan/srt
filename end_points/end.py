@@ -395,11 +395,21 @@ def _record_optics_trend(dso_dir, frames: list[dict], arcsec_per_pixel: float,
 
 
 def do_main():
+    """The end-of-night shutdown. Returns True iff the roof was CONFIRMED closed.
+
+    Park is judged as vision CONFIRMED plus PWI4 not-DENIED: PWI4 saying
+    "not parked" (or moving) leaves the roof open; PWI4 unreachable is no
+    information, and the close then rests on the scope AprilTag exactly as it
+    does at every roof open (where the mount is unpowered). The mount's power
+    is cut before the vision check, so a scope the tag sees at park cannot be
+    tracking away from it while the roof moves.
+    """
     logger = utils.set_logger()
 
     cfg = config.data()
 
     logger.info('Begin End Sequence')
+    roof_closed = False
 
     # Tag this run's posts (roof-close spectrogram, imaging summary, …) with
     # the imaging job that started the night, so they land on that job's card
@@ -413,10 +423,17 @@ def do_main():
         logger.info("before discovery")
         dev_map = asyncio.run(ku.make_discovery_map())
         logger.info("after discovery")
-        parked = pwi4_utils.get_is_parked()
+        mount_state = pwi4_utils.mount_park_state()
+        parked = mount_state != "not_parked"
         try:
             if parked:
-                social_server.post_social_message("Mount says Iris is parked")
+                if mount_state == "parked":
+                    social_server.post_social_message("Mount says Iris is parked")
+                else:
+                    social_server.post_social_message(
+                        "PWI4 unreachable -- mount park state unknown; the close "
+                        "rests on the scope tag (vision), mount power cut first")
+                    logger.warning("end: PWI4 unreachable; park check falls to vision")
                 instructions = (dict
                     (
                     {
@@ -465,6 +482,7 @@ def do_main():
                     # annotated snapshot, and the loop gives the roof 20 minutes.
                     closed = super_user_commands.confirm_roof_state(
                         "closed", imaging_run=True)
+                    roof_closed = bool(closed)
                     if closed:
                         social_server.post_social_message("Vision Safety says roof is closed")
                     else:
@@ -572,6 +590,7 @@ def do_main():
     # that phase's first act is to kill NINA. Setting it earlier would start
     # flats while the shutdown is still running.
     super_user_commands.set_imaging_state(super_user_commands.ImagingState.NONE)
+    return roof_closed
 
 
 

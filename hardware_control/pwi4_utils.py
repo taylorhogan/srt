@@ -40,6 +40,27 @@ def park_scope ():
 
 
 
+def mount_park_state():
+    """'parked' | 'not_parked' | 'unknown' -- get_is_parked() with its blind spot named.
+
+    get_is_parked() returns False both when PWI4 says the mount is off park
+    (or moving) and when PWI4 cannot be reached at all. Those are different
+    facts: the first is a DENIAL and must stop a roof close; the second is no
+    information (PWI4 not running, mount power cycled), and the AprilTag on
+    the scope is then the only park sensor. The 2026-09-10 stop! read the
+    second as the first, tried to park through a dead PWI4, and died before
+    the roof close (the roof was closed by hand). Callers that gate hardware
+    want vision CONFIRMED plus PWI4 not-DENIED; this gives them the three-way.
+    """
+    try:
+        pwi4 = PWI4()
+        pwi4.status()
+    except Exception as e:      # noqa: BLE001
+        logger.warning("mount_park_state: PWI4 unreachable (%s); park state unknown", e)
+        return "unknown"
+    return "parked" if get_is_parked() else "not_parked"
+
+
 def get_is_parked ():
 
     try:

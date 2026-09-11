@@ -126,23 +126,53 @@ def set_power_port(port, level):
     return _send_raw_command(f"P{int(port)}:{level}") is not None
 
 
-# Power ports carrying the imaging train (camera, gemini, fan). Cutting these
-# blinds the vision-safety camera, which is powered through the Pegasus box, so
-# they must be powered off LAST in any shutdown — after all roof/mount/vision
-# work is complete.
+# Power ports carrying the imaging train: 1=camera, 2=gemini, 3=fan (the
+# names the box itself reports). These are "the 3 Pegasus switches" a stop!
+# must leave off once the roof is closed. They are powered off LAST in any
+# shutdown, after every roof/mount/vision step, because nothing after them
+# needs the train and (until the webcam retired on 2026-09-07) the safety
+# camera drew its power through this box; the Kasa camera that replaced it
+# does not -- it read the roof fine on 2026-09-11 with all three ports off.
 IMAGING_TRAIN_PORTS = (1, 2, 3)
 
 
-def power_off_imaging_train():
-    """Power off the imaging-train ports (camera/gemini/fan).
+def read_power_ports():
+    """{port_number: level} for every power port, from the aggregate report.
 
-    MUST be the final step of a shutdown sequence: the vision-safety camera is
-    powered through the Pegasus box, so this call blinds it. Every port is
-    attempted regardless of individual failures. Returns True only if every
-    port acknowledged.
+    ``level`` is the LIVE setting (0 = off, 1-100 = on); ``bootStrap`` in the
+    same report is the power-on default and is ignored here. None if Unity or
+    the box cannot be reached.
     """
-    results = [set_power_port(port, 0) for port in IMAGING_TRAIN_PORTS]
-    return all(results)
+    unity_url, driver_name, driver_key = _resolve_driver()
+    if not driver_name:
+        return None
+    url = f"{unity_url}/Driver/{driver_name}/Report"
+    if driver_key:
+        url += f"?DriverUniqueKey={driver_key}"
+    try:
+        r = requests.get(url, timeout=5)
+        hub = r.json()["data"]["message"]["pwmHubStatus"]["hub"]
+        return {int(p["portNumber"]): int(p["level"]) for p in hub}
+    except (requests.RequestException, KeyError, ValueError, TypeError):
+        return None
+
+
+def power_off_imaging_train():
+    """Power off the imaging-train ports (camera/gemini/fan) and VERIFY.
+
+    Every port is attempted regardless of individual failures, then the box
+    is read back. Returns (ok, levels): ok is True only when the read-back
+    shows every train port at level 0; levels is the read-back
+    {port: level} (None if the box could not be read, in which case ok is
+    False -- an acknowledged command is not evidence the port is off).
+    """
+    for port in IMAGING_TRAIN_PORTS:
+        set_power_port(port, 0)
+    levels = read_power_ports()
+    if levels is None:
+        return False, None
+    ok = all(levels.get(p, 1) == 0 for p in IMAGING_TRAIN_PORTS)
+    return ok, {p: levels.get(p) for p in IMAGING_TRAIN_PORTS}
 
 
 if __name__ == "__main__":

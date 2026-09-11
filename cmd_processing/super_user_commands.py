@@ -963,29 +963,93 @@ def unsafe_cmd(words: list[str], account: str) -> None:
     jobs.spawn(_emergency_stop_sequence)
 
 
-def _power_off_pegasus_train() -> None:
-    """Final shutdown step: power off the Pegasus imaging-train ports.
+def _power_off_pegasus_train() -> bool:
+    """Power off the three Pegasus imaging-train ports (camera, gemini, fan).
 
-    Called LAST because the vision-safety camera is powered through the Pegasus
-    box — cutting these ports blinds it, so it must happen only after all
-    roof/mount/vision work is complete. Never raises.
+    Last step of a shutdown: nothing after it needs the train. The result is
+    READ BACK from the box, not inferred from the command echo, and posted
+    to the chat either way. Never raises. True iff all three verified off.
     """
     try:
-        if pegasus.power_off_imaging_train():
-            _logger.info("emergency: Pegasus imaging-train ports powered off")
-        else:
-            _logger.warning("emergency: Pegasus power-off not fully acknowledged")
+        ok, levels = pegasus.power_off_imaging_train()
     except Exception:
         _logger.exception("emergency: Pegasus power-off failed")
+        social_server.post_social_message("Pegasus power-off FAILED (see log)")
+        return False
+    if ok:
+        _logger.info("emergency: Pegasus imaging-train ports verified off: %s", levels)
+        social_server.post_social_message("Pegasus camera/gemini/fan ports powered off (verified)")
+        return True
+    _logger.warning("emergency: Pegasus power-off NOT verified: %s", levels)
+    social_server.post_social_message(
+        "Pegasus power-off NOT verified: %s" % ("box unreachable" if levels is None else
+                                                 ", ".join("port %d=%s" % kv for kv in levels.items())))
+    return False
+
+
+def _dehumidifier_on() -> bool:
+    """Switch the dehumidifier relay on; post the result. Never raises."""
+    try:
+        utl_shelly.set_dehumidifier(True)
+        _logger.info("emergency: dehumidifier on")
+        social_server.post_social_message("Dehumidifier on")
+        return True
+    except Exception:
+        _logger.exception("emergency: dehumidifier could not be switched on")
+        social_server.post_social_message("Dehumidifier could NOT be switched on (see log)")
+        return False
+
+
+def _power_down_after_close() -> None:
+    """What every stop! ends with once the roof is CONFIRMED closed:
+    dehumidifier back on, then the three Pegasus ports off (last).
+
+    Both are idempotent, so it does not matter that end.do_main() may already
+    have switched the dehumidifier: the user's requirement is that a stop!
+    ends in this state, and the 2026-09-10 stop! died before reaching it."""
+    _dehumidifier_on()
+    _power_off_pegasus_train()
+
+
+def _scope_confirmed_parked(mount_state: str, vision_parked: bool) -> bool:
+    """The park rule for a roof close: vision CONFIRMED plus PWI4 not-DENIED.
+
+    PWI4 'not_parked' is a denial (the mount is off park or moving) and wins
+    over vision. PWI4 'unknown' (unreachable: not running, or the mount was
+    power-cycled and has no home reference) is no information, and the
+    AprilTag on the scope is then the only park sensor -- exactly the
+    situation at every roof open, where the mount is unpowered. Pure.
+    """
+    if mount_state == "not_parked":
+        return False
+    return bool(vision_parked)
 
 
 def _emergency_stop_sequence() -> None:
     """Body of the emergency stop (see :func:`unsafe_cmd`).
 
-    Never closes the roof unless the scope is confirmed parked. The authoritative
-    parked check is mount telemetry (``pwi4_utils.get_is_parked``); vision tells
-    us the roof position and needs the inside light on to be reliable.
+    Never closes the roof unless the scope is confirmed parked
+    (:func:`_scope_confirmed_parked`). Every hardware step is fenced so one
+    failure cannot end the sequence half-done: on 2026-09-10 PWI4 was not
+    running, park_scope() raised, and the job died before the roof close --
+    the roof was closed by hand and neither the dehumidifier nor the Pegasus
+    ports were touched. A failure now is posted and pushed, and the sequence
+    still ends in :func:`_power_down_after_close` whenever the roof is
+    confirmed closed.
     """
+    try:
+        _emergency_stop_body()
+    except Exception as exc:  # noqa: BLE001 -- the job runner would only log it
+        _logger.exception("emergency: stop sequence FAILED")
+        msg = "EMERGENCY STOP FAILED (%s: %s) -- check the observatory" % (type(exc).__name__, exc)
+        social_server.post_social_message(msg)
+        try:
+            pushover.push_message(msg, priority=2)
+        except Exception:
+            _logger.exception("emergency: pushover failed")
+
+
+def _emergency_stop_body() -> None:
     utils.set_install_dir()
     inside_view = config.data()["camera safety"]["scope_view"]
 
@@ -1007,8 +1071,8 @@ def _emergency_stop_sequence() -> None:
         _logger.exception("emergency: frame_watcher.stop failed")
 
     # 3. Read observatory state. Turn the inside light on first so vision is
-    #    reliable (during imaging the room is dark); the parked check uses mount
-    #    telemetry and is light-independent.
+    #    reliable (during imaging the room is dark); the mount reading is
+    #    three-way: parked / not_parked / unknown (PWI4 unreachable).
     dev_map = None
     try:
         dev_map = asyncio.run(ku.make_discovery_map())
@@ -1018,28 +1082,38 @@ def _emergency_stop_sequence() -> None:
         _logger.exception("emergency: could not turn on inside light")
 
     parked, closed, is_open, _ = get_status_with_lights()
-    mount_parked = pwi4_utils.get_is_parked()
+    mount_state = pwi4_utils.mount_park_state()
     _logger.info(
-        "emergency: vision parked=%s closed=%s open=%s; mount_parked=%s",
-        parked, closed, is_open, mount_parked,
+        "emergency: vision parked=%s closed=%s open=%s; mount=%s",
+        parked, closed, is_open, mount_state,
     )
 
     # 4. Branch on roof position (safety-critical).
     if is_open:
         # Roof confirmed open → safe to slew/park the scope.
-        if not mount_parked:
+        if mount_state == "not_parked":
             social_server.post_social_message("Roof open — parking scope")
-            pwi4_utils.park_scope()
-            mount_parked = pwi4_utils.get_is_parked()
+            try:
+                pwi4_utils.park_scope()
+            except Exception:
+                _logger.exception("emergency: park_scope failed")
+                social_server.post_social_message("Park command FAILED (see log)")
+            mount_state = pwi4_utils.mount_park_state()
+            parked, closed, is_open, _ = get_status_with_lights()
+            _logger.info("emergency: after park: vision parked=%s; mount=%s", parked, mount_state)
 
-        if mount_parked:
+        if _scope_confirmed_parked(mount_state, parked):
             # Parked + roof open → end.do_main() closes the roof + full shutdown
-            # (it re-confirms parked via vision before toggling the roof).
-            # Mount power must stay ON until do_main's own parked check — its
-            # get_is_parked needs mount telemetry; do_main then cuts mount power
-            # before it moves the roof.
+            # (it re-confirms parked via vision before toggling the roof, and
+            # cuts mount power first). It returns whether the roof was
+            # CONFIRMED closed; a crash inside it counts as not confirmed.
             social_server.post_social_message("Scope parked — closing roof and shutting down")
-            end.do_main()
+            roof_closed = False
+            try:
+                roof_closed = bool(end.do_main())
+            except Exception:
+                _logger.exception("emergency: end.do_main failed")
+                social_server.post_social_message("End sequence FAILED (see log)")
             # Backstop: if do_main failed before its power-off step (its blanket
             # except only logs), the mount would stay powered all night. Parked
             # is confirmed here, so force the Kasa switch off.
@@ -1059,18 +1133,28 @@ def _emergency_stop_sequence() -> None:
                         "EMERGENCY: could not confirm mount power off", priority=2)
             except Exception:
                 _logger.exception("emergency: mount power-off backstop failed")
-            # LAST: blinds the vision camera (powered through the Pegasus box).
-            _power_off_pegasus_train()
+            if roof_closed:
+                _power_down_after_close()
+            else:
+                # The roof close is what the power-down waits on; do not
+                # dehumidify an open building or unpower the train while
+                # someone may still need to see or move it.
+                msg = ("EMERGENCY: roof NOT confirmed closed -- Pegasus ports left "
+                       "powered and dehumidifier left off; check the observatory")
+                social_server.post_social_message(msg)
+                pushover.push_message(msg, inside_view)
         else:
             # Never close the roof over a scope we can't confirm is parked.
-            msg = "EMERGENCY: scope would NOT park — roof LEFT OPEN, manual help needed"
+            msg = ("EMERGENCY: scope NOT confirmed parked (vision parked=%s, mount %s) "
+                   "— roof LEFT OPEN, manual help needed" % (parked, mount_state))
             social_server.post_social_message(msg)
             pushover.push_message(msg, inside_view)
             set_imaging_state(ImagingState.NONE)
 
     elif closed:
-        # Roof already closed.
-        if mount_parked:
+        # Roof already closed. Nothing moves on this branch, so either park
+        # sensor reading parked is enough (a denial from PWI4 still refuses).
+        if mount_state == "parked" or _scope_confirmed_parked(mount_state, parked):
             # Already a safe geometry → power down only. Do NOT call end.do_main()
             # here: it unconditionally toggles the roof when parked, which would
             # re-open a closed roof.
@@ -1082,15 +1166,14 @@ def _emergency_stop_sequence() -> None:
                         "Roof motor": 'off',
                         "Iris inside light": 'off',
                     }))
-                utl_shelly.set_dehumidifier(True)
             except Exception:
                 _logger.exception("emergency: lightweight shutdown failed")
-            # LAST: blinds the vision camera (powered through the Pegasus box).
-            _power_off_pegasus_train()
+            _power_down_after_close()
             set_imaging_state(ImagingState.NONE)
         else:
             # Unparked scope under a closed roof — no safe automatic action.
-            msg = "EMERGENCY: roof closed but scope NOT parked — manual help needed"
+            msg = ("EMERGENCY: roof closed but scope NOT confirmed parked (vision "
+                   "parked=%s, mount %s) — manual help needed" % (parked, mount_state))
             social_server.post_social_message(msg)
             pushover.push_message(msg, inside_view)
             set_imaging_state(ImagingState.NONE)

@@ -124,7 +124,9 @@ HELP: dict[str, dict] = {
     },
     "stop!": {
         "category": "super",
-        "summary": "Emergency stop: kill NINA, park the scope, close the roof, shut down.",
+        "summary": ("Emergency stop: kill NINA, park the scope, close the roof, then "
+                    "dehumidifier on and the 3 Pegasus ports (camera/gemini/fan) off. "
+                    "Also what cancelling an image!! card runs."),
         "usage": ["stop!"],
     },
     "safe!": {
