@@ -62,7 +62,8 @@ HELP: dict[str, dict] = {
     },
     "status": {
         "category": "general",
-        "summary": "Post observatory status (roof, mount, scheduler, weather).",
+        "summary": ("Post observatory status (roof, mount, scheduler, PWI4 reachable, "
+                    "the 3 Pegasus ports, audio clip)."),
         "usage": ["status"],
     },
     "latest": {

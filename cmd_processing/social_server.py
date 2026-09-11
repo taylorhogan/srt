@@ -287,7 +287,8 @@ def status_cmd(words: list[str], index: int, m: Mastodon, account: str) -> None:
         f"━━ Control ━━\n"
         f"Mode      : {mode.title()}\n"
         f"Safety    : {safe}\n"
-        f"State     : {imaging}"
+        f"State     : {imaging}\n"
+        + su.hardware_status_lines()
     )
 
     # Attach a short live audio clip of the observatory to the status report,

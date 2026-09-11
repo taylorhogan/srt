@@ -136,12 +136,13 @@ def set_power_port(port, level):
 IMAGING_TRAIN_PORTS = (1, 2, 3)
 
 
-def read_power_ports():
-    """{port_number: level} for every power port, from the aggregate report.
+def read_power_port_details():
+    """{port_number: (name, level)} for every power port, from the aggregate report.
 
     ``level`` is the LIVE setting (0 = off, 1-100 = on); ``bootStrap`` in the
-    same report is the power-on default and is ignored here. None if Unity or
-    the box cannot be reached.
+    same report is the power-on default and is ignored here. ``name`` is the
+    label the box carries (camera / gemini / fan / Output4..6). None if Unity
+    or the box cannot be reached.
     """
     unity_url, driver_name, driver_key = _resolve_driver()
     if not driver_name:
@@ -152,9 +153,17 @@ def read_power_ports():
     try:
         r = requests.get(url, timeout=5)
         hub = r.json()["data"]["message"]["pwmHubStatus"]["hub"]
-        return {int(p["portNumber"]): int(p["level"]) for p in hub}
+        return {int(p["portNumber"]): (str(p.get("name", "")), int(p["level"])) for p in hub}
     except (requests.RequestException, KeyError, ValueError, TypeError):
         return None
+
+
+def read_power_ports():
+    """{port_number: level} for every power port; None if unreachable."""
+    details = read_power_port_details()
+    if details is None:
+        return None
+    return {port: level for port, (_name, level) in details.items()}
 
 
 def power_off_imaging_train():

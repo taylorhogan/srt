@@ -78,6 +78,31 @@ def test_pegasus_power_off_not_verified_when_box_unreadable(monkeypatch):
     assert pegasus.power_off_imaging_train() == (False, None)
 
 
+# ------------------------------------------------------------- status block
+
+def test_status_hardware_block_lists_pwi4_and_the_three_ports():
+    ports = {1: ("camera", 0), 2: ("gemini", 100), 3: ("fan", 40), 4: ("Output4", 0)}
+    out = suc.format_hardware_status("reachable, mount connected", ports)
+    assert "PWI4      : reachable, mount connected" in out
+    assert "Pegasus 1 : camera OFF" in out
+    assert "Pegasus 2 : gemini ON" in out
+    assert "Pegasus 3 : fan ON 40%" in out
+    assert "Output4" not in out
+
+
+def test_status_hardware_block_when_pegasus_unreachable():
+    out = suc.format_hardware_status("unreachable", None)
+    assert "PWI4      : unreachable" in out and "Pegasus   : unreachable" in out
+
+
+def test_status_hardware_lines_never_raise(monkeypatch):
+    def boom():
+        raise OSError("unity down")
+    monkeypatch.setattr(suc.pegasus, "read_power_port_details", boom)
+    monkeypatch.setattr(suc, "pwi4_reach_state", lambda: "unreachable")
+    assert "Pegasus   : unreachable" in suc.hardware_status_lines()
+
+
 # ------------------------------------------------------------- ending
 
 def test_power_down_after_close_does_both_and_pegasus_last(monkeypatch):

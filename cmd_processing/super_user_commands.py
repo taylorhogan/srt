@@ -963,6 +963,47 @@ def unsafe_cmd(words: list[str], account: str) -> None:
     jobs.spawn(_emergency_stop_sequence)
 
 
+def pwi4_reach_state() -> str:
+    """'unreachable' | 'reachable, mount connected' | 'reachable, mount NOT connected'.
+
+    A read-only probe: never connects the mount (get_is_parked would). PWI4
+    unreachable is what the 2026-09-10 stop! ran into, so `status` shows it.
+    """
+    try:
+        from hardware_control.pwi4_client import PWI4
+        s = PWI4().status()
+        return ("reachable, mount connected" if s.mount.is_connected
+                else "reachable, mount NOT connected")
+    except Exception:  # noqa: BLE001
+        return "unreachable"
+
+
+def format_hardware_status(pwi4_state: str, ports) -> str:
+    """The `status` card's hardware lines from a PWI4 reach state and the
+    Pegasus port details ({port: (name, level)} or None). Pure."""
+    lines = ["━━ Hardware ━━", f"PWI4      : {pwi4_state}"]
+    if ports is None:
+        lines.append("Pegasus   : unreachable")
+        return "\n".join(lines)
+    for port in pegasus.IMAGING_TRAIN_PORTS:
+        name, level = ports.get(port, ("?", None))
+        state = "?" if level is None else ("OFF" if level == 0 else
+                                           "ON" if level >= 100 else f"ON {level}%")
+        lines.append(f"Pegasus {port} : {name} {state}")
+    return "\n".join(lines)
+
+
+def hardware_status_lines() -> str:
+    """Live hardware block for `status`: PWI4 reachability and the three
+    Pegasus imaging-train ports. Never raises."""
+    try:
+        ports = pegasus.read_power_port_details()
+    except Exception:  # noqa: BLE001
+        _logger.exception("status: Pegasus read failed")
+        ports = None
+    return format_hardware_status(pwi4_reach_state(), ports)
+
+
 def _power_off_pegasus_train() -> bool:
     """Power off the three Pegasus imaging-train ports (camera, gemini, fan).
 
