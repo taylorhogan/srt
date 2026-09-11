@@ -633,8 +633,10 @@ def _match_from_detail(det, parked, closed, is_open):
                       else "pose" if "pose" in str(sd.get("why", "")) else "not seen")
     closed_verdict = ("ok" if closed else "position" if rd.get("tag_elsewhere")
                       else "not seen")
+    star_seen = int(det.get("star_seen") or 0) > 0
     open_verdict = ("ok" if is_open else "tag present" if roof_seen
                     else "aperture veto" if rd.get("aperture") == "shut" and scope_seen
+                    else "star not seen" if rd.get("open_no_star")
                     else "not seen")
     return {
         "source": "kasa",
@@ -657,8 +659,8 @@ def _match_from_detail(det, parked, closed, is_open):
         "closed": {"conf": 1.0 if roof_seen else 0.0,
                    "error": float(rd.get("worst_corner_px", 0.0) or 0.0),
                    "verdict": closed_verdict},
-        "open": {"conf": 1.0 if (scope_seen and not roof_seen) else 0.0,
-                 "error": 0.0,
+        "open": {"conf": 1.0 if (scope_seen and not roof_seen and star_seen) else 0.0,
+                 "error": float(rd.get("star_px", 0.0) or 0.0),
                  "verdict": open_verdict},
         "why": rd.get("why") or sd.get("why"),
     }

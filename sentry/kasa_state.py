@@ -24,20 +24,39 @@ scope against a fixed camera and does not care. First off-park reading
 
 ROOF -- the AprilTag (id 1) on the roof panel, seen only when the roof is
 over the aperture, against the shut reference (local/roof_marker_shut.json),
-with the scope tag as WITNESS that the camera can see at all:
+with the scope tag as WITNESS that the camera can see at all, and the gold
+STAR on the wall (local/roof_star_open.json) as the positive marker for open:
 
     roof tag at its shut position     -> SHUT     (positive)
-    roof tag gone, scope tag seen     -> OPEN     (positive: the camera can
-                                                  see, and the roof is not there)
+    roof tag gone, scope tag seen,
+        open star seen at its place   -> OPEN     (positive: the star is only
+                                                  in view when the roof is off)
+    roof tag gone, scope tag seen,
+        star not seen                 -> UNKNOWN  (consistent with open, but
+                                                  nothing positive says so)
     roof tag seen somewhere else      -> UNKNOWN  (unexplained; refuse)
     neither tag                       -> UNKNOWN  (blind: lens, power, pointing)
 
+Until 2026-09-11 the second line needed no star: "tag gone + witness" was
+OPEN. The user rejected that on 2026-09-10 ("you need to see the open
+star"): a tag that fails to DECODE, a smear over that part of the lens, or a
+roof stopped half way all look like absence, and a false OPEN while the roof
+is shut is the collision case. The star is the webcam-era gold star on the
+dark wall left of the aperture: in view when open, hidden by the roof
+structure when shut (8/8 lit open frames on file within 15 px of one spot;
+0/9 shut frames, where the nearest yellow thing is pine 60+ px away). It is
+found by colour (a star-sized yellow blob within tolerance of the golden
+position) AND context (the recorded template -- a bright compact blob on the
+dark wall -- correlates there; pine over the window, bright everywhere with
+no dark surround, correlates at 0.33 or less), and it needs a COLOUR frame: a gating read switches the inside light on and waits for the
+camera to leave greyscale IR before it looks. On an IR frame the star is
+"unknown", so OPEN cannot be confirmed without the light.
+
 The old aperture-statistics rule (green excess by day, IR return by night)
-is kept ONLY as a veto on OPEN: a tag that fails to DECODE is also "absent",
-and in IR at night that happens on a real fraction of frames. A false OPEN
-while the roof is shut is the collision case, so an OPEN that the aperture
-contradicts is UNKNOWN, and a gating read takes several frames and needs
-every one of them to say open.
+is kept ONLY as a veto on OPEN. A gating read takes several frames; OPEN
+needs every one of them consistent with open (tag gone, witness seen,
+aperture not objecting) and the star seen in at least one, which mirrors
+SHUT: a positive read that the other frames cannot undo.
 
 POSE FIRST. Both references describe the scene from ONE camera pose, so a
 gating read drives the camera there (cloud round trip) before it looks, and
@@ -80,8 +99,29 @@ _logger = utils.set_logger()
 HOST = "192.168.87.65"
 SNAP_PATH = "local/kasa_state_frame.jpg"
 SHUT_PATH = "local/roof_marker_shut.json"
+STAR_PATH = "local/roof_star_open.json"
+STAR_TEMPLATE_PATH = "local/roof_star_template.png"
 ROOF_ID = 1
 SCOPE_ID = 0
+
+# The open star (see module docstring; recorded by scripts/roof_star_check.py).
+# Measured 2026-09-11 on every colour frame in sentry/roof_frames_kasa:
+#   open: blob 312-519 px, 0-15 px from the golden position, template ncc
+#         0.48-1.00 there (daylight ~0.5-0.6, night-lit 0.92-1.00)
+#   shut: nearest yellow blob (pine) 60-83 px away, 487-1838 px, ncc <= 0.33
+# Position and shape are each required; neither alone has the margin.
+STAR_SEARCH_PX = 80            # half-width of the window searched around the golden spot
+STAR_TOLERANCE_PX = 40         # blob centroid must be this close to it
+STAR_AREA_PX = (150, 1200)     # star-sized: the pine strips run bigger
+STAR_NCC_MIN = 0.40            # template correlation at the blob
+STAR_TEMPLATE_MARGIN = 12      # px of wall kept around the star in the template
+STAR_HSV_LO, STAR_HSV_HI = (8, 60, 110), (45, 255, 255)   # yellow, lit
+# A frame whose channels differ by less than this on average is greyscale IR.
+IR_CHROMA = 0.5
+# After the inside light goes on the camera stays in IR for a few seconds
+# (2026-09-10: three gating reads 7 s after the switch were still IR). A
+# gating read waits up to this long for colour before it looks.
+COLOUR_WAIT_S = 25.0
 
 # Frames per GATING read. Decode failures are per-frame noise; requiring every
 # frame to agree on OPEN turns a 16 % single-frame miss (the measured IR rate)
@@ -164,6 +204,34 @@ def _shut_reference():
         return None
 
 
+def _star_reference():
+    try:
+        with open(STAR_PATH) as fh:
+            return json.load(fh)
+    except Exception:  # noqa: BLE001
+        return None
+
+
+_star_template_cache: dict = {}
+
+
+def _star_template(ref):
+    """The recorded star crop, or None if the reference names none / it is missing."""
+    path = (ref or {}).get("template")
+    if not path:
+        return None
+    mtime = os.path.getmtime(path) if os.path.exists(path) else None
+    if mtime is None:
+        return None
+    hit = _star_template_cache.get(path)
+    if hit is None or hit[0] != mtime:
+        img = cv2.imread(path)
+        if img is None or not img.size:
+            return None
+        _star_template_cache[path] = hit = (mtime, img)
+    return hit[1]
+
+
 def _required_pose():
     """(camera name, (x, y)) the park reference was recorded at, or None."""
     try:
@@ -190,8 +258,99 @@ def _scope_verdict(found, parked_ref, pose):
     return verdict, detail
 
 
-def roof_tag_verdict(found, ref):
+def is_ir(img):
+    """True when the frame is the camera's greyscale IR output (no colour at all)."""
+    small = img[::8, ::8].astype(np.float32)
+    return float(np.mean(small.max(axis=2) - small.min(axis=2))) <= IR_CHROMA
+
+
+def find_star_blob(img, near, search_px, area=STAR_AREA_PX):
+    """The star-sized yellow blob nearest *near* within the search window.
+
+    Returns (distance_px, area_px, cx, cy, (x, y, w, h)) in full-frame
+    coordinates, or None. Pure image work; no reference needed, so the
+    recorder uses it too.
+    """
+    h, w = img.shape[:2]
+    gx, gy = float(near[0]), float(near[1])
+    x0, y0 = max(0, int(gx - search_px)), max(0, int(gy - search_px))
+    x1, y1 = min(w, int(gx + search_px)), min(h, int(gy + search_px))
+    if x1 - x0 < 8 or y1 - y0 < 8:
+        return None
+    hsv = cv2.cvtColor(img[y0:y1, x0:x1], cv2.COLOR_BGR2HSV)
+    mask = cv2.inRange(hsv, STAR_HSV_LO, STAR_HSV_HI)
+    n, _lab, stats, cent = cv2.connectedComponentsWithStats(mask)
+    best = None
+    for i in range(1, n):
+        a = int(stats[i, cv2.CC_STAT_AREA])
+        if not (area[0] <= a <= area[1]):
+            continue
+        cx, cy = float(cent[i][0] + x0), float(cent[i][1] + y0)
+        d = float(np.hypot(cx - gx, cy - gy))
+        if best is None or d < best[0]:
+            bx, by = int(stats[i, cv2.CC_STAT_LEFT] + x0), int(stats[i, cv2.CC_STAT_TOP] + y0)
+            best = (d, a, cx, cy, (bx, by, int(stats[i, cv2.CC_STAT_WIDTH]),
+                                   int(stats[i, cv2.CC_STAT_HEIGHT])))
+    return best
+
+
+def star_verdict(img, ref, template=None):
+    """('seen'|'absent'|'unknown', detail): is the open star at its place?
+
+    'seen' needs a star-sized yellow blob within tolerance of the golden
+    position AND the recorded template correlating there. 'absent' is a
+    colour frame that shows no such thing (the roof structure is over it, or
+    the camera is not looking where it should). 'unknown' is a frame that
+    cannot answer: IR, or no reference on file.
+    """
+    if ref is None:
+        return "unknown", {"why": "no open-star reference recorded; run "
+                                  "scripts/roof_star_check.py --set-open"}
+    if is_ir(img):
+        return "unknown", {"why": "camera in greyscale IR; the star needs colour",
+                           "ir": True}
+    gx, gy = ref["centre"]
+    tol = float(ref.get("tolerance_px", STAR_TOLERANCE_PX))
+    blob = find_star_blob(img, (gx, gy), int(ref.get("search_px", STAR_SEARCH_PX)))
+    if blob is None:
+        return "absent", {"why": "no star-sized yellow blob within %d px of (%.0f, %.0f)"
+                                 % (int(ref.get("search_px", STAR_SEARCH_PX)), gx, gy)}
+    d, a, cx, cy, _bbox = blob
+    detail = {"star_px": round(d, 1), "star_area": a, "star_at": (round(cx), round(cy))}
+    if d > tol:
+        detail["why"] = ("nearest yellow blob is %.0f px from the star's golden "
+                         "position (tolerance %.0f)" % (d, tol))
+        return "absent", detail
+    tmpl = template if template is not None else _star_template(ref)
+    if tmpl is None:
+        detail["why"] = "star template %s missing; re-run scripts/roof_star_check.py --set-open" \
+                        % ref.get("template")
+        return "unknown", detail
+    th, tw = tmpl.shape[:2]
+    h, w = img.shape[:2]
+    sx0, sy0 = max(0, int(cx - tw / 2 - tol)), max(0, int(cy - th / 2 - tol))
+    sx1, sy1 = min(w, int(cx + tw / 2 + tol)), min(h, int(cy + th / 2 + tol))
+    region = img[sy0:sy1, sx0:sx1]
+    if region.shape[0] < th or region.shape[1] < tw:
+        detail["why"] = "star too close to the frame edge to match the template"
+        return "unknown", detail
+    ncc = float(cv2.minMaxLoc(cv2.matchTemplate(region, tmpl, cv2.TM_CCOEFF_NORMED))[1])
+    detail["star_ncc"] = round(ncc, 2)
+    ncc_min = float(ref.get("ncc_min", STAR_NCC_MIN))
+    if ncc < ncc_min:
+        detail["why"] = ("yellow blob at the star's position but it does not correlate "
+                         "with the recorded star (ncc %.2f < %.2f)" % (ncc, ncc_min))
+        return "absent", detail
+    return "seen", detail
+
+
+def roof_tag_verdict(found, ref, star=None):
     """('shut'|'open'|'unknown', detail) from the tags in one frame.
+
+    *star* is star_verdict()'s (verdict, detail) for the same frame; OPEN
+    needs it to be 'seen'. A frame with the roof tag gone and the witness
+    seen but no star is 'unknown' with detail["open_no_star"] set, so
+    combine_roof can tell "consistent with open" from "contradicts open".
 
     Pure: the pose is established once per status call, before any frame is
     taken, so it is not re-checked here.
@@ -213,7 +372,16 @@ def roof_tag_verdict(found, ref):
                                   "(tolerance %.0f)" % (d, tol),
                            "worst_corner_px": round(d, 1), "tag_elsewhere": True}
     if scope_seen:
-        return "open", {"why": "roof tag absent while the scope tag is visible"}
+        sv, sd = star if star is not None else ("unknown", {"why": "open star not checked"})
+        detail = {k: v for k, v in sd.items() if k != "why"}
+        detail["star"] = sv
+        if sv == "seen":
+            detail["why"] = "roof tag absent, scope tag visible, open star at its place"
+            return "open", detail
+        detail["why"] = ("roof tag absent while the scope tag is visible, but the open "
+                         "star was not seen (%s)" % sd.get("why", sv))
+        detail["open_no_star"] = True
+        return "unknown", detail
     return "unknown", {"why": "neither tag visible; the camera is blind"}
 
 
@@ -284,24 +452,46 @@ def combine_roof(verdicts):
     """One roof verdict from several frames.
 
     SHUT: at least one frame decoded the roof tag at its shut position and no
-    frame saw it elsewhere. OPEN: every frame read open (tag gone with the
-    witness seen, aperture not objecting). Anything else is unknown.
+    frame read open or open-like (tag gone with the witness seen). OPEN:
+    every frame is open-like with the aperture not objecting, and at least
+    one of them SAW the star -- a positive read the other frames cannot
+    undo, mirroring SHUT. Anything else is unknown.
     """
     vs = [v for v, _ in verdicts]
     if any(d.get("tag_elsewhere") for _, d in verdicts):
         return "unknown"
-    if "shut" in vs and "open" not in vs:
+    open_like = [v == "open" or bool(d.get("open_no_star")) for v, d in verdicts]
+    if "shut" in vs and not any(open_like):
         return "shut"
-    if vs and all(v == "open" for v in vs):
+    if vs and all(open_like) and "open" in vs:
         return "open"
     return "unknown"
 
 
 # ------------------------------------------------------------------ picture
 
-def _annotate(img, found, parked_ref, shut_ref, scope, roof):
+def _annotate(img, found, parked_ref, shut_ref, scope, roof, star_ref=None, star=None):
     """The frame with the tags outlined and the verdict stamped on it."""
     out = img.copy()
+    # The open star: golden position as a circle of the tolerance, and where
+    # (if anywhere) this frame found it. The picture shows the positive open
+    # evidence, or its absence, at a glance.
+    if star_ref:
+        try:
+            gx, gy = (int(v) for v in star_ref["centre"])
+            tol = int(star_ref.get("tolerance_px", STAR_TOLERANCE_PX))
+            sv, sd = star if star is not None else ("unknown", {})
+            col = {"seen": (80, 220, 80), "absent": (40, 40, 240)}.get(sv, (200, 200, 200))
+            cv2.circle(out, (gx, gy), tol, col, 3)
+            if sd.get("star_at"):
+                ax, ay = (int(v) for v in sd["star_at"])
+                cv2.drawMarker(out, (ax, ay), col, cv2.MARKER_CROSS, 40, 3)
+            what = {"seen": "open star seen", "absent": "open star NOT seen"}.get(
+                sv, "open star %s" % sv)
+            cv2.putText(out, what, (gx - 150, gy - tol - 20), cv2.FONT_HERSHEY_SIMPLEX,
+                        1.2, col, 3)
+        except Exception:  # noqa: BLE001 -- annotation must never cost a picture
+            pass
     colour = {"safe": (80, 220, 80), "shut": (80, 220, 80),
               "UNSAFE": (40, 40, 240), "open": (240, 180, 40)}
     for tid, corners in found.items():
@@ -311,11 +501,9 @@ def _annotate(img, found, parked_ref, shut_ref, scope, roof):
         cx, cy = int(c[:, 0, 0].mean()), int(c[:, 0, 1].mean())
         label = "scope tag" if tid == SCOPE_ID else "roof tag" if tid == ROOF_ID else "tag %d" % tid
         cv2.putText(out, label, (cx - 60, cy - 70), cv2.FONT_HERSHEY_SIMPLEX, 1.4, col, 3)
-    # The roof has no OPEN marker: open is the roof tag being ABSENT from its
-    # shut position while the scope tag proves the camera can see. Draw where
-    # the tag would be, so an open picture shows the evidence, not just the
-    # witness. (The old webcam had a gold star that appeared when open; this
-    # camera reads the absence of a thing that is present when shut.)
+    # The roof tag is ABSENT from its shut position when open; draw where it
+    # would be, so the picture shows both halves of the open evidence: the
+    # tag gone from here and the star seen over there.
     if shut_ref and ROOF_ID not in found:
         try:
             q = np.asarray(shut_ref["markers"][str(ROOF_ID)], dtype=np.int32).reshape(-1, 1, 2)
@@ -328,7 +516,7 @@ def _annotate(img, found, parked_ref, shut_ref, scope, roof):
                     p1 = (int(a[0] + (b_[0] - a[0]) * (t + 1) / 8), int(a[1] + (b_[1] - a[1]) * (t + 1) / 8))
                     cv2.line(out, p0, p1, col, 3)
             cx, cy = int(q[:, 0, 0].mean()), int(q[:, 0, 1].mean())
-            what = "roof tag absent = open" if roof == "open" else "roof tag not seen"
+            what = "roof tag absent" if roof == "open" else "roof tag not seen"
             cv2.putText(out, what, (cx - 150, cy - 70), cv2.FONT_HERSHEY_SIMPLEX, 1.2, col, 3)
         except Exception:  # noqa: BLE001 -- annotation must never cost a picture
             pass
@@ -343,12 +531,13 @@ def _annotate(img, found, parked_ref, shut_ref, scope, roof):
     return out
 
 
-def _write_view(img, found, parked_ref, shut_ref, scope, roof):
+def _write_view(img, found, parked_ref, shut_ref, scope, roof, star_ref=None, star=None):
     """Write the annotated decision picture to the configured scope_view path."""
     try:
         path = config.data()["camera safety"]["scope_view"]
         os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-        cv2.imwrite(path, _annotate(img, found, parked_ref, shut_ref, scope, roof),
+        cv2.imwrite(path, _annotate(img, found, parked_ref, shut_ref, scope, roof,
+                                    star_ref, star),
                     [cv2.IMWRITE_JPEG_QUALITY, 82])
     except Exception:  # noqa: BLE001 -- a picture must never cost a verdict
         _logger.exception("kasa_state: could not write the decision picture")
@@ -394,29 +583,34 @@ def kasa_status(quick=False, verify_pose=False, frames=1):
     from scripts.scope_marker_check import find_markers
     parked_ref = _parked_reference()
     shut_ref = _shut_reference()
+    star_ref = _star_reference()
     dict_name = (parked_ref or {}).get("dict", "APRILTAG_36h11")
 
     n = 1 if quick else max(1, int(frames))
     scope_v, roof_v, per_frame = [], [], []
-    img = found = None
+    img = found = star = None
     for i in range(n):
         if i:
             time.sleep(0.5)
         img_i = _grab(retries=1, timeout=8, wait_stream=False) if quick else _grab()
+        if img_i is not None and i == 0 and not quick and star_ref and is_ir(img_i):
+            img_i = _await_colour(img_i)
         if img_i is None:
             per_frame.append({"camera": False})
             continue
         img = img_i
         found = find_markers(img, dict_name)
         sv, sd = _scope_verdict(found, parked_ref, verified)
-        tv, td = roof_tag_verdict(found, shut_ref)
+        star = star_verdict(img, star_ref)
+        tv, td = roof_tag_verdict(found, shut_ref, star)
         hint, hd = _aperture_hint(img)
         rv, rd = roof_verdict_with_veto(tv, td, hint)
         rd.update({k: v for k, v in hd.items() if k in ("regime", "sun_alt")})
         scope_v.append((sv, sd))
         roof_v.append((rv, rd))
         per_frame.append({"tags": sorted(found), "scope": sv, "roof": rv,
-                          "roof_tag": tv, "aperture": hint})
+                          "roof_tag": tv, "aperture": hint, "star": star[0],
+                          "star_px": star[1].get("star_px")})
 
     if img is None:
         last_detail = {"camera": False, "frames": n, "per_frame": per_frame}
@@ -429,23 +623,55 @@ def kasa_status(quick=False, verify_pose=False, frames=1):
     # captions; the per-frame list carries the rest.
     sdet = next((d for v, d in reversed(scope_v) if v != "unknown"), scope_v[-1][1])
     rdet = next((d for v, d in reversed(roof_v) if v != "unknown"), roof_v[-1][1])
+    star_seen = sum(1 for f in per_frame if f.get("star") == "seen")
     last_detail = {"camera": True, "scope": scope, "scope_detail": sdet,
                    "roof": roof, "roof_detail": rdet,
+                   "star": star[0] if star else "unknown", "star_seen": star_seen,
                    "frames": n, "per_frame": per_frame,
                    "pose_verified": verified is not None}
-    _write_view(img, found, parked_ref, shut_ref, scope, roof)
+    _write_view(img, found, parked_ref, shut_ref, scope, roof, star_ref, star)
     # Wording coupled to _KASA_RE in iris/conductor/shadow.py; change together.
     # The offsets ride on the line so the stops' repeatability accumulates in
     # the log for free: the roof tag is 1.2 px/mm, so a shut-stop drift shows
     # here long before anyone would notice it by eye.
+    star_word = ("seen %d/%d" % (star_seen, n) if star_seen
+                 else "n/a (%s)" % (star[1].get("why", "unknown") if star else "unknown")
+                 if (star and star[0] == "unknown") else "not seen")
     _logger.info("kasa_status: scope=%s roof=%s (%s; %d/%d frames decoded a tag; pose %s; "
-                 "scope tag %.1f px off park; roof tag %s)",
+                 "scope tag %.1f px off park; roof tag %s; open star %s)",
                  scope, roof, rdet.get("regime", "?"),
                  sum(1 for f in per_frame if f.get("tags")), n,
                  "verified" if verified is not None else "unverified",
                  float(sdet.get("worst_corner_px", 0.0) or 0.0),
-                 ("%.1f px off shut" % rdet["worst_corner_px"]) if "worst_corner_px" in rdet else "not seen")
+                 ("%.1f px off shut" % rdet["worst_corner_px"]) if "worst_corner_px" in rdet else "not seen",
+                 star_word)
     return scope == "safe", roof == "shut", roof == "open", when
+
+
+def _await_colour(first):
+    """Regrab until the camera leaves IR, up to COLOUR_WAIT_S; return the last frame.
+
+    The inside light is already on when a gating read starts, but the camera
+    takes a few seconds to switch out of greyscale, and the open star cannot
+    be seen in greyscale. Returns an IR frame if the wait runs out (the tags
+    still decode; OPEN will then be refused for want of the star).
+    """
+    deadline = time.time() + COLOUR_WAIT_S
+    img = first
+    t0 = time.time()
+    while time.time() < deadline:
+        time.sleep(2.0)
+        g = _grab(retries=1, timeout=8, wait_stream=False)
+        if g is None:
+            continue
+        img = g
+        if not is_ir(g):
+            _logger.info("kasa_status: camera switched to colour %.0f s after the light",
+                         time.time() - t0)
+            return g
+    _logger.warning("kasa_status: camera still in IR %.0f s after the light; the open "
+                    "star cannot be checked on a greyscale frame", COLOUR_WAIT_S)
+    return img
 
 
 def main():
