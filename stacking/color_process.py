@@ -212,6 +212,158 @@ def _prepare(channels: dict[str, np.ndarray], subtract_background: bool,
     return subbed, white
 
 
+
+# --- auto stretch -----------------------------------------------------------
+#
+# The by-hand NGC 7380 HOO stretch of 2026-09-12 came down to three decisions,
+# two of which were measurements: (1) a channel with faint signal just above
+# its sky needs black placed a margin BELOW sky or that signal is clipped, (2) a
+# channel with nothing near its sky must have black AT sky or the harder curve
+# lifts its noise into a colour cast (O-III made the whole background teal),
+# (3) the softening sets how hard the faint end is pushed. auto_stretch()
+# measures (1) and (2) from each channel against a pure-noise sky model and
+# turns (3) into a brightness target for the faint end.
+#
+# The measurement is made on a BINNED image, not per pixel. Faint nebulosity
+# sits at a fraction of a sigma per pixel — invisible in a per-pixel histogram,
+# where the first version of this rule measured 0.0% faint signal on IC 1396,
+# whose whole field is 1-5 sigma emission — but a viewer sees the picture at
+# thumbnail scale, where 16x16 pixels average and that fraction of a sigma
+# becomes several. So the field is block-averaged AUTO_BIN on a side, and
+# "faint" means what stands above the noise of that image.
+#
+# Noise model: sky pixels are symmetric about the sky level and signal only adds
+# on the positive side, so the negative half of the histogram is pure noise. Its
+# MAD gives sigma without nebulosity inflating it, and its count, doubled, is
+# the number of sky pixels; the excess over that model on the positive side is
+# the fraction of the field carrying signal.
+AUTO_BIN = 16                  # block size the field is averaged over
+AUTO_FAINT_BAND = (1.0, 4.0)   # binned sigma above sky that "faint signal" is
+AUTO_BRIGHT_SIGMA = 4.0        # ...and above which it is "bright"
+AUTO_MARGIN_SIGMA = 0.5        # full black margin below sky, in PER-PIXEL sigma
+AUTO_MARGIN_GATE = 0.03        # faint fraction below which margin is 0
+AUTO_MARGIN_FULL = 0.25        # ...and above which it is the full margin
+AUTO_FAINT_TARGET = 0.15       # output (of white) for sky + 2 binned sigma
+AUTO_BRIGHT_CAP = 0.90         # p90 of the bright signal may not exceed this
+AUTO_SOFT_RANGE = (0.002, 0.2)
+
+
+def _asinh_out(y, soft: float):
+    return np.arcsinh(y / soft) / np.arcsinh(1.0 / soft)
+
+
+def _solve_soft(y: float, target: float, lo: float, hi: float) -> float:
+    """Softening at which the asinh curve maps y to target; monotone, bisect.
+
+    Output falls as softening rises, so if even the hardest curve is too dim
+    the answer is lo, and if the softest is still too bright it is hi.
+    """
+    if _asinh_out(y, lo) <= target:
+        return lo
+    if _asinh_out(y, hi) >= target:
+        return hi
+    for _ in range(60):
+        mid = (lo * hi) ** 0.5
+        if _asinh_out(y, mid) > target:
+            lo = mid
+        else:
+            hi = mid
+    return (lo * hi) ** 0.5
+
+
+def _block_mean(a: np.ndarray, b: int) -> np.ndarray:
+    h, w = (a.shape[0] // b) * b, (a.shape[1] // b) * b
+    return np.nanmean(a[:h, :w].reshape(h // b, b, w // b, b), axis=(1, 3))
+
+
+def sky_noise_model(chan: np.ndarray, bin_factor: int = AUTO_BIN) -> dict:
+    """Sky level, per-pixel and binned noise, and the faint/bright signal
+    fractions of one background-subtracted channel."""
+    import sep
+    from math import erf, sqrt
+
+    def phi(v):
+        return 0.5 * (1.0 + erf(v / sqrt(2.0)))
+
+    a = np.ascontiguousarray(chan.astype(np.float32))
+    binned = np.ascontiguousarray(_block_mean(a, bin_factor).astype(np.float32))
+    box = max(8, min(64, min(binned.shape) // 8))
+    sky = float(sep.Background(binned, bw=box, bh=box).globalback)
+
+    # Per-pixel sigma, negative side, on a strided subsample of the full field.
+    px = a[::4, ::4].ravel()
+    px = px[np.isfinite(px)] - sky
+    neg = -px[px < 0]
+    sigma_px = max(1.4826 * float(np.median(neg)) if neg.size else float(np.std(px)), 1e-6)
+
+    zb = binned.ravel()
+    zb = zb[np.isfinite(zb)] - sky
+    negb = -zb[zb < 0]
+    sigma_b = max(1.4826 * float(np.median(negb)) if negb.size else float(np.std(zb)), 1e-6)
+    zb = zb / sigma_b
+    n_total = zb.size
+    n_sky = 2 * negb.size
+    lo, hi = AUTO_FAINT_BAND
+    faint = max(0.0, int(np.count_nonzero((zb >= lo) & (zb < hi))) - n_sky * (phi(hi) - phi(lo))) / n_total
+    bright_px = zb[zb >= AUTO_BRIGHT_SIGMA]
+    bright = max(0.0, bright_px.size - n_sky * (1.0 - phi(AUTO_BRIGHT_SIGMA))) / n_total
+    bright_p90 = float(np.percentile(bright_px, 90)) * sigma_b + sky if bright_px.size else None
+    return {"sky": sky, "sigma": sigma_px, "sigma_binned": sigma_b,
+            "faint_fraction": faint, "bright_fraction": bright, "bright_p90": bright_p90}
+
+
+def auto_stretch(subbed: dict[str, np.ndarray], white: float,
+                 lum: Optional[str] = None, log=None) -> dict:
+    """Per-channel black points and one softening, chosen from the data.
+
+    Returns {"blacks": {chan: ADU}, "softening": float, "channels": {chan:
+    diagnostics}, "dominant": chan, "anchors": {...}}. The caller applies the
+    same values to the raw and the denoised set, exactly as it would with
+    hand-chosen ones.
+    """
+    diag = {c: sky_noise_model(a) for c, a in subbed.items()}
+    blacks = {}
+    for c, d in diag.items():
+        t = (d["faint_fraction"] - AUTO_MARGIN_GATE) / (AUTO_MARGIN_FULL - AUTO_MARGIN_GATE)
+        k = AUTO_MARGIN_SIGMA * float(np.clip(t, 0.0, 1.0))
+        d["margin_sigma"] = k
+        blacks[c] = d["sky"] - k * d["sigma"]
+        d["black"] = blacks[c]
+
+    # The softening is one number for every channel, so it is set from the
+    # channel that carries the picture: the luminance when there is one, else
+    # the channel with the most signal.
+    if lum and lum in diag:
+        dom = lum
+    else:
+        dom = max(diag, key=lambda c: diag[c]["faint_fraction"] + diag[c]["bright_fraction"])
+    d = diag[dom]
+    span = max(white - blacks[dom], 1e-6)
+    faint_adu = d["sky"] + 2.0 * d["sigma_binned"]
+    y_faint = (faint_adu - blacks[dom]) / span
+    lo, hi = AUTO_SOFT_RANGE
+    soft = _solve_soft(y_faint, AUTO_FAINT_TARGET, lo, hi)
+    anchors = {"faint_adu": faint_adu, "soft_from_faint": soft}
+    if d["bright_p90"] is not None and d["bright_fraction"] > 1e-3:
+        y_bright = min((d["bright_p90"] - blacks[dom]) / span, 1.0)
+        if _asinh_out(y_bright, soft) > AUTO_BRIGHT_CAP:
+            soft = max(soft, _solve_soft(y_bright, AUTO_BRIGHT_CAP, lo, hi))
+        anchors.update({"bright_adu": d["bright_p90"],
+                        "bright_out": float(_asinh_out(y_bright, soft))})
+    anchors["faint_out"] = float(_asinh_out(y_faint, soft))
+    if log:
+        for c in sorted(diag):
+            x = diag[c]
+            log(f"    {c}: sky {x['sky']:+.3f} sigma {x['sigma']:.3f} (binned {x['sigma_binned']:.3f}) "
+                f"faint {100*x['faint_fraction']:.1f}% bright {100*x['bright_fraction']:.1f}% -> "
+                f"margin {x['margin_sigma']:.2f} sigma, black {x['black']:+.3f} ADU")
+        b = anchors.get("bright_out")
+        log(f"    softening {soft:.4f} from {dom}: sky+2 binned sigma ({faint_adu:.2f} ADU) -> "
+            f"{anchors['faint_out']:.2f} of white" + (f", bright p90 -> {b:.2f}" if b is not None else ""))
+    return {"blacks": blacks, "softening": float(soft), "channels": diag,
+            "dominant": dom, "anchors": anchors}
+
+
 def effective_options(**overrides) -> dict:
     """Every compose() display knob with its default filled in.
 

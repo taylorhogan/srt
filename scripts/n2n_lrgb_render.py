@@ -375,8 +375,14 @@ def compose(args) -> int:
         raw_ch, opts["subtract_background"], opts["mesh"], opts["white_pct"])
     subbed_den, _ = color_process._prepare(
         den_ch, opts["subtract_background"], opts["mesh"], opts["white_pct"])
-    blacks = {c: float(np.nanpercentile(subbed_raw[c], opts["black_pct"]))
-              for c in subbed_raw}
+    if args.auto_stretch:
+        log("auto stretch:")
+        auto = color_process.auto_stretch(subbed_raw, white, lum="L", log=log)
+        blacks = auto["blacks"]
+        opts["softening"] = auto["softening"]
+    else:
+        blacks = {c: float(np.nanpercentile(subbed_raw[c], opts["black_pct"]))
+                  for c in subbed_raw}
     log(f"shared stretch from raw: white {white:.2f} ADU, blacks "
         + ", ".join(f"{c} {v:.2f}" for c, v in sorted(blacks.items())))
 
@@ -564,8 +570,13 @@ def routine(args) -> int:
     # denoised channel and manufactures a colour shift.
     subbed_raw, white = color_process._prepare(
         to_channels(raw), opts["subtract_background"], opts["mesh"], opts["white_pct"])
-    blacks = sky_anchored_blacks(subbed_raw, args.black_sigma, opts["black_pct"], log)
-    soft = opts["softening"]
+    if args.auto_stretch:
+        log("auto stretch:")
+        auto = color_process.auto_stretch(subbed_raw, white, lum="L", log=log)
+        blacks, soft = auto["blacks"], auto["softening"]
+    else:
+        blacks = sky_anchored_blacks(subbed_raw, args.black_sigma, opts["black_pct"], log)
+        soft = opts["softening"]
     log(f"stretch from raw: white {white:.2f} ADU, blacks "
         + ", ".join(f"{c} {v:.2f}" for c, v in sorted(blacks.items())))
 
@@ -662,6 +673,10 @@ def main() -> int:
     ap.add_argument("--soft", type=float, default=None,
                     help="asinh softening; lower = harder stretch "
                          f"(compose default {0.025})")
+    ap.add_argument("--auto-stretch", action="store_true",
+                    help="black points and softening from the data "
+                         "(color_process.auto_stretch) instead of the fixed "
+                         "--black-sigma/--black-pct/--soft; white stays --white-pct")
     ap.add_argument("--black-sigma", type=float, default=0.5,
                     help="black point at sky_median - N*sigma, measured from the "
                          "raw; 0 or less restores the --black-pct percentile")
