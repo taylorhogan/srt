@@ -109,6 +109,13 @@ Before writing any code that calls `toggle_roof()`, `pwi4.mount_park()`, `pwi4.m
   (`bad` renames). Irreversible: older lights lose the option of epoch-matched
   flats, which matters only if the optics were disturbed between runs.
 
+  Every picture product (stack/process/channel/sweep JPEGs) is written with
+  **sky parity** through `stacker.sky_parity()`: the array as stored, row 0 at
+  the top. On this rig the FITS-convention view is a mirror of the sky
+  (positive CD determinant on a solved light), and until 2026-09-12 every
+  JPEG was flipped into it. The rule is fixed by the optical train, not read
+  from a WCS; the FITS products keep the stored orientation.
+
   Finished products from `stack` and `process` go to
   `<image_dir>/Iris/<dso>/`, beside that target's lights and calibration frames
   rather than into scratch. Safe because every path that collects light frames

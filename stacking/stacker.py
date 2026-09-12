@@ -1687,6 +1687,28 @@ def _write_stack(
     fits.writeto(str(output_path), result, header, overwrite=True)
 
 
+def sky_parity(data: np.ndarray) -> np.ndarray:
+    """Return *data* in the row order every picture product is written in.
+
+    Pictures are written with true sky parity: rotate one to north-up and
+    east is on the left, as on a chart or on Astrobin. On this rig that is the
+    array AS STORED, row 0 at the top. The QHY600M on the CDK delivers frames
+    whose FITS-convention view (row 0 at the bottom, origin="lower") is a
+    MIRROR of the sky: the plate-solved CD matrix of a 2026-09-11 ngc7380
+    light has a positive determinant, and a north-up/east-left image has a
+    negative one. Until 2026-09-12 every JPEG was flipped to that convention,
+    so every picture was mirrored and the Wizard looked wrong-handed next to
+    anyone else's.
+
+    Parity is a property of the optical train (mirror count, camera driver),
+    not of the night or the rotator angle, so this is a fixed rule rather
+    than something read from a WCS. If the train changes (a diagonal, a
+    different camera), this is the only line to change. The FITS products are
+    untouched: they keep the stored orientation for astrometry.
+    """
+    return np.asarray(data)
+
+
 def save_plain_jpg(data: np.ndarray, output_path: Path) -> Path:
     """Save a ZScale-stretched JPEG with no title, axes, border or resampling.
 
@@ -1695,8 +1717,7 @@ def save_plain_jpg(data: np.ndarray, output_path: Path) -> Path:
     fits in 10 inches at 150 dpi. Written with PIL rather than matplotlib
     precisely so nothing can add furniture to the image.
 
-    Row order matches the FITS convention used everywhere else here (origin
-    lower), so the result is oriented like the annotated preview.
+    Oriented by sky_parity(), like every other picture product.
     """
     from astropy.visualization import ZScaleInterval
     from PIL import Image
@@ -1704,7 +1725,7 @@ def save_plain_jpg(data: np.ndarray, output_path: Path) -> Path:
     vmin, vmax = ZScaleInterval().get_limits(data)
     span = float(vmax - vmin) or 1.0
     scaled = np.clip((np.asarray(data, dtype=np.float32) - vmin) / span, 0.0, 1.0)
-    img = (scaled * 255.0).astype(np.uint8)[::-1]        # flip to origin="lower"
+    img = sky_parity((scaled * 255.0).astype(np.uint8))
     output_path.parent.mkdir(parents=True, exist_ok=True)
     Image.fromarray(img).save(output_path, quality=92, optimize=True)
     return output_path
@@ -1721,7 +1742,11 @@ def _save_jpg(data: np.ndarray, output_path: Path, title: str = "") -> Path:
     fig = Figure(figsize=(10, 10))
     FigureCanvasAgg(fig)
     ax = fig.add_subplot(111)
-    ax.imshow(data, origin="lower", cmap="gray", vmin=vmin, vmax=vmax, interpolation="nearest")
+    # origin="upper" draws the array as stored, which is sky parity here (see
+    # sky_parity()); origin="lower" would mirror it like every JPEG before
+    # 2026-09-12.
+    ax.imshow(sky_parity(data), origin="upper", cmap="gray", vmin=vmin, vmax=vmax,
+              interpolation="nearest")
     ax.axis("off")
     if title:
         ax.set_title(title, fontsize=10)

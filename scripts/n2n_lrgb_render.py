@@ -576,12 +576,14 @@ def routine(args) -> int:
     from PIL import Image
     written = []
 
+    from stacking import stacker
+
     def emit(subbed, tag):
         for ch in ("R", "G", "B", "L"):
             if ch not in subbed:
                 continue
             mono = st(subbed[ch], blacks[ch])
-            arr = (np.clip(np.nan_to_num(mono), 0, 1) * 255).astype(np.uint8)[::-1]
+            arr = stacker.sky_parity((np.clip(np.nan_to_num(mono), 0, 1) * 255).astype(np.uint8))
             img = Image.fromarray(arr, mode="L")
             mx = color_process.CHANNEL_JPG_MAX_PX
             if max(img.size) > mx:

@@ -654,6 +654,7 @@ def sweep(channels: dict, grid: dict, bin_factor: int = 4,
     """
     import itertools
     from PIL import Image, ImageDraw
+    from stacking import stacker
 
     binned = {k: (v if bin_factor <= 1 else
                   v[:v.shape[0] // bin_factor * bin_factor,
@@ -670,7 +671,7 @@ def sweep(channels: dict, grid: dict, bin_factor: int = 4,
             progress_cb(f"sweep {i}/{len(combos)}: "
                         + "  ".join(f"{k}={v}" for k, v in combo.items()))
         rgb = compose(binned, **combo)
-        img = Image.fromarray((np.clip(rgb, 0, 1) * 255).astype(np.uint8)[::-1])
+        img = Image.fromarray(stacker.sky_parity((np.clip(rgb, 0, 1) * 255).astype(np.uint8)))
         img.thumbnail((760, 760))
         d = ImageDraw.Draw(img)
         label = "  ".join(f"{k.replace('_pct','').replace('softening','soft')}={v}"
@@ -710,6 +711,7 @@ def save_channel_jpgs(channels: dict[str, np.ndarray], out_dir: Path, dso: str,
     cannot ask at full resolution anyway. The FITS is the archival copy.
     """
     from PIL import Image
+    from stacking import stacker
     subbed, white = _prepare(channels, subtract_background, mesh, white_pct)
     out_dir.mkdir(parents=True, exist_ok=True)
     written = []
@@ -717,7 +719,7 @@ def save_channel_jpgs(channels: dict[str, np.ndarray], out_dir: Path, dso: str,
         if chan not in subbed:
             continue
         mono = _stretch(subbed[chan], black_pct, white, softening)
-        arr = (np.clip(np.nan_to_num(mono), 0.0, 1.0) * 255).astype(np.uint8)[::-1]
+        arr = stacker.sky_parity((np.clip(np.nan_to_num(mono), 0.0, 1.0) * 255).astype(np.uint8))
         img = Image.fromarray(arr, mode="L")
         if max_px and max(img.size) > max_px:
             ratio = max_px / max(img.size)
@@ -886,9 +888,14 @@ def save_sheet(sheet: np.ndarray, path: Path) -> Path:
 
 
 def save_rgb(rgb: np.ndarray, path: Path, max_px: Optional[int] = None) -> Path:
-    """Write an RGB float image (0..1) as a JPEG with no text or furniture."""
+    """Write an RGB float image (0..1) as a JPEG with no text or furniture.
+
+    Oriented by stacker.sky_parity(): the same row order as every other
+    picture product, so a colour render and its channel JPEGs match.
+    """
     from PIL import Image
-    img = Image.fromarray((np.clip(rgb, 0, 1) * 255).astype(np.uint8)[::-1])
+    from stacking import stacker
+    img = Image.fromarray(stacker.sky_parity((np.clip(rgb, 0, 1) * 255).astype(np.uint8)))
     if max_px and max(img.size) > max_px:
         ratio = max_px / max(img.size)
         img = img.resize((max(1, int(img.width * ratio)),
