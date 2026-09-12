@@ -53,7 +53,7 @@ def _save_comparison(raw: np.ndarray, denoised: np.ndarray, out_path: Path, titl
     fig, axes = plt.subplots(1, 2, figsize=(18, 9))
     fig.patch.set_facecolor("#0d0d1a")
     for ax, data, label in zip(axes, [raw, denoised], ["Raw", "Denoised (N2N)"]):
-        ax.imshow(data, cmap="gray", vmin=vmin, vmax=vmax, origin="lower")
+        ax.imshow(data, cmap="gray", vmin=vmin, vmax=vmax, origin="upper")  # sky parity, see stacker.sky_parity
         ax.set_title(label, color="white", fontsize=14)
         ax.axis("off")
         ax.set_facecolor("#0d0d1a")
