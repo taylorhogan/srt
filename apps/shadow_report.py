@@ -47,12 +47,22 @@ _ISLOG_RE = re.compile(
     r"^\w{3}\s+(\d\d)/(\d\d)/(\d{4})\s+(\d{1,2}):(\d\d):(\d\d)\.\d+\s+"
     r"IMAGING_STATE set to ([A-Z_]+)\s*$")
 
-# Which journal event corresponds to each bat-written imaging state.
+# Which journal event corresponds to each bat-written imaging state. This
+# mirrors the shadow's own reading of imaging.txt (iris/conductor/shadow.py,
+# _on_imaging): IN_MAIN is a slot STARTING and DONE_MAIN a slot ENDING -- the
+# split ADR 0012 made. Until 2026-09-12 IN_MAIN still mapped to
+# NINA_SLOT_DONE, the pre-split meaning; a single-slot night never showed it
+# because its only IN_MAIN sat inside the tolerance of nothing and the judge
+# happened not to see it, but the first two-slot night (2026-09-11) wrote
+# IN_MAIN at the 03:08 hand-over, the journal correctly said SLOT_STARTED two
+# seconds later, and the judge called the night DIVERGED. IN_FLATS has no
+# event: the machine is already in FLATS by then (the roof close walked it
+# there), so it is neither a hit nor a miss.
 _BAT_TO_EVENT = {
     "DONE_PRELUDE": "NINA_PRELUDE_DONE",
+    "IN_MAIN": "SLOT_STARTED",
+    "DONE_MAIN": "NINA_SLOT_DONE",
     "DONE_FLATS": "NINA_FLATS_DONE",
-    "IN_MAIN": "NINA_SLOT_DONE",
-    "IN_FLATS": "NINA_SLOT_DONE",
 }
 
 

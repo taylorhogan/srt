@@ -555,3 +555,21 @@ def test_two_slot_night_walks_both_slots(tmp_path):
     assert got.count(("SLOT_STARTED", "SLOT_SETUP", "SLOT_IMAGING")) == 2
     assert ("NINA_SLOT_DONE", "SLOT_IMAGING", "SLOT_SETUP") in got
     assert ("NINA_SLOT_DONE", "SLOT_IMAGING", "PARKING") in got
+
+
+def test_judge_table_mirrors_the_shadow_reading():
+    """apps/shadow_report judges the journal against imaging_state.log with its
+    own state->event table. It must say what the shadow itself does with the
+    same imaging states (test_two_slot_night_walks_both_slots above): IN_MAIN
+    starts a slot, DONE_MAIN ends one. The pre-ADR-0012 table (IN_MAIN ->
+    NINA_SLOT_DONE) called the first two-slot night DIVERGED on a correct
+    journal."""
+    import importlib
+    sr = importlib.import_module("apps.shadow_report")
+    assert sr._BAT_TO_EVENT == {
+        "DONE_PRELUDE": "NINA_PRELUDE_DONE",
+        "IN_MAIN": "SLOT_STARTED",
+        "DONE_MAIN": "NINA_SLOT_DONE",
+        "DONE_FLATS": "NINA_FLATS_DONE",
+    }
+    assert "IN_FLATS" not in sr._BAT_TO_EVENT   # machine is already in FLATS
