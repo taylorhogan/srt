@@ -72,6 +72,13 @@ def _night_events(states):
         if s == "DONE_PRELUDE":
             ev.append(("NINA_PRELUDE_DONE", 1))
             ev.append(("SLOT_STARTED", 1))        # imaging.txt -> IN_MAIN
+        elif s == "DONE_MAIN":
+            # Two-slot hand-over (first seen live 2026-09-11): the sequence
+            # writes DONE_MAIN as slot 1 ends and IN_MAIN as slot 2 begins.
+            # One slot is still left, so this is SLOT_SETUP, not PARKING.
+            ev.append(("NINA_SLOT_DONE", 1))
+        elif s == "IN_MAIN":
+            ev.append(("SLOT_STARTED", 1))
         elif s == "DONE_FLATS":
             # The real order, corrected 2026-09-05: end.py parks and closes
             # the roof and THEN shoots flats against a panel, so the close
@@ -96,6 +103,15 @@ def _walk(states):
         assert out.state in STATES
         s = out.state
     return s, outcomes
+
+
+def _canonical(states) -> bool:
+    """A prelude, zero or more two-slot hand-overs, flats: the shapes a
+    night takes when nothing went wrong."""
+    if len(states) < 2 or states[0] != "DONE_PRELUDE" or states[-1] != "DONE_FLATS":
+        return False
+    mid = states[1:-1]
+    return all(mid[i] == ("DONE_MAIN" if i % 2 == 0 else "IN_MAIN") for i in range(len(mid)))         and len(mid) % 2 == 0
 
 
 def _sources():
@@ -129,7 +145,7 @@ def test_every_recorded_night_replays_without_rejection():
 def test_clean_nights_reach_night_done_then_idle():
     for name, nights in _sources():
         for night, states in sorted(nights.items()):
-            if states == ["DONE_PRELUDE", "DONE_FLATS"]:
+            if _canonical(states):
                 final, outcomes = _walk(states)
                 assert final == "IDLE_DAY", (name, night, final)
                 assert outcomes["ignored"] == 0, (name, night, outcomes)
@@ -143,7 +159,7 @@ def test_anomalous_nights_are_absorbed_not_derailed():
     edge is what would close it out in live operation."""
     for name, nights in _sources():
         for night, states in sorted(nights.items()):
-            if states == ["DONE_PRELUDE", "DONE_FLATS"]:
+            if _canonical(states):
                 continue
             final, outcomes = _walk(states)
             # "Ends in flats -> reaches IDLE_DAY" holds only for nights that

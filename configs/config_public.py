@@ -296,6 +296,15 @@ class PublicConfig():
             # object-type default) sizes ONE pass to hours * efficiency, and
             # the container's hard end (slot window) stops the run.
             "efficiency": 0.75,
+            # Focus seeds (fits_processing/focus_model.py): before every
+            # SmartExposure block the generator writes a N.I.N.A
+            # MoveFocuserByTemperature (absolute: slope * T + intercept) with
+            # that filter's fit from N.I.N.A's own autofocus reports, refit at
+            # every generation. Centres the autofocus sweep and is what
+            # N.I.N.A restores when a run fails. False = sequences as before.
+            "focus_seed": True,
+            "focus_model": "local/focus_model.json",
+            "autofocus_reports": "%LOCALAPPDATA%/NINA/AutoFocus",
             # 4-block expansion of cdk_full_sequence.json (expand_sequence_blocks.py):
             # _apply_filter_plan needs >=4 SmartExposure blocks or it silently
             # ignores every filter plan. Regenerate after editing the source

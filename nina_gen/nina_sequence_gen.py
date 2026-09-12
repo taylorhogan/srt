@@ -1,6 +1,7 @@
 import json
 import logging
 import math
+import os
 from pathlib import Path
 from typing import Any, Optional
 
@@ -633,6 +634,116 @@ def _script_item(prototype: dict, script: str, parent_id: str, next_id: list) ->
     return item
 
 
+# --------------------------------------------------------------------------- #
+# Focus seeds: a MoveFocuserByTemperature before every SmartExposure block
+# --------------------------------------------------------------------------- #
+
+FOCUS_SEED_TYPE = "NINA.Sequencer.SequenceItem.Focuser.MoveFocuserByTemperature, NINA.Sequencer"
+
+
+def _focus_model():
+    """The per-filter temperature model, refreshed from N.I.N.A's autofocus
+    reports, or None when seeding is off / no model exists."""
+    try:
+        from configs import config
+        nina = config.data().get("nina", {}) or {}
+    except Exception:
+        nina = {}
+    if not nina.get("focus_seed", True):
+        return None
+    try:
+        from fits_processing import focus_model as fm
+        reports = os.path.expandvars(str(nina.get("autofocus_reports") or fm.DEFAULT_REPORTS_DIR))
+        return fm.refresh(reports, str(nina.get("focus_model") or fm.DEFAULT_MODEL_PATH))
+    except Exception as e:  # never let the seed break sequence generation
+        logging.getLogger(__name__).warning("focus model unavailable: %s", e)
+        return None
+
+
+def _resolve_filter_name(se: dict, ids: dict) -> Optional[str]:
+    """The filter a SmartExposure will switch to, following a $ref if the
+    block shares the template's filter definition."""
+    for item in _items_of(se):
+        if "SwitchFilter" in str(item.get("$type", "")):
+            f = item.get("Filter")
+            if isinstance(f, dict) and "$ref" in f:
+                f = ids.get(f["$ref"])
+            if isinstance(f, dict):
+                return f.get("_name")
+    return None
+
+
+def _index_ids(node: Any, ids: Optional[dict] = None) -> dict:
+    if ids is None:
+        ids = {}
+    if isinstance(node, dict):
+        if "$id" in node:
+            ids[node["$id"]] = node
+        for v in node.values():
+            _index_ids(v, ids)
+    elif isinstance(node, list):
+        for v in node:
+            _index_ids(v, ids)
+    return ids
+
+
+def seed_focus(container: Any, model: Optional[dict], next_id: list,
+               ids: Optional[dict] = None) -> dict[str, tuple[float, float]]:
+    """Insert a MoveFocuserByTemperature before every SmartExposure under
+    *container* whose filter the model knows. Returns {filter: (slope,
+    intercept)} for the blocks that got one.
+
+    Absolute mode: N.I.N.A moves to slope * T + intercept with T read from
+    the focuser at run time, so the seed follows the night's temperature
+    rather than a forecast made at noon. It runs BEFORE the block's own
+    SwitchFilter, so the autofocus-after-filter-change trigger that fires
+    inside the block starts its sweep centred on the seed -- and if that
+    run fails, the position N.I.N.A restores is the seed, not the previous
+    filter's focus (the 2026-09-11 first-O-III-light failure). Blocks whose
+    filter has no model are left untouched. Call AFTER the filter plan has
+    renamed the blocks.
+    """
+    if not model:
+        return {}
+    from fits_processing import focus_model as fm
+    if ids is None:
+        ids = _index_ids(container)
+    seeded: dict[str, tuple[float, float]] = {}
+
+    def walk(n):
+        if isinstance(n, dict):
+            vals = _items_of(n)
+            if vals and any(isinstance(it, dict) and _short_type(it) == "SmartExposure"
+                            for it in vals):
+                out = []
+                for it in vals:
+                    if isinstance(it, dict) and _short_type(it) == "SmartExposure":
+                        name = _resolve_filter_name(it, ids)
+                        si = fm.seed_for(model, name) if name else None
+                        if si is not None:
+                            out.append({"$id": str(next_id[0]), "$type": FOCUS_SEED_TYPE,
+                                        "Slope": round(si[0], 3), "Intercept": round(si[1], 1),
+                                        "Absolute": True, "Parent": {"$ref": n.get("$id")},
+                                        "ErrorBehavior": 0, "Attempts": 1})
+                            next_id[0] += 1
+                            seeded[name] = si
+                    out.append(it)
+                vals[:] = out
+            for k, v in n.items():
+                if k != "Parent":
+                    walk(v)
+        elif isinstance(n, list):
+            for v in n:
+                walk(v)
+
+    walk(container)
+    if seeded:
+        logging.getLogger(__name__).info(
+            "Focus seeds: " + "  ".join("%s %+.0f*T%+.0f" % (f, s, i)
+                                        for f, (s, i) in seeded.items()))
+    return seeded
+
+
 def generate_slots_sequence(template_path: Path, slots: list, output_path: Path,
                             state_script: Optional[str] = None) -> list:
     """Write a sequence with one target container per slot.
@@ -666,6 +777,7 @@ def generate_slots_sequence(template_path: Path, slots: list, output_path: Path,
     proto = items[idx]
     script_proto = _find_first(sequence, "ExternalScript")
     next_id = [_max_id(sequence) + 1]
+    focus_model = _focus_model()
     # Clone from a PRISTINE copy: the first slot edits the original in place
     # (name, coordinates, hard end), and a clone taken after that would carry
     # the first slot's end time into the second.
@@ -684,6 +796,7 @@ def generate_slots_sequence(template_path: Path, slots: list, output_path: Path,
         _apply_rotation(c, slot.get("rotation", _rotation_for(slot["name"])))
         _set_hard_end(c, slot.get("end"), next_id)
         plans.append(_plan_for(c, slot["name"], slot.get("seconds")))
+        seed_focus(c, focus_model, next_id, ids=_index_ids(sequence))
         if k > 0:
             # No explicit autofocus after the first slot. Focus follows
             # temperature and filter, and both already have triggers inside
@@ -774,6 +887,7 @@ def generate_sequence(
         _dedupe_singletons(sequence)
 
     filter_plan = _plan_for(sequence, dso_name, above_horizon_seconds)
+    seed_focus(sequence, _focus_model(), [_max_id(sequence) + 1])
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with open(output_path, "w", encoding="utf-8") as f:
