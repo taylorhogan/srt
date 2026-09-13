@@ -660,6 +660,16 @@ def _focus_model():
         return None
 
 
+def _iterations(se: dict) -> Optional[int]:
+    for cond in (se.get("Conditions") or {}).get("$values", []) if isinstance(se.get("Conditions"), dict) else []:
+        if "LoopCondition" in str(cond.get("$type", "")):
+            try:
+                return int(cond.get("Iterations", 0))
+            except (TypeError, ValueError):
+                return None
+    return None
+
+
 def _resolve_filter_name(se: dict, ids: dict) -> Optional[str]:
     """The filter a SmartExposure will switch to, following a $ref if the
     block shares the template's filter definition."""
@@ -720,6 +730,8 @@ def seed_focus(container: Any, model: Optional[dict], next_id: list,
                     if isinstance(it, dict) and _short_type(it) == "SmartExposure":
                         name = _resolve_filter_name(it, ids)
                         si = fm.seed_for(model, name) if name else None
+                        if _iterations(it) == 0:
+                            si = None    # a zeroed spare block: no move for nothing
                         if si is not None:
                             out.append({"$id": str(next_id[0]), "$type": FOCUS_SEED_TYPE,
                                         "Slope": round(si[0], 3), "Intercept": round(si[1], 1),

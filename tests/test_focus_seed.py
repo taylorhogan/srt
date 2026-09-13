@@ -122,3 +122,18 @@ def test_config_off_disables_seeding(monkeypatch):
     monkeypatch.setitem(sys.modules, "configs.config", _Cfg)
     monkeypatch.setattr(configs, "config", _Cfg, raising=False)
     assert g._focus_model() is None
+
+
+def test_zeroed_spare_block_gets_no_seed():
+    """The 4-block template's fourth block is usually zeroed by the plan; a
+    seed in front of it is a focuser move for nothing (seen 2026-09-13:
+    'seed -> O-III x0' at the end of the narrowband slot)."""
+    c = _container()
+    spare = c["Items"]["$values"][1]                     # the Ha block
+    spare["Conditions"] = {"$values": [
+        {"$type": f"{NS}.Conditions.LoopCondition, {NS}", "Iterations": 0}]}
+    g.seed_focus(c, _model(), [100])
+    types = [g._short_type(v) for v in c["Items"]["$values"]]
+    assert types == ["MoveFocuserByTemperature", "SmartExposure",   # L
+                     "SmartExposure",                               # Ha x0: no seed
+                     "SmartExposure"]                               # S-II: no model
