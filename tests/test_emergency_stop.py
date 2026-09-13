@@ -150,3 +150,21 @@ def test_stop_sequence_reports_a_crash_instead_of_dying_silently(monkeypatch):
     suc._emergency_stop_sequence()          # must not raise
     assert any("EMERGENCY STOP FAILED" in p and "PWI4 refused" in p for p in posts)
     assert pushes and pushes[0][1] == 2
+
+
+# ------------------------------------------------------- image!! refusal
+
+def test_image_cmd_refusal_is_loud_and_returns_false(monkeypatch):
+    """2026-09-13: the first auto night was refused because N.I.N.A was still
+    open, and the only trace was a Pushover message. A refusal must log,
+    post to the feed, and tell the caller, so the scheduler never reads an
+    unclaimed imaging state as a completed run."""
+    posted, pushed = [], []
+    monkeypatch.setattr(suc, "is_imaging", lambda: False)
+    monkeypatch.setattr(suc, "is_nina_running", lambda: True)
+    monkeypatch.setattr(suc.social_server, "post_social_message", lambda m: posted.append(m))
+    monkeypatch.setattr(suc.pushover, "push_message", lambda m: pushed.append(m))
+    monkeypatch.setattr(suc.jobs, "spawn", lambda fn: pytest.fail("must not launch"))
+    assert suc.image_cmd(["", "image!!", "1"], "iris") is False
+    assert posted and "REFUSED" in posted[0] and "N.I.N.A" in posted[0]
+    assert pushed and "REFUSED" in pushed[0]

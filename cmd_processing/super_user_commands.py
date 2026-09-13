@@ -3343,13 +3343,30 @@ def is_imaging() -> bool:
     """Return True if any imaging activity is currently in progress."""
     return get_imaging_state() != ImagingState.NONE
 
-def image_cmd(words: list[str], account: str) -> None:
-    """Start a full imaging run in a background thread (non-blocking)."""
+def image_cmd(words: list[str], account: str) -> bool:
+    """Start a full imaging run in a background thread (non-blocking).
+
+    Returns True when the run was claimed and launched, False when it was
+    refused. A refusal is LOUD: log + feed + push. On 2026-09-13 the first
+    auto-mode night was refused because N.I.N.A had been left open after the
+    previous night, and the only trace was a Pushover message -- the log and
+    the feed said nothing, and the scheduler read the untouched imaging state
+    as "run complete".
+    """
     if is_imaging() or is_nina_running():
         # is_nina_running() catches the case where a process restart cleared
         # imaging.txt but NINA is still capturing — starting again would run two
         # imaging sequences against the same mount/camera.
-        pushover.push_message("Already imaging (or NINA still running), cannot restart")
+        why = ("an imaging run is already in progress" if is_imaging()
+               else "N.I.N.A is still open (close it and run image!! again)")
+        msg = "Imaging run REFUSED: " + why
+        _logger.warning(msg)
+        try:
+            social_server.post_social_message(msg)
+        except Exception:
+            _logger.exception("could not post the refusal to the feed")
+        pushover.push_message(msg)
+        return False
     else:
         from fits_processing import frame_watcher
         cfg = config.data()
@@ -3371,6 +3388,7 @@ def image_cmd(words: list[str], account: str) -> None:
                 frame_watcher.stop()
                 set_imaging_state(ImagingState.NONE)
         jobs.spawn(_run)
+        return True
 
 
 

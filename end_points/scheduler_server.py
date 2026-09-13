@@ -645,7 +645,13 @@ def imaging_task():
     set_state(State.IMAGING)
     LOGGER.info("Starting imaging run")
     if super_user_commands.get_mode() == "auto":
-        super_user_commands.image_cmd(["", "image!!", "1"], "iris")
+        started = super_user_commands.image_cmd(["", "image!!", "1"], "iris")
+        if not started:
+            # image_cmd has already said why (log, feed, push). Do not poll:
+            # the state was never claimed, so it reads NONE at once and used
+            # to be reported as a completed run (2026-09-13).
+            LOGGER.warning("Auto imaging did not start -- see the refusal above")
+            return
         LOGGER.info("Waiting for imaging state to return to NONE")
         while super_user_commands.get_imaging_state() != super_user_commands.ImagingState.NONE:
             time.sleep(60)
