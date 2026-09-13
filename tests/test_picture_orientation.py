@@ -5,10 +5,17 @@ determinant on a plate-solved light). One helper, stacker.sky_parity, holds
 the rule; these tests pin every writer to it so a stray [::-1] cannot creep
 back into one of them and leave the channel JPEGs disagreeing with the
 colour render."""
-import numpy as np
 import pytest
 
-from stacking import stacker, color_process
+# CI runs a pytest-only interpreter (see .github/workflows/ci.yml); these
+# tests exercise the real writers, so they need the imaging stack and skip
+# without it rather than break collection for the whole suite.
+np = pytest.importorskip("numpy")
+pytest.importorskip("PIL")
+pytest.importorskip("astropy")
+pytest.importorskip("matplotlib")
+
+from stacking import stacker, color_process  # noqa: E402
 
 
 def _gradient(h=8, w=6):

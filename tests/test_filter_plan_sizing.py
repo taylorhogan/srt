@@ -70,12 +70,23 @@ def test_zero_in_the_plan_stays_zero(monkeypatch):
 
 
 def test_efficiency_comes_from_config_and_is_bounded(monkeypatch):
-    import configs.config as config
-    monkeypatch.setattr(config, "data", lambda: {"nina": {"efficiency": 0.5}})
+    # A stub in place of configs.config: the real module imports the
+    # gitignored config_private at load, which CI does not have. This was the
+    # red run from 2026-09-10 that held `release` back for three days.
+    import sys
+    import types
+    import configs
+    stub = types.ModuleType("configs.config")
+    monkeypatch.setitem(sys.modules, "configs.config", stub)
+    # `from configs import config` takes the package attribute first when the
+    # real module has already been imported (every run on the observatory),
+    # so patch that too or the stub is ignored there.
+    monkeypatch.setattr(configs, "config", stub, raising=False)
+    stub.data = lambda: {"nina": {"efficiency": 0.5}}
     assert g._efficiency() == 0.5
-    monkeypatch.setattr(config, "data", lambda: {"nina": {}})
+    stub.data = lambda: {"nina": {}}
     assert g._efficiency() == g.DEFAULT_EFFICIENCY
-    monkeypatch.setattr(config, "data", lambda: {"nina": {"efficiency": 3}})
+    stub.data = lambda: {"nina": {"efficiency": 3}}
     assert g._efficiency() == g.DEFAULT_EFFICIENCY
 
 
