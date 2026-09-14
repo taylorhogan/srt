@@ -310,11 +310,6 @@ class PublicConfig():
             # 7-minute refocus every 2 degC. Filter-change autofocus unchanged.
             "focus_track": True,
             "focus_track_af_trigger_c": 5.0,
-            # After flats, run the convergence (snr) analysis for every target
-            # that got lights tonight, one after another in one child process.
-            # This is what the auto-stop decision reads; before 2026-09-14 it
-            # only ran when someone typed `snr`.
-            "auto_snr": True,
             "focus_model": "local/focus_model.json",
             "autofocus_reports": "%LOCALAPPDATA%/NINA/AutoFocus",
             # 4-block expansion of cdk_full_sequence.json (expand_sequence_blocks.py):

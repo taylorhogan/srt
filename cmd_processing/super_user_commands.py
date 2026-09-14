@@ -3754,44 +3754,6 @@ def do_flats() -> None:
             "Flats done, but the mount could NOT be powered off — switch it off "
             "in the Kasa app, or the roof cannot be closed")
     social_server.post_social_message("Flats sequence complete")
-    _auto_convergence_after_run()
-
-
-def _auto_convergence_after_run() -> None:
-    """Run the convergence (snr) analysis for every target that got lights
-    tonight, in ONE detached process, one target after another.
-
-    This is the measurement the Target machine's auto-stop needs (a target
-    is CONVERGED when its curve flattens), and until 2026-09-14 nothing ran
-    it: convergence.json only changed when someone typed `snr`. Sequential
-    on purpose -- two convergence stacks at once is the overlap that used to
-    crash the web server. cfg["nina"]["auto_snr"] = False turns it off.
-    """
-    try:
-        cfg = config.data()
-        if not cfg.get("nina", {}).get("auto_snr", True):
-            return
-        from control import imaged_tonight
-        night = imaged_tonight.night_of(datetime.now())
-        dsos = imaged_tonight.dsos_imaged_on(Path(cfg["nina"]["image_dir"]), night)
-    except Exception:
-        _logger.exception("auto convergence: could not list tonight's targets")
-        return
-    if not dsos:
-        _logger.info("auto convergence: no lights filed under %s, nothing to run", night)
-        return
-    _logger.info("auto convergence after the run: %s", ", ".join(dsos))
-    social_server.post_social_message("Running convergence for tonight's targets: " + ", ".join(dsos))
-    jobs.spawn_process(_snr_run_many, args=(dsos,))
-
-
-def _snr_run_many(dsos: list[str]) -> None:
-    """One process, targets in turn, each under the single-flight lock."""
-    for dso in dsos:
-        try:
-            _snr_run(["snr", dso])
-        except Exception:
-            _logger.exception("auto convergence failed for %s", dso)
 
 
 def doflats_cmd(words: list[str], account: str) -> None:
