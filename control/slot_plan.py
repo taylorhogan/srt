@@ -162,6 +162,22 @@ def plan_slots(rows, dark_hours, weather_by_hour, min_slot_hours: float = 2.0,
     return [slot1]
 
 
+def signature(slots) -> tuple:
+    """What a sequence generated from *slots* depends on: names, windows and
+    hours, in order. Two plans with equal signatures produce the same
+    sequence; a different signature means the file on disk is stale.
+
+    Why this exists: on 2026-09-13 the noon plan had two slots (ngc7380 +
+    m33). A restart at 15:46 re-planned under a worse forecast and wrote a
+    one-slot sequence; the pre-sunset check then found the better forecast
+    again, with m33 back, but only regenerated when the BEST TARGET'S NAME
+    changed -- it had not -- so the one-slot file ran and m33 never imaged.
+    """
+    return tuple((s.name, s.start.isoformat() if s.start else None,
+                  s.end.isoformat() if s.end else None, int(s.good_hours))
+                 for s in (slots or []))
+
+
 def describe(slots, tz=None) -> str:
     """One line per slot for the chat: 'squid 21:00-02:00 (5h)'."""
     out = []

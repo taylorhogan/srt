@@ -129,3 +129,16 @@ def test_window_for_ends_at_the_earliest_of_horizon_dawn_and_weather():
     assert w.start == T0 + timedelta(hours=1) and w.end == T0 + timedelta(hours=4) and w.good_hours == 3
     # nothing usable
     assert window_for(row("m33", "----++++"), HOURS, wx) is None
+
+
+def test_signature_changes_when_a_slot_appears_or_a_window_moves():
+    from control.slot_plan import signature
+    t0 = datetime(2026, 9, 13, 22, 0)
+    a = [Slot("ngc7380", t0, t0 + timedelta(hours=3), 3, 100)]
+    b = [Slot("ngc7380", t0, t0 + timedelta(hours=3), 3, 100),
+         Slot("m33", t0 + timedelta(hours=5), t0 + timedelta(hours=7), 2, 100)]
+    c = [Slot("ngc7380", t0, t0 + timedelta(hours=4), 4, 100)]
+    assert signature(a) == signature(list(a))
+    assert signature(a) != signature(b)          # second slot gained (2026-09-13)
+    assert signature(a) != signature(c)          # same target, longer window
+    assert signature([]) == ()

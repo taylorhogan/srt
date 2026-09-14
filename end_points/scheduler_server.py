@@ -106,6 +106,7 @@ from iris_astronomy.astro_dso_visibility import best_object_tonight
 from iris_astronomy.weather import get_sunrise_sunset
 from configs import config
 from control import instructions
+from control import slot_plan
 from cmd_processing import social_server
 from utils import utils, pushover
 from cmd_processing import super_user_commands
@@ -194,6 +195,11 @@ def message_handling(client, userdata, msg):
 # The DSO's rise time from the noon check, kept so the notification written at
 # sequence-generation time can quote it. Prefect tasks do not share locals.
 _LAST_BEST_START: dict = {}
+# Signature (control.slot_plan.signature) of the plan the sequence on disk
+# was generated from. The pre-sunset check compares against it and
+# regenerates on ANY difference -- a second slot appearing or vanishing, a
+# window moving -- not only when the best target's name changes.
+_PLAN_ON_DISK: dict = {}
 
 def _slots_record(slots) -> list:
     """The slot plan as plain JSON for scheduler_state.json."""
@@ -634,6 +640,7 @@ def generate_sequence_task(dso_name: str, good_hours: float = 0.0, notify: bool 
     else:
         end = slots[0].end if slots and slots[0].name == dso_name else None
         got = _generate_nina_sequence(dso_name, good_hours, end=end)
+    _PLAN_ON_DISK["sig"] = slot_plan.signature(slots)
     if got and notify:
         _plan, output_path = got
         _push_imaging_plan(dso_name, good_hours, _LAST_BEST_START.get("t"), output_path)
@@ -695,11 +702,19 @@ def nightly_cycle():
         return
 
     # The pre-sunset check re-runs the ranking and can land on a different
-    # target than noon did. The noon sequence would then point at the wrong
-    # object, so regenerate. Silent on the happy path: one notification a night.
-    if best_name != noon_name:
-        LOGGER.info("Target changed after noon (%s -> %s) — regenerating",
-                    noon_name, best_name)
+    # PLAN than the sequence on disk was built from: a different best target,
+    # a second slot gained or lost, a window moved by the forecast. Any of
+    # those makes the file stale, so regenerate on any difference. Until
+    # 2026-09-13 only the best target's NAME was compared, and a one-slot
+    # file written by an afternoon restart ran a night whose sunset plan had
+    # two slots. Silent on the happy path: one notification a night.
+    sunset_sig = slot_plan.signature(list(astro_dso_visibility.last_slots))
+    if best_name != noon_name or sunset_sig != _PLAN_ON_DISK.get("sig"):
+        LOGGER.info("Plan changed since the sequence was written (%s -> %s; slots %s -> %s) — regenerating",
+                    noon_name, best_name, _PLAN_ON_DISK.get("sig"), sunset_sig)
+        social_server.post_social_message(
+            "Plan changed since the sequence was written — regenerating:\n"
+            + slot_plan.describe(list(astro_dso_visibility.last_slots)))
         generate_sequence_task(best_name, good_hours)
 
     imaging_task()
