@@ -34,7 +34,6 @@ if __name__ == "__main__":
             "Iris door light": 'off',
             "Iris inside light": "off",
             "Driveway lights": "off",
-            "Deck lights": "off",
             "Grill Lights":"off",
             "Iris landscape lights": "off",
             "Main landscape lights": "off"

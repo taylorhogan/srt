@@ -67,16 +67,13 @@ def legacy_alias(host: str, timeout: float = 4.0):
         s.close()
 
 
-async def make_discovery_map():
-    """{alias: ip} for every device that will answer to a name.
+DISCOVERY_PASSES = 2          # every map is the union of this many broadcasts
+DISCOVERY_PASSES_EXPECT = 3   # ... and up to this many while an expected name is missing
 
-    Addressing by NAME rather than IP is deliberate: it is what lets DHCP move
-    these devices around without breaking anything, and why only the sky camera
-    needs a reservation. So an alias that discovery failed to return is worth a
-    second, direct attempt rather than a silently absent key.
-    """
-    map_from_name_to_ip = dict()
 
+async def _discover_once() -> dict:
+    """One broadcast, resolved to {alias: ip}."""
+    found = {}
     devices = {}
     try:
         devices = await Discover.discover()
@@ -93,8 +90,40 @@ async def make_discovery_map():
         else:
             print(f"Device found at {host}: {alias} ({device.model})")
         if alias:
-            map_from_name_to_ip[alias] = host
+            found[alias] = host
+    return found
 
+
+async def make_discovery_map(expect=(), passes: int = DISCOVERY_PASSES):
+    """{alias: ip} for every device that will answer to a name.
+
+    Addressing by NAME rather than IP is deliberate: it is what lets DHCP move
+    these devices around without breaking anything, and why only the sky camera
+    needs a reservation. So an alias that discovery failed to return is worth a
+    second, direct attempt rather than a silently absent key.
+
+    Discovery is one UDP broadcast with a short timeout, answered best-effort
+    over Wi-Fi, so a single pass can simply miss a plug: on 2026-09-14 the map
+    built for the flats run at 01:04 lacked 'Telescope mount' while the end
+    sequence's map at 01:00 and a pass the next morning both had it, and the
+    post-flats power-off reported the plug missing. The map is therefore the
+    UNION of *passes* broadcasts, and while any name in *expect* is still
+    absent it keeps going, up to DISCOVERY_PASSES_EXPECT.
+    """
+    expect = tuple(expect or ())
+    limit = max(int(passes), DISCOVERY_PASSES_EXPECT if expect else 0, 1)
+    map_from_name_to_ip: dict = {}
+    for i in range(limit):
+        if i >= passes and all(name in map_from_name_to_ip for name in expect):
+            break
+        found = await _discover_once()
+        missed_before = [k for k in found if k not in map_from_name_to_ip and i > 0]
+        map_from_name_to_ip.update(found)
+        if missed_before:
+            _logger.info("discovery pass %d added %s", i + 1, ", ".join(sorted(missed_before)))
+    missing = [name for name in expect if name not in map_from_name_to_ip]
+    if missing:
+        _logger.warning("discovery: %s not found in %d pass(es)", ", ".join(missing), limit)
     return map_from_name_to_ip
 
 
@@ -181,6 +210,15 @@ async def kasa_do(cfg, instructions):
     for key, want in instructions.items():
         on = str(want).lower() in ("on", "1", "true")
         ip = cfg.get(key)
+        if ip is None:
+            # The map may be hours old, or built from a pass that missed this
+            # plug. One targeted re-discovery before declaring it absent; the
+            # caller's map is updated in place so the next command has it.
+            _logger.warning("kasa_do: %r not in the discovery map -- re-discovering", key)
+            fresh = await make_discovery_map(expect=(key,))
+            if isinstance(cfg, dict):
+                cfg.update(fresh)
+            ip = fresh.get(key)
         if ip is None:
             _logger.error("kasa_do: %r is not in the discovery map -- NOT switched "
                           "%s. Check 'allow third-party apps to control' on that "

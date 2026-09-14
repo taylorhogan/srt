@@ -438,11 +438,12 @@ def _imaging_blocked_reason() -> str | None:
 # the mount cannot be powered for the run or cut at the end of it, the roof
 # motor cannot be energised, and the inside light cannot be turned off before
 # flats. ADVISORY are lights -- a missing one is a nuisance, not a hazard, and
-# some (Deck lights, Iris landscape lights) are routinely unplugged or offline,
-# so requiring them would block every run.
+# some (Iris landscape lights) are routinely unplugged or offline, so
+# requiring them would block every run. Deck lights: removed 2026-09-14, the
+# plug is gone.
 KASA_REQUIRED = ("Telescope mount", "Roof motor", "Iris inside light")
 KASA_ADVISORY = ("Driveway lights", "Iris door light", "Grill Lights",
-                 "Main landscape lights", "Iris landscape lights", "Deck lights")
+                 "Main landscape lights", "Iris landscape lights")
 
 
 def _kasa_preflight_reason(dev_map: dict | None = None) -> str | None:
