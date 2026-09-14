@@ -697,8 +697,48 @@ def _index_ids(node: Any, ids: Optional[dict] = None) -> dict:
     return ids
 
 
+AF_TEMP_TRIGGER_TYPE = "AutofocusAfterTemperatureChangeTrigger"
+DEFAULT_TRACK_AF_TRIGGER_C = 5.0
+
+
+def _track_settings() -> dict:
+    """Temperature TRACKING between subs (cfg["nina"]["focus_track"], default
+    on) and the autofocus temperature trigger to write when it is on
+    (cfg["nina"]["focus_track_af_trigger_c"], default 5 degC)."""
+    try:
+        from configs import config
+        nina = config.data().get("nina", {}) or {}
+    except Exception:
+        nina = {}
+    return {"track": bool(nina.get("focus_track", True)),
+            "af_trigger_c": float(nina.get("focus_track_af_trigger_c", DEFAULT_TRACK_AF_TRIGGER_C))}
+
+
+def _set_af_temperature_trigger(container: Any, degrees: float) -> int:
+    """Set every AutofocusAfterTemperatureChangeTrigger under *container* to
+    *degrees*. Returns how many were set."""
+    n = 0
+
+    def walk(node):
+        nonlocal n
+        if isinstance(node, dict):
+            if AF_TEMP_TRIGGER_TYPE in str(node.get("$type", "")) and "Amount" in node:
+                node["Amount"] = float(degrees)
+                n += 1
+            for k, v in node.items():
+                if k != "Parent":
+                    walk(v)
+        elif isinstance(node, list):
+            for v in node:
+                walk(v)
+
+    walk(container)
+    return n
+
+
 def seed_focus(container: Any, model: Optional[dict], next_id: list,
-               ids: Optional[dict] = None) -> dict[str, tuple[float, float]]:
+               ids: Optional[dict] = None, track: bool = False,
+               af_trigger_c: Optional[float] = None) -> dict[str, tuple[float, float]]:
     """Insert a MoveFocuserByTemperature before every SmartExposure under
     *container* whose filter the model knows. Returns {filter: (slope,
     intercept)} for the blocks that got one.
@@ -712,6 +752,17 @@ def seed_focus(container: Any, model: Optional[dict], next_id: list,
     filter's focus (the 2026-09-11 first-O-III-light failure). Blocks whose
     filter has no model are left untouched. Call AFTER the filter plan has
     renamed the blocks.
+
+    With *track*, each seeded block ALSO gets a RELATIVE MoveFocuserByTemperature
+    inside it, between the filter switch and the exposure, so it runs before
+    every sub: N.I.N.A moves by slope * (T now - T at its last move), a few
+    steps per sub, always the same direction as the night cools. That is the
+    slope doing the work the temperature-triggered autofocus used to do
+    (six or seven minutes of no imaging per 2 degC), so with tracking on the
+    container's AutofocusAfterTemperatureChangeTrigger is raised to
+    *af_trigger_c* (a safety net, not the routine); the filter-change
+    autofocus stays as the ground truth every block. Built 2026-09-14 after
+    the first seeded night.
     """
     if not model:
         return {}
@@ -739,6 +790,8 @@ def seed_focus(container: Any, model: Optional[dict], next_id: list,
                                         "ErrorBehavior": 0, "Attempts": 1})
                             next_id[0] += 1
                             seeded[name] = si
+                            if track:
+                                _insert_tracking(it, si, next_id)
                     out.append(it)
                 vals[:] = out
             for k, v in n.items():
@@ -753,7 +806,30 @@ def seed_focus(container: Any, model: Optional[dict], next_id: list,
         logging.getLogger(__name__).info(
             "Focus seeds: " + "  ".join("%s %+.0f*T%+.0f" % (f, s, i)
                                         for f, (s, i) in seeded.items()))
+        if track and af_trigger_c is not None:
+            n_trig = _set_af_temperature_trigger(container, af_trigger_c)
+            logging.getLogger(__name__).info(
+                "Focus tracking between subs on for %s; autofocus temperature trigger set to %.1f C (%d trigger(s))",
+                ", ".join(seeded), af_trigger_c, n_trig)
     return seeded
+
+
+def _insert_tracking(se: dict, seed: tuple[float, float], next_id: list) -> None:
+    """Put a relative MoveFocuserByTemperature inside *se* just before its
+    TakeExposure, so the block re-runs it before every sub."""
+    vals = _items_of(se)
+    if any(isinstance(it, dict) and _short_type(it) == "MoveFocuserByTemperature"
+           for it in vals):
+        return                                   # already tracked
+    idx = next((i for i, it in enumerate(vals)
+                if isinstance(it, dict) and "TakeExposure" in str(it.get("$type", ""))), None)
+    if idx is None:
+        return
+    vals.insert(idx, {"$id": str(next_id[0]), "$type": FOCUS_SEED_TYPE,
+                      "Slope": round(seed[0], 3), "Intercept": 0.0,
+                      "Absolute": False, "Parent": {"$ref": se.get("$id")},
+                      "ErrorBehavior": 0, "Attempts": 1})
+    next_id[0] += 1
 
 
 def generate_slots_sequence(template_path: Path, slots: list, output_path: Path,
@@ -790,6 +866,7 @@ def generate_slots_sequence(template_path: Path, slots: list, output_path: Path,
     script_proto = _find_first(sequence, "ExternalScript")
     next_id = [_max_id(sequence) + 1]
     focus_model = _focus_model()
+    track_settings = _track_settings()
     # Clone from a PRISTINE copy: the first slot edits the original in place
     # (name, coordinates, hard end), and a clone taken after that would carry
     # the first slot's end time into the second.
@@ -808,7 +885,7 @@ def generate_slots_sequence(template_path: Path, slots: list, output_path: Path,
         _apply_rotation(c, slot.get("rotation", _rotation_for(slot["name"])))
         _set_hard_end(c, slot.get("end"), next_id)
         plans.append(_plan_for(c, slot["name"], slot.get("seconds")))
-        seed_focus(c, focus_model, next_id, ids=_index_ids(sequence))
+        seed_focus(c, focus_model, next_id, ids=_index_ids(sequence), **track_settings)
         if k > 0:
             # No explicit autofocus after the first slot. Focus follows
             # temperature and filter, and both already have triggers inside
@@ -899,7 +976,7 @@ def generate_sequence(
         _dedupe_singletons(sequence)
 
     filter_plan = _plan_for(sequence, dso_name, above_horizon_seconds)
-    seed_focus(sequence, _focus_model(), [_max_id(sequence) + 1])
+    seed_focus(sequence, _focus_model(), [_max_id(sequence) + 1], **_track_settings())
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with open(output_path, "w", encoding="utf-8") as f:
