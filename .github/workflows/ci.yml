@@ -29,6 +29,24 @@ jobs:
       # edit that forgets to regenerate them fails here, so the docs cannot
       # drift from the machine.
       - run: python scripts/gen_state_diagrams.py --check
+      # A red main holds `release` back silently: from 2026-09-10 to 09-13
+      # nobody noticed for three days. Say so on the phone. Needs the
+      # PUSHOVER_TOKEN and PUSHOVER_USER repository secrets (Settings ->
+      # Secrets and variables -> Actions); without them this step is a no-op.
+      - name: Pushover on failure
+        if: failure()
+        env:
+          PUSHOVER_TOKEN: ${{ secrets.PUSHOVER_TOKEN }}
+          PUSHOVER_USER: ${{ secrets.PUSHOVER_USER }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          COMMIT_MSG: ${{ github.event.head_commit.message }}
+          COMMIT_SHA: ${{ github.sha }}
+        run: |
+          if [ -z "$PUSHOVER_TOKEN" ] || [ -z "$PUSHOVER_USER" ]; then
+            echo "Pushover secrets not set; skipping notification"; exit 0
+          fi
+          FIRST_LINE=$(printf '%s' "$COMMIT_MSG" | head -n 1)
+          curl -sS --max-time 20 https://api.pushover.net/1/messages.json             --form-string "token=$PUSHOVER_TOKEN"             --form-string "user=$PUSHOVER_USER"             --form-string "title=SRT CI failed -- release held back"             --form-string "message=${COMMIT_SHA:0:7}: $FIRST_LINE"             --form-string "url=$RUN_URL"             --form-string "url_title=Open the run"             --form-string "priority=0" > /dev/null
 
   release:
     # Fast-forward the branch the observatory deploys from. No --force: under
