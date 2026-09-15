@@ -2,12 +2,13 @@
 
 Since 2026-09-07 kasa_state is the only safety eye behind every roof move, so
 the pure parts -- what one frame's tags mean, how several frames combine,
-where the aperture veto applies, what the open star adds -- get enumerated
-here. The dangerous edge is a FALSE OPEN with the roof shut: a roof tag that
+what the open star adds -- get enumerated here. The dangerous edge is a FALSE OPEN with the roof shut: a roof tag that
 fails to decode is "absent" exactly like a roof that is not there, so since
 2026-09-11 OPEN also needs the gold star on the wall SEEN (positive evidence,
 like SHUT's decoded tag), in at least one frame, with every frame consistent
-with open and none vetoed by the aperture.
+with open. The aperture colour rule has no vote: on 2026-09-14 its
+daylight test vetoed a correct OPEN two minutes before sunset (dusk sky reads
+blue-grey, not green) and the auto night died with the roof open.
 
 Runs on the observatory (needs cv2/numpy and the private config to import the
 module); skipped on a bare CI runner like the other hardware-adjacent tests.
@@ -71,20 +72,19 @@ def test_no_shut_reference_never_answers():
         assert ks.roof_tag_verdict(found, None, STAR_SEEN)[0] == "unknown"
 
 
-def test_aperture_vetoes_open_only():
-    assert ks.roof_verdict_with_veto("open", {}, "shut")[0] == "unknown"
-    assert ks.roof_verdict_with_veto("open", {}, "open")[0] == "open"
-    assert ks.roof_verdict_with_veto("open", {}, "unknown")[0] == "open"
-    # a decoded tag at the shut position is positive evidence; no veto
-    assert ks.roof_verdict_with_veto("shut", {}, "open")[0] == "shut"
-    assert ks.roof_verdict_with_veto("unknown", {}, "open")[0] == "unknown"
-
-
-def test_aperture_veto_drops_the_open_like_flag():
-    # A vetoed frame contradicts open outright; it must not count as
-    # "consistent with open" when the frames combine.
-    v, d = ks.roof_verdict_with_veto("open", {"star": "seen"}, "shut")
-    assert v == "unknown" and not d.get("open_no_star")
+def test_the_aperture_colour_rule_has_no_vote():
+    """2026-09-14 19:00: tags gone, star seen 3/3, sun +0.3 deg, aperture
+    green excess -1.46 -> the old daylight veto called it shut and the auto
+    night stopped with the roof open. Only the star decides OPEN now."""
+    assert not hasattr(ks, "roof_verdict_with_veto")
+    assert not hasattr(ks, "_aperture_hint")
+    for name in ("GREEN_OPEN", "GREEN_SHUT", "NIGHT_P99_OPEN", "NIGHT_EDGE_OPEN"):
+        assert not hasattr(ks, name)
+    # The per-frame roof verdict is roof_tag_verdict's alone: tag absent,
+    # witness seen, star seen -> open, whatever the sky colour was.
+    v, d = ks.roof_tag_verdict({0: SCOPE}, REF, STAR_SEEN)
+    assert v == "open", d
+    assert ks.combine_roof([(v, d)] * ks.GATE_FRAMES) == "open"
 
 
 O = ("open", {"star": "seen"})

@@ -53,10 +53,16 @@ camera to leave greyscale IR before it looks. On an IR frame the star is
 "unknown", so OPEN cannot be confirmed without the light.
 
 The old aperture-statistics rule (green excess by day, IR return by night)
-is kept ONLY as a veto on OPEN. A gating read takes several frames; OPEN
-needs every one of them consistent with open (tag gone, witness seen,
-aperture not objecting) and the star seen in at least one, which mirrors
-SHUT: a positive read that the other frames cannot undo.
+has NO vote any more. Until 2026-09-14 it was kept as a veto on OPEN, and
+that night it refused a correct OPEN (tags gone, star seen 3/3) two minutes
+before sunset: the sun was still above the horizon so the rule ran its
+daylight test, and the dusk sky in the aperture had gone blue-grey, which
+that test calls "shut". The auto night checks the roof at exactly that hour.
+The user's ruling: only look for the star. A gating read takes several
+frames; OPEN needs every one of them consistent with open (tag gone,
+witness seen) and the star seen in at least one, which mirrors SHUT: a
+positive read that the other frames cannot undo. The regime (day /
+night-lit / night) is still worked out per frame, but only for the log.
 
 POSE FIRST. Both references describe the scene from ONE camera pose, so a
 gating read drives the camera there (cloud round trip) before it looks, and
@@ -125,7 +131,7 @@ COLOUR_WAIT_S = 25.0
 
 # Frames per GATING read. Decode failures are per-frame noise; requiring every
 # frame to agree on OPEN turns a 16 % single-frame miss (the measured IR rate)
-# into ~0.4 %, before the aperture veto. SHUT needs only one decoded tag at
+# into ~0.4 %. SHUT needs only one decoded tag at
 # the shut position: a decoded tag is positive evidence the others cannot undo.
 GATE_FRAMES = 3
 # A grab waits this long for a roof-move audio capture to release the stream.
@@ -133,14 +139,11 @@ STREAM_WAIT_S = 75.0
 
 # The aperture: roof underside when shut, sky when open. Same box as
 # roof_region_stats.py and iriscam_shadow_log.py so every log stays comparable.
+# Only the frame's chroma is measured there now, to name the regime in the log.
 REGION_Y = (100, 1400)
 REGION_X = (0, 700)
 
-# Aperture rule thresholds (now a veto only; see module docstring).
-GREEN_OPEN = +1.0
-GREEN_SHUT = -1.0
-NIGHT_P99_OPEN, NIGHT_P99_SHUT = 170.0, 180.0
-NIGHT_EDGE_OPEN, NIGHT_EDGE_SHUT = 1.8, 2.0
+# Sun above this is "day" in the log's regime word. Nothing decides on it.
 SUN_DAY_DEG = 0.0
 
 RETRIES = 3
@@ -385,50 +388,24 @@ def roof_tag_verdict(found, ref, star=None):
     return "unknown", {"why": "neither tag visible; the camera is blind"}
 
 
-def _aperture_hint(img):
-    """The pre-tag aperture rule: 'open' / 'shut' / 'unknown' plus detail.
-    A veto on OPEN only; it decides nothing on its own any more."""
-    reg = img[REGION_Y[0]:REGION_Y[1], REGION_X[0]:REGION_X[1]]
-    f = reg.astype(np.float64)
-    grey = cv2.cvtColor(reg, cv2.COLOR_BGR2GRAY)
-    chroma = float(np.mean(np.max(f, 2) - np.min(f, 2)))
+def _regime(img):
+    """'day' / 'night-lit' / 'night' plus sun altitude, for the log line only.
+
+    This is what remains of the aperture rule: the regime word that every
+    kasa_status line carries (and that the conductor's shadow parses). It
+    decides nothing; see the module docstring for the 2026-09-14 refusal.
+    """
+    reg = img[REGION_Y[0]:REGION_Y[1], REGION_X[0]:REGION_X[1]].astype(np.float64)
+    chroma = float(np.mean(np.max(reg, 2) - np.min(reg, 2)))
     detail = {"chroma": round(chroma, 2)}
     try:
         sun = _sun_altitude()
         detail["sun_alt"] = round(sun, 1)
     except Exception:  # noqa: BLE001
-        return "unknown", detail
-    if sun >= SUN_DAY_DEG:
-        b, g, r = f[:, :, 0], f[:, :, 1], f[:, :, 2]
-        ge = float((g - (b + r) / 2.0).mean())
-        detail.update(regime="day", green_excess=round(ge, 2))
-        return ("open" if ge >= GREEN_OPEN else "shut" if ge <= GREEN_SHUT
-                else "unknown"), detail
-    if chroma > 0.5:
-        detail.update(regime="night-lit")
-        return "unknown", detail
-    p99 = float(np.percentile(grey, 99))
-    edges = cv2.Canny(cv2.GaussianBlur(grey, (5, 5), 0), 40, 120)
-    edge_pct = 100.0 * float((edges > 0).mean())
-    detail.update(regime="night", p99=round(p99, 1), edge_pct=round(edge_pct, 2))
-    open_votes = (p99 <= NIGHT_P99_OPEN) + (edge_pct <= NIGHT_EDGE_OPEN)
-    shut_votes = (p99 >= NIGHT_P99_SHUT) + (edge_pct >= NIGHT_EDGE_SHUT)
-    if open_votes == 2 and shut_votes == 0:
-        return "open", detail
-    if shut_votes == 2 and open_votes == 0:
-        return "shut", detail
-    return "unknown", detail
-
-
-def roof_verdict_with_veto(tag_verdict, tag_detail, hint):
-    """Apply the aperture veto: an OPEN the aperture calls SHUT is UNKNOWN."""
-    detail = dict(tag_detail, aperture=hint)
-    if tag_verdict == "open" and hint == "shut":
-        detail["why"] = ("roof tag absent but the aperture reads shut -- a tag "
-                         "that failed to decode looks the same as a roof that "
-                         "is not there; refusing")
-        return "unknown", detail
-    return tag_verdict, detail
+        return detail
+    detail["regime"] = ("day" if sun >= SUN_DAY_DEG
+                        else "night-lit" if chroma > IR_CHROMA else "night")
+    return detail
 
 
 # ------------------------------------------------------------------ combining
@@ -453,9 +430,9 @@ def combine_roof(verdicts):
 
     SHUT: at least one frame decoded the roof tag at its shut position and no
     frame read open or open-like (tag gone with the witness seen). OPEN:
-    every frame is open-like with the aperture not objecting, and at least
-    one of them SAW the star -- a positive read the other frames cannot
-    undo, mirroring SHUT. Anything else is unknown.
+    every frame is open-like and at least one of them SAW the star -- a
+    positive read the other frames cannot undo, mirroring SHUT. Anything
+    else is unknown.
     """
     vs = [v for v, _ in verdicts]
     if any(d.get("tag_elsewhere") for _, d in verdicts):
@@ -602,14 +579,12 @@ def kasa_status(quick=False, verify_pose=False, frames=1):
         found = find_markers(img, dict_name)
         sv, sd = _scope_verdict(found, parked_ref, verified)
         star = star_verdict(img, star_ref)
-        tv, td = roof_tag_verdict(found, shut_ref, star)
-        hint, hd = _aperture_hint(img)
-        rv, rd = roof_verdict_with_veto(tv, td, hint)
-        rd.update({k: v for k, v in hd.items() if k in ("regime", "sun_alt")})
+        rv, rd = roof_tag_verdict(found, shut_ref, star)
+        rd.update(_regime(img))
         scope_v.append((sv, sd))
         roof_v.append((rv, rd))
         per_frame.append({"tags": sorted(found), "scope": sv, "roof": rv,
-                          "roof_tag": tv, "aperture": hint, "star": star[0],
+                          "regime": rd.get("regime"), "star": star[0],
                           "star_px": star[1].get("star_px")})
 
     if img is None:

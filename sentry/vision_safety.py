@@ -635,7 +635,6 @@ def _match_from_detail(det, parked, closed, is_open):
                       else "not seen")
     star_seen = int(det.get("star_seen") or 0) > 0
     open_verdict = ("ok" if is_open else "tag present" if roof_seen
-                    else "aperture veto" if rd.get("aperture") == "shut" and scope_seen
                     else "star not seen" if rd.get("open_no_star")
                     else "not seen")
     return {
