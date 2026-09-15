@@ -484,7 +484,6 @@ def main() -> None:
             tth, tr = np.radians(taz), 90.0 - talt
             ax.scatter([tth], [tr], s=340, facecolors="none", edgecolors=TARGET,
                        linewidths=2.0, zorder=6)
-            ax.scatter([tth], [tr], s=26, c=TARGET, zorder=7)
             ax.annotate(name + ("" if mode == "imaging" else " (planned)")
                         + "\nalt " + ("%.1f" % talt) + "°  az "
                         + ("%.1f" % taz) + "°\n" + state,
