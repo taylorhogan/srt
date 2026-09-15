@@ -65,6 +65,12 @@ RECIPE_RULES = [
     ("LRGB", {"L", "R", "G", "B"}),
 ]
 MIN_FRAMES = 12          # below this a stack is not worth the wall time
+# LRGB's colour channels are binned and blurred by the stretch and carry no
+# detail of their own, so they need far fewer frames than the luminance that
+# does. 2026-09-15: m33 sat at L 18 / R 4 / G 4 / B 3 after a two-hour second
+# slot whose plan gives each colour two frames a night; under the 12-frame
+# rule for every channel it would not have rendered for six more nights.
+MIN_COLOUR_FRAMES = 3
 # Narrowband recipes: no L channel, so the shared reference comes from Ha, and
 # they take the nebula stretch rather than the galaxy one. Kept as a set because
 # adding HSO to RECIPE_RULES without adding it here silently gave that recipe
@@ -145,13 +151,20 @@ def already_rendered(dso: str, recipe: str, counts: dict) -> bool:
 
 
 def pick_recipes(counts: dict) -> list[str]:
-    """Every recipe the qualifying filters support, in stack-first order."""
+    """Every recipe the qualifying filters support, in stack-first order.
+
+    Narrowband recipes need MIN_FRAMES in every filter they use. LRGB needs
+    MIN_FRAMES of L and at least two colours with MIN_COLOUR_FRAMES each (the
+    old rule's tolerance of one missing filter, kept).
+    """
     have = {f for f, n in counts.items() if n >= MIN_FRAMES}
+    colours = {f for f in ("R", "G", "B") if counts.get(f, 0) >= MIN_COLOUR_FRAMES}
     out = []
     for name, need in RECIPE_RULES:
-        if need <= have:
-            out.append(name)
-        elif name == "LRGB" and len(need & have) >= 3:
+        if name == "LRGB":
+            if "L" in have and len(colours) >= 2:
+                out.append(name)
+        elif need <= have:
             out.append(name)
     return out
 
