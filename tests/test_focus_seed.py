@@ -139,46 +139,22 @@ def test_zeroed_spare_block_gets_no_seed():
                      "SmartExposure"]                               # S-II: no model
 
 
-def test_tracking_adds_a_relative_move_before_each_sub_and_raises_the_trigger():
-    """Temperature tracking between subs (2026-09-14): a relative
-    MoveFocuserByTemperature inside every seeded block, before its
-    TakeExposure, with the filter's slope; blocks without a model untouched;
-    the container's autofocus temperature trigger raised to the safety-net
-    value."""
+def test_seed_never_touches_the_inside_of_a_smart_exposure():
+    """2026-09-14: a relative MoveFocuserByTemperature written INSIDE every
+    seeded SmartExposure ("tracking between subs") made N.I.N.A's
+    SmartExposure.Validate() throw NullReferenceException 6104 times and
+    skip every block; the run took no exposures until it was relaunched on
+    a hand-stripped sequence. Seeds go before the block; the block's own
+    items stay exactly [SwitchFilter, TakeExposure], and the container's
+    autofocus temperature trigger is left as the template wrote it."""
     c = _container()
     c["Triggers"] = {"$values": [
         {"$id": "90", "$type": f"{NS}.Trigger.Autofocus.AutofocusAfterTemperatureChangeTrigger, {NS}",
          "Amount": 2.0}]}
-    g.seed_focus(c, _model(), [100], track=True, af_trigger_c=5.0)
+    g.seed_focus(c, _model(), [100])
     blocks = [v for v in c["Items"]["$values"] if g._short_type(v) == "SmartExposure"]
-    for blk, expect in zip(blocks, ("L", "Ha", None)):
-        inner = [g._short_type(i) for i in blk["Items"]["$values"]]
-        if expect is None:                                        # S-II: no model
-            assert inner == ["SwitchFilter", "TakeExposure"]
-            continue
-        assert inner == ["SwitchFilter", "MoveFocuserByTemperature", "TakeExposure"]
-        mv = blk["Items"]["$values"][1]
-        assert mv["Absolute"] is False and mv["Intercept"] == 0.0
-        assert mv["Parent"] == {"$ref": blk["$id"]}
-    assert blocks[0]["Items"]["$values"][1]["Slope"] == -80.0      # L's slope
-    assert blocks[1]["Items"]["$values"][1]["Slope"] == -45.0      # Ha's slope
-    assert c["Triggers"]["$values"][0]["Amount"] == 5.0
-
-
-def test_tracking_off_leaves_blocks_and_trigger_alone():
-    c = _container()
-    c["Triggers"] = {"$values": [
-        {"$id": "90", "$type": f"{NS}.Trigger.Autofocus.AutofocusAfterTemperatureChangeTrigger, {NS}",
-         "Amount": 2.0}]}
-    g.seed_focus(c, _model(), [100], track=False)
-    for blk in (v for v in c["Items"]["$values"] if g._short_type(v) == "SmartExposure"):
+    assert len(blocks) == 3
+    for blk in blocks:
         assert [g._short_type(i) for i in blk["Items"]["$values"]] == ["SwitchFilter", "TakeExposure"]
     assert c["Triggers"]["$values"][0]["Amount"] == 2.0
-
-
-def test_tracking_is_idempotent():
-    c = _container()
-    g.seed_focus(c, _model(), [100], track=True, af_trigger_c=5.0)
-    blk = c["Items"]["$values"][1]
-    g._insert_tracking(blk, (-80.0, 72000.0), [200])
-    assert sum(1 for i in blk["Items"]["$values"] if g._short_type(i) == "MoveFocuserByTemperature") == 1
+    assert not hasattr(g, "_insert_tracking") and not hasattr(g, "_track_settings")

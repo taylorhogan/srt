@@ -303,13 +303,9 @@ class PublicConfig():
             # every generation. Centres the autofocus sweep and is what
             # N.I.N.A restores when a run fails. False = sequences as before.
             "focus_seed": True,
-            # Temperature TRACKING between subs: a relative
-            # MoveFocuserByTemperature inside every seeded block (slope * dT
-            # before each sub), and the autofocus temperature trigger raised
-            # to focus_track_af_trigger_c so it is a safety net rather than a
-            # 7-minute refocus every 2 degC. Filter-change autofocus unchanged.
-            "focus_track": True,
-            "focus_track_af_trigger_c": 5.0,
+            # No "focus_track" any more (2026-09-14): a focuser move INSIDE
+            # a SmartExposure fails N.I.N.A's validation and the whole block
+            # is skipped -- the night ran with no exposures until relaunched.
             "focus_model": "local/focus_model.json",
             "autofocus_reports": "%LOCALAPPDATA%/NINA/AutoFocus",
             # 4-block expansion of cdk_full_sequence.json (expand_sequence_blocks.py):
