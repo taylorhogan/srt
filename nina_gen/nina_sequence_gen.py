@@ -768,8 +768,114 @@ def seed_focus(container: Any, model: Optional[dict], next_id: list,
     return seeded
 
 
+def _refuse_if_broken(sequence: Any, template: Any, output_path: Path,
+                      lint_scripts: bool) -> None:
+    """Run sequence_lint over the finished sequence and raise rather than
+    write a file N.I.N.A would skip parts of. The night of 2026-09-14 is why:
+    every exposure block silently skipped, nothing said until a target
+    finished with no subs. *lint_scripts* checks that every ExternalScript's
+    program exists -- true on the observatory, off for unit tests whose
+    templates name made-up paths."""
+    from nina_gen import sequence_lint
+    problems = sequence_lint.lint(sequence, template=template, check_scripts=lint_scripts)
+    if problems:
+        logging.getLogger(__name__).error(
+            "REFUSING to write %s: %d lint problem(s):\n  %s",
+            output_path, len(problems), "\n  ".join(problems))
+        raise sequence_lint.SequenceLintError(problems)
+
+
+SWITCH_FILTER_TYPE = "NINA.Sequencer.SequenceItem.FilterWheel.SwitchFilter, NINA.Sequencer"
+FILTER_INFO_TYPE = "NINA.Core.Model.Equipment.FilterInfo, NINA.Core"
+# The filter every slot's plate solve runs through. Broadband, and position 0
+# on this wheel.
+CENTER_FILTER = "L"
+
+
+def _filter_info(sequence: Any, name: str) -> Optional[dict]:
+    """The template's own FilterInfo for *name*: the first SwitchFilter that
+    names it, following a $ref. None if the template never switches to it."""
+    ids = _index_ids(sequence)
+
+    def walk(n):
+        if isinstance(n, dict):
+            if _short_type(n) == "SwitchFilter":
+                f = n.get("Filter")
+                if isinstance(f, dict) and "$ref" in f:
+                    f = ids.get(f["$ref"])
+                if isinstance(f, dict) and f.get("_name") == name:
+                    return f
+            for v in n.values():
+                got = walk(v)
+                if got is not None:
+                    return got
+        elif isinstance(n, list):
+            for v in n:
+                got = walk(v)
+                if got is not None:
+                    return got
+        return None
+
+    return walk(sequence)
+
+
+def ensure_center_filter(container: Any, sequence: Any, next_id: list,
+                         name: str = CENTER_FILTER) -> int:
+    """Put a SwitchFilter *name* immediately before every Center /
+    CenterAndRotate under *container* that does not already follow one.
+    Returns how many were inserted.
+
+    2026-09-15 03:00: the second slot's centering ran through the H-alpha
+    filter the previous block left in the wheel, at the H-alpha focus, and
+    ASTAP failed eight solves in fifteen minutes; the run was rescued by
+    moving the wheel to L over N.I.N.A's API. The first slot never saw it
+    because the prelude leaves L in place. Now every slot's plate solve gets
+    broadband light regardless of what the block before it was doing. The
+    FilterInfo is the template's own for *name* (fresh ids, so Newtonsoft's
+    reference tracking sees a new object, not an alias), or a minimal one
+    when the template never names it.
+    """
+    proto = _filter_info(sequence, name)
+    inserted = 0
+
+    def walk(n):
+        nonlocal inserted
+        if isinstance(n, dict):
+            vals = _items_of(n)
+            if vals:
+                out = []
+                for it in vals:
+                    if (isinstance(it, dict)
+                            and _short_type(it) in ("Center", "CenterAndRotate")
+                            and not (out and isinstance(out[-1], dict)
+                                     and _short_type(out[-1]) == "SwitchFilter")):
+                        if proto is not None:
+                            finfo = _clone_with_fresh_ids(proto, next_id)
+                        else:
+                            finfo = {"$id": str(next_id[0]), "$type": FILTER_INFO_TYPE,
+                                     "_name": name, "_position": 0}
+                            next_id[0] += 1
+                        out.append({"$id": str(next_id[0]), "$type": SWITCH_FILTER_TYPE,
+                                    "Filter": finfo, "Parent": {"$ref": n.get("$id")},
+                                    "ErrorBehavior": 0, "Attempts": 1})
+                        next_id[0] += 1
+                        inserted += 1
+                    out.append(it)
+                vals[:] = out
+            for k, v in n.items():
+                if k != "Parent":
+                    walk(v)
+        elif isinstance(n, list):
+            for v in n:
+                walk(v)
+
+    walk(container)
+    return inserted
+
+
 def generate_slots_sequence(template_path: Path, slots: list, output_path: Path,
-                            state_script: Optional[str] = None) -> list:
+                            state_script: Optional[str] = None,
+                            lint_scripts: bool = True) -> list:
     """Write a sequence with one target container per slot.
 
     *slots* is a list of dicts: ``name, ra_hours, dec_degrees, seconds, start,
@@ -790,6 +896,8 @@ def generate_slots_sequence(template_path: Path, slots: list, output_path: Path,
     """
     with open(template_path, "r", encoding="utf-8") as f:
         sequence = json.load(f)
+    import copy
+    template = copy.deepcopy(sequence)
     area = _find_target_area(sequence)
     if area is None:
         raise ValueError("template has no TargetAreaContainer")
@@ -818,6 +926,7 @@ def generate_slots_sequence(template_path: Path, slots: list, output_path: Path,
                   "DecSeconds": round(dec_s, 5)}
         _walk_and_replace(c, slot["name"], coords)
         _apply_rotation(c, slot.get("rotation", _rotation_for(slot["name"])))
+        ensure_center_filter(c, sequence, next_id)
         _set_hard_end(c, slot.get("end"), next_id)
         plans.append(_plan_for(c, slot["name"], slot.get("seconds")))
         seed_focus(c, focus_model, next_id, ids=_index_ids(sequence))
@@ -846,6 +955,7 @@ def generate_slots_sequence(template_path: Path, slots: list, output_path: Path,
         clones.append(c)
     items[idx:idx + 1] = clones
     _dedupe_singletons(sequence)
+    _refuse_if_broken(sequence, template, output_path, lint_scripts)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with open(output_path, "w", encoding="utf-8") as f:
@@ -861,6 +971,7 @@ def generate_sequence(
     output_path: Path,
     above_horizon_seconds: Optional[float] = None,
     end=None,
+    lint_scripts: bool = True,
 ) -> dict[str, int]:
     """
     Generate a NINA imaging sequence from a template with a new target.
@@ -883,6 +994,8 @@ def generate_sequence(
     """
     with open(template_path, "r", encoding="utf-8") as f:
         sequence = json.load(f)
+    import copy
+    template = copy.deepcopy(sequence)
 
     ra_h, ra_m, ra_s = _decompose_ra(ra_hours)
     dec_neg, dec_d, dec_m, dec_s = _decompose_dec(dec_degrees)
@@ -899,6 +1012,7 @@ def generate_sequence(
 
     _walk_and_replace(sequence, dso_name, coords)
     _apply_rotation(sequence, _rotation_for(dso_name))
+    ensure_center_filter(sequence, sequence, [_max_id(sequence) + 1])
     if end is not None:
         # Only the target's own container: the template's start and end
         # sections keep whatever clocks they carry.
@@ -912,6 +1026,7 @@ def generate_sequence(
 
     filter_plan = _plan_for(sequence, dso_name, above_horizon_seconds)
     seed_focus(sequence, _focus_model(), [_max_id(sequence) + 1])
+    _refuse_if_broken(sequence, template, output_path, lint_scripts)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with open(output_path, "w", encoding="utf-8") as f:

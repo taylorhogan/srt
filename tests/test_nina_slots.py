@@ -30,7 +30,10 @@ def _se(idn, filt_id, iters):
                             "_name": filt_id, "_position": 1}},
                 {"$id": str(idn + 6), "$type": f"{NS}.SequenceItem.Imaging.TakeExposure, {NS}",
                  "ExposureTime": 300.0}]},
-            "Parent": {"$ref": "20"}}
+            "Triggers": {"$id": str(idn + 7), "$type": "x", "$values": [
+                {"$id": str(idn + 8), "$type": f"{NS}.Trigger.Guider.DitherAfterExposures, {NS}",
+                 "AfterExposures": 1}]},
+            "Parent": {"$ref": "29"}}          # the IMAGING container
 
 
 def _template():
@@ -87,7 +90,7 @@ def _gen(tmp_path, slots, script="C:\\\\srt\\\\set_imaging_state.bat"):
     tpl = tmp_path / "tpl.json"
     tpl.write_text(json.dumps(_template()))
     out = tmp_path / "out.json"
-    plans = g.generate_slots_sequence(tpl, slots, out, state_script=script)
+    plans = g.generate_slots_sequence(tpl, slots, out, state_script=script, lint_scripts=False)
     return json.loads(out.read_text()), plans
 
 
@@ -158,7 +161,7 @@ def test_single_target_generate_sequence_takes_an_end(tmp_path):
     tpl.write_text(json.dumps(_template()))
     out = tmp_path / "out.json"
     end = datetime(2026, 9, 11, 1, 0)
-    g.generate_sequence(tpl, "ngc7380", 22.79, 58.1, out, end=end)
+    g.generate_sequence(tpl, "ngc7380", 22.79, 58.1, out, end=end, lint_scripts=False)
     seq = json.loads(out.read_text())
     d = g._find_first(g._find_target_area(seq), "DeepSkyObjectContainer")
     tc = g._find_first(d, "TimeCondition")
@@ -167,7 +170,7 @@ def test_single_target_generate_sequence_takes_an_end(tmp_path):
     ids, refs = [], []
     _ids_refs(seq, ids, refs)
     assert len(ids) == len(set(ids)) and set(refs) <= set(ids)
-    g.generate_sequence(tpl, "ngc7380", 22.79, 58.1, out)
+    g.generate_sequence(tpl, "ngc7380", 22.79, 58.1, out, lint_scripts=False)
     seq = json.loads(out.read_text())
     tc = g._find_first(g._find_first(g._find_target_area(seq), "DeepSkyObjectContainer"), "TimeCondition")
     assert (tc["Hours"], tc["Minutes"]) == (4, 3)
@@ -265,3 +268,72 @@ def test_rotation_turns_center_into_center_and_rotate_for_that_slot_only(tmp_pat
     assert car is not None and car["PositionAngle"] == 90 and car["Inherited"] is True
     assert g._find_first(second, "Center") is None
     assert second["Target"]["PositionAngle"] == 90
+
+def _setup_types(container):
+    setup = next(it for it in container["Items"]["$values"]
+                 if g._short_type(it) == "SequentialContainer")
+    return setup, [g._short_type(it) for it in setup["Items"]["$values"]]
+
+
+def test_every_slot_switches_to_l_before_centering(tmp_path):
+    """2026-09-15 03:00: the second slot centred through the H-alpha filter the
+    previous block left in the wheel and ASTAP failed every solve. Every
+    slot's Center now follows a SwitchFilter L, parented to its setup
+    container, with ids of its own."""
+    seq, _ = _gen(tmp_path, SLOTS)
+    targets = [it for it in seq["Items"]["$values"][0]["Items"]["$values"]
+               if g._short_type(it) == "DeepSkyObjectContainer"]
+    assert len(targets) == 2
+    for t in targets:
+        setup, types = _setup_types(t)
+        i = next(i for i, ty in enumerate(types) if ty in ("Center", "CenterAndRotate"))
+        assert types[i - 1] == "SwitchFilter"
+        sw = setup["Items"]["$values"][i - 1]
+        assert sw["Filter"]["_name"] == "L"
+        assert sw["Parent"] == {"$ref": setup["$id"]}
+    ids, refs = [], []
+    _ids_refs(seq, ids, refs)
+    assert len(ids) == len(set(ids))
+    assert set(refs) <= set(ids)
+
+
+def test_center_filter_copies_the_templates_own_l_and_is_idempotent(tmp_path):
+    tpl = _template()
+    # a prelude-style SwitchFilter L with the wheel's real settings
+    tpl["Items"]["$values"].insert(0, {
+        "$id": "90", "$type": f"{NS}.Container.StartAreaContainer, {NS}",
+        "Items": {"$id": "91", "$type": "x", "$values": [
+            {"$id": "92", "$type": f"{NS}.SequenceItem.FilterWheel.SwitchFilter, {NS}",
+             "Filter": {"$id": "93", "$type": "NINA.Core.Model.Equipment.FilterInfo, NINA.Core",
+                        "_name": "L", "_position": 0, "_autoFocusExposureTime": 12.0,
+                        "_autoFocusBinning": {"$id": "94", "$type": "NINA.Core.Model.Equipment.BinningMode, NINA.Core",
+                                              "X": 2, "Y": 2}},
+             "Parent": {"$ref": "90"}}]},
+        "Parent": {"$ref": "1"}})
+    next_id = [g._max_id(tpl) + 1]
+    assert g.ensure_center_filter(tpl, tpl, next_id) == 1
+    assert g.ensure_center_filter(tpl, tpl, next_id) == 0          # already there
+    dso = next(it for it in tpl["Items"]["$values"][1]["Items"]["$values"]
+               if g._short_type(it) == "DeepSkyObjectContainer")
+    setup, types = _setup_types(dso)
+    sw = setup["Items"]["$values"][types.index("Center") - 1]
+    f = sw["Filter"]
+    assert f["_name"] == "L" and f["_position"] == 0
+    assert f["_autoFocusExposureTime"] == 12.0                       # the wheel's own settings
+    assert f["$id"] != "93" and f["_autoFocusBinning"]["$id"] != "94"   # fresh ids
+    ids, refs = [], []
+    _ids_refs(tpl, ids, refs)
+    assert len(ids) == len(set(ids))
+
+
+def test_single_target_generate_sequence_switches_to_l_before_centering(tmp_path):
+    tpl = tmp_path / "tpl.json"
+    tpl.write_text(json.dumps(_template()))
+    out = tmp_path / "out.json"
+    g.generate_sequence(tpl, "ngc7380", 22.79, 58.1, out, lint_scripts=False)
+    seq = json.loads(out.read_text())
+    dso = next(it for it in seq["Items"]["$values"][0]["Items"]["$values"]
+               if g._short_type(it) == "DeepSkyObjectContainer")
+    _, types = _setup_types(dso)
+    i = next(i for i, ty in enumerate(types) if ty in ("Center", "CenterAndRotate"))
+    assert types[i - 1] == "SwitchFilter"

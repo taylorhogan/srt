@@ -110,7 +110,7 @@ from control import slot_plan
 from cmd_processing import social_server
 from utils import utils, pushover
 from cmd_processing import super_user_commands
-from nina_gen import nina_sequence_gen
+from nina_gen import nina_sequence_gen, sequence_lint
 
 CFG = config.data()
 LOGGER = utils.set_logger()
@@ -633,13 +633,25 @@ def generate_sequence_task(dso_name: str, good_hours: float = 0.0, notify: bool 
     comes first), not at dawn regardless.
     """
     slots = list(astro_dso_visibility.last_slots)
-    if len(slots) >= 2:
-        got = _generate_nina_slots_sequence(slots)
-        dso_name = " + ".join(s.name for s in slots)
-        good_hours = float(sum(s.good_hours for s in slots))
-    else:
-        end = slots[0].end if slots and slots[0].name == dso_name else None
-        got = _generate_nina_sequence(dso_name, good_hours, end=end)
+    try:
+        if len(slots) >= 2:
+            got = _generate_nina_slots_sequence(slots)
+            dso_name = " + ".join(s.name for s in slots)
+            good_hours = float(sum(s.good_hours for s in slots))
+        else:
+            end = slots[0].end if slots and slots[0].name == dso_name else None
+            got = _generate_nina_sequence(dso_name, good_hours, end=end)
+    except sequence_lint.SequenceLintError as exc:
+        # The generator refused to write a sequence N.I.N.A would skip parts
+        # of (2026-09-14: every exposure block). Nothing is on disk but last
+        # night's file, so say so loudly now, at noon, and let the flow fail
+        # rather than image on a stale plan.
+        msg = ("Sequence generation REFUSED for %s: %d lint problem(s); the file on "
+               "disk is last night's. %s" % (dso_name, len(exc.problems), exc.problems[0]))
+        LOGGER.error(msg)
+        social_server.post_social_message("⛔ " + msg)
+        pushover.push_message(msg)
+        raise
     _PLAN_ON_DISK["sig"] = slot_plan.signature(slots)
     if got and notify:
         _plan, output_path = got
