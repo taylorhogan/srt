@@ -344,8 +344,8 @@ def annotate(src, dst, sol=None, shape=None, profile=None, when=None):
                            outline=black, width=wdt + 2)
                 dr.ellipse([tx - rr, ty - rr, tx + rr, ty + rr],
                            outline=cyan, width=wdt)
-                dot = max(2, int(3 * k))
-                dr.ellipse([tx - dot, ty - dot, tx + dot, ty + dot], fill=cyan)
+                # No centre dot (user, 2026-09-15): it sat on the object's own
+                # light and read as a second thing inside the ring.
                 label = "%s  %.0f° alt%s" % (name or "target", alt,
                                             "" if mode == "imaging" else "  (planned)")
                 lfont = font
