@@ -15,6 +15,20 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+# convergence imports configs.config at load, and that imports the gitignored
+# config_private, which CI does not have. Stand in a stub whose data() is
+# empty: every threshold the summary reads falls back to its default, and
+# the tests below pin the ones they depend on with monkeypatch anyway.
+try:
+    import configs.config  # noqa: F401
+except Exception:  # noqa: BLE001
+    import types
+    import configs
+    _stub = types.ModuleType("configs.config")
+    _stub.data = lambda: {}
+    sys.modules["configs.config"] = _stub
+    configs.config = _stub
+
 from fits_processing import convergence as c  # noqa: E402
 
 COUNTS = [1, 2, 3, 5, 8, 13, 21, 34, 55]
