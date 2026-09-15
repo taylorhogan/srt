@@ -20,6 +20,7 @@ tail_slope_pct is negative (RMSE is falling), so "done" means abs(slope) < thres
 
 import json
 import logging
+import math
 import os
 import tempfile
 from datetime import date
@@ -141,8 +142,9 @@ def compute_dso_convergence(dso_name: str, image_dir: Path) -> dict[str, dict]:
     for fname, paths in by_filter.items():
         try:
             calibration = stacker.calibration_from_config(fname)
-            counts, _, slope_pct, final_rmse_pct = stacker.convergence_curve(
+            counts, resid, slope_pct, final_rmse_pct = stacker.convergence_curve(
                 paths, filter_name=fname, calibration=calibration)
+            fit = decay_fit(counts, resid)
             # counts[-1] is the all-frames point of the curve: the frames that
             # survived the quality cut and registered, i.e. the ones the slope
             # was actually measured on. len(paths) is every LIGHT frame on disk.
@@ -153,6 +155,8 @@ def compute_dso_convergence(dso_name: str, image_dir: Path) -> dict[str, dict]:
                 "total_frames": len(paths),
                 "calibrated": calibration is not None,
                 "updated": today,
+                "decay_exponent": fit["exponent"] if fit else None,
+                "effective_frames": fit["effective_frames"] if fit else None,
             }
         except Exception:
             _logger.exception("compute_dso_convergence: failed for filter '%s'", fname)
@@ -180,6 +184,89 @@ def decay_ratio(counts: list[int], residuals: list[float]) -> Optional[float]:
     A = residuals[0] / ((1 - 1 / n) ** 0.5)
     model = A * max(1 / k - 1 / n, 0) ** 0.5
     return residuals[-2] / model if model > 0 else None
+
+
+def decay_fit(counts: list[int], residuals: list[float]) -> Optional[dict]:
+    """The curve's curvature, as one number: fit residual = A * (1/k - 1/n)^(q/2)
+    through every point but the last (k = n is zero by construction).
+
+    q = 1 is the independent-noise ideal the plot draws; the residual then
+    falls exactly as photon statistics say. q < 1 is a curve flattening
+    HARDER than statistics allow -- a correlated term (gradients, flats,
+    registration) that averaging does not touch. q > 1 is later frames worth
+    more than early ones (the early ones were the poor ones, or the quality
+    cut is still shaping the stack). This is the second derivative the user
+    asked for on 2026-09-15, in the form that survives a noisy 6-10 point
+    curve: a two-parameter fit in log space rather than a numeric second
+    difference.
+
+    Returns {exponent, amplitude, tail_ratio, effective_frames, points} or
+    None when there is not enough to fit. tail_ratio is the fitted curve at
+    the second-to-last count over the ideal anchored on the fitted k = 1
+    value -- the whole-curve version of decay_ratio's two-point number --
+    and effective_frames = n / tail_ratio**2 is how many INDEPENDENT frames
+    would give the same noise: "these 41 frames average like 16".
+    """
+    if len(counts) < 4 or len(residuals) != len(counts):
+        return None
+    n = counts[-1]
+    if n <= 1:
+        return None
+    xs, ys = [], []
+    for k, r in zip(counts[:-1], residuals[:-1]):
+        x = 1.0 / k - 1.0 / n
+        if k >= 1 and x > 0 and r > 0:
+            xs.append(math.log(x))
+            ys.append(math.log(r))
+    if len(xs) < 3:
+        return None
+    mx = sum(xs) / len(xs)
+    my = sum(ys) / len(ys)
+    sxx = sum((x - mx) ** 2 for x in xs)
+    if sxx <= 0:
+        return None
+    slope = sum((x - mx) * (y - my) for x, y in zip(xs, ys)) / sxx
+    intercept = my - slope * mx
+    q = 2.0 * slope
+    x1 = 1.0 - 1.0 / n
+    xk = 1.0 / counts[-2] - 1.0 / n
+    if xk <= 0:
+        return None
+    # fitted / ideal at the tail, both anchored at the fitted k = 1 value:
+    # (xk / x1) ** ((q - 1) / 2), > 1 when the tail sits above the ideal.
+    tail_ratio = (xk / x1) ** ((q - 1.0) / 2.0)
+    # A tail below the ideal (ratio < 1, a noisy-high k = 1 point) cannot mean
+    # more independent frames than there are frames.
+    return {"exponent": round(q, 3),
+            "amplitude": round(math.exp(intercept), 6),
+            "tail_ratio": round(tail_ratio, 3),
+            "effective_frames": round(min(float(n), n / (tail_ratio ** 2)), 1),
+            "points": len(xs)}
+
+
+def curvature_sentence(fit: Optional[dict], n: int) -> str:
+    """One sentence on what the decay exponent says; '' when there is no fit."""
+    if not fit:
+        return ""
+    q = fit["exponent"]
+    ratio = fit["tail_ratio"]
+    n_eff = fit["effective_frames"]
+    if q < 0.9:
+        return (f"Curvature: the curve is flattening harder than photon statistics "
+                f"allow (decay exponent {q:.2f} against 1.00 for independent frames); "
+                f"the tail sits {ratio:.1f}x above the independent-noise line, so "
+                f"these {n} frames average like {n_eff:.0f} independent ones. What "
+                f"is left is correlated -- gradients, flats, registration -- and "
+                f"more frames will not remove it.")
+    if q > 1.1:
+        return (f"Curvature: later frames are pulling more weight than photon "
+                f"statistics predict (decay exponent {q:.2f} against 1.00), so the "
+                f"early frames were the poorer ones or the quality cut is still "
+                f"shaping the stack; the tail sits at {ratio:.2f}x the "
+                f"independent-noise line.")
+    return (f"Curvature: the curve falls as independent frames should (decay "
+            f"exponent {q:.2f} against 1.00), so what remains is photon noise and "
+            f"more frames buy exactly what the 1/sqrt(N) numbers above say.")
 
 
 def progress_summary(
@@ -214,6 +301,9 @@ def progress_summary(
     else:
         head += "."
     parts = [head]
+    fit = decay_fit(counts, residuals)
+    curvature = curvature_sentence(fit, n)
+    correlated = bool(fit) and fit["exponent"] < 0.9
 
     # Below min_frames the tail is a fit through almost nothing, so a flat slope
     # there is noise rather than convergence. Say so instead of reading the
@@ -227,6 +317,8 @@ def progress_summary(
         parts.append("Recommendation: keep shooting — there is not enough here to call it.")
         return " ".join(parts)
 
+    if curvature:
+        parts.append(curvature)
     if slope_abs <= threshold:
         need = 0
         parts.append(
@@ -244,13 +336,19 @@ def progress_summary(
             f"and 100 by {gain(100):.0f}%."
         )
         parts.append(
+            "Recommendation: find the correlated term (flats, gradients, "
+            "registration) before spending more nights on this filter -- the "
+            "frame counts above assume it is not there."
+            if correlated else
             "Recommendation: keep shooting this filter."
             if need <= 3 * n else
             "Recommendation: keep shooting, but that is several more nights — "
             "worth deciding whether this target deserves them."
         )
 
-    ratio = decay_ratio(counts, residuals)
+    # The two-point tail ratio, only when the whole-curve fit could not run;
+    # when it did, the curvature sentence above already said this.
+    ratio = None if fit else decay_ratio(counts, residuals)
     if ratio is not None and ratio >= 1.5:
         parts.append(
             f"Caveat: this filter's residual is falling {ratio:.1f}x slower than "

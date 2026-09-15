@@ -2199,6 +2199,16 @@ def convergence_curve(
         if ratio is not None:
             ideal_label += ("\ntail is riding it" if ratio < 1.15
                             else f"\ntail is {ratio:.2f}× above it")
+        try:
+            from fits_processing.convergence import decay_fit
+            fit = decay_fit(counts, mean_residuals)
+        except Exception:  # diagnostics only — never break the plot
+            _logger.debug("convergence: decay_fit unavailable", exc_info=True)
+            fit = None
+        if fit is not None:
+            # The curvature in one number: 1.00 is this ideal's own exponent.
+            ideal_label += (f"\nwhole-curve decay exponent {fit['exponent']:.2f} "
+                            f"(1.00 = independent);  ~{fit['effective_frames']:.0f} effective frames")
 
     fig = Figure(figsize=(10, 5))
     FigureCanvasAgg(fig)

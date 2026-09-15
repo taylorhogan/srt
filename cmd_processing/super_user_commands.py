@@ -3964,6 +3964,7 @@ def _snr_run_locked(words: list[str]) -> None:
         n_frames = f"{stacked} of {len(paths)} frames" if stacked != len(paths) \
             else f"{stacked} frames"
         _logger.info("Convergence [%s]: %s in %.1fs", fn, n_frames, time.perf_counter() - _t0)
+        fit = _conv.decay_fit(counts, resid)
         with _saved_lock:
             saved[fn] = {
                 "tail_slope_pct": round(slope_pct, 6),
@@ -3972,6 +3973,11 @@ def _snr_run_locked(words: list[str]) -> None:
                 "total_frames": len(paths),
                 "calibrated": _calibration is not None,
                 "updated": _date.today().isoformat(),
+                # Whole-curve curvature (convergence.decay_fit): 1.0 = frames
+                # averaging as independent noise; effective_frames is how many
+                # independent frames would give the same noise.
+                "decay_exponent": fit["exponent"] if fit else None,
+                "effective_frames": fit["effective_frames"] if fit else None,
             }
         social_server.post_social_message(
             f"Stack convergence vs golden — {fn}  ({n_frames})  slope {slope_pct:+.4f}%/frame  RMSE {final_rmse_pct:.2f}%",
