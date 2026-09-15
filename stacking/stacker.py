@@ -776,11 +776,16 @@ def _register_one(
     ref_shape: tuple[int, int],
     scale: int,
     cal: Optional["CalibrationSet"] = None,
+    crop: Optional[tuple[int, int, int, int]] = None,
 ) -> tuple[Optional[np.ndarray], str]:
     """Register one frame against *det_target*, downscaled by *scale*.
 
     Returns (downscaled aligned frame, "") on success, or (None, reason) — the
     reason is prefixed "QA:" when the frame was rejected rather than errored.
+    With *crop* = (y0, y1, x0, x1) in reference pixels, the first element is
+    instead a pair (downscaled frame, native-resolution crop): the stacking
+    movie shows the field small and one patch at 1:1, and a downscaled frame
+    has already averaged away the noise the patch is there to show.
     Runs in a worker process (see _registration_pool), so it takes a path rather
     than an array, reports outcomes by return value rather than by logging, and
     never touches shared state.
@@ -797,7 +802,11 @@ def _register_one(
     frame = None  # free full-res copy
     if aligned is None:
         return None, reason
-    return _downsample_mean(aligned, scale), ""
+    small = _downsample_mean(aligned, scale)
+    if crop is not None:
+        y0, y1, x0, x1 = crop
+        return (small, np.ascontiguousarray(aligned[y0:y1, x0:x1])), ""
+    return small, ""
 
 
 def _register_one_array(frame: np.ndarray, det_target: np.ndarray,
@@ -1806,10 +1815,24 @@ def _prepare_for_convergence(
     cancel_cb: Optional[Callable[[], bool]] = None,
     precomputed_fwhm_stars: Optional[dict[Path, tuple[float, int]]] = None,
     calibration: Optional[CalibrationSet] = None,
+    shared_reference: Optional[tuple[np.ndarray, tuple[int, int]]] = None,
+    crop: Optional[tuple[int, int, int, int]] = None,
 ) -> tuple[list[np.ndarray], list[Path], dict[Path, float]]:
     """
     Load, FWHM-filter, register, and downscale a set of FITS paths for convergence
     analysis.
+
+    *shared_reference* is (control points, full-res shape) from another frame,
+    as stack() takes it. With it every frame — the group's own sharpest one
+    included — is registered onto that grid, so several filters prepared this
+    way land on identical pixels and can be composed; without it each group
+    picks its own reference, which is all a single-filter curve needs. Output
+    order follows the input order, so a chronological input gives a
+    chronological cube.
+
+    *crop* = (y0, y1, x0, x1) in reference pixels makes every returned frame a
+    pair (downscaled frame, native-resolution crop) — see _register_one.
+    Registration only; the no-registration path ignores it.
 
     With *calibration*, every frame has its master bias and exposure-scaled
     master dark subtracted before registration, so what comes out is sky signal
@@ -1904,32 +1927,50 @@ def _prepare_for_convergence(
     # measurable FWHM. (The old source-count-only pick selected the blurriest
     # frame on noisy channels and failed registration — see
     # _reference_index_by_fwhm.)
-    actual_ref_idx = _reference_index_by_fwhm([fwhm_values.get(p, 0.0) for p in accepted])
-    if actual_ref_idx is None:
-        step = max(1, len(accepted) // 10)
-        sample_indices = list(range(0, len(accepted), step))[:10]
-        sample_frames = [_load_calibrated(accepted[i], calibration) for i in sample_indices]
-        actual_ref_idx = sample_indices[_best_reference_idx(sample_frames)]
-        sample_frames = None  # free full-res copies
-    _logger.info("Convergence: reference = accepted[%d]", actual_ref_idx)
+    if shared_reference is not None:
+        # Every frame goes onto the caller's grid, this group's sharpest one
+        # included, so the output order is the input order.
+        ref_pts, ref_shape = shared_reference
+        ref_pts = np.asarray(ref_pts)
+        reference = None
+        reference_det = None
+        scale = 1 if downscale_to is None else max(1, min(ref_shape) // downscale_to)
+        result_frames: list[np.ndarray] = []
+        result_accepted: list[Path] = []
+        todo = list(enumerate(accepted))
+        _logger.info("Convergence: registering %d frames onto a shared reference", len(todo))
+        if progress_cb:
+            progress_cb(f"registering {len(accepted)} frames onto the shared reference…")
+    else:
+        actual_ref_idx = _reference_index_by_fwhm([fwhm_values.get(p, 0.0) for p in accepted])
+        if actual_ref_idx is None:
+            step = max(1, len(accepted) // 10)
+            sample_indices = list(range(0, len(accepted), step))[:10]
+            sample_frames = [_load_calibrated(accepted[i], calibration) for i in sample_indices]
+            actual_ref_idx = sample_indices[_best_reference_idx(sample_frames)]
+            sample_frames = None  # free full-res copies
+        _logger.info("Convergence: reference = accepted[%d]", actual_ref_idx)
 
-    if progress_cb:
-        progress_cb(f"registering {len(accepted)} frames (streaming)…")
+        if progress_cb:
+            progress_cb(f"registering {len(accepted)} frames (streaming)…")
 
-    reference = _load_calibrated(accepted[actual_ref_idx], calibration)
-    # Same despike-for-detection as _register_frames: hot pixels must not
-    # provide the control points (they'd vote for the identity transform).
-    # Extracted to a point list once so find_transform doesn't redo it per frame.
-    reference_det = _despike(reference)
-    ref_pts = _reference_control_points(reference_det)
-    scale = 1 if downscale_to is None else max(1, min(reference.shape) // downscale_to)
-    ref_shape = reference.shape
+        reference = _load_calibrated(accepted[actual_ref_idx], calibration)
+        # Same despike-for-detection as _register_frames: hot pixels must not
+        # provide the control points (they'd vote for the identity transform).
+        # Extracted to a point list once so find_transform doesn't redo it per frame.
+        reference_det = _despike(reference)
+        ref_pts = _reference_control_points(reference_det)
+        scale = 1 if downscale_to is None else max(1, min(reference.shape) // downscale_to)
+        ref_shape = reference.shape
 
-    result_frames: list[np.ndarray] = [_downsample_mean(reference, scale)]
-    result_accepted: list[Path] = [accepted[actual_ref_idx]]
+        first = _downsample_mean(reference, scale)
+        if crop is not None:
+            y0, y1, x0, x1 = crop
+            first = (first, np.ascontiguousarray(reference[y0:y1, x0:x1]))
+        result_frames = [first]
+        result_accepted = [accepted[actual_ref_idx]]
+        todo = [(i, p) for i, p in enumerate(accepted) if i != actual_ref_idx]
     failed, poor_qa = 0, 0
-
-    todo = [(i, p) for i, p in enumerate(accepted) if i != actual_ref_idx]
 
     # Registering one frame is ~3 s of pure CPU (source detection, triangle
     # matching, warp) and holds the GIL throughout — sep and skimage are C, but
@@ -1944,12 +1985,12 @@ def _prepare_for_convergence(
 
     def _serial_results():
         for i, p in todo:
-            yield i, _register_one(p, det_target, ref_shape, scale, calibration)
+            yield i, _register_one(p, det_target, ref_shape, scale, calibration, crop)
 
     def _pooled_results(pool):
         # Read back in submission order so result_frames keeps the same ordering
         # as the serial loop; anything raised here cancels the rest.
-        futures = [(i, pool.submit(_register_one, p, ref_pts, ref_shape, scale, calibration))
+        futures = [(i, pool.submit(_register_one, p, ref_pts, ref_shape, scale, calibration, crop))
                    for i, p in todo]
         try:
             for i, fut in futures:

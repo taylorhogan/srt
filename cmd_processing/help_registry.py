@@ -324,6 +324,26 @@ HELP: dict[str, dict] = {
                      "process sh2-92 hoo auto",
                      "process sh2-92 hoo auto black=55"],
     },
+    "movie": {
+        "category": "super",
+        "summary": ("A looping MP4 that shows a target being stacked deeper: n "
+                    "frames, each holding ~5 s, the first from a fraction of the "
+                    "subs and the last from all of them, with a footer counting "
+                    "the subs in each. Every filter of the recipe (LRGB, HOO, "
+                    "SHO, HSO) is registered once to one shared reference and "
+                    "combined at each depth; one stretch, taken from the full "
+                    "stack, is applied to every frame so what changes between "
+                    "frames is the noise and nothing else. Options as for "
+                    "process: noflat, black= white= soft= mesh= scnr=, plus "
+                    "width= (px, default 1920), hold= (seconds per frame) and "
+                    "inset= (off, a size, or x,y,size): a patch carried at native "
+                    "resolution and shown 2x in the corner, because the reduced "
+                    "field averages the noise away before stacking does. "
+                    "H.264 MP4, so it drops into a web page as a <video>. "
+                    "Saved to <image_dir>/Iris/<dso>/ with a poster JPEG."),
+        "usage": ["movie <dso> <recipe> <n>", "movie <dso> <recipe> <n> noflat width=1280"],
+        "examples": ["movie ngc7380 hso 8", "movie m33 lrgb 4 hold=3"],
+    },
     "seen": {
         "category": "super",
         "summary": ("Chart of catalogue stars actually seen per night, one row "

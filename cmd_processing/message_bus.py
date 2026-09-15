@@ -81,8 +81,18 @@ def _stage_media(src_path: str) -> Optional[str]:
 
 
 def post_message(text: str, image_path: Optional[str] = None, html: Optional[str] = None,
-                 job_id: Optional[str] = None, audio_path: Optional[str] = None) -> dict:
+                 job_id: Optional[str] = None, audio_path: Optional[str] = None,
+                 video_path: Optional[str] = None) -> dict:
     image_url = _stage_media(image_path) if image_path else None
+
+    # A movie is delivered as an inline <video> that loops on its own, plus a
+    # download link, so the same MP4 can be dropped into an article as-is.
+    if video_path and html is None:
+        video_url = _stage_media(video_path)
+        if video_url:
+            html = (f'<video controls loop autoplay muted playsinline preload="metadata" '
+                    f'src="{video_url}" style="max-width:100%"></video>'
+                    f' <a href="{video_url}" download>⬇ mp4</a>')
 
     # An audio clip is delivered as an inline <audio> player via the html field,
     # followed by explicit download links for the clip (and the attached image,

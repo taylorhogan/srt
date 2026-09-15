@@ -113,3 +113,4 @@ prefect
 pyserial
 skyfield
 markdown          # push_mm.py renders the maintenance manual for /mm/ (was only transitive via tensorboard)
+imageio-ffmpeg

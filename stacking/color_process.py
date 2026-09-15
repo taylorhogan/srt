@@ -468,6 +468,77 @@ def compose(channels: dict[str, np.ndarray], black_pct: float = BLACK_PCT,
     return np.clip(np.nan_to_num(rgb), 0.0, 1.0)
 
 
+def sky_anchored_blacks(subbed: dict[str, np.ndarray], black_sigma: float,
+                        black_pct: float = BLACK_PCT, log=None) -> dict[str, float]:
+    """Black point per channel, anchored to the sky rather than a percentile.
+
+    A percentile is a *relative* rule, and anything that changes the pixel
+    distribution — denoising, or simply stacking deeper — moves it: on the
+    2026-08-24 trunk render p65 on Ha landed 0.36 sigma above sky, inside the
+    noise, so raw sky pixels read as a veil while denoised ones went black and
+    the model looked as though it had eaten the nebulosity. Anchoring to
+    `sky_median - black_sigma * sigma` puts black below the sky by a known
+    amount in every frame of a series, which is what keeps them comparable.
+    sigma comes from sep.Background, which sigma-clips, so nebulosity does not
+    inflate it. black_sigma <= 0 restores the percentile rule.
+    """
+    if black_sigma is None or black_sigma <= 0:
+        return blacks_from(subbed, black_pct)
+    import sep
+    out = {}
+    for c, arr in subbed.items():
+        a = np.ascontiguousarray(arr.astype(np.float32))
+        try:
+            sig = float(sep.Background(a).globalrms)
+            med = float(np.nanmedian(a))
+        except Exception:
+            out[c] = float(np.nanpercentile(arr, black_pct))
+            continue
+        out[c] = med - black_sigma * sig
+        if log:
+            pct = float(np.mean(a <= out[c]) * 100.0)
+            log(f"    {c}: sky {med:+.3f} sigma {sig:.3f} -> black {out[c]:+.3f} ADU "
+                f"({pct:.0f}% of pixels, vs {black_pct:.0f}% under the old rule)")
+    return out
+
+
+def blacks_from(subbed: dict[str, np.ndarray], black_pct: float) -> dict[str, float]:
+    """The per-channel black points compose() would pick, as numbers.
+
+    compose() decides black by percentile *per call*, which is right for one
+    image and wrong for a series that has to be compared — a stacking movie, a
+    raw/denoised pair — where the darkest 65% of a noisier frame is a different
+    ADU. Take the blacks from the frame that should set the scale and hand
+    them to compose_prepared() for every other one.
+    """
+    return {c: float(np.nanpercentile(subbed[c], black_pct)) for c in subbed}
+
+
+def compose_prepared(subbed: dict[str, np.ndarray], blacks: dict[str, float],
+                     white: float, softening: float = SOFTENING,
+                     scnr: float = SCNR_AMOUNT) -> np.ndarray:
+    """compose() from background-subtracted channels with black and white given.
+
+    Same curve, same SCNR order, same luminance substitution as compose(); the
+    only difference is that nothing is measured from the input, so a series
+    rendered through this shares one scale exactly.
+    """
+    def st(chan, black):
+        y = np.clip((chan - black) / max(white - black, 1e-6), 0.0, 1.0)
+        return np.arcsinh(y / softening) / np.arcsinh(1.0 / softening)
+
+    rgb = np.dstack([st(subbed[c], blacks[c]) for c in ("R", "G", "B")])
+    if scnr > 0.0:
+        rgb = _scnr(rgb, float(np.clip(scnr, 0.0, 1.0)))
+    if "L" in subbed:
+        lum = st(subbed["L"], blacks["L"])
+        rgb_lum = rgb @ np.array([0.299, 0.587, 0.114], dtype=np.float32)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            scale = np.where(rgb_lum > 1e-4, lum / np.maximum(rgb_lum, 1e-4), 0.0)
+        rgb = rgb * np.clip(scale, 0.0, MAX_LUM_BOOST)[:, :, None]
+    return np.clip(np.nan_to_num(rgb), 0.0, 1.0)
+
+
 def cache_tag(recipe: str, use_flats: bool) -> str:
     """Cache key for a stacking run.
 

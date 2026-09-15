@@ -3262,6 +3262,7 @@ def get_super_user_commands() -> dict[str, Callable]:
         "drift": drift_cmd,
         "stack": stack_cmd,
         "process": process_cmd,
+        "movie": movie_cmd,
         "publish": publish_cmd,
         "purge": purge_cmd,
         "bad": bad_cmd,
@@ -5237,6 +5238,156 @@ def _channel_products_note(info: dict) -> str:
                      + ", ".join(p.name for p in jpgs))
     return ("\n" + "\n".join(lines)) if lines else ""
 
+
+
+def movie_cmd(words: list[str], account: str) -> None:
+    """A looping movie of a target being stacked deeper.
+
+    Usage:
+        movie <dso> <recipe> <n>                — n frames, LRGB / HOO / SHO / HSO
+        movie <dso> <recipe> <n> noflat
+        movie <dso> <recipe> <n> width=1280 hold=3 black=50 soft=0.01
+        movie <dso> <recipe> <n> inset=off | inset=600 | inset=4800,3200,480
+
+    The field is shown reduced, and reducing 9576 px to 1920 averages 16
+    pixels into one — a 4x noise cut before any stacking, enough to hide the
+    effect entirely. So a 480 px patch rides through registration at native
+    resolution and is shown at 2x in the corner, where the noise is plain and
+    shrinks frame by frame. By default it lands on faint extended signal (the
+    75th-percentile block by median brightness), not the bright centre where
+    noise hides. inset=x,y,size places it, in reference-frame pixels;
+    inset=off drops it.
+
+    Frame k of n is stacked from the first k/n of each filter's subs in the
+    order they were taken, so `movie ngc7380 hso 8` on 80 subs shows 10, 20,
+    … 80. Each frame holds about five seconds, crossfades to the next, and the
+    footer counts the subs on screen; the last crossfades back to the first so
+    it loops cleanly. One registration onto one shared reference, one stretch
+    taken from the full stack — so the only thing that changes between frames
+    is the noise, which is the point.
+
+    The product is an H.264 MP4 that plays in any browser <video> tag, posted
+    to the card as an inline player with a download link, plus a poster JPEG
+    of the last frame. Both go to <image_dir>/Iris/<dso>/.
+
+    Process-isolated (jobs.spawn_process) like stack and process.
+    """
+    jobs.spawn_process(_movie_run, args=(words,))
+
+
+def _movie_run(words: list[str]) -> None:
+    _job_id = jobs.get_current_job()
+    _cancel = jobs.cancel_cb_for(_job_id)
+
+    from stacking import color_process, movie, stacker
+
+    cfg = config.data()
+    image_dir = Path(cfg["nina"]["image_dir"])
+    extra = [w for w in (words[1:] if len(words) > 1 else []) if w]
+
+    _FLAGS = {"noflat": ("use_flats", False), "no-flat": ("use_flats", False),
+              "noflats": ("use_flats", False), "no-flats": ("use_flats", False),
+              "nobg": ("subtract_background", False), "no-bg": ("subtract_background", False)}
+    _KEYS = {"black": ("black_pct", float), "white": ("white_pct", float),
+             "soft": ("softening", float), "mesh": ("mesh", int),
+             "scnr": ("scnr", float), "width": ("width", int), "hold": ("hold_s", float),
+             "inset": ("inset", str)}
+    opts: dict = {"use_flats": True}
+    rest, bad = [], []
+    for w in extra:
+        lw = w.lower()
+        if lw in _FLAGS:
+            k, v = _FLAGS[lw]; opts[k] = v; continue
+        if "=" in lw:
+            k, _, v = lw.partition("=")
+            if k in _KEYS:
+                name, cast = _KEYS[k]
+                try:
+                    opts[name] = cast(v)
+                except ValueError:
+                    bad.append(w)
+                continue
+            bad.append(w); continue
+        rest.append(w)
+    if bad:
+        social_server.post_social_message(
+            f"Unrecognised option(s): {', '.join(bad)}. "
+            f"Known: {', '.join(sorted(_KEYS))}=value, {', '.join(sorted(_FLAGS))}")
+        return
+
+    recipe, steps = None, None
+    for w in list(rest):
+        if recipe is None and w.upper() in color_process.RECIPES:
+            recipe = w.upper(); rest.remove(w)
+        elif steps is None and w.isdigit():
+            steps = int(w); rest.remove(w)
+    dso_arg = " ".join(rest).strip()
+    if not dso_arg or recipe is None or steps is None:
+        social_server.post_social_message(
+            "Usage: movie <dso> <recipe> <n>  — recipe one of "
+            f"{', '.join(sorted(color_process.RECIPES))}, n frames (2 or more). "
+            "e.g. `movie ngc7380 hso 8`")
+        return
+    if steps < 2 or steps > 60:
+        social_server.post_social_message("n must be between 2 and 60 frames.")
+        return
+
+    dso_dir = movie.find_dso_dir(image_dir, dso_arg)
+    if dso_dir is None:
+        social_server.post_social_message(f"No image directory found for '{dso_arg}'")
+        return
+
+    use_flats = opts.pop("use_flats")
+    width = opts.pop("width", movie.WIDTH)
+    hold_s = opts.pop("hold_s", movie.HOLD_SECONDS)
+    inset_arg = str(opts.pop("inset", "on")).lower()
+    inset: object = True
+    try:
+        if inset_arg in ("off", "no", "none", "0"):
+            inset = False
+        elif "," in inset_arg:
+            inset = tuple(int(v) for v in inset_arg.split(","))
+        elif inset_arg != "on":
+            inset = int(inset_arg)
+    except ValueError:
+        social_server.post_social_message("inset must be off, a size in px, or x,y,size")
+        return
+    out_dir = stacker.results_dir(dso_dir.name)
+    tag = recipe if use_flats else f"{recipe}_noflat"
+    out_path = out_dir / f"movie_{dso_dir.name}_{tag}_{steps}.mp4"
+
+    def _progress(msg: str) -> None:
+        social_server.post_social_message(f"{dso_dir.name} {recipe} movie: {msg}")
+
+    social_server.post_social_message(
+        f"Building a {steps}-frame stacking movie of {dso_dir.name} as {recipe}"
+        f"{'' if use_flats else ' (no flats)'} — one registration pass, then "
+        f"{steps} combines; expect several minutes on a few hundred frames.")
+    _t0 = time.perf_counter()
+    try:
+        path, info = movie.make_stacking_movie(
+            dso_dir, recipe, steps, out_path, use_flats=use_flats, width=width,
+            hold_s=hold_s, inset=inset, progress_cb=_progress, cancel_cb=_cancel, **opts)
+    except jobs.Cancelled:
+        raise
+    except Exception as exc:
+        _logger.exception("movie %s %s failed", dso_dir.name, recipe)
+        social_server.post_social_message(f"{dso_dir.name} {recipe} movie: failed — {exc}")
+        return
+
+    frames = "  ".join(f"{f}:{n}" for f, n in sorted(info["frames"].items()))
+    depths = " → ".join(str(sum(c.values())) for c in info["plan"])
+    w_, h_ = info["size"]
+    social_server.post_social_message(
+        f"{dso_dir.name} — {recipe} stacking movie, {steps} frames"
+        f"{'' if use_flats else '  (no flats)'}\n"
+        f"subs per frame: {depths}   (per filter at full depth: {frames})\n"
+        f"shared reference: {info['reference']}   stretch from the full stack\n"
+        f"{w_}x{h_}, {info['seconds']:.0f} s loop, {info['bytes'] / 1e6:.1f} MB, "
+        f"{time.perf_counter() - _t0:.0f}s\n"
+        f"Saved:\n  {path}\n  {info['poster']}  (poster)",
+        video=str(path),
+    )
 
 
 def skysolve_cmd(words: list[str], account: str) -> None:

@@ -209,42 +209,10 @@ def build(args) -> int:
 
 def sky_anchored_blacks(subbed: dict, black_sigma: float, black_pct: float,
                         log=print) -> dict:
-    """Black point per channel, anchored to the sky rather than a percentile.
+    """Lives in color_process now; kept here as the name every caller uses."""
+    from stacking import color_process
+    return color_process.sky_anchored_blacks(subbed, black_sigma, black_pct, log=log)
 
-    `BLACK_PCT = 65` sends 65% of pixels to black. That is a *relative* rule, and
-    denoising changes the distribution it is relative to — which is what wrecked
-    the 2026-08-24 trunk render. Measured there: p65 on Ha landed at 0.572 ADU
-    against a sky sigma of 1.569, i.e. **0.36 sigma above sky**, inside the noise.
-    In the raw, sky pixels are dithered above that line and read as a faint veil;
-    denoised, they correctly fall below it and go black, so the render looked as
-    though the model had eaten the nebulosity. It had not — tile photometry put
-    flux retention at 104-117% at every brightness.
-
-    Anchoring to `sky_median - black_sigma * sigma` puts the black point below the
-    sky in both frames, so genuine faint signal survives the stretch and the two
-    renders stay comparable. sigma comes from `sep.Background`, which sigma-clips,
-    so nebulosity does not inflate it.
-
-    black_sigma <= 0 restores the old percentile behaviour.
-    """
-    if black_sigma is None or black_sigma <= 0:
-        return {c: float(np.nanpercentile(subbed[c], black_pct)) for c in subbed}
-    import sep
-    out = {}
-    for c, arr in subbed.items():
-        a = np.ascontiguousarray(arr.astype(np.float32))
-        try:
-            bkg = sep.Background(a)
-            sig = float(bkg.globalrms)
-            med = float(np.nanmedian(a))
-        except Exception:
-            out[c] = float(np.nanpercentile(arr, black_pct))
-            continue
-        out[c] = med - black_sigma * sig
-        pct = float(np.mean(a <= out[c]) * 100.0)
-        log(f"    {c}: sky {med:+.3f} sigma {sig:.3f} -> black {out[c]:+.3f} ADU "
-            f"({pct:.0f}% of pixels, vs {black_pct:.0f}% under the old rule)")
-    return out
 
 def compose(args) -> int:
     import torch

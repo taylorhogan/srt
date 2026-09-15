@@ -729,7 +729,7 @@ def post_html_message(html: str) -> None:
 
 
 def post_social_message(message: str, image: Optional[str] = None, vis: Optional[str] = None,
-                        audio: Optional[str] = None) -> None:
+                        audio: Optional[str] = None, video: Optional[str] = None) -> None:
     logger = logging.getLogger(__name__)
     cfg = config.data()
 
@@ -741,7 +741,7 @@ def post_social_message(message: str, image: Optional[str] = None, vis: Optional
             logger.warning(
                 "in-process post with no job id (goes to the feed) thread=%s: %.60s",
                 threading.current_thread().name, message)
-        message_bus.post_message(message, image, audio_path=audio)
+        message_bus.post_message(message, image, audio_path=audio, video_path=video)
     else:
         try:
             from cmd_processing import jobs
@@ -751,6 +751,8 @@ def post_social_message(message: str, image: Optional[str] = None, vis: Optional
                 data["image_path"] = image
             if audio:
                 data["audio_path"] = audio
+            if video:
+                data["video_path"] = video
             # In a process-isolated worker the job is bound on this thread;
             # forward it so the post lands on that worker's card, not the
             # system feed.

@@ -373,7 +373,8 @@
     const e = job.log[job.log.length - 1];
     if (e.text) return e.text;
     if (e.image_url) return '🖼 image attached';
-    if (e.html) return e.html.indexOf('<audio') !== -1 ? '🔊 audio clip' : '▦ table';
+    if (e.html) return e.html.indexOf('<audio') !== -1 ? '🔊 audio clip'
+                : e.html.indexOf('<video') !== -1 ? '🎞 movie' : '▦ table';
     return '';
   }
 
