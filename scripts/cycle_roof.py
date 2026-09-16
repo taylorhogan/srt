@@ -91,7 +91,13 @@ def main() -> None:
 
     print(f"Toggling roof (motor on -> relay -> ~45s travel -> motor off), "
           f"capturing current signature [{args.direction or 'unknown'}]...")
-    suc.toggle_roof(dev_map, capture_direction=args.direction or direction)
+    try:
+        suc.toggle_roof(dev_map, capture_direction=args.direction or direction)
+    except suc.RoofFireError:
+        if direction:
+            suc._report_roof_fire_failure(direction, "cycle_roof")
+        print("Relay command failed — the roof did not move; conductor told.")
+        sys.exit(3)
 
     # --- Confirm as a night would, and tell the conductor.
     if direction:

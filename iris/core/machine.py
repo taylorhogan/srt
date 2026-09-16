@@ -78,9 +78,13 @@ EVENTS = (
     # clock / planner
     "NOON_TICK", "PLAN_GOOD", "PLAN_BAD", "PRE_SUNSET_TICK",
     "CHECKS_PASSED", "CHECKS_FAILED", "REPLAN_REQUESTED",
-    # roof sensing / motion outcomes
+    # roof sensing / motion outcomes. ROOF_FIRE_FAILED: the relay command
+    # never reached the relay (2026-09-16 11:11, the Shelly did not answer
+    # for the ten seconds the run needed it) and vision re-read the roof at
+    # its start position -- sense and expectation AGREE, so it is not a
+    # fault; the guard on its rows demands that fresh read.
     "ROOF_OPEN_CONFIRMED", "ROOF_CLOSE_CONFIRMED", "ROOF_STALL",
-    "ROOF_TIMEOUT", "VISION_CONTRADICTION",
+    "ROOF_TIMEOUT", "ROOF_FIRE_FAILED", "VISION_CONTRADICTION",
     # capture (NINA today) cooperative signals.
     # SLOT_STARTED and NINA_SLOT_DONE are deliberately DISTINCT events. An
     # early draft used NINA_SLOT_DONE for both "sequence launched" (in
@@ -184,6 +188,14 @@ TRANSITIONS = (
     T("OPENING_ROOF", "ROOF_OPEN_CONFIRMED", "PRELUDE"),
     T("OPENING_ROOF", "ROOF_STALL",          "FAULT_ROOF_UNKNOWN"),
     T("OPENING_ROOF", "ROOF_TIMEOUT",        "FAULT_ROOF_UNKNOWN"),
+    # The fire never happened and the roof is sensed still shut: back to the
+    # day the open was attempted from (a standing plan means ARMED). Without
+    # the fresh sense there is no row, and the motion watchdog's ROOF_TIMEOUT
+    # takes it to FAULT as before.
+    T("OPENING_ROOF", "ROOF_FIRE_FAILED",    "ARMED",
+      guards=(G.roof_closed, G.slots_remaining)),
+    T("OPENING_ROOF", "ROOF_FIRE_FAILED",    "IDLE_DAY",
+      guards=(G.roof_closed, G.plan_exhausted)),
 
     # --- the slots. One event, two rows: table order + guards do the fan-out.
     T("PRELUDE",      "NINA_PRELUDE_DONE",   "SLOT_SETUP",
@@ -219,6 +231,10 @@ TRANSITIONS = (
     T("CLOSING_ROOF", "ROOF_CLOSE_CONFIRMED", "FLATS"),
     T("CLOSING_ROOF", "ROOF_STALL",          "FAULT_ROOF_UNKNOWN"),
     T("CLOSING_ROOF", "ROOF_TIMEOUT",        "FAULT_ROOF_UNKNOWN"),
+    # Close never fired, roof sensed still open: back to PARKING, where the
+    # close is asked for again (end.py retries, or an operator closes).
+    T("CLOSING_ROOF", "ROOF_FIRE_FAILED",    "PARKING",
+      guards=(G.roof_open,)),
     # Flats run shut, so nothing here can move the roof and every way out of
     # FLATS leads to SHUTDOWN. A capture failure during flats costs the flats,
     # not the night's safety: the observatory is already closed.
@@ -264,6 +280,10 @@ TRANSITIONS = (
     T("MANUAL_OPENING", "ROOF_OPEN_CONFIRMED", "MANUAL_OPEN"),
     T("MANUAL_OPENING", "ROOF_STALL",        "FAULT_ROOF_UNKNOWN"),
     T("MANUAL_OPENING", "ROOF_TIMEOUT",      "FAULT_ROOF_UNKNOWN"),
+    T("MANUAL_OPENING", "ROOF_FIRE_FAILED",  "ARMED",
+      guards=(G.roof_closed, G.slots_remaining)),
+    T("MANUAL_OPENING", "ROOF_FIRE_FAILED",  "IDLE_DAY",
+      guards=(G.roof_closed, G.plan_exhausted)),
     T("MANUAL_OPEN",  "ROOF_CLOSE_REQUESTED", "MANUAL_CLOSING",
       guards=(G.mount_parked, G.roof_state_known)),
     T("MANUAL_OPEN",  "VISION_CONTRADICTION", "FAULT_ROOF_UNKNOWN"),
@@ -281,6 +301,8 @@ TRANSITIONS = (
       guards=(G.plan_exhausted,)),
     T("MANUAL_CLOSING", "ROOF_STALL",        "FAULT_ROOF_UNKNOWN"),
     T("MANUAL_CLOSING", "ROOF_TIMEOUT",      "FAULT_ROOF_UNKNOWN"),
+    T("MANUAL_CLOSING", "ROOF_FIRE_FAILED",  "MANUAL_OPEN",
+      guards=(G.roof_open,)),
 
     # --- operator: the holds
     T("*",            "SAFETY_CLEARED",      "SAFE_HOLD"),

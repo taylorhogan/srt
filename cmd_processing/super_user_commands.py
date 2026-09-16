@@ -74,6 +74,10 @@ class RoofStallError(RuntimeError):
     """Roof motor still drawing power ROOF_STALL_AFTER_S after the relay fired."""
 
 
+class RoofFireError(RuntimeError):
+    """The relay command never reached the relay: the roof did not move."""
+
+
 def _roof_stall_abort(dev_map: dict, direction: Optional[str],
                       capture, audio_capture, watts: float, elapsed: float) -> None:
     """Emergency path for a roof-motor stall: cut power, alert, bank evidence, abort.
@@ -192,6 +196,26 @@ def _post_kasa_roof_audio(direction, base, detail, verdict) -> None:
         _logger.error("Failed to post roof audio: %s", e)
 
 
+ROOF_RELAY_BOOT_MAX_S = 90   # give up waiting for the relay Shelly after this
+
+
+def _wait_for_roof_relay(max_s: float = ROOF_RELAY_BOOT_MAX_S) -> bool:
+    """Poll the relay Shelly's read-only status until it answers. Returns
+    True when it did, False after max_s; either way the caller proceeds to
+    the fire, which reports its own failure."""
+    t0 = time.monotonic()
+    while True:
+        if utl_shelly.roof_relay_status() is not None:
+            _logger.info("roof relay reachable %.0f s after the motor plug went on",
+                         10.0 + time.monotonic() - t0)
+            return True
+        if time.monotonic() - t0 > max_s:
+            _logger.error("roof relay still unreachable %.0f s after the motor plug "
+                          "went on; firing anyway", 10.0 + max_s)
+            return False
+        time.sleep(2.0)
+
+
 def toggle_roof(dev_map: dict, capture_direction: Optional[str] = None) -> None:
     """Power the roof motor, trigger the Shelly relay to move the roof, then power off.
 
@@ -206,6 +230,14 @@ def toggle_roof(dev_map: dict, capture_direction: Optional[str] = None) -> None:
     inst = {"Roof motor": 'on'}
     asyncio.run(ku.kasa_do(dev_map, inst))
     time.sleep(10)
+    # The relay Shelly is powered THROUGH that plug: it boots when the plug
+    # goes on and needs Wi-Fi before it can take the fire. Ten seconds was
+    # enough for 26 moves and not for the 27th (2026-09-16 11:11: connect
+    # timeout, the run died, the plug stayed on). So after the fixed ten
+    # seconds, wait until it actually answers a read-only status query,
+    # and log how long that took -- the boot time is now measured on every
+    # move instead of assumed.
+    _wait_for_roof_relay()
 
     # Best-effort: bank the motor's current signature for anomaly detection.
     # Never let a capture problem disrupt the roof sequence (the helpers swallow
@@ -244,7 +276,14 @@ def toggle_roof(dev_map: dict, capture_direction: Optional[str] = None) -> None:
         _logger.error("Failed to trigger relay in toggle_roof")
         if capture is not None:
             rcs.finish_background_capture(capture, save=False)
-        raise RuntimeError("toggle_roof: roof relay trigger failed")
+        # The motor plug went on above and the normal off is after the
+        # travel wait. 2026-09-16 11:11: the relay Shelly did not answer,
+        # this raised, and the plug stayed on until it was found by hand.
+        try:
+            asyncio.run(ku.kasa_do(dev_map, {"Roof motor": 'off'}))
+        except Exception:  # noqa: BLE001
+            _logger.exception("toggle_roof: could not switch the roof motor off after the relay failure")
+        raise RoofFireError("toggle_roof: roof relay trigger failed")
     _wait_for_roof_travel(dev_map, capture_direction, capture, audio_capture)
     inst = {"Roof motor": 'off'}
     asyncio.run(ku.kasa_do(dev_map, inst))
@@ -527,6 +566,29 @@ def _report_roof_outcome(direction: str, confirmed: bool, source: str = "operato
                      evidence)
 
 
+def _report_roof_fire_failure(direction: str, source: str = "operator") -> None:
+    """The relay command did not go out. Re-sense: if the roof still reads at
+    its start position, ROOF_FIRE_FAILED (the machine returns to where it
+    was); otherwise ROOF_TIMEOUT (position untrusted -> FAULT, resolve!).
+    A STALL is not reported here: the shadow posts ROOF_STALL from the
+    watchdog's log line, and the roof may have part-moved."""
+    from iris import client as conductor
+    try:
+        parked, closed, is_open = get_status_with_lights()[:3]
+    except Exception:  # noqa: BLE001
+        parked, closed, is_open = False, False, False
+    unchanged = closed if direction == "open" else is_open
+    ev = _roof_evidence(parked, closed, is_open)
+    conductor.report("ROOF_FIRE_FAILED" if unchanged else "ROOF_TIMEOUT", source,
+                     {"direction": direction, "why": "relay command failed",
+                      "roof_unchanged": bool(unchanged)}, ev)
+    social_server.post_social_message(
+        "Roof relay command failed; roof reads %s — %s"
+        % ("closed" if closed else ("open" if is_open else "unknown"),
+           "unchanged, run aborted" if unchanged else
+           "position untrusted: check the roof, then resolve!"))
+
+
 def _roof_evidence(parked: bool, closed: bool, is_open: bool) -> dict:
     from iris import client as conductor
     return conductor.evidence_from_vision(parked, closed, is_open)
@@ -774,7 +836,13 @@ def open_roof(force: bool = False, imaging_run: bool = False,
         _roof_cancel_point("Roof open cancelled — the roof was not moved", imaging_run)
         announce_roof_movement("The roof will be opening in one minute")
         my_seq = _bump_move_seq()
-        toggle_roof(dev_map, capture_direction="open")
+        try:
+            toggle_roof(dev_map, capture_direction="open")
+        except RoofFireError:
+            _roof_lock.release()
+            holding = False
+            _report_roof_fire_failure("open", source)
+            raise
         if force:
             social_server.post_social_message("Roof open relay fired (forced, unverified)")
             # One look after a forced move: the conductor still needs to know
@@ -865,7 +933,13 @@ def close_roof(force: bool = False, imaging_run: bool = False,
         _roof_cancel_point("Roof close cancelled — the roof was not moved", imaging_run)
         announce_roof_movement("The roof will be closing in one minute")
         my_seq = _bump_move_seq()
-        toggle_roof(dev_map, capture_direction="close")
+        try:
+            toggle_roof(dev_map, capture_direction="close")
+        except RoofFireError:
+            _roof_lock.release()
+            holding = False
+            _report_roof_fire_failure("close", source)
+            raise
         if force:
             social_server.post_social_message("Roof close relay fired (forced, unverified)")
             _roof_lock.release()
@@ -1037,7 +1111,12 @@ def _toggle_roof_cmd(force: bool) -> None:
     # stopped (toggle_roof owns the travel window uninterrupted).
     _roof_cancel_point("Roof toggle cancelled — the roof was not moved")
     announce_roof_movement("The roof will be moving in one minute")
-    toggle_roof(dev_map, capture_direction=direction)
+    try:
+        toggle_roof(dev_map, capture_direction=direction)
+    except RoofFireError:
+        if direction:
+            _report_roof_fire_failure(direction, "operator")
+        raise
     parked, closed, is_open, _ = get_status_with_lights()
     new_state = "closed" if closed else ("open" if is_open else "ambiguous")
     if direction == "open":

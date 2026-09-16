@@ -538,7 +538,18 @@ def do_main():
                         social_server.post_social_message("ℹ️ " + reason)
                     social_server.post_social_message("Vision Safety says Scope is parked, closing roof")
                     super_user_commands.announce_roof_movement("The roof will be closing in one minute")
-                    super_user_commands.toggle_roof(dev_map, capture_direction="close")
+                    try:
+                        super_user_commands.toggle_roof(dev_map, capture_direction="close")
+                    except super_user_commands.RoofFireError:
+                        # The command never went out. Tell the conductor
+                        # (back to PARKING if the roof still reads open) and
+                        # let the outer handler log it; the roof is open and
+                        # the phone must say so.
+                        super_user_commands._report_roof_fire_failure("close", "end.py")
+                        pushover.push_message(
+                            "ROOF RELAY FAILED at the end sequence — roof still open, "
+                            "check the observatory", inside_view, priority=1)
+                        raise
                     # Judge the close exactly as roof!! close does — a single
                     # frame 30s after the relay is not a verdict, and reporting
                     # one as though it were is what told the imaging card the

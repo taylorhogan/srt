@@ -325,3 +325,19 @@ def test_unplanned_manual_run_opens_from_idle_without_a_weather_verdict():
     assert step("ARMED", "CHECKS_PASSED", no_weather).kind == "rejected"
     assert step("IDLE_DAY", "CHECKS_PASSED",
                 no_weather.replace(parked_vision=Tri.UNKNOWN)).kind == "rejected"
+
+
+def test_a_failed_fire_returns_only_on_a_fresh_sense_of_the_unchanged_roof():
+    """2026-09-16 11:11: the relay Shelly did not answer and the run died in
+    OPENING_ROOF. With the roof re-read shut the machine goes back to the
+    day; without that read the only way out is the watchdog's timeout."""
+    shut = ALL_GO.replace(roof=Tri.DENIED, slots_remaining=0)
+    assert step("OPENING_ROOF", "ROOF_FIRE_FAILED", shut) == Outcome("transition", "IDLE_DAY")
+    assert step("OPENING_ROOF", "ROOF_FIRE_FAILED", shut.replace(slots_remaining=2)).state == "ARMED"
+    assert step("OPENING_ROOF", "ROOF_FIRE_FAILED", shut.replace(roof=Tri.UNKNOWN)).kind == "rejected"
+    assert step("OPENING_ROOF", "ROOF_FIRE_FAILED", shut.replace(roof=Tri.CONFIRMED)).kind == "rejected"
+    open_ = ALL_GO.replace(roof=Tri.CONFIRMED)
+    assert step("CLOSING_ROOF", "ROOF_FIRE_FAILED", open_) == Outcome("transition", "PARKING")
+    assert step("MANUAL_CLOSING", "ROOF_FIRE_FAILED", open_) == Outcome("transition", "MANUAL_OPEN")
+    assert step("MANUAL_OPENING", "ROOF_FIRE_FAILED", shut) == Outcome("transition", "IDLE_DAY")
+    assert step("IDLE_DAY", "ROOF_FIRE_FAILED", shut).kind == "ignored"

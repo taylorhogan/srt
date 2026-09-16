@@ -71,7 +71,9 @@ FALLBACK_MARKER = Path("local") / "roof_fallback_marker.json"
 # are stepped with the real evidence; every other live event (confirmations,
 # operator resolves, end requests) has no sensor guard and steps as before.
 ROOF_DECISION_EVENTS = frozenset({"ROOF_OPEN_REQUESTED", "ROOF_CLOSE_REQUESTED",
-                                  "CHECKS_PASSED", "MOUNT_PARK_CONFIRMED"})
+                                  "CHECKS_PASSED", "MOUNT_PARK_CONFIRMED",
+                                  # a failed fire returns only on a fresh sense
+                                  "ROOF_FIRE_FAILED"})
 
 
 @dataclass(frozen=True)

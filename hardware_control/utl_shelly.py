@@ -25,6 +25,20 @@ def fire_roof_relay(timeout=10):
     return _get(url, timeout=timeout)
 
 
+def roof_relay_status(timeout=3):
+    """Read-only status of the roof relay Shelly (the relay URL without its
+    ?turn= query), or None if it does not answer. It is powered through the
+    roof motor plug, so it BOOTS every time the plug goes on and is not on
+    Wi-Fi for the first several seconds; this is how a caller waits for it."""
+    url = config.data()["hardware"]["roof_relay_url"].split("?", 1)[0]
+    try:
+        response = requests.get(url, timeout=timeout)
+        response.raise_for_status()
+        return response
+    except requests.exceptions.RequestException:
+        return None
+
+
 def set_dehumidifier(on, timeout=10):
     """Turn the dehumidifier Shelly relay on or off.
 

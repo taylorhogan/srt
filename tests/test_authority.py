@@ -315,3 +315,16 @@ def test_end_py_retry_closes_a_night_the_machine_lost(tmp_path):
     v = c.offer("ROOF_CLOSE_REQUESTED", "end.py", {"why": "not in PARKING"}, evidence=OPEN)
     assert v.accepted and v.state == "MANUAL_CLOSING"
     assert c.offer("ROOF_CLOSE_CONFIRMED", "end.py", {"confirmed": True}).state == "IDLE_DAY"
+
+
+def test_relay_failure_reported_with_the_roof_still_shut_returns_to_idle(tmp_path):
+    """The 2026-09-16 incident, as the actuator now reports it."""
+    c = _conductor(_mkroot(tmp_path))
+    c.offer("CHECKS_PASSED", "operator", {}, evidence=GOOD)
+    assert c.state == "OPENING_ROOF"
+    v = c.offer("ROOF_FIRE_FAILED", "operator", {"why": "relay command failed"}, evidence=GOOD)
+    assert v.accepted and c.state == "IDLE_DAY"
+    # Reported blind (the re-read failed): stays until the watchdog faults it.
+    c.offer("CHECKS_PASSED", "operator", {}, evidence=GOOD)
+    v = c.offer("ROOF_FIRE_FAILED", "operator", {}, evidence={**GOOD, "roof": "UNKNOWN"})
+    assert not v.accepted and c.state == "OPENING_ROOF"
