@@ -159,10 +159,10 @@ def request_roof_move(event: str, source: str, evidence: dict,
     return allowed, reason, reply
 
 
-def state() -> Optional[dict]:
+def state(timeout: float = DEFAULT_TIMEOUT_S) -> Optional[dict]:
     """GET /v1/state, or None if unreachable."""
     try:
-        with urllib.request.urlopen(conductor_url() + "/v1/state", timeout=DEFAULT_TIMEOUT_S) as r:
+        with urllib.request.urlopen(conductor_url() + "/v1/state", timeout=timeout) as r:
             return json.load(r)
     except (urllib.error.URLError, OSError, ValueError):
         return None

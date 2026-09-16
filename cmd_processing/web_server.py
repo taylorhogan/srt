@@ -422,12 +422,21 @@ async def api_ticker():
 
         mode = su.get_mode()
         safe = "Safe" if su.is_safe() else "Unsafe"
-        imaging = su.get_imaging_state().value.replace("_", " ").title()
         sched = su.get_scheduler_state()
 
-        sched_state = sched.get("state", "—")
-        if isinstance(sched_state, str):
-            sched_state = sched_state.replace("_", " ").title()
+        # The conductor's Night machine state replaces the old "Scheduler"
+        # and "State" items (2026-09-16): one word for where the night stands,
+        # from the system of record rather than two legacy files. Unreachable
+        # is shown as such -- a blank here would hide the one thing worth
+        # knowing about a conductor that is down.
+        conductor_state = "Unreachable"
+        try:
+            from iris import client as conductor
+            st = await asyncio.to_thread(conductor.state, 2.0)
+            if st and st.get("state"):
+                conductor_state = str(st["state"]).replace("_", " ").title()
+        except Exception:
+            pass
 
         tonight = sched.get("will image tonight", "—")
         if isinstance(tonight, bool):
@@ -445,11 +454,10 @@ async def api_ticker():
                 dso = sched.get("dso") or "—"
 
         metrics = [
-            {"label": "Scheduler", "value": sched_state},
+            {"label": "Conductor", "value": conductor_state},
             {"label": "Target",    "value": str(dso)},
             {"label": "Mode",      "value": mode.title()},
             {"label": "Safety",    "value": safe},
-            {"label": "State",     "value": imaging},
         ]
 
         # Append Pegasus (inside-observatory) environment data if available

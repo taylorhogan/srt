@@ -815,12 +815,16 @@
 
   // ── Status ticker ───────────────────────────────────────────────
   const tickerTrack = document.getElementById('ticker-track');
-  const ACTIVE_STATES = new Set(['In Flats', 'Active', 'In Process']);
+  // Conductor: the Night machine's state (iris/core/machine.py). Holds and an
+  // unreachable conductor read as unsafe; the resting day states are plain;
+  // anything else is a night (or a roof move) in progress.
+  const CONDUCTOR_HOLDS = new Set(['Safe Hold', 'Fault Roof Unknown', 'Estop', 'Unreachable']);
+  const CONDUCTOR_RESTING = new Set(['Idle Day', 'Planning', 'Armed', 'Night Done']);
   function buildTickerHTML(metrics) {
     const items = metrics.map((m) => {
       let cls = '';
       if (m.label === 'Safety') cls = m.value === 'Safe' ? ' safe' : ' unsafe';
-      else if (m.label === 'State' && ACTIVE_STATES.has(m.value)) cls = ' active';
+      else if (m.label === 'Conductor') cls = CONDUCTOR_HOLDS.has(m.value) ? ' unsafe' : (CONDUCTOR_RESTING.has(m.value) ? '' : ' active');
       else if (m.label === 'Moon') cls = m.value.endsWith('+') ? ' waxing' : ' waning';
       else if (m.label === 'Seeing') cls = m.value.includes('good') ? ' safe' : (/poor|bad/.test(m.value) ? ' unsafe' : '');
       return `<span class="t-item"><span class="t-lbl">${m.label}</span><span class="t-val${cls}">${m.value}</span></span>`;
