@@ -3,6 +3,7 @@
     python scripts/morning_check.py            # check, push only on a problem
     python scripts/morning_check.py --dry-run  # check and print, never push
     python scripts/morning_check.py --always-push  # push the result even when clear
+    python scripts/morning_check.py --always-push-until 2026-09-19  # ... through that date
 
 Run daily at 09:00 by the scheduled task IrisMorningCheck (morning_check.cmd).
 User request 2026-09-16. Every morning all of these must hold:
@@ -178,8 +179,14 @@ def main():
     ap.add_argument("--dry-run", action="store_true", help="print; never push")
     ap.add_argument("--always-push", action="store_true",
                     help="push the result even when all clear (tests the Pushover path)")
+    ap.add_argument("--always-push-until", metavar="YYYY-MM-DD",
+                    help="as --always-push, through this date inclusive; silent on "
+                         "success afterwards, so a trial period cannot be forgotten on")
     args = ap.parse_args()
     _watchdog(args.dry_run)
+    if args.always_push_until:
+        until = datetime.strptime(args.always_push_until, "%Y-%m-%d").date()
+        args.always_push = args.always_push or datetime.now().date() <= until
 
     # Kasa and Pegasus first: they are quick, and the vision read switches the
     # inside light, which would be pointless to do before knowing the plugs answer.
