@@ -391,9 +391,20 @@ DOMAIN_MODELS = {
 }
 
 
+_NARROWBAND_FILTERS = {"Ha", "O-III", "S-II"}
+
+
+def domain_for(filt: str) -> str:
+    """Which model a single filter's stack is denoised with."""
+    return "narrowband" if filt in _NARROWBAND_FILTERS else "broadband"
+
+
 def pick_model(filters) -> tuple:
-    nb = {"Ha", "O-III", "S-II"}
-    domain = "narrowband" if set(filters) & nb else "broadband"
+    """One (domain, model path) for a whole filter set — the pre-HALRGB rule,
+    kept for callers that render a single-domain set. A mixed set (HALRGB:
+    L R G B + Ha) must not go through this: it would hand the narrowband
+    model every broadband channel. routine() picks per filter instead."""
+    domain = "narrowband" if set(filters) & _NARROWBAND_FILTERS else "broadband"
     return domain, os.path.join(_root, DOMAIN_MODELS[domain])
 
 
@@ -485,15 +496,19 @@ def routine(args) -> int:
         log("no channels built — nothing to render")
         return 1
 
-    domain, model_path = pick_model(filters)
-    if args.model:
-        model_path = args.model
+    # Model per FILTER, not per recipe: HALRGB mixes broadband L R G B with
+    # narrowband Ha, and each stack gets the model trained on its own domain.
+    # --model overrides every filter with the one file.
+    model_by_filter: dict[str, str] = {}
+    for f in filters:
+        mp_ = args.model or os.path.join(_root, DOMAIN_MODELS[domain_for(f)])
+        model_by_filter[f] = mp_ if os.path.exists(mp_) else ""
     log("")
-    log(f"recipe {args.recipe}  filters {filters}  domain {domain}")
-    log(f"model {os.path.basename(model_path)}")
-    if not os.path.exists(model_path):
-        log(f"  missing — raw products only")
-        model_path = ""
+    log(f"recipe {args.recipe}  filters {filters}")
+    for f in filters:
+        log(f"  {f}: {domain_for(f)} -> "
+            + (os.path.basename(model_by_filter[f]) or "model missing — raw only"))
+    model_path = next((m for m in model_by_filter.values() if m), "")
 
     # results_dir() creates its own; an explicit --out-dir has to be made here.
     out_dir = Path(args.out_dir) if args.out_dir else stacker.results_dir(args.dso)
@@ -512,15 +527,21 @@ def routine(args) -> int:
 
         from nn import denoiser
         from nn.noise2noise_model import UNet
-        ck = torch.load(model_path, map_location="cpu", weights_only=False)
-        m = UNet(residual="linear")
-        m.load_state_dict(ck["model_state"])
-        m.eval()
         dev = "cuda" if torch.cuda.is_available() else "cpu"
+        loaded: dict[str, UNet] = {}
         for f in filters:
+            mp_ = model_by_filter.get(f)
+            if not mp_:
+                continue
+            if mp_ not in loaded:
+                ck = torch.load(mp_, map_location="cpu", weights_only=False)
+                m = UNet(residual="linear")
+                m.load_state_dict(ck["model_state"])
+                m.eval()
+                loaded[mp_] = m
             t0 = time.time()
-            den[f] = denoiser.denoise_frame(raw[f], m, device=dev)[:h, :w]
-            log(f"  denoised {f} in {time.time() - t0:.0f}s")
+            den[f] = denoiser.denoise_frame(raw[f], loaded[mp_], device=dev)[:h, :w]
+            log(f"  denoised {f} ({domain_for(f)}) in {time.time() - t0:.0f}s")
 
     def to_channels(d):
         return {ch: d[mapping[ch]] for ch in ("L", "R", "G", "B", "HA")
@@ -558,10 +579,14 @@ def routine(args) -> int:
     from stacking import stacker
 
     def emit(subbed, tag):
-        for ch in ("R", "G", "B", "L"):
+        # HALRGB: R and L are the blended planes; HA is the raw Ha stack and
+        # HA_EXCESS the emission map that was added (black at 0: it is
+        # zero-floored, so it has no sky to anchor to).
+        names = {**mapping, "HA_EXCESS": "Ha_excess"}
+        for ch in ("R", "G", "B", "L", "HA", "HA_EXCESS"):
             if ch not in subbed:
                 continue
-            mono = st(subbed[ch], blacks[ch])
+            mono = st(subbed[ch], blacks.get(ch, 0.0))
             arr = stacker.sky_parity((np.clip(np.nan_to_num(mono), 0, 1) * 255).astype(np.uint8))
             img = Image.fromarray(arr, mode="L")
             mx = color_process.CHANNEL_JPG_MAX_PX
@@ -569,7 +594,7 @@ def routine(args) -> int:
                 r_ = mx / max(img.size)
                 img = img.resize((int(img.width * r_), int(img.height * r_)),
                                  Image.LANCZOS)
-            pth = out_dir / f"{args.dso}_{args.recipe}_{tag}_{mapping[ch]}.jpg"
+            pth = out_dir / f"{args.dso}_{args.recipe}_{tag}_{names[ch]}.jpg"
             img.save(pth, quality=92, optimize=True)
             written.append(pth)
         rgb = np.dstack([st(subbed[c], blacks[c]) for c in ("R", "G", "B")])

@@ -130,3 +130,23 @@ def test_excess_is_zero_on_sky_noise():
     ex = out["HA_EXCESS"]
     assert float(np.mean(ex > 0)) < 0.05
     assert abs(float((out["R"] - ch["R"]).mean())) < 0.05
+
+
+def test_black_point_pickers_skip_the_excess_plane():
+    ch, _ = _field()
+    out, _ = cp.apply_ha_blend(ch, gain=1.0)
+    auto = cp.auto_stretch(out, white=100.0, lum="L")
+    assert "HA_EXCESS" not in auto["blacks"]
+    assert {"R", "G", "B", "L", "HA"} <= set(auto["blacks"])
+    pytest.importorskip("sep")
+    anchored = cp.sky_anchored_blacks(out, black_sigma=1.0)
+    assert "HA_EXCESS" not in anchored and "R" in anchored
+
+
+def test_n2n_render_picks_the_model_per_filter():
+    import sys
+    from pathlib import Path as _P
+    sys.path.insert(0, str(_P(__file__).resolve().parents[1] / "scripts"))
+    import n2n_lrgb_render as n
+    assert n.domain_for("Ha") == "narrowband"
+    assert all(n.domain_for(f) == "broadband" for f in ("L", "R", "G", "B"))

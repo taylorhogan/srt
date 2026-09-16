@@ -137,6 +137,10 @@ HA_CONTINUUM_MIN_PIX = 500    # fewer than this and the top slice is widened
 # sigma is read from the NEGATIVE half of the map (pure noise: emission only
 # adds on the positive side) and the excess starts this many sigma above it.
 HA_NOISE_FLOOR_SIGMA = 2.0
+# Planes _prepare derives rather than stacks. They have no sky: the excess
+# map is zero-floored, so a sky/noise model fitted to it is meaningless and
+# its "black point" is 0 by construction. The black-point pickers skip them.
+DERIVED_PLANES = frozenset({"HA_EXCESS"})
 
 # Per-channel inspection JPEGs are capped at the preview's size; full resolution
 # is what the per-channel FITS is for.
@@ -443,7 +447,8 @@ def auto_stretch(subbed: dict[str, np.ndarray], white: float,
     same values to the raw and the denoised set, exactly as it would with
     hand-chosen ones.
     """
-    diag = {c: sky_noise_model(a) for c, a in subbed.items()}
+    diag = {c: sky_noise_model(a) for c, a in subbed.items()
+            if c not in DERIVED_PLANES}
     blacks = {}
     for c, d in diag.items():
         t = (d["faint_fraction"] - AUTO_MARGIN_GATE) / (AUTO_MARGIN_FULL - AUTO_MARGIN_GATE)
@@ -614,6 +619,8 @@ def sky_anchored_blacks(subbed: dict[str, np.ndarray], black_sigma: float,
     import sep
     out = {}
     for c, arr in subbed.items():
+        if c in DERIVED_PLANES:
+            continue
         a = np.ascontiguousarray(arr.astype(np.float32))
         try:
             sig = float(sep.Background(a).globalrms)
