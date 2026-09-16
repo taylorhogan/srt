@@ -203,6 +203,29 @@ def build_report(night: str) -> str:
                 w.strftime("%H:%M:%S"), e.data.get("direction"),
                 e.data["guard_would"], e.data.get("evidence")))
 
+    # --- roof requests (Phase 2): what the actuators asked and what the
+    # conductor answered. A refusal under authority stopped a move; a
+    # would-refuse without authority is the decision-diff on the caller's
+    # own sensor read.
+    asks = [(w, e) for w, e in entries
+            if e.event in ("ROOF_OPEN_REQUESTED", "ROOF_CLOSE_REQUESTED",
+                           "CHECKS_PASSED", "MOUNT_PARK_CONFIRMED")
+            and e.source not in ("shadow",)]
+    if asks:
+        refused = [(w, e) for w, e in asks if e.kind == "rejected"
+                   or (e.kind == "note" and e.data.get("ignored_in_state"))]
+        would = [(w, e) for w, e in asks if e.kind == "transition"
+                 and e.data.get("guard_would")]
+        enforced = sum(1 for _, e in asks if e.data.get("guards") == "enforced")
+        lines.append(f"Roof requests to the conductor: {len(asks)} "
+                     f"({enforced} under authority), refused {len(refused)}, "
+                     f"would-refuse {len(would)}")
+        for w, e in refused + would:
+            lines.append("  %s  %s from %s: %s" % (
+                w.strftime("%H:%M:%S"), e.event, e.source,
+                e.guard or e.data.get("guard_would")
+                or ("no row in " + str(e.data.get("ignored_in_state")))))
+
     # --- ignored events (reality outside the model)
     ignored = [(w, e) for w, e in entries
                if e.kind == "note" and e.data.get("ignored_in_state")]

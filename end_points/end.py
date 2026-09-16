@@ -21,6 +21,7 @@ from configs import config
 from fits_processing import fitsfwhm, sky_brightness as sb
 from hardware_control import pwi4_utils, kasa_utils as ku, utl_shelly
 from cmd_processing import jobs, super_user_commands, social_server
+from iris import client as conductor
 from sentry import vision_safety
 from utils import pushover, utils
 
@@ -394,6 +395,30 @@ def _record_optics_trend(dso_dir, frames: list[dict], arcsec_per_pixel: float,
     )
 
 
+def write_fallback_marker(confirmed_closed: bool, evidence: dict, root: str | None = None) -> str:
+    """Record a close made while the conductor was unreachable.
+
+    Ingested by the conductor at its next start: a confirmed close is a
+    loud note, an unconfirmed one is a contradiction -> FAULT_ROOF_UNKNOWN.
+    Written under local/ beside the journal. Never raises past logging.
+    """
+    import json
+    from iris.conductor.shadow import FALLBACK_MARKER
+    root = root or os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    path = os.path.join(root, str(FALLBACK_MARKER))
+    info = {"ts": datetime.now().astimezone().isoformat(timespec="seconds"),
+            "who": "end.py", "confirmed_closed": bool(confirmed_closed),
+            "evidence": {k: v for k, v in (evidence or {}).items() if k != "ts"},
+            "why": "conductor unreachable at the end-of-night close"}
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(info, fh, indent=2)
+    except OSError:
+        logging.getLogger(__name__).exception("could not write the roof fallback marker")
+    return path
+
+
 def do_main():
     """The end-of-night shutdown. Returns True iff the roof was CONFIRMED closed.
 
@@ -410,6 +435,11 @@ def do_main():
 
     logger.info('Begin End Sequence')
     roof_closed = False
+    # Phase 2: the conductor decides the roof. Deciding to END is never
+    # guarded (the machine walks to PARKING); the close itself is asked for
+    # below, after the park is sensed. Unreachable here means unreachable for
+    # the close too, and the close then takes the last-resort path.
+    conductor.report("NIGHT_END_REQUESTED", "end.py")
 
     # Tag this run's posts (roof-close spectrogram, imaging summary, …) with
     # the imaging job that started the night, so they land on that job's card
@@ -470,6 +500,42 @@ def do_main():
                 pushover.push_message("Investigating if scope is parked", inside_view)
                 if parked:
                     logger.info("step 3")
+                    # Ask the conductor for the close, with what was just
+                    # sensed. Three answers: accepted (close); refused under
+                    # authority (roof stays open, loudly -- the guard saw
+                    # something this sequence did not); unreachable (the
+                    # LAST-RESORT FALLBACK: the close must happen even if
+                    # the brain died, so it proceeds on the vision check
+                    # alone and leaves a marker the conductor ingests at
+                    # its next start).
+                    evidence = conductor.evidence_from_vision(parked, closed, is_open)
+                    allowed, reason, reply = conductor.request_roof_move(
+                        "MOUNT_PARK_CONFIRMED", "end.py", evidence)
+                    if reply is not None and reply.get("kind") == "ignored":
+                        # The night machine is not in PARKING: a night it lost
+                        # track of, or a stop! that put it in a hold. Closing
+                        # is the safe direction, so ask for it as a plain
+                        # close, which the resting states and the holds answer
+                        # on Invariant A's guards alone.
+                        allowed, reason, reply = conductor.request_roof_move(
+                            "ROOF_CLOSE_REQUESTED", "end.py", evidence,
+                            {"why": "night machine not in PARKING (%s)" % reply.get("state")})
+                    fallback = reply is None
+                    if not allowed:
+                        msg = ("End sequence: conductor REFUSED the roof close — %s. "
+                               "Roof stays open; check the observatory" % reason)
+                        logger.error(msg)
+                        social_server.post_social_message(msg)
+                        pushover.push_message(msg, inside_view, priority=1)
+                        raise RuntimeError(msg)
+                    if fallback:
+                        logger.error("end: conductor unreachable — closing on the "
+                                     "vision check alone (last-resort fallback)")
+                        social_server.post_social_message(
+                            "End sequence: conductor unreachable — closing on the "
+                            "vision check alone (fallback)")
+                    elif reason:
+                        social_server.post_social_message("ℹ️ " + reason)
                     social_server.post_social_message("Vision Safety says Scope is parked, closing roof")
                     super_user_commands.announce_roof_movement("The roof will be closing in one minute")
                     super_user_commands.toggle_roof(dev_map, capture_direction="close")
@@ -483,6 +549,10 @@ def do_main():
                     closed = super_user_commands.confirm_roof_state(
                         "closed", imaging_run=True)
                     roof_closed = bool(closed)
+                    conductor.report("ROOF_CLOSE_CONFIRMED" if roof_closed else "ROOF_TIMEOUT",
+                                     "end.py", {"direction": "close", "confirmed": roof_closed})
+                    if fallback:
+                        write_fallback_marker(roof_closed, evidence)
                     if closed:
                         social_server.post_social_message("Vision Safety says roof is closed")
                     else:

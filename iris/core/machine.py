@@ -62,6 +62,14 @@ STATES = (
     "SAFE_HOLD",         # operator cleared safety; only an operator exits
     "FAULT_ROOF_UNKNOWN",  # roof position untrusted; only OPERATOR_RESOLVE exits
     "ESTOP",             # emergency stop ran; only OPERATOR_RESOLVE exits
+    # --- roof moved by hand, outside a night (Phase 2). roof!! open/close and
+    # scripts/cycle_roof.py ask the conductor for the roof; these are where
+    # the machine holds that motion so it is guarded, journaled and timed out
+    # exactly as the night's own roof moves are, without pretending a night
+    # has begun. Not stages of a night: excluded from NIGHT_PATH.
+    "MANUAL_OPENING",    # relay fired on an operator's request, awaiting open
+    "MANUAL_OPEN",       # roof open by hand; the night machine is otherwise idle
+    "MANUAL_CLOSING",    # relay fired on an operator's request, awaiting closed
 )
 
 # ---------------------------------------------------------------- events
@@ -91,6 +99,9 @@ EVENTS = (
     "WEATHER_BAD",
     # operator
     "SAFETY_CLEARED", "SAFETY_ARMED", "ESTOP_REQUESTED", "OPERATOR_RESOLVE",
+    # operator roof requests outside a night (roof!!, cycle_roof). The night's
+    # own roof moves are CHECKS_PASSED (open) and MOUNT_PARK_CONFIRMED (close).
+    "ROOF_OPEN_REQUESTED", "ROOF_CLOSE_REQUESTED",
 )
 
 # ---------------------------------------------------------------- table
@@ -110,13 +121,26 @@ class T:
 # of SAFE_HOLD would reintroduce the bug SAFE_HOLD exists to kill.
 HOLD_STATES = frozenset({"SAFE_HOLD", "FAULT_ROOF_UNKNOWN", "ESTOP"})
 
+# Roof moved by an operator outside a night. Roof motion is guarded and timed
+# out here exactly as in the night's own OPENING_ROOF / CLOSING_ROOF.
+MANUAL_STATES = frozenset({"MANUAL_OPENING", "MANUAL_OPEN", "MANUAL_CLOSING"})
+
+# Every state in which the relay has fired and the roof has not yet been
+# confirmed at rest. Entry into any of these is Invariant A's territory, and
+# the conductor's watchdog turns a stay here that outlives the confirm loop
+# into ROOF_TIMEOUT.
+ROOF_MOVING_STATES = frozenset({"OPENING_ROOF", "CLOSING_ROOF",
+                                "MANUAL_OPENING", "MANUAL_CLOSING"})
+
 # The night's progression, in order, for consoles that show "where the night
 # stands" (the website's Live tab). DERIVED from STATES' declaration order --
 # which is the night's order, and is asserted to be by tests -- so a console
 # rendering this list can never show a stage the machine does not have, and a
-# state added to the table appears without touching any console. The holds are
-# excluded: they are not stages of a night, they are where a night stops.
-NIGHT_PATH = tuple(s for s in STATES if s not in HOLD_STATES)
+# state added to the table appears without touching any console. The holds
+# and the manual roof states are excluded: they are not stages of a night,
+# they are where a night stops or where the roof moves without one.
+NIGHT_PATH = tuple(s for s in STATES
+                   if s not in HOLD_STATES and s not in MANUAL_STATES)
 
 TRANSITIONS = (
     # --- the day
@@ -145,6 +169,16 @@ TRANSITIONS = (
     # unplanned runs and is asserted by tests/test_shadow.py.
     T("ARMED",        "CHECKS_PASSED",       "OPENING_ROOF",
       guards=(G.safety_armed, G.mount_parked, G.roof_state_known, G.weather_ok)),
+    # An UNPLANNED manual run: image!! on a day the noon check planned
+    # nothing (or was never run). With the conductor deciding the roof
+    # (Phase 2) a missing row is a refusal, and refusing every operator night
+    # that the planner did not foresee is a lost night, not safety. The
+    # safety case is identical; only the weather guard is absent, because an
+    # operator starting a run IS the weather verdict for that run -- the
+    # planner had none to offer. The conductor sizes the slot count from the
+    # sequence on disk when this row fires (see shadow.offer).
+    T("IDLE_DAY",     "CHECKS_PASSED",       "OPENING_ROOF",
+      guards=(G.safety_armed, G.mount_parked, G.roof_state_known)),
     T("PRE_FLIGHT",   "CHECKS_FAILED",       "IDLE_DAY"),
     T("PRE_FLIGHT",   "WEATHER_BAD",         "IDLE_DAY"),
     T("OPENING_ROOF", "ROOF_OPEN_CONFIRMED", "PRELUDE"),
@@ -212,6 +246,41 @@ TRANSITIONS = (
     T("SLOT_SETUP",   "VISION_CONTRADICTION", "FAULT_ROOF_UNKNOWN"),
     T("SLOT_IMAGING", "VISION_CONTRADICTION", "FAULT_ROOF_UNKNOWN"),
     T("FLATS",        "VISION_CONTRADICTION", "FAULT_ROOF_UNKNOWN"),
+
+    # --- the roof moved by hand, outside a night: roof!! open/close and
+    # scripts/cycle_roof.py. Same guards as the night's own roof moves
+    # (Invariant A on every entry into motion); a request from any other
+    # state -- mid-night, or from a hold -- has no row and is refused.
+    # Closing is allowed from the resting states too, not only from
+    # MANUAL_OPEN: a roof found open where the machine believed it closed
+    # (a restart that lost MANUAL_OPEN, a roof opened by hand) must always be
+    # closeable, and closing is the safe direction.
+    T("IDLE_DAY",     "ROOF_OPEN_REQUESTED", "MANUAL_OPENING",
+      guards=(G.safety_armed, G.mount_parked, G.roof_state_known)),
+    T("ARMED",        "ROOF_OPEN_REQUESTED", "MANUAL_OPENING",
+      guards=(G.safety_armed, G.mount_parked, G.roof_state_known)),
+    T("NIGHT_DONE",   "ROOF_OPEN_REQUESTED", "MANUAL_OPENING",
+      guards=(G.safety_armed, G.mount_parked, G.roof_state_known)),
+    T("MANUAL_OPENING", "ROOF_OPEN_CONFIRMED", "MANUAL_OPEN"),
+    T("MANUAL_OPENING", "ROOF_STALL",        "FAULT_ROOF_UNKNOWN"),
+    T("MANUAL_OPENING", "ROOF_TIMEOUT",      "FAULT_ROOF_UNKNOWN"),
+    T("MANUAL_OPEN",  "ROOF_CLOSE_REQUESTED", "MANUAL_CLOSING",
+      guards=(G.mount_parked, G.roof_state_known)),
+    T("MANUAL_OPEN",  "VISION_CONTRADICTION", "FAULT_ROOF_UNKNOWN"),
+    T("IDLE_DAY",     "ROOF_CLOSE_REQUESTED", "MANUAL_CLOSING",
+      guards=(G.mount_parked, G.roof_state_known)),
+    T("ARMED",        "ROOF_CLOSE_REQUESTED", "MANUAL_CLOSING",
+      guards=(G.mount_parked, G.roof_state_known)),
+    T("NIGHT_DONE",   "ROOF_CLOSE_REQUESTED", "MANUAL_CLOSING",
+      guards=(G.mount_parked, G.roof_state_known)),
+    # Closed again: back to the day the roof was opened from. A standing
+    # night plan (slots) means ARMED, else IDLE_DAY.
+    T("MANUAL_CLOSING", "ROOF_CLOSE_CONFIRMED", "ARMED",
+      guards=(G.slots_remaining,)),
+    T("MANUAL_CLOSING", "ROOF_CLOSE_CONFIRMED", "IDLE_DAY",
+      guards=(G.plan_exhausted,)),
+    T("MANUAL_CLOSING", "ROOF_STALL",        "FAULT_ROOF_UNKNOWN"),
+    T("MANUAL_CLOSING", "ROOF_TIMEOUT",      "FAULT_ROOF_UNKNOWN"),
 
     # --- operator: the holds
     T("*",            "SAFETY_CLEARED",      "SAFE_HOLD"),

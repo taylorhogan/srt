@@ -113,7 +113,11 @@ HELP: dict[str, dict] = {
                    "open/close are also vision-safety-checked (scope must be parked). "
                    "The relay only toggles, so direction follows current position. "
                    "Append 'force' to skip only the vision check (DANGEROUS). "
-                   "status is read-only and needs no safe!.",
+                   "status is read-only and needs no safe!. Every move also asks the "
+                   "conductor (journaled with the guards' verdict; binding when "
+                   "conductor.roof_authority is on, advisory otherwise). A forced "
+                   "move is journaled as an operator assertion and is checked once "
+                   "afterwards: unconfirmed means FAULT_ROOF_UNKNOWN until resolve!.",
         "usage": [
             "roof!! status",
             "roof!! open",
@@ -134,6 +138,16 @@ HELP: dict[str, dict] = {
         "category": "super",
         "summary": "Mark conditions as safe for imaging (writes USER SAFE to safety.txt).",
         "usage": ["safe!"],
+    },
+    "resolve!": {
+        "category": "super",
+        "summary": ("Release the conductor from FAULT_ROOF_UNKNOWN or ESTOP after you "
+                    "have LOOKED at the roof. Those holds are entered by a roof stall, "
+                    "a move that never confirmed, a restart mid-move or a contradiction "
+                    "between roof sensors, and nothing automatic can leave them; while "
+                    "held, every roof request is refused (when the conductor has roof "
+                    "authority). Echoes the state change."),
+        "usage": ["resolve!"],
     },
     "announce": {
         "category": "super",

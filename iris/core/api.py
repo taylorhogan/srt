@@ -15,6 +15,7 @@ machine decides. Refusals are journaled with the guard's reason.
 import asyncio
 import json
 from dataclasses import asdict
+from typing import Optional
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
@@ -26,6 +27,9 @@ class EventIn(BaseModel):
     source: str = "unknown"
     kind: str = "event"           # "event" drives the machine; "note" annotates
     data: dict = {}
+    # A live sensor read posted with a roof request (iris/client.py
+    # evidence_from_vision): parked_vision / parked_kasa / roof as Tri names.
+    evidence: Optional[dict] = None
 
 
 def _entry_dict(e):
@@ -43,10 +47,14 @@ def build_app(conductor, journal, registry_fn):
     @app.get("/v1/state")
     def state():
         ev = conductor._current_evidence()
+        authority = bool(getattr(conductor, "roof_authority", False))
         return {
             "state": conductor.state,
             "seq": journal.head(),
-            "shadow": True,        # dropped when authority arrives (Phase 3)
+            # True until the conductor owns everything (Phase 3); the roof
+            # is the first thing it decides (Phase 2), reported separately.
+            "shadow": not authority,
+            "authority": {"roof": authority},
             "context": {
                 "slots_remaining": conductor.slots,
                 "safety": "armed" if ev.safety_armed else "cleared",
@@ -63,14 +71,13 @@ def build_app(conductor, journal, registry_fn):
             e = journal.append("note", body.event, body.source, data=body.data)
             return {"accepted": True, "seq": e.seq, "state": conductor.state}
         before = conductor.state
-        conductor.offer(body.event, body.source, body.data)
-        after = conductor.state
-        # In shadow mode a rejected event is visible as an unchanged state
-        # with a journaled rejection; report faithfully.
-        last = journal.entries_since(journal.head() - 1)
-        rejected = bool(last and last[-1].kind == "rejected")
-        return {"accepted": not rejected, "seq": journal.head(),
-                "state": after, "was": before}
+        v = conductor.offer(body.event, body.source, body.data, evidence=body.evidence)
+        # accepted == the machine moved. A guard refusal and a missing row are
+        # both refusals to a caller asking for the roof; the reason says which.
+        return {"accepted": v.accepted, "kind": v.kind,
+                "guard": v.guard, "would_refuse": v.would_refuse,
+                "seq": v.seq or journal.head(), "state": v.state, "was": before,
+                "authority": bool(getattr(conductor, "roof_authority", False))}
 
     @app.get("/v1/journal")
     def journal_page(since: int = 0, limit: int = 500):

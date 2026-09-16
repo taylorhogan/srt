@@ -135,17 +135,21 @@ def test_safety_edges_are_operator_events_and_hold(tmp_path):
     assert ("transition", "SAFETY_ARMED") in kinds
 
 
-def test_manual_run_outside_the_night_is_journaled_not_lost(tmp_path):
-    """A manual image!! run starts with the machine in IDLE_DAY. The events
-    must not vanish: they land as notes with ignored_in_state, which is the
-    dataset Phase 3 uses to model manual runs."""
+def test_manual_run_outside_the_night_is_tracked_as_an_unplanned_night(tmp_path):
+    """image!! on a day with no plan. Until 2026-09-16 the machine had no row
+    for CHECKS_PASSED from IDLE_DAY and the whole night was journaled as
+    ignored notes; with the conductor deciding the roof that would have been
+    a refusal. Now it opens from IDLE_DAY, tagged unplanned, with one slot."""
     root = _mkroot(tmp_path)
     sh = _shadow(root)
     _imaging(root, "ACTIVE"); sh.poll()
     _imaging(root, "IN_PRELUDE"); sh.poll()
-    notes = [e for e in sh.journal.replay() if e.kind == "note"]
-    assert any(e.event == "CHECKS_PASSED" and
-               e.data.get("ignored_in_state") == "IDLE_DAY" for e in notes)
+    assert _transitions(sh) == [
+        ("CHECKS_PASSED", "IDLE_DAY", "OPENING_ROOF"),
+        ("ROOF_OPEN_CONFIRMED", "OPENING_ROOF", "PRELUDE")]
+    first = next(e for e in sh.journal.replay() if e.kind == "transition")
+    assert first.data.get("unplanned") is True
+    assert sh.slots >= 1
 
 
 def test_restart_mid_night_resumes_from_journal(tmp_path):

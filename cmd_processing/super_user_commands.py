@@ -489,6 +489,54 @@ def _kasa_preflight_reason(dev_map: dict | None = None) -> str | None:
             % ", ".join(missing))
 
 
+# --------------------------------------------------------------------------- #
+# Phase 2: the conductor decides the roof (iris/client.py). Every relay fire
+# below asks first and reports after. With conductor.roof_authority OFF the
+# verdict is advisory and posted as such; ON, a refusal stops the move.
+# --------------------------------------------------------------------------- #
+
+def _ask_conductor(event: str, direction: str, evidence: dict,
+                   source: str = "operator", data: dict | None = None) -> bool:
+    """Post a roof request; True when the move may proceed. Refusals and
+    advisories go to the chat, so the verdict is visible where the command
+    was typed and not only in the journal."""
+    from iris import client as conductor
+    allowed, reason, reply = conductor.request_roof_move(event, source, evidence, data)
+    if not allowed:
+        msg = f"Roof will not {direction}: conductor refused — {reason}"
+        _logger.warning(msg)
+        social_server.post_social_message(msg)
+        return False
+    if reason:
+        social_server.post_social_message(
+            f"ℹ️ {reason} (roof {direction} proceeding: conductor not yet authoritative)")
+    return True
+
+
+def _report_roof_outcome(direction: str, confirmed: bool, source: str = "operator",
+                         evidence: dict | None = None) -> None:
+    """Tell the conductor how the move ended. A confirmed move completes the
+    machine's roof step; an unconfirmed one is ROOF_TIMEOUT, which is
+    FAULT_ROOF_UNKNOWN until an operator has looked and issued resolve!."""
+    from iris import client as conductor
+    if confirmed:
+        event = "ROOF_OPEN_CONFIRMED" if direction == "open" else "ROOF_CLOSE_CONFIRMED"
+    else:
+        event = "ROOF_TIMEOUT"
+    conductor.report(event, source, {"direction": direction, "confirmed": bool(confirmed)},
+                     evidence)
+
+
+def _roof_evidence(parked: bool, closed: bool, is_open: bool) -> dict:
+    from iris import client as conductor
+    return conductor.evidence_from_vision(parked, closed, is_open)
+
+
+def _asserted_evidence(direction: str) -> dict:
+    from iris import client as conductor
+    return conductor.asserted_evidence(direction)
+
+
 def _roof_move_blocked_reason(imaging_run: bool = False, dev_map: dict | None = None) -> str | None:
     """Return why the roof must not MOVE right now, or None if movement may proceed.
 
@@ -647,9 +695,16 @@ def confirm_roof_state(target: str, imaging_run: bool = False,
     return False
 
 
-def open_roof(force: bool = False, imaging_run: bool = False) -> bool:
+def open_roof(force: bool = False, imaging_run: bool = False,
+              source: str = "operator") -> bool:
     """Open the observatory roof with full gating — the single open path for
     both ``roof!! open`` and the imaging run.
+
+    Since 2026-09-16 (Phase 2) the conductor is asked between the vision
+    check and the relay: the imaging run posts CHECKS_PASSED (the night's
+    own roof open), a roof!! open posts ROOF_OPEN_REQUESTED, each with the
+    evidence just read. *source* names who is asking ("operator" or
+    "scheduler"); an operator's run is its own weather verdict.
 
     ABSOLUTE RULE: the roof must never move unless the scope is confirmed
     parked — a tracking/slewing scope can intersect the roof's travel path.
@@ -704,6 +759,16 @@ def open_roof(force: bool = False, imaging_run: bool = False) -> bool:
                 )
                 return False
             social_server.post_social_message("Vision Safety says roof is closed, opening roof")
+            evidence = _roof_evidence(parked, closed, is_open)
+            data = None
+        else:
+            # force: the operator asserts the scope is parked and the roof
+            # shut. Journaled as an assertion, never as a sensor read.
+            evidence = _asserted_evidence("open")
+            data = {"operator_override": True}
+        if not _ask_conductor("CHECKS_PASSED" if imaging_run else "ROOF_OPEN_REQUESTED",
+                              "open", evidence, source, data):
+            return False
         # Last safe abort point: past here the relay fires and the move cannot
         # be stopped (toggle_roof owns the travel window uninterrupted).
         _roof_cancel_point("Roof open cancelled — the roof was not moved", imaging_run)
@@ -712,6 +777,14 @@ def open_roof(force: bool = False, imaging_run: bool = False) -> bool:
         toggle_roof(dev_map, capture_direction="open")
         if force:
             social_server.post_social_message("Roof open relay fired (forced, unverified)")
+            # One look after a forced move: the conductor still needs to know
+            # whether the roof is where the operator said it would be, and an
+            # unconfirmed forced move is FAULT_ROOF_UNKNOWN until resolve!.
+            _roof_lock.release()
+            holding = False
+            time.sleep(30)
+            p2, c2, o2, _ = get_status_with_lights()
+            _report_roof_outcome("open", bool(o2), source, _roof_evidence(p2, c2, o2))
             return True
         # The roof has stopped moving; confirmation is advisory from here, so
         # the lock goes back NOW. Holding it across the confirm loop meant an
@@ -721,15 +794,21 @@ def open_roof(force: bool = False, imaging_run: bool = False) -> bool:
         # cancelled. A roof that cannot be VERIFIED must still be CLOSEABLE.
         _roof_lock.release()
         holding = False
-        return confirm_roof_state("open", imaging_run, my_seq)
+        ok = confirm_roof_state("open", imaging_run, my_seq)
+        _report_roof_outcome("open", ok, source)
+        return ok
     finally:
         if holding:
             _roof_lock.release()
 
 
-def close_roof(force: bool = False, imaging_run: bool = False) -> bool:
+def close_roof(force: bool = False, imaging_run: bool = False,
+               source: str = "operator") -> bool:
     """Close the observatory roof with full gating — the single close path for
     ``roof!! close`` (the end-of-night close in ``end.py`` is separate).
+
+    Since 2026-09-16 (Phase 2) the conductor is asked (ROOF_CLOSE_REQUESTED
+    with the evidence just read) between the vision check and the relay.
 
     ABSOLUTE RULE: the roof must never move unless the scope is confirmed
     parked — a tracking/slewing scope can intersect the roof's travel path.
@@ -774,6 +853,13 @@ def close_roof(force: bool = False, imaging_run: bool = False) -> bool:
                 social_server.post_social_message("Vision Safety says roof is already closed")
                 return True
             social_server.post_social_message("Vision Safety says scope is parked, closing roof")
+            evidence = _roof_evidence(parked, closed, is_open)
+            data = None
+        else:
+            evidence = _asserted_evidence("close")
+            data = {"operator_override": True}
+        if not _ask_conductor("ROOF_CLOSE_REQUESTED", "close", evidence, source, data):
+            return False
         # Last safe abort point: past here the relay fires and the move cannot
         # be stopped (toggle_roof owns the travel window uninterrupted).
         _roof_cancel_point("Roof close cancelled — the roof was not moved", imaging_run)
@@ -782,6 +868,11 @@ def close_roof(force: bool = False, imaging_run: bool = False) -> bool:
         toggle_roof(dev_map, capture_direction="close")
         if force:
             social_server.post_social_message("Roof close relay fired (forced, unverified)")
+            _roof_lock.release()
+            holding = False
+            time.sleep(30)
+            p2, c2, o2, _ = get_status_with_lights()
+            _report_roof_outcome("close", bool(c2), source, _roof_evidence(p2, c2, o2))
             return True
         # The roof has stopped moving; confirmation is advisory from here, so
         # the lock goes back NOW. Holding it across the confirm loop meant an
@@ -791,7 +882,9 @@ def close_roof(force: bool = False, imaging_run: bool = False) -> bool:
         # cancelled. A roof that cannot be VERIFIED must still be CLOSEABLE.
         _roof_lock.release()
         holding = False
-        return confirm_roof_state("closed", imaging_run, my_seq)
+        ok = confirm_roof_state("closed", imaging_run, my_seq)
+        _report_roof_outcome("close", ok, source)
+        return ok
     finally:
         if holding:
             _roof_lock.release()
@@ -926,6 +1019,20 @@ def _toggle_roof_cmd(force: bool) -> None:
         cur = "closed" if closed else ("open" if is_open else "ambiguous")
         going = f"{direction}ing" if direction else "moving (direction unknown)"
         social_server.post_social_message(f"Scope parked; roof currently {cur} — {going}")
+        evidence = _roof_evidence(parked, closed, is_open)
+        data = None
+    else:
+        # A forced toggle asserts nothing about the roof's position, so the
+        # conductor sees roof UNKNOWN: with authority that is a refusal (a
+        # toggle from an unknown position is a coin flip -- use roof!! open
+        # or close force, which assert a direction).
+        evidence = {"parked_vision": "CONFIRMED", "parked_kasa": "UNKNOWN",
+                    "roof": "UNKNOWN", "ts": time.time(), "asserted": True}
+        data = {"operator_override": True}
+    event = "ROOF_CLOSE_REQUESTED" if direction == "close" else "ROOF_OPEN_REQUESTED"
+    if not _ask_conductor(event, direction or "toggle", evidence, "operator",
+                          {**(data or {}), "direction": direction or "unknown"}):
+        return
     # Last safe abort point: past here the relay fires and the move cannot be
     # stopped (toggle_roof owns the travel window uninterrupted).
     _roof_cancel_point("Roof toggle cancelled — the roof was not moved")
@@ -933,6 +1040,10 @@ def _toggle_roof_cmd(force: bool) -> None:
     toggle_roof(dev_map, capture_direction=direction)
     parked, closed, is_open, _ = get_status_with_lights()
     new_state = "closed" if closed else ("open" if is_open else "ambiguous")
+    if direction == "open":
+        _report_roof_outcome("open", bool(is_open), "operator", _roof_evidence(parked, closed, is_open))
+    elif direction == "close":
+        _report_roof_outcome("close", bool(closed), "operator", _roof_evidence(parked, closed, is_open))
     # Simple success/failure line: did the roof reach the intended direction?
     # When direction is unknown (forced toggle, or an ambiguous pre-state), we
     # can't claim success against an intent, so just report the resulting state.
@@ -1226,6 +1337,32 @@ def _emergency_stop_body() -> None:
         social_server.post_social_message(msg)
         pushover.push_message(msg, inside_view)
         set_imaging_state(ImagingState.NONE)
+
+
+def resolve_cmd(words: list[str], account: str) -> None:
+    """Release the conductor from FAULT_ROOF_UNKNOWN or ESTOP. Command: ``resolve!``
+
+    The holds are left ONLY by this operator event (iris/core/machine.py):
+    a roof stall, a move that never confirmed, a restart mid-move or a
+    contradiction between roof sensors parks the machine in a hold, and
+    nothing automatic can re-arm it. Issue this after LOOKING at the roof --
+    it is a statement that the roof is where the sensors now say it is.
+    """
+    from iris import client as conductor
+    before = conductor.state()
+    if before is None:
+        social_server.post_social_message("resolve!: conductor unreachable — nothing to resolve")
+        return
+    reply = conductor.post_event("OPERATOR_RESOLVE", "operator", {"account": account})
+    if reply is None:
+        social_server.post_social_message("resolve!: conductor unreachable — nothing to resolve")
+        return
+    if reply.get("accepted"):
+        social_server.post_social_message(
+            f"resolve!: conductor {reply.get('was')} -> {reply.get('state')} (by {account})")
+    else:
+        social_server.post_social_message(
+            f"resolve!: nothing to resolve — conductor is in {before.get('state')}")
 
 
 def safe_cmd(words: list[str], account: str) -> None:
@@ -3238,6 +3375,7 @@ def get_super_user_commands() -> dict[str, Callable]:
         "roof!!": roof_cmd,
         "stop!": unsafe_cmd,
         "safe!": safe_cmd,
+        "resolve!": resolve_cmd,
         "announce": announce_cmd,
         "sequence": sequence_cmd,
         "mode": mode_cmd,
@@ -3503,7 +3641,11 @@ def doit_cmd(words: list[str], account: str) -> None:
     # takes the roof lock, verifies parked+closed via vision, announces via
     # Sonos, then opens and confirms. imaging_run=True waives only its
     # imaging-in-progress gate, since image_cmd already claimed the run.
-    ok = open_roof(imaging_run=True)
+    # "iris" is the scheduler's account (scheduler_server -> image_cmd); any
+    # other account is a person at the web chat, whose run is its own
+    # weather verdict at the conductor.
+    ok = open_roof(imaging_run=True,
+                   source="scheduler" if account == "iris" else "operator")
     print("ok=", str(ok))
     if not ok:
         # Vision safety confirmed the roof did not open successfully.

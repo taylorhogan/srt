@@ -501,6 +501,15 @@ class PublicConfig():
         "conductor": {
             "shadow_enabled": True,
             "port": 8096,
+            "url": "http://127.0.0.1:8096",
+            # Phase 2: when True the conductor's verdict on every roof move
+            # is binding (open_roof / close_roof / roof!! toggle / end.py /
+            # cycle_roof ask first and refuse on a refusal). False = the
+            # same requests are posted and journaled, the verdict is
+            # advisory ("conductor would have refused: ...") and nothing
+            # behavioural changes. Flip only after a supervised daytime
+            # cycle_roof and a deliberate refusal have been seen.
+            "roof_authority": False,
         },
 
         "transit": {

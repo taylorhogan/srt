@@ -14,10 +14,18 @@ the code is wrong or this is — fix one.*
 | **iris-publish** | Windows Scheduled Tasks (5-min publishers, morning jobs) | `/srv/iris-live` content via the one scp transport; site staging; (from Phase 4) automatic gallery publication |
 | **iris-n2n** | cron on the Spark (05:00/06:00 rsync, 07:00 render) | Training/inference, morning stack+denoise, render reporting |
 
-**Migration status:** the conductor currently runs in **shadow mode** — it
-watches the legacy state files and iris.log, synthesizes events, and builds
-the journal; it commands nothing. Authority transfers per the plan's phases,
-each gated by clean shadow nights.
+**Migration status:** Phase 1 (shadow) is complete and Phase 2 (roof) is
+**built, shipped dark** (2026-09-16). The conductor watches the legacy state
+files and iris.log, synthesizes events and builds the journal, and every
+roof-moving site (`open_roof` / `close_roof` / `roof!! toggle`, `end.py`'s
+close, `scripts/cycle_roof.py`) now ASKS it first through `iris/client.py`
+with the evidence it just sensed, and reports the outcome after. With
+`conductor.roof_authority` off the verdict is advisory and journaled; on,
+a refusal stops the move. The relay itself still fires from the legacy
+code — the conductor decides, the actuators act. `end.py` keeps a
+last-resort close for an unreachable conductor and leaves a marker the
+conductor ingests at its next start. `FAULT_ROOF_UNKNOWN` is real and
+persists across restarts; `resolve!` is the only way out.
 
 ## The machines
 

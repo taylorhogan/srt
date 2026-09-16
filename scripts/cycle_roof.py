@@ -12,6 +12,11 @@ match on the indoor camera) confirms the scope is parked, unless you pass
 --force. The visual check is used rather than pwi4_utils.get_is_parked()
 because the latter needs the mount powered and connected; the camera does not.
 
+Since 2026-09-16 (Phase 2) it also ASKS THE CONDUCTOR before firing, with the
+evidence it just read, and reports the outcome after the confirm loop -- so a
+supervised daytime cycle exercises exactly the path a night's open and close
+take: request -> guards -> relay -> confirm -> journal. Print the verdict.
+
     python scripts/cycle_roof.py                  # parked-checked toggle + capture
     python scripts/cycle_roof.py --direction open # label the captured signature
     python scripts/cycle_roof.py --force          # skip the parked check (DANGEROUS)
@@ -59,11 +64,46 @@ def main() -> None:
         roof_state = "closed" if closed else ("open" if is_open else "unknown")
         print(f"Vision Safety: scope parked; roof currently {roof_state}.")
 
+    # --- Ask the conductor (Phase 2). Direction is what the roof is about to
+    # do, sensed from its current position; the --direction flag only labels
+    # the banked signature and does not override the sense.
+    from iris import client as conductor
+    if args.force:
+        direction = args.direction
+        evidence = (conductor.asserted_evidence(direction) if direction else
+                    {"parked_vision": "CONFIRMED", "parked_kasa": "UNKNOWN",
+                     "roof": "UNKNOWN", "asserted": True})
+        data = {"operator_override": True}
+    else:
+        direction = "open" if closed else ("close" if is_open else None)
+        evidence = conductor.evidence_from_vision(parked, closed, is_open)
+        data = None
+    event = "ROOF_CLOSE_REQUESTED" if direction == "close" else "ROOF_OPEN_REQUESTED"
+    allowed, reason, reply = conductor.request_roof_move(
+        event, "cycle_roof", evidence, {**(data or {}), "direction": direction or "unknown"})
+    print(f"Conductor: {'unreachable' if reply is None else reply.get('state')}; "
+          f"{event} -> {'ALLOWED' if allowed else 'REFUSED'}"
+          + (f" ({reason})" if reason else ""))
+    if not allowed:
+        sys.exit(2)
+
     dev_map = asyncio.run(ku.make_discovery_map())
 
     print(f"Toggling roof (motor on -> relay -> ~45s travel -> motor off), "
           f"capturing current signature [{args.direction or 'unknown'}]...")
-    suc.toggle_roof(dev_map, capture_direction=args.direction)
+    suc.toggle_roof(dev_map, capture_direction=args.direction or direction)
+
+    # --- Confirm as a night would, and tell the conductor.
+    if direction:
+        target = "open" if direction == "open" else "closed"
+        print(f"Confirming the roof is {target} (30 s, then up to 5 checks)...")
+        ok = suc.confirm_roof_state(target, imaging_run=True)
+        conductor.report("ROOF_OPEN_CONFIRMED" if (ok and direction == "open") else
+                         "ROOF_CLOSE_CONFIRMED" if ok else "ROOF_TIMEOUT",
+                         "cycle_roof", {"direction": direction, "confirmed": bool(ok)})
+        st = conductor.state() or {}
+        print(f"Roof {target}: {'CONFIRMED' if ok else 'NOT confirmed'}; "
+              f"conductor now {st.get('state', 'unreachable')}")
 
     # --- Report the signature just banked ------------------------------------
     sig = _newest_signature(args.direction)

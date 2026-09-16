@@ -10,6 +10,7 @@ stateDiagram-v2
     ARMED --> IDLE_DAY: WEATHER_BAD
     PRE_FLIGHT --> OPENING_ROOF: CHECKS_PASSED / safety_armed & mount_parked & roof_state_known & weather_ok
     ARMED --> OPENING_ROOF: CHECKS_PASSED / safety_armed & mount_parked & roof_state_known & weather_ok
+    IDLE_DAY --> OPENING_ROOF: CHECKS_PASSED / safety_armed & mount_parked & roof_state_known
     PRE_FLIGHT --> IDLE_DAY: CHECKS_FAILED
     PRE_FLIGHT --> IDLE_DAY: WEATHER_BAD
     OPENING_ROOF --> PRELUDE: ROOF_OPEN_CONFIRMED
@@ -46,6 +47,21 @@ stateDiagram-v2
     SLOT_SETUP --> FAULT_ROOF_UNKNOWN: VISION_CONTRADICTION
     SLOT_IMAGING --> FAULT_ROOF_UNKNOWN: VISION_CONTRADICTION
     FLATS --> FAULT_ROOF_UNKNOWN: VISION_CONTRADICTION
+    IDLE_DAY --> MANUAL_OPENING: ROOF_OPEN_REQUESTED / safety_armed & mount_parked & roof_state_known
+    ARMED --> MANUAL_OPENING: ROOF_OPEN_REQUESTED / safety_armed & mount_parked & roof_state_known
+    NIGHT_DONE --> MANUAL_OPENING: ROOF_OPEN_REQUESTED / safety_armed & mount_parked & roof_state_known
+    MANUAL_OPENING --> MANUAL_OPEN: ROOF_OPEN_CONFIRMED
+    MANUAL_OPENING --> FAULT_ROOF_UNKNOWN: ROOF_STALL
+    MANUAL_OPENING --> FAULT_ROOF_UNKNOWN: ROOF_TIMEOUT
+    MANUAL_OPEN --> MANUAL_CLOSING: ROOF_CLOSE_REQUESTED / mount_parked & roof_state_known
+    MANUAL_OPEN --> FAULT_ROOF_UNKNOWN: VISION_CONTRADICTION
+    IDLE_DAY --> MANUAL_CLOSING: ROOF_CLOSE_REQUESTED / mount_parked & roof_state_known
+    ARMED --> MANUAL_CLOSING: ROOF_CLOSE_REQUESTED / mount_parked & roof_state_known
+    NIGHT_DONE --> MANUAL_CLOSING: ROOF_CLOSE_REQUESTED / mount_parked & roof_state_known
+    MANUAL_CLOSING --> ARMED: ROOF_CLOSE_CONFIRMED / slots_remaining
+    MANUAL_CLOSING --> IDLE_DAY: ROOF_CLOSE_CONFIRMED / plan_exhausted
+    MANUAL_CLOSING --> FAULT_ROOF_UNKNOWN: ROOF_STALL
+    MANUAL_CLOSING --> FAULT_ROOF_UNKNOWN: ROOF_TIMEOUT
     note left of SAFE_HOLD: from any non-hold state on SAFETY_CLEARED
     SAFE_HOLD --> IDLE_DAY: SAFETY_ARMED
     note left of ESTOP: from any non-hold state on ESTOP_REQUESTED

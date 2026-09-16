@@ -12,8 +12,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from iris.core import guards as G
-from iris.core.machine import (EVENTS, HOLD_STATES, INITIAL_STATE, NIGHT_PATH,
-                               STATES, TRANSITIONS, Outcome, step)
+from iris.core.machine import (EVENTS, HOLD_STATES, INITIAL_STATE, MANUAL_STATES,
+                               NIGHT_PATH, ROOF_MOVING_STATES, STATES, TRANSITIONS,
+                               Outcome, step)
 from iris.core.snapshot import SensorSnapshot, Tri
 
 # A snapshot in which every guard passes: night is go, scope parked and
@@ -39,7 +40,7 @@ def test_night_path_covers_every_non_hold_state_and_starts_at_idle():
     """The Live tab renders NIGHT_PATH as the night's stages. If a state is
     added to the table and not to the path, a console would silently never be
     able to show it -- so the coverage is asserted rather than trusted."""
-    assert set(NIGHT_PATH) == set(STATES) - set(HOLD_STATES)
+    assert set(NIGHT_PATH) == set(STATES) - set(HOLD_STATES) - set(MANUAL_STATES)
     assert len(NIGHT_PATH) == len(set(NIGHT_PATH))
     assert NIGHT_PATH[0] == INITIAL_STATE
     assert NIGHT_PATH[-1] == "NIGHT_DONE"
@@ -122,7 +123,10 @@ def test_fault_states_exit_only_via_operator_resolve():
                 assert out.kind == "ignored", f"{hold} leaked via {event}"
 
 
-ROOF_MOVING_STATES = {"OPENING_ROOF", "CLOSING_ROOF"}
+# Imported from the machine: the manual roof states (Phase 2) are roof motion
+# too, and every Invariant A property below must hold for them unchanged.
+assert ROOF_MOVING_STATES >= {"OPENING_ROOF", "CLOSING_ROOF",
+                              "MANUAL_OPENING", "MANUAL_CLOSING"}
 
 
 def test_invariant_a_every_entry_into_roof_motion_is_park_guarded():
@@ -256,3 +260,68 @@ def test_stall_night_lands_in_persistent_fault():
     # restated here in story form)
     assert step("FAULT_ROOF_UNKNOWN", "NOON_TICK", ALL_GO).kind == "ignored"
     assert step("FAULT_ROOF_UNKNOWN", "OPERATOR_RESOLVE", ALL_GO).state == "IDLE_DAY"
+
+
+# ------------------------------------------------- Phase 2: manual roof moves
+
+def test_manual_roof_cycle_from_idle_returns_to_idle():
+    """roof!! open then roof!! close on a day with no plan: IDLE_DAY ->
+    MANUAL_OPENING -> MANUAL_OPEN -> MANUAL_CLOSING -> IDLE_DAY."""
+    snap = ALL_GO.replace(slots_remaining=0)
+    s = step("IDLE_DAY", "ROOF_OPEN_REQUESTED", snap)
+    assert s == Outcome("transition", "MANUAL_OPENING")
+    s = step(s.state, "ROOF_OPEN_CONFIRMED", snap.replace(roof=Tri.CONFIRMED))
+    assert s == Outcome("transition", "MANUAL_OPEN")
+    s = step(s.state, "ROOF_CLOSE_REQUESTED", snap.replace(roof=Tri.CONFIRMED))
+    assert s == Outcome("transition", "MANUAL_CLOSING")
+    s = step(s.state, "ROOF_CLOSE_CONFIRMED", snap.replace(roof=Tri.DENIED))
+    assert s == Outcome("transition", "IDLE_DAY")
+
+
+def test_manual_roof_cycle_keeps_a_standing_plan():
+    """A daytime roof cycle while a night is ARMED ends back in ARMED."""
+    s = step("ARMED", "ROOF_OPEN_REQUESTED", ALL_GO)
+    assert s.state == "MANUAL_OPENING"
+    s = step(s.state, "ROOF_OPEN_CONFIRMED", ALL_GO)
+    s = step(s.state, "ROOF_CLOSE_REQUESTED", ALL_GO.replace(roof=Tri.CONFIRMED))
+    assert s.state == "MANUAL_CLOSING"
+    s = step(s.state, "ROOF_CLOSE_CONFIRMED", ALL_GO)
+    assert s == Outcome("transition", "ARMED")
+
+
+def test_manual_roof_requests_are_refused_mid_night_and_in_holds():
+    """No row: a roof!! open while the night runs, or in a hold, is ignored
+    (which the conductor with authority reports as a refusal)."""
+    for state in ("PRELUDE", "SLOT_IMAGING", "FLATS", "PARKING", "CLOSING_ROOF",
+                  "SAFE_HOLD", "FAULT_ROOF_UNKNOWN", "ESTOP"):
+        for ev in ("ROOF_OPEN_REQUESTED", "ROOF_CLOSE_REQUESTED"):
+            assert step(state, ev, ALL_GO).kind == "ignored", (state, ev)
+
+
+def test_manual_roof_requests_carry_invariant_a():
+    unparked = ALL_GO.replace(parked_vision=Tri.UNKNOWN)
+    assert step("IDLE_DAY", "ROOF_OPEN_REQUESTED", unparked).kind == "rejected"
+    assert step("MANUAL_OPEN", "ROOF_CLOSE_REQUESTED", unparked).kind == "rejected"
+    blind = ALL_GO.replace(roof=Tri.UNKNOWN)
+    assert step("IDLE_DAY", "ROOF_OPEN_REQUESTED", blind).kind == "rejected"
+    # Opening needs safe!; closing (the safe direction) does not.
+    unsafe = ALL_GO.replace(safety_armed=False)
+    assert step("IDLE_DAY", "ROOF_OPEN_REQUESTED", unsafe).kind == "rejected"
+    assert step("IDLE_DAY", "ROOF_CLOSE_REQUESTED",
+                unsafe.replace(roof=Tri.CONFIRMED)).kind == "transition"
+
+
+def test_manual_motion_faults_on_stall_or_timeout():
+    for state in ("MANUAL_OPENING", "MANUAL_CLOSING"):
+        for ev in ("ROOF_STALL", "ROOF_TIMEOUT"):
+            assert step(state, ev, ALL_STOP) == Outcome("transition", "FAULT_ROOF_UNKNOWN")
+
+
+def test_unplanned_manual_run_opens_from_idle_without_a_weather_verdict():
+    """image!! on a day with no plan: the safety case is unchanged, the
+    weather guard is absent (the operator is the verdict)."""
+    no_weather = ALL_GO.replace(weather_ok=False, slots_remaining=0)
+    assert step("IDLE_DAY", "CHECKS_PASSED", no_weather) == Outcome("transition", "OPENING_ROOF")
+    assert step("ARMED", "CHECKS_PASSED", no_weather).kind == "rejected"
+    assert step("IDLE_DAY", "CHECKS_PASSED",
+                no_weather.replace(parked_vision=Tri.UNKNOWN)).kind == "rejected"

@@ -22,20 +22,86 @@ EVIDENCE COMES FROM THE LOG, NOT THE SENSORS. Vision verdicts are parsed from
 iris.log lines the live system already writes ("vision parked=... closed=...
 open=...") rather than re-running vision. This means evidence can be stale or
 absent -- which is recorded honestly as UNKNOWN, never guessed.
+
+PHASE 2 (roof authority, 2026-09-16). The actuators still fire the relay, but
+they ASK first: every roof-moving site posts its request and the evidence it
+just sensed (iris/client.py), and this conductor steps the machine with that
+evidence. With `conductor.roof_authority` ON the verdict is binding -- a
+refusal is journaled with the guard's reason and the caller does not move.
+OFF, the request is stepped permissively as any shadow event and the verdict
+is returned as `would_refuse`: the same decision-diff, now on the caller's
+own sensor read rather than a log line. The shadow watcher keeps running in
+both modes; where a live post has already walked the machine, the
+synthesized event for the same step is skipped rather than journaled as
+ignored. Every roof-moving state is timed out into FAULT_ROOF_UNKNOWN when it
+outlives the confirm loop, a restart that lands in a manual move faults the
+same way, and end.py's last-resort close leaves a marker that is ingested at
+the next start.
 """
+import json
 import logging
 import os
 import re
 import subprocess
+import threading
 import time
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Optional
 
 from iris.core import guards as G
 from iris.core.journal import Journal
-from iris.core.machine import HOLD_STATES, INITIAL_STATE, TRANSITIONS, step
+from iris.core.machine import (HOLD_STATES, INITIAL_STATE, ROOF_MOVING_STATES,
+                               TRANSITIONS, step)
 from iris.core.snapshot import SensorSnapshot, Tri
 
 _logger = logging.getLogger(__name__)
+
+# A roof move that has not been confirmed within this long has outlived the
+# confirm loop (30 s + 5 x 5 min in super_user_commands.confirm_roof_state)
+# by a margin: the actuator died, or forgot to report. The roof's position is
+# then untrusted, which is what FAULT_ROOF_UNKNOWN means.
+ROOF_MOTION_TIMEOUT_S = 30 * 60
+
+# Where end.py's last-resort close (conductor unreachable) records what it
+# did, for ingestion at the next conductor start.
+FALLBACK_MARKER = Path("local") / "roof_fallback_marker.json"
+
+# The events an actuator posts BEFORE moving the roof. Under authority these
+# are stepped with the real evidence; every other live event (confirmations,
+# operator resolves, end requests) has no sensor guard and steps as before.
+ROOF_DECISION_EVENTS = frozenset({"ROOF_OPEN_REQUESTED", "ROOF_CLOSE_REQUESTED",
+                                  "CHECKS_PASSED", "MOUNT_PARK_CONFIRMED"})
+
+
+@dataclass(frozen=True)
+class Verdict:
+    """What offering one event produced, for the API to report."""
+    kind: str                       # transition | rejected | ignored | allowed_in_hold
+    state: str
+    guard: Optional[str] = None     # the refusal, for rejected / ignored
+    would_refuse: Optional[str] = None   # decision-diff verdict on a permissive step
+    seq: int = 0
+
+    @property
+    def accepted(self) -> bool:
+        """May the caller act? A transition, or a close permitted in a hold."""
+        return self.kind in ("transition", "allowed_in_hold")
+
+
+def _read_roof_authority():
+    try:
+        from configs import config
+        return bool(config.data().get("conductor", {}).get("roof_authority", False))
+    except Exception:
+        return False
+
+
+def _tri(name) -> Tri:
+    try:
+        return Tri(str(name).upper())
+    except ValueError:
+        return Tri.UNKNOWN
 
 # The permissive snapshot transitions are stepped with (see module docstring).
 # slots_remaining is patched per-event from the shadow's own slot counter.
@@ -148,11 +214,18 @@ class ShadowConductor:
     # spin.
     _flats_grace_polls = 60
 
-    def __init__(self, repo_root: Path, journal: Journal, sun_probe=None):
+    def __init__(self, repo_root: Path, journal: Journal, sun_probe=None,
+                 roof_authority=None):
         self.root = Path(repo_root)
         self.journal = journal
         self.state = INITIAL_STATE
         self.slots = 0
+        # offer() is entered from the watcher thread AND the API thread; the
+        # machine steps under one lock so two events can never interleave.
+        self._lock = threading.RLock()
+        self._state_since = time.time()
+        self.roof_authority = (_read_roof_authority() if roof_authority is None
+                               else bool(roof_authority))
         self._none_streak = 0         # consecutive polls reading NONE (debounce)
         # Slow sensors (network round-trips) polled every N fast polls.
         # Injectable so tests drive them without a mount or a Shelly.
@@ -180,6 +253,7 @@ class ShadowConductor:
         self._log_pos = None          # byte offset into iris.log
         self.evidence = SensorSnapshot()
         self._recover()
+        self._ingest_fallback_marker()
 
     # ------------------------------------------------------------ recovery
 
@@ -228,8 +302,42 @@ class ShadowConductor:
                 self.offer("SLOT_STARTED", "shadow",
                            {"imaging": self._imaging, "synthesized": True,
                             "why": "recovered behind the capture state"})
+        # A restart in the middle of a MANUAL roof move: the relay fired, the
+        # confirmation never arrived here, and nothing will send it now. The
+        # roof may be open, closed or stopped halfway; ADR 0007 says that is
+        # FAULT_ROOF_UNKNOWN, resolved by an operator who has looked.
+        if self.state in ("MANUAL_OPENING", "MANUAL_CLOSING"):
+            self.offer("ROOF_TIMEOUT", "conductor",
+                       {"why": "conductor restarted mid-move; the roof "
+                               "position is untrusted until an operator resolves"})
         _logger.info("shadow recovered: state=%s slots=%d journal head=%d",
                      self.state, self.slots, self.journal.head())
+
+    def _ingest_fallback_marker(self):
+        """end.py closed the roof while this conductor was unreachable.
+
+        The marker says whether the close was CONFIRMED by vision. Confirmed:
+        journaled loudly, nothing else -- the roof is where the machine
+        believes it is. Not confirmed: sense and expectation disagree, which
+        is the contradiction FAULT_ROOF_UNKNOWN exists for.
+        """
+        marker = self.root / FALLBACK_MARKER
+        if not marker.exists():
+            return
+        try:
+            info = json.loads(marker.read_text(encoding="utf-8"))
+        except Exception as exc:
+            info = {"unreadable": f"{type(exc).__name__}: {exc}"}
+        self.journal.append("note", "ROOF_MOVED_WITHOUT_CONDUCTOR", "end.py-fallback",
+                            data=info)
+        if not info.get("confirmed_closed"):
+            self.offer("VISION_CONTRADICTION", "end.py-fallback",
+                       {"why": "end.py's fallback close was not confirmed while "
+                               "the conductor was down"})
+        try:
+            marker.rename(marker.with_suffix(".ingested-%d.json" % int(time.time())))
+        except OSError:
+            _logger.exception("could not retire the fallback marker")
 
     def _live_plan_slots(self):
         """Slots of the night plan still in force per the journal, or None.
@@ -513,41 +621,142 @@ class ShadowConductor:
                 return row
         return None
 
-    def offer(self, event: str, source: str, data: dict = None):
-        """Step the machine with the permissive snapshot; journal everything,
-        including the counterfactual guard verdict on the fired row."""
-        snap = _PERMISSIVE.replace(slots_remaining=self.slots)
-        out = step(self.state, event, snap)
-        payload = dict(data or {})
-        if out.kind == "transition":
-            row = self._fired_row(self.state, event, snap)
-            if row is not None and row.guards:
-                would = G.evaluate(row.guards, self._current_evidence())
-                payload["guard_would"] = would      # None == would have passed
-            payload["slots_after"] = self.slots
-            self.journal.append("transition", event, source,
-                                from_state=self.state, to_state=out.state,
-                                data=payload)
-            self.state = out.state
-        elif out.kind == "rejected":
-            self.journal.append("rejected", event, source,
-                                from_state=self.state, guard=out.guard,
-                                data=payload)
-        else:
-            # Ignored events are journaled as notes in shadow mode: they are
-            # exactly the mismatches between reality and the table that Phase 3
-            # needs to know about (e.g. a manual image!! run starting outside
-            # the modelled night).
+    def _close_in_hold(self, source: str, payload: dict) -> Verdict:
+        """Closing the roof inside a hold: decided by Invariant A's guards,
+        not by the table, and the hold is not left.
+
+        stop! clears safety (SAFE_HOLD) and then parks and closes; a fault
+        or an ESTOP leaves the roof wherever it was. The holds ignore every
+        non-operator event by design, but closing is the SAFE direction and
+        an emergency close refused for bookkeeping is a roof open at dawn.
+        So the request is answered by the two guards that matter -- scope
+        confirmed parked, roof position known -- on the posted evidence,
+        journaled as a note either way, and the machine stays where it is
+        until the operator's own event (safe! / resolve!) releases it.
+        """
+        guards = (G.mount_parked, G.roof_state_known)
+        ev = self._current_evidence()
+        refusal = G.evaluate(guards, ev)
+        payload["in_hold"] = self.state
+        if self.roof_authority:
+            payload["guards"] = "enforced"
+            if refusal:
+                e = self.journal.append("rejected", "ROOF_CLOSE_REQUESTED", source,
+                                        from_state=self.state, guard=refusal, data=payload)
+                return Verdict("rejected", self.state, guard=refusal, seq=e.seq)
+            e = self.journal.append("note", "ROOF_CLOSE_ALLOWED_IN_HOLD", source, data=payload)
+            return Verdict("allowed_in_hold", self.state, seq=e.seq)
+        payload["guard_would"] = refusal
+        e = self.journal.append("note", "ROOF_CLOSE_ALLOWED_IN_HOLD", source, data=payload)
+        return Verdict("allowed_in_hold", self.state, would_refuse=refusal, seq=e.seq)
+
+    def _absorb_evidence(self, evidence: dict, payload: dict):
+        """A live sensor read posted with a request replaces the log-derived
+        one, fresh as of now. Recorded on the entry so the journal shows what
+        the decision was made on."""
+        e = self.evidence
+        if "parked_vision" in evidence:
+            e = e.replace(parked_vision=_tri(evidence["parked_vision"]),
+                          roof=_tri(evidence.get("roof", e.roof.value)))
+            self._evidence_ts = time.time()
+        elif "roof" in evidence:
+            e = e.replace(roof=_tri(evidence["roof"]))
+            self._evidence_ts = time.time()
+        if "parked_kasa" in evidence:
+            e = e.replace(parked_kasa=_tri(evidence["parked_kasa"]))
+            self._kasa_ts = time.time()
+        self.evidence = e
+        payload["evidence_posted"] = {k: v for k, v in evidence.items() if k != "ts"}
+
+    def offer(self, event: str, source: str, data: dict = None,
+              evidence: dict = None) -> Verdict:
+        """Offer one event; journal everything.
+
+        Shadow-synthesized events step with the permissive snapshot and carry
+        the counterfactual guard verdict (`guard_would`). A LIVE roof decision
+        (posted by an actuator with its evidence) steps with the REAL evidence
+        when roof authority is on -- the guards decide, and a refusal is
+        journaled as `rejected` with the reason -- and permissively otherwise,
+        with the verdict returned as `would_refuse` for the caller to post.
+        """
+        with self._lock:
+            payload = dict(data or {})
+            if evidence:
+                self._absorb_evidence(evidence, payload)
+            live = source != "shadow"
+            if live and event == "ROOF_CLOSE_REQUESTED" and self.state in HOLD_STATES:
+                return self._close_in_hold(source, payload)
+            enforced = live and self.roof_authority and event in ROOF_DECISION_EVENTS
+            # An operator starting a run is the weather verdict for that run:
+            # the planner's "will image tonight" describes the planner's plan,
+            # not the operator's decision to image anyway.
+            operator_weather = (event == "CHECKS_PASSED" and source == "operator")
+            # An unplanned run (image!! with nothing planned) opens from
+            # IDLE_DAY; size its slot count from the sequence on disk so the
+            # prelude does not walk straight to FLATS on "plan exhausted".
+            if event == "CHECKS_PASSED" and self.state == "IDLE_DAY":
+                self.slots = max(1, self._read_slot_count())
+                payload["unplanned"] = True
+            evidence_snap = self._current_evidence()
+            if operator_weather:
+                evidence_snap = evidence_snap.replace(weather_ok=True)
+                payload["weather"] = "operator's call"
+            if enforced:
+                snap = evidence_snap
+                payload["guards"] = "enforced"
+            else:
+                snap = _PERMISSIVE.replace(slots_remaining=self.slots)
+            out = step(self.state, event, snap)
+            would = None
+            if out.kind == "transition":
+                if not enforced:
+                    row = self._fired_row(self.state, event, snap)
+                    if row is not None and row.guards:
+                        would = G.evaluate(row.guards, evidence_snap)
+                        payload["guard_would"] = would      # None == would have passed
+                payload["slots_after"] = self.slots
+                e = self.journal.append("transition", event, source,
+                                        from_state=self.state, to_state=out.state,
+                                        data=payload)
+                self.state = out.state
+                self._state_since = time.time()
+                return Verdict("transition", self.state, would_refuse=would, seq=e.seq)
+            if out.kind == "rejected":
+                e = self.journal.append("rejected", event, source,
+                                        from_state=self.state, guard=out.guard,
+                                        data=payload)
+                return Verdict("rejected", self.state, guard=out.guard, seq=e.seq)
+            # Ignored events are journaled as notes: they are exactly the
+            # mismatches between reality and the table that Phase 3 needs to
+            # know about. For a live request they are a refusal: no row means
+            # the machine does not move the roof from here.
             payload["ignored_in_state"] = self.state
-            self.journal.append("note", event, source, data=payload)
+            e = self.journal.append("note", event, source, data=payload)
+            return Verdict("ignored", self.state,
+                           guard="no transition for %s in state %s" % (event, self.state),
+                           seq=e.seq)
 
     # ------------------------------------------------------------ polling
 
     def poll(self):
         """One observation pass. Called every few seconds by the runner."""
+        with self._lock:
+            self._poll_locked()
+
+    def _poll_locked(self):
         lines = self._read_new_log_lines()
         self._update_evidence_from_log(lines)
         self._poll_slow_sensors()
+
+        # --- a roof move that never confirmed. The actuator posts the
+        # confirmation (or its own timeout) when its confirm loop ends; if it
+        # died first, nothing will. Past the loop's worst case the position
+        # is untrusted: FAULT_ROOF_UNKNOWN, until an operator has looked.
+        if (self.state in ROOF_MOVING_STATES
+                and time.time() - self._state_since > ROOF_MOTION_TIMEOUT_S):
+            self.offer("ROOF_TIMEOUT", "watchdog",
+                       {"why": "no confirmation within %d s of the relay fire"
+                               % ROOF_MOTION_TIMEOUT_S})
 
         # --- sunrise ends a finished night. NIGHT_DONE's only exit is
         # DAY_TICK, and the scheduler's version of that (IMAGING ->
@@ -615,7 +824,13 @@ class ShadowConductor:
                 # closed up and ran image!! again. The table has no row for
                 # that from any mid-night state, so re-arm first: the plan
                 # is unchanged and the roof was shut for the retry to open.
-                if self.state in self._MID_NIGHT:
+                # ...unless the machine reached PRELUDE moments ago on the
+                # run's OWN posts (roof authority: CHECKS_PASSED then
+                # ROOF_OPEN_CONFIRMED arrive before NINA writes IN_PRELUDE).
+                # That is the same run, not a retry.
+                fresh_prelude = (self.state == "PRELUDE"
+                                 and time.time() - self._state_since < 15 * 60)
+                if self.state in self._MID_NIGHT and not fresh_prelude:
                     self._reseat("prelude restarted while the machine was "
                                  "mid-night: the previous attempt was lost",
                                  night=True)
@@ -623,8 +838,15 @@ class ShadowConductor:
                 # prelude; the shadow sees only the prelude begin, so the two
                 # machine steps are synthesized back to back. Their true
                 # relative timing is in iris.log for the report to compare.
-                self.offer("CHECKS_PASSED", "shadow", {"imaging": img})
-                self.offer("ROOF_OPEN_CONFIRMED", "shadow", {"imaging": img})
+                # Each is offered only where the machine still stands before
+                # it: with roof authority the run has already posted them
+                # itself, and a second copy would only journal as ignored.
+                # IDLE_DAY is included since 2026-09-16: an unplanned manual
+                # run is tracked as a night, not journaled as noise.
+                if self.state in ("ARMED", "PRE_FLIGHT", "IDLE_DAY"):
+                    self.offer("CHECKS_PASSED", "shadow", {"imaging": img})
+                if self.state == "OPENING_ROOF":
+                    self.offer("ROOF_OPEN_CONFIRMED", "shadow", {"imaging": img})
             elif img == "DONE_PRELUDE":
                 self.offer("NINA_PRELUDE_DONE", "shadow", {"imaging": img})
             elif img == "IN_MAIN":
@@ -669,9 +891,14 @@ class ShadowConductor:
                 # 02:28:58, flats launched 02:29:46. So this NONE is the roof
                 # CLOSING, not the night ending, and the flats follow it.
                 self.slots = 0
-                self.offer("NINA_SLOT_DONE", "shadow", {"imaging": img})
-                self.offer("MOUNT_PARK_CONFIRMED", "shadow", {"imaging": img})
-                self.offer("ROOF_CLOSE_CONFIRMED", "shadow", {"imaging": img})
+                # Each step only where the machine still stands before it:
+                # end.py posts the park and close itself under roof authority.
+                if self.state == "SLOT_IMAGING":
+                    self.offer("NINA_SLOT_DONE", "shadow", {"imaging": img})
+                if self.state == "PARKING":
+                    self.offer("MOUNT_PARK_CONFIRMED", "shadow", {"imaging": img})
+                if self.state == "CLOSING_ROOF":
+                    self.offer("ROOF_CLOSE_CONFIRMED", "shadow", {"imaging": img})
             elif img == "NONE" and prev in ("IN_FLATS", "DONE_FLATS"):
                 # NOW the night is over. A run that never showed DONE_FLATS --
                 # last night's flats were killed by the stall watchdog -- has
