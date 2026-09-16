@@ -2,6 +2,7 @@
 
     python scripts/morning_check.py            # check, push only on a problem
     python scripts/morning_check.py --dry-run  # check and print, never push
+    python scripts/morning_check.py --always-push  # push the result even when clear
 
 Run daily at 09:00 by the scheduled task IrisMorningCheck (morning_check.cmd).
 User request 2026-09-16. Every morning all of these must hold:
@@ -175,6 +176,8 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--dry-run", action="store_true", help="print; never push")
+    ap.add_argument("--always-push", action="store_true",
+                    help="push the result even when all clear (tests the Pushover path)")
     args = ap.parse_args()
     _watchdog(args.dry_run)
 
@@ -191,14 +194,21 @@ def main():
     _append_log(entry)
     print(json.dumps(entry, indent=2, default=str))
 
-    if not problems and not warnings:
+    if not problems and not warnings and not args.always_push:
         _logger.info("morning check: all clear (scope tag %s/%s frames, %.1f px off park)",
                      vision.get("scope_tag_frames"), vision.get("frames"),
                      float(vision.get("worst_corner_px") or 0.0))
         return 0
 
-    lines = (["Iris morning check FAILED:"] + ["- " + p for p in problems]
-             if problems else ["Iris morning check: OK, with a warning:"])
+    if problems:
+        lines = ["Iris morning check FAILED:"] + ["- " + p for p in problems]
+    elif warnings:
+        lines = ["Iris morning check: OK, with a warning:"]
+    else:
+        lines = ["Iris morning check: all clear (roof closed, scope parked, mount off, "
+                 "Pegasus 1-3 off, Kasa reachable; scope tag %s/%s frames, %.1f px off park)"
+                 % (vision.get("scope_tag_frames"), vision.get("frames"),
+                    float(vision.get("worst_corner_px") or 0.0))]
     lines += ["- warning: " + w for w in warnings]
     msg = "\n".join(lines)
     _logger.warning(msg.replace("\n", " | "))
