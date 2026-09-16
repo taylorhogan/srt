@@ -99,7 +99,13 @@ sys.argv = _argv
 LADDER = Path(_root) / "local" / "n2n_ladder"
 STACK_DIR = LADDER / "stacks"
 MANIFEST = LADDER / "manifest.json"
-ARMS = ("per-filter", "pooled-filters", "pooled-scenes")
+ARMS = ("per-filter", "pooled-filters", "pooled-scenes", "groups")
+# `groups` is the fourth arm: an explicit list from --groups, for a pool the
+# other three cannot express. First use, 2026-09-16: abell2151's four filters
+# plus m33|L, because the pooled-filters winner trained on a cluster of small
+# galaxies on empty sky and smears the dust lanes of a face-on spiral into
+# haze — it never saw resolved extended structure in broadband. Name the run
+# with --suffix so the checkpoint says what went in.
 
 
 def log(msg: str = "") -> None:
@@ -251,6 +257,9 @@ def build_stacks(args) -> int:
 def arm_groups(man: dict, arm: str, args, filt: str = None) -> list[str]:
     """Group keys this arm trains on. The only thing that differs between arms."""
     usable = {k: g for k, g in man["groups"].items() if g["usable"]}
+    wanted = {g.strip() for g in (getattr(args, "groups", "") or "").split(",") if g.strip()}
+    if arm == "groups" and not wanted:
+        raise SystemExit("--arm groups needs --groups dso|F,dso|F,...")
     out = []
     for key, g in sorted(usable.items()):
         if g["dso"] == args.test:
@@ -263,6 +272,13 @@ def arm_groups(man: dict, arm: str, args, filt: str = None) -> list[str]:
                 out.append(key)
         elif arm == "pooled-scenes":
             out.append(key)
+        elif arm == "groups":
+            if key in wanted:
+                out.append(key)
+    if arm == "groups":
+        missing = wanted - set(out)
+        if missing:
+            log(f"  --groups: not usable or not stacked: {', '.join(sorted(missing))}")
     return out
 
 
@@ -524,6 +540,8 @@ def main() -> int:
     ap.add_argument("--base", default="abell2151",
                     help="single training target for arms 1 and 2")
     ap.add_argument("--filters", default="L,R,G,B")
+    ap.add_argument("--groups", default="",
+                    help="for --arm groups: comma list of dso|filter keys to train on")
     ap.add_argument("--exptime", type=int, default=300)
     ap.add_argument("--epochs", type=int, default=60)
     ap.add_argument("--seed", type=int, default=0)

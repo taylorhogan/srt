@@ -2107,6 +2107,86 @@ match the config default, and any A/B against a freshly trained model now
 carries patch size as a second variable. Retraining both at 512 is the obvious
 follow-up and has not been done.
 
+### 37. A face-on spiral breaks the broadband model, and one target's L repairs L only
+
+2026-09-16. M33 had 27 L and 5-6 R/G/B subs at 300 s, and the routine LRGB
+render (`n2n_ladder_pooled-filters_300s.pt`, the ladder winner) came out
+noticeably worse than the raw: the dust lanes threading the inner arms went
+soft, the disk turned to milky haze, and the outer arms picked up a glow that is
+not in the data. On the raw the lanes are crisp filaments and the H II regions
+have hard edges. Judged first by eye at 1:1, then measured below.
+
+**Why.** The production broadband model trained on one target, Abell 2151 —
+a cluster of small, mostly unresolved galaxies on empty sky — and was scored on
+NGC 5907, an edge-on disk with a bright thin profile. Neither contains resolved
+extended broadband structure, so the model learned that smooth is noise and
+compact is signal, and nothing in the ladder could have flagged the failure.
+Same class of blind spot as step 21: the gate measured what it was pointed at.
+
+**What was tried.** A fourth ladder arm, `groups`, that takes an explicit list
+(`scripts/n2n_lrgb_ladder.py train --arm groups --groups "abell2151|L,
+abell2151|R,abell2151|G,abell2151|B,m33|L" --suffix _abell2151+m33L`). M33's
+colour channels could not be paired at 5-6 subs (the split needs 12), so the
+pool is Abell 2151 in four filters plus M33 in L: 2x10 training stacks and 2x3
+validation stacks, pair offset (0,0). 60 epochs, best val 0.616 at epoch 28,
+against 0.624 for the four-group parent. Checkpoint
+`n2n_ladder_groups_abell2151+m33L_300s.pt`. The M33 stacks took 7 min to build
+and training ~2 h at patch 512.
+
+**Held-out NGC 5907 is unchanged**, which is the first thing to check when a
+group is added:
+
+| filter | survival old → new | flux median old → new | faint quintile old → new |
+| --- | --- | --- | --- |
+| L | 0.96 → 0.99 | 0.99 → 1.01 | 0.95 → 1.01 |
+| R | — | 0.99 → 1.02 | — |
+| G | 0.59 → 0.59 | 0.92 → 0.99 | 0.54 → 0.46 |
+| B | — | 0.99 → 1.02 | — |
+
+G's poor faint-source survival is in both models and predates this run.
+
+**On M33 itself**, `n2n_extended_check.py` on the four channel stacks, fraction
+of extended flux kept by smoothed surface brightness (channel sky-sigma units):
+
+| SB bin | L old | L new | R old | R new | G old | G new | B old | B new |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 0-1 | 0.42 | **0.90** | 0.29 | 0.52 | 0.26 | 0.40 | 0.25 | 0.34 |
+| 1-2 | 0.63 | **0.81** | 0.44 | 0.59 | 0.48 | 0.61 | 0.50 | 0.61 |
+| 2-4 | 0.72 | **0.81** | 0.41 | 0.53 | 0.44 | 0.53 | 0.48 | 0.57 |
+| 4-8 | 0.80 | **0.84** | 0.42 | 0.52 | 0.43 | 0.53 | 0.40 | 0.47 |
+| 8-16 | 0.82 | **0.86** | 0.52 | 0.60 | 0.51 | 0.58 | 0.52 | 0.59 |
+| 16-32 | 0.79 | 0.85 | 0.63 | 0.68 | 0.60 | 0.68 | 0.83 | 0.83 |
+| >32 | 0.97 | 0.99 | 0.96 | 0.99 | 0.96 | 0.98 | 0.95 | 0.97 |
+
+Two results, one per row of the training pool:
+
+- **L is repaired.** 81-90% of faint extended flux kept where the parent kept
+  42-72%. The lanes, H II edges and arm knots are back in the render; the
+  frame-disjoint validation stacks and the 1:1 crop agree
+  (`~/Desktop/m33_model_ab/` at the time; the render script's `compose` stage
+  with `--model` reproduces it).
+- **R, G and B are not.** 40-50% of extended flux still lost across the faint
+  and mid range, only modestly better than the parent, because no resolved
+  galaxy was in the pool in a colour passband. The L-to-RGB spread is 0.2-0.4 in
+  every bin below the core. In LRGB that is a **desaturated disk, not a cast**
+  — R, G and B lose about equally, so the hue holds and the colour thins.
+
+**Verdict.** The mechanism is confirmed: a scene class absent from training is
+smoothed as noise, and adding one target of that class in one passband fixes
+that passband and no other. The model is right for L and not yet for RGB, so
+it is **not promoted** for LRGB targets and the raw stays the M33 picture. The
+fix is data the raw needs anyway: 12+ subs per colour filter on M33, then a
+retrain with all four M33 channels in the pool. M33 is also still the only
+face-on spiral in the archive, so the model is proven on M33 and unproven on
+the next one.
+
+**Qualifies standing conclusion 0.** "The training set is not the limit" was
+measured on narrowband nebulae across four training targets of the same class.
+It does not extend across scene classes: here the training set was the whole
+defect, and one group changed retention in the affected channel by a factor of
+two at 0-1 sigma. Check the checkpoint's `groups` key against the object class
+before trusting it on anything new.
+
 ## Choosing training data
 
 Guidance, distilled from steps 18-29. Everything here is measured; the section
@@ -2190,6 +2270,10 @@ differences that turned out to be inside the floor.
    total effect — visually indistinguishable (step 31). A model trained on the
    target itself, which bounds what any training choice can reach, leaves S-II
    and O-III exactly where production has them. Spend nights, not epochs.
+   **Within a scene class.** Across classes the training set can be the whole
+   defect: the broadband model, trained on one galaxy cluster, smeared M33's
+   dust lanes into haze, and adding M33's L to the pool doubled faint-flux
+   retention in L while leaving RGB (not in the pool) unrepaired (step 37).
 1. **Denoised frames are not a science product, and are a display product only
    for point-source-dominated fields.** Calibrated linear frames remain the
    science product for transit work, the colour-magnitude diagram, and the
