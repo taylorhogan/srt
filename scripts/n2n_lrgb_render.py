@@ -82,7 +82,7 @@ def recipe_filters(args) -> list[str]:
     from stacking import color_process
     mapping = color_process.RECIPES[args.recipe]
     seen, out = set(), []
-    for ch in ("L", "R", "G", "B"):
+    for ch in ("L", "R", "G", "B", "HA"):
         f = mapping.get(ch)
         if f and f not in seen:
             seen.add(f)
@@ -237,7 +237,7 @@ def compose(args) -> int:
     mapping = color_process.RECIPES[args.recipe]
     filters = [f for f in recipe_filters(args) if f in meta["channels"]]
     log(f"recipe {args.recipe}: " + ", ".join(
-        f"{ch}<-{mapping[ch]}" for ch in ("L", "R", "G", "B") if ch in mapping))
+        f"{ch}<-{mapping[ch]}" for ch in ("L", "R", "G", "B", "HA") if ch in mapping))
 
     if not args.model:
         log("no --model: rendering the raw composite only")
@@ -247,7 +247,7 @@ def compose(args) -> int:
         h = min(a.shape[0] for a in raw_ch.values())
         w = min(a.shape[1] for a in raw_ch.values())
         raw_ch = {k: v[:h, :w] for k, v in raw_ch.items()}
-        raw_ch = {ch: raw_ch[mapping[ch]] for ch in ("L", "R", "G", "B")
+        raw_ch = {ch: raw_ch[mapping[ch]] for ch in ("L", "R", "G", "B", "HA")
                   if ch in mapping and mapping[ch] in raw_ch}
         opts = color_process.effective_options(
             white_pct=args.white_pct, black_pct=args.black_pct,
@@ -308,7 +308,7 @@ def compose(args) -> int:
     # Filter arrays -> output channels. HOO points both G and B at the same
     # O-III stack, which is what makes its palette teal rather than green.
     def to_channels(d: dict) -> dict:
-        return {ch: d[mapping[ch]] for ch in ("L", "R", "G", "B")
+        return {ch: d[mapping[ch]] for ch in ("L", "R", "G", "B", "HA")
                 if ch in mapping and mapping[ch] in d}
 
     raw_ch, den_ch = to_channels(raw_ch), to_channels(den_ch)
@@ -523,7 +523,7 @@ def routine(args) -> int:
             log(f"  denoised {f} in {time.time() - t0:.0f}s")
 
     def to_channels(d):
-        return {ch: d[mapping[ch]] for ch in ("L", "R", "G", "B")
+        return {ch: d[mapping[ch]] for ch in ("L", "R", "G", "B", "HA")
                 if ch in mapping and mapping[ch] in d}
 
     opts = color_process.effective_options(
@@ -609,7 +609,7 @@ def main() -> int:
     ap.add_argument("stage", choices=("stacks", "compose", "routine"))
     ap.add_argument("--dso", default="ngc5907")
     ap.add_argument("--recipe", default="LRGB",
-                    choices=("LRGB", "HOO", "SHO", "HSO"))
+                    choices=("LRGB", "HALRGB", "HOO", "SHO", "HSO"))
     ap.add_argument("--filters", default="",
                     help="override the recipe's filter list")
     ap.add_argument("--lum", default="",

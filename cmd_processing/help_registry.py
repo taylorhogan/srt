@@ -298,12 +298,16 @@ HELP: dict[str, dict] = {
     "process": {
         "category": "super",
         "summary": ("Stack a DSO's filters and combine into a colour image at full "
-                    "resolution. LRGB (L as luminance), HOO (Ha->R, O-III->G/B) or "
+                    "resolution. LRGB (L as luminance), HALRGB (LRGB plus the Ha "
+                    "excess — Ha minus its continuum share of R — added into R and "
+                    "L, so HII regions get redder and brighter; ha= sets the gain, "
+                    "default 1, 0 = plain LRGB; the Ha stack and the excess map are "
+                    "exported as channels), HOO (Ha->R, O-III->G/B) or "
                     "SHO (S-II->R, Ha->G, O-III->B). All filters register to one "
                     "shared reference so the channels align. Add 'noflat' to skip "
                     "flat correction, which is worth trying when the only flats "
                     "available were shot in a different epoch. Display options: "
-                    "black= white= soft= mesh= scnr= nobg scale=. scnr=0..1 is "
+                    "black= white= soft= mesh= scnr= ha= nobg scale=. scnr=0..1 is "
                     "average-neutral green removal, min(g,(r+b)/2) — good on "
                     "LRGB, leave off for HOO. Add 'reuse' to "
                     "re-render the cached channels in seconds instead of "
@@ -316,7 +320,8 @@ HELP: dict[str, dict] = {
                     "FITS (with WCS) and as a mono JPEG, to <image_dir>/Iris/<dso>/."),
         "usage": ["process <dso> <recipe>", "process <dso> <recipe> noflat",
                   "process <dso> <recipe> reuse black=50 mesh=6"],
-        "examples": ["process sh2-92 hoo", "process abell2151 lrgb noflat",
+        "examples": ["process sh2-92 hoo", "process m33 halrgb ha=1.5",
+                     "process abell2151 lrgb noflat",
                      "process abell2151 lrgb reuse black=50",
                      "process sh2-92 hoo reuse soft=0.01 nobg",
                      "process abell2151 lrgb reuse black=45,55,65,75",
@@ -329,12 +334,12 @@ HELP: dict[str, dict] = {
         "summary": ("A looping MP4 that shows a target being stacked deeper: n "
                     "frames, each holding ~5 s, the first from a fraction of the "
                     "subs and the last from all of them, with a footer counting "
-                    "the subs in each. Every filter of the recipe (LRGB, HOO, "
-                    "SHO, HSO) is registered once to one shared reference and "
+                    "the subs in each. Every filter of the recipe (LRGB, HALRGB, "
+                    "HOO, SHO, HSO) is registered once to one shared reference and "
                     "combined at each depth; one stretch, taken from the full "
                     "stack, is applied to every frame so what changes between "
                     "frames is the noise and nothing else. Options as for "
-                    "process: noflat, black= white= soft= mesh= scnr=, plus "
+                    "process: noflat, black= white= soft= mesh= scnr= ha=, plus "
                     "width= (px, default 1920), hold= (seconds per frame) and "
                     "inset= (off, a size, or x,y,size): a patch carried at native "
                     "resolution and shown 2x in the corner, because the reduced "

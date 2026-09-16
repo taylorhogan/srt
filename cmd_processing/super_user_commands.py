@@ -5026,7 +5026,8 @@ def _process_run(words: list[str]) -> None:
               "reuse": ("reuse", True)}
     _KEYS = {"black": ("black_pct", float), "white": ("white_pct", float),
              "soft": ("softening", float), "mesh": ("mesh", int),
-             "scnr": ("scnr", float), "scale": ("scale", int)}
+             "scnr": ("scnr", float), "scale": ("scale", int),
+             "ha": ("ha_gain", float)}
     opts = {"use_flats": True, "reuse": False}
     rest = []
     bad = []
@@ -5244,7 +5245,7 @@ def movie_cmd(words: list[str], account: str) -> None:
     """A looping movie of a target being stacked deeper.
 
     Usage:
-        movie <dso> <recipe> <n>                — n frames, LRGB / HOO / SHO / HSO
+        movie <dso> <recipe> <n>                — n frames, LRGB / HALRGB / HOO / SHO / HSO
         movie <dso> <recipe> <n> noflat
         movie <dso> <recipe> <n> width=1280 hold=3 black=50 soft=0.01
         movie <dso> <recipe> <n> inset=off | inset=600 | inset=4800,3200,480
@@ -5290,7 +5291,8 @@ def _movie_run(words: list[str]) -> None:
               "nobg": ("subtract_background", False), "no-bg": ("subtract_background", False)}
     _KEYS = {"black": ("black_pct", float), "white": ("white_pct", float),
              "soft": ("softening", float), "mesh": ("mesh", int),
-             "scnr": ("scnr", float), "width": ("width", int), "hold": ("hold_s", float),
+             "scnr": ("scnr", float), "ha": ("ha_gain", float),
+             "width": ("width", int), "hold": ("hold_s", float),
              "inset": ("inset", str)}
     opts: dict = {"use_flats": True}
     rest, bad = [], []

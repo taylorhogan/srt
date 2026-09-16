@@ -86,8 +86,9 @@ Before writing any code that calls `toggle_roof()`, `pwi4.mount_park()`, `pwi4.m
   (masters cached as `.npy` in scratch, keyed on the calibration frames' mtimes),
   a shared quality gate, astroalign registration, and a tiled sigma-clip combine
   that streams frames to disk so full resolution does not need the whole cube in
-  RAM. `color_process.py` backs the `process <dso> <recipe>` command (LRGB / HOO /
-  SHO): it stacks each filter against **one shared reference** so the channels
+  RAM. `color_process.py` backs the `process <dso> <recipe>` command (LRGB / HALRGB /
+  HOO / SHO; HALRGB adds the Hα *excess* — Hα minus its measured continuum
+  share of R — into R and L, never the raw Hα): it stacks each filter against **one shared reference** so the channels
   land on the same pixels, then stretches them on a **shared** brightness scale so
   the ratio between channels survives into the image. Both of those are easy to
   get wrong in ways that still produce a plausible-looking picture.

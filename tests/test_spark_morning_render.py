@@ -29,3 +29,13 @@ def test_lrgb_needs_luminance_depth_but_only_a_few_colour_frames():
 
 def test_thresholds_are_what_the_docstring_says():
     assert r.MIN_FRAMES == 12 and r.MIN_COLOUR_FRAMES == 3
+
+
+def test_spark_picks_halrgb_only_with_enough_ha():
+    base = {"L": 20, "R": 4, "G": 4, "B": 4}
+    assert r.pick_recipes(base) == ["LRGB"]
+    assert r.pick_recipes({**base, "Ha": r.MIN_FRAMES}) == ["HALRGB", "LRGB"]
+    # Ha is a detail channel: a colour-sized handful does not earn the recipe.
+    assert r.pick_recipes({**base, "Ha": r.MIN_COLOUR_FRAMES}) == ["LRGB"]
+    # ...and without L there is no luminance to add the excess to.
+    assert "HALRGB" not in r.pick_recipes({"R": 20, "G": 20, "B": 20, "Ha": 20})

@@ -2,9 +2,11 @@
 
 Backs the webchat ``process <dso> <recipe>`` command. Recipes:
 
-    LRGB  R->R  G->G  B->B, with L substituted as luminance
-    HOO   Ha->R, O-III->G and B      (H-alpha region palette)
-    SHO   S-II->R, Ha->G, O-III->B   (the "Hubble" palette)
+    LRGB    R->R  G->G  B->B, with L substituted as luminance
+    HALRGB  LRGB plus the Ha EXCESS (Ha minus its continuum share of R) added
+            into R and L, so HII regions get redder AND brighter (see HA_GAIN)
+    HOO     Ha->R, O-III->G and B      (H-alpha region palette)
+    SHO     S-II->R, Ha->G, O-III->B   (the "Hubble" palette)
 
 Two things here are not obvious and were both learned the hard way on sh2-92:
 
@@ -49,6 +51,10 @@ RECIPES: dict[str, dict[str, str]] = {
     # across channels so their ratio survives — so the choice is which channel
     # you want carrying the image.
     "HSO":  {"R": "Ha", "G": "S-II", "B": "O-III"},
+    # HA is a fifth ROLE, not a primary: _prepare turns it into an emission
+    # map and folds that into R and L before anything is stretched. The raw
+    # Ha stack and the excess map are still exported beside the primaries.
+    "HALRGB": {"R": "R", "G": "G", "B": "B", "L": "L", "HA": "Ha"},
 }
 
 # FITS FILTER values vary by capture software; match on a squashed form.
@@ -105,6 +111,32 @@ BG_MESH_FRACTION = 4      # mesh boxes across the short axis
 # LRGB and a matter of taste on SHO, but on HOO it actively destroys the palette
 # (see _scnr), so it has to be asked for rather than assumed.
 SCNR_AMOUNT = 0.0
+
+# --- HALRGB: how much Ha excess goes into R and L ---------------------------
+#
+# An Ha filter still passes continuum: a star is (bandwidth ratio) as bright
+# in Ha as in R, roughly 5%. Adding the Ha stack straight into R therefore
+# reddens every star and the whole galaxy disk, not the HII regions. So first
+# the continuum share is measured — the median Ha/R ratio over the brightest
+# R pixels, which are stars and galaxy body, with HII regions a minority that
+# the median ignores — and only the EXCESS, max(Ha - ratio*R, 0), is blended.
+# The excess is line emission in Ha-frame ADU. A line photon lands in R at
+# (almost) the same ADU it lands in Ha, so gain 1.0 counts the emission twice
+# in R: the contrast of an HII region against the disk doubles. It goes into
+# L at the same gain, because LRGB takes brightness from L and an excess in
+# R alone would only change hue — HII regions would turn red without getting
+# brighter, the classic complaint about HaRGB done as a hue-only blend.
+# `ha=` on the process/movie command sets the gain; 0 makes HALRGB = LRGB.
+HA_GAIN = 1.0
+HA_CONTINUUM_TOP_PCT = 98.0   # R pixels above this percentile define the ratio
+HA_CONTINUUM_MIN_PIX = 500    # fewer than this and the top slice is widened
+# The difference map Ha - ratio*R is noise almost everywhere, and clipping it
+# at zero keeps the positive half of that noise: measured on m33 channels
+# with a 1 ADU Ha noise, the "excess" was non-zero on 49% of the field and
+# put a pedestal plus speckle into R and L across the whole sky. The noise
+# sigma is read from the NEGATIVE half of the map (pure noise: emission only
+# adds on the positive side) and the excess starts this many sigma above it.
+HA_NOISE_FLOOR_SIGMA = 2.0
 
 # Per-channel inspection JPEGs are capped at the preview's size; full resolution
 # is what the per-channel FITS is for.
@@ -194,8 +226,94 @@ def _remove_gradient(chan: np.ndarray, mesh: int = BG_MESH_FRACTION) -> np.ndarr
         return chan - float(np.nanmedian(chan))
 
 
+def ha_continuum_ratio(ha: np.ndarray, r: np.ndarray,
+                       top_pct: float = HA_CONTINUUM_TOP_PCT,
+                       min_pix: int = HA_CONTINUUM_MIN_PIX) -> Optional[float]:
+    """Ha/R for continuum sources — the share of R an Ha frame also sees.
+
+    Both inputs must be background-subtracted and on the same grid. Measured
+    as the median Ha/R over the brightest R pixels (stars and galaxy body);
+    HII regions push individual ratios up, but they are a minority of bright
+    pixels and the median steps over them. Returns None when there is nothing
+    bright enough to measure — the caller then blends the raw Ha, which is
+    wrong in a visible way (red stars) rather than a silent one.
+    """
+    ok = np.isfinite(ha) & np.isfinite(r) & (r > 0)
+    if not ok.any():
+        return None
+    pct = float(top_pct)
+    while True:
+        cut = float(np.nanpercentile(r[ok], pct))
+        sel = ok & (r > cut)
+        if int(sel.sum()) >= min_pix or pct <= 50.0:
+            break
+        pct -= 10.0
+    if int(sel.sum()) < 10:
+        return None
+    ratio = float(np.nanmedian(ha[sel] / r[sel]))
+    if not np.isfinite(ratio) or ratio <= 0:
+        return None
+    _logger.info("Ha continuum ratio %.4f from %d R pixels above p%.0f (%.2f ADU)",
+                 ratio, int(sel.sum()), pct, cut)
+    return ratio
+
+
+def apply_ha_blend(subbed: dict[str, np.ndarray], gain: float = HA_GAIN,
+                   ratio: Optional[float] = None
+                   ) -> tuple[dict[str, np.ndarray], Optional[float]]:
+    """Fold the Ha excess into R and L; returns (channels, ratio used).
+
+    Expects background-subtracted channels with an "HA" plane. R and L are
+    replaced by R + gain*excess and L + gain*excess; "HA" is left as the raw
+    subtracted plane and "HA_EXCESS" is added, so the exporters can show what
+    was blended. Without "HA" the channels come back untouched, and with gain
+    0 only the excess map is added — HALRGB with ha=0 is exactly LRGB.
+    *ratio* pins the continuum share (a movie measures it once on the full
+    stack and reuses it for every depth, so the frames share one blend as
+    they share one stretch); None measures it here.
+    """
+    if "HA" not in subbed or "R" not in subbed:
+        return subbed, None
+    out = dict(subbed)
+    ha = out["HA"]
+    if ratio is None:
+        ratio = ha_continuum_ratio(ha, out["R"])
+    if ratio is None:
+        _logger.warning("Ha continuum ratio not measurable — blending the raw Ha "
+                        "(stars will redden); check the Ha stack")
+        diff = np.asarray(ha, dtype=np.float32)
+    else:
+        diff = (ha - ratio * out["R"]).astype(np.float32)
+    # Noise floor from the negative half of the map, MAD-scaled to sigma.
+    neg = diff[np.isfinite(diff) & (diff < 0)]
+    sigma = float(1.4826 * np.median(-neg)) if neg.size else 0.0
+    floor = HA_NOISE_FLOOR_SIGMA * sigma
+    excess = np.clip(diff - floor, 0.0, None)
+    out["HA_EXCESS"] = excess
+    gain = float(gain)
+    lit = float(np.mean(excess > 0)) * 100.0
+    _logger.info("Ha excess: noise %.2f ADU, floor %.2f ADU, above it on %.1f%% "
+                 "of pixels, p99.9 %.2f ADU", sigma, floor, lit,
+                 float(np.nanpercentile(excess, 99.9)))
+    if gain != 0.0:
+        out["R"] = out["R"] + gain * excess
+        if "L" in out:
+            out["L"] = out["L"] + gain * excess
+        _logger.info("Ha blend: gain %.2f -> R%s", gain, " and L" if "L" in out else "")
+    return out, ratio
+
+
+def shared_white(subbed: dict[str, np.ndarray], white_pct: float) -> float:
+    """The one white point every channel is stretched against: a percentile
+    of the brightest primary at each pixel. Separate so a caller that blends
+    after _prepare (the movie) can re-derive it from the blended planes."""
+    colour = [subbed[c] for c in ("R", "G", "B") if c in subbed]
+    return float(np.nanpercentile(np.maximum.reduce(colour), white_pct))
+
+
 def _prepare(channels: dict[str, np.ndarray], subtract_background: bool,
-             mesh: int, white_pct: float) -> tuple[dict, float]:
+             mesh: int, white_pct: float,
+             ha_gain: Optional[float] = HA_GAIN) -> tuple[dict, float]:
     """Background-subtract every channel and find the shared white point.
 
     Factored out of compose() because the per-channel exports have to be the
@@ -207,9 +325,13 @@ def _prepare(channels: dict[str, np.ndarray], subtract_background: bool,
         subbed = {k: _remove_gradient(v, mesh) for k, v in channels.items()}
     else:
         subbed = {k: v - float(np.nanmedian(v)) for k, v in channels.items()}
-    colour = [subbed[c] for c in ("R", "G", "B") if c in subbed]
-    white = float(np.nanpercentile(np.maximum.reduce(colour), white_pct))
-    return subbed, white
+    # HALRGB: the blend happens here, on subtracted linear data, so the
+    # shared white point and every per-channel export see the blended R.
+    # ha_gain=None leaves it to the caller (the movie pins one ratio for
+    # every depth); 0 adds only the excess map, for inspection.
+    if ha_gain is not None:
+        subbed, _ = apply_ha_blend(subbed, ha_gain)
+    return subbed, shared_white(subbed, white_pct)
 
 
 
@@ -373,7 +495,8 @@ def effective_options(**overrides) -> dict:
     """
     opts = {"black_pct": BLACK_PCT, "white_pct": WHITE_PCT,
             "softening": SOFTENING, "mesh": BG_MESH_FRACTION,
-            "subtract_background": SUBTRACT_BACKGROUND, "scnr": SCNR_AMOUNT}
+            "subtract_background": SUBTRACT_BACKGROUND, "scnr": SCNR_AMOUNT,
+            "ha_gain": HA_GAIN}
     opts.update({k: v for k, v in overrides.items() if k in opts})
     return opts
 
@@ -388,6 +511,8 @@ def describe_options(opts: dict, scale: int = 1) -> str:
         parts.append("nobg")
     if opts.get("scnr"):
         parts.append(f"scnr={opts['scnr']:g}")
+    if opts.get("ha_gain", HA_GAIN) != HA_GAIN:
+        parts.append(f"ha={opts['ha_gain']:g}")
     if scale and scale > 1:
         parts.append(f"scale={scale:g}")
     return "  ".join(parts)
@@ -436,13 +561,15 @@ def compose(channels: dict[str, np.ndarray], black_pct: float = BLACK_PCT,
             subtract_background: bool = SUBTRACT_BACKGROUND,
             softening: float = SOFTENING,
             mesh: int = BG_MESH_FRACTION,
-            scnr: float = SCNR_AMOUNT) -> np.ndarray:
+            scnr: float = SCNR_AMOUNT,
+            ha_gain: float = HA_GAIN) -> np.ndarray:
     """Combine channel stacks into an RGB image in 0..1.
 
-    channels holds any of R/G/B plus an optional L. Every channel must already
-    be on the same pixel grid — that is what the shared reference guarantees.
+    channels holds any of R/G/B plus an optional L, and for HALRGB an HA plane
+    that _prepare folds into R and L. Every channel must already be on the
+    same pixel grid — that is what the shared reference guarantees.
     """
-    subbed, white = _prepare(channels, subtract_background, mesh, white_pct)
+    subbed, white = _prepare(channels, subtract_background, mesh, white_pct, ha_gain)
     _logger.info("Compose: shared white point %.2f ADU (p%.1f)", white, white_pct)
 
     rgb = np.dstack([_stretch(subbed[c], black_pct, white, softening, label=c)
@@ -658,6 +785,12 @@ def process_dso(
             f"{recipe} needs {', '.join(mapping[c] for c in ('R','G','B'))}; "
             f"this target has {', '.join(sorted(by_filter))}. Missing: "
             f"{', '.join(missing)}")
+    if "HA" in mapping and "HA" not in resolved:
+        # Without Ha this recipe is LRGB under another name; say so instead
+        # of rendering something that looks finished and is not what was asked.
+        raise ValueError(
+            f"{recipe} needs {mapping['HA']} frames; this target has "
+            f"{', '.join(sorted(by_filter))}. Use LRGB, or shoot Ha first.")
     if missing and progress_cb:
         progress_cb(f"missing {', '.join(missing)} — continuing without")
 
@@ -685,7 +818,7 @@ def process_dso(
 
     stacks: dict[str, np.ndarray] = {}
     used: dict[str, int] = {}
-    for chan in ("R", "G", "B", "L"):
+    for chan in ("R", "G", "B", "L", "HA"):
         if chan not in resolved:
             continue
         filt = resolved[chan]
@@ -920,7 +1053,8 @@ def save_channel_jpgs(channels: dict[str, np.ndarray], out_dir: Path, dso: str,
                       subtract_background: bool = SUBTRACT_BACKGROUND,
                       softening: float = SOFTENING,
                       mesh: int = BG_MESH_FRACTION,
-                      max_px: int = CHANNEL_JPG_MAX_PX) -> list[Path]:
+                      max_px: int = CHANNEL_JPG_MAX_PX,
+                      ha_gain: float = HA_GAIN) -> list[Path]:
     """Write one mono JPEG per channel, on the composite's shared scale.
 
     Deliberately not per-channel autostretch: these are meant to explain the
@@ -935,10 +1069,13 @@ def save_channel_jpgs(channels: dict[str, np.ndarray], out_dir: Path, dso: str,
     """
     from PIL import Image
     from stacking import stacker
-    subbed, white = _prepare(channels, subtract_background, mesh, white_pct)
+    subbed, white = _prepare(channels, subtract_background, mesh, white_pct, ha_gain)
     out_dir.mkdir(parents=True, exist_ok=True)
     written = []
-    for chan in ("R", "G", "B", "L"):
+    # For HALRGB, R and L here are the BLENDED planes (what the composite
+    # used), HA is the raw subtracted Ha stack and HA_EXCESS the emission map
+    # that was added — the three together explain where the red came from.
+    for chan in ("R", "G", "B", "L", "HA", "HA_EXCESS"):
         if chan not in subbed:
             continue
         mono = _stretch(subbed[chan], black_pct, white, softening)

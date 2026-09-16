@@ -62,6 +62,10 @@ RECIPE_RULES = [
     ("HSO", {"Ha", "S-II", "O-III"}),
     ("SHO", {"S-II", "Ha", "O-III"}),
     ("HOO", {"Ha", "O-III"}),
+    # HALRGB before LRGB when the target has Ha: it stacks first and LRGB
+    # reuses its channels. Ha is a detail channel like L (MIN_FRAMES), not a
+    # colour (MIN_COLOUR_FRAMES): the excess map is added at full contrast.
+    ("HALRGB", {"L", "R", "G", "B", "Ha"}),
     ("LRGB", {"L", "R", "G", "B"}),
 ]
 MIN_FRAMES = 12          # below this a stack is not worth the wall time
@@ -163,6 +167,9 @@ def pick_recipes(counts: dict) -> list[str]:
     for name, need in RECIPE_RULES:
         if name == "LRGB":
             if "L" in have and len(colours) >= 2:
+                out.append(name)
+        elif name == "HALRGB":
+            if "L" in have and "Ha" in have and len(colours) >= 2:
                 out.append(name)
         elif need <= have:
             out.append(name)

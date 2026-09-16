@@ -267,7 +267,7 @@ def make_stacking_movie(
         raise ValueError(f"{recipe} needs {', '.join(mapping[c] for c in ('R', 'G', 'B'))}; "
                          f"this target has {', '.join(sorted(by_filter))}. Missing: {', '.join(missing)}")
     filters: list[str] = []
-    for chan in ("L", "R", "G", "B"):
+    for chan in ("L", "R", "G", "B", "HA"):
         f = resolved.get(chan)
         if f and f not in filters:
             filters.append(f)
@@ -376,7 +376,7 @@ def make_stacking_movie(
 
     def channels_for(counts: dict[str, int], patch: bool = False) -> dict[str, np.ndarray]:
         out = {}
-        for chan in ("R", "G", "B", "L"):
+        for chan in ("R", "G", "B", "L", "HA"):
             f = resolved.get(chan)
             if not f:
                 continue
@@ -388,16 +388,16 @@ def make_stacking_movie(
 
     ckpt()
     full = channels_for(plan[-1])
-    subbed_full, white = color_process._prepare(
-        full, opts["subtract_background"], opts["mesh"], opts["white_pct"])
-    blacks = color_process.sky_anchored_blacks(subbed_full, black_sigma, opts["black_pct"],
-                                               log=lambda m: _logger.info(m.strip()))
-    _logger.info("Movie stretch: white %.2f ADU, blacks %s", white,
-                 {c: round(b, 3) for c, b in blacks.items()})
+    # ha_gain=None: the blend is done here, not in _prepare, so the Ha
+    # continuum ratio is measured ONCE on the full stack and pinned for every
+    # depth — the frames share one blend as they share one stretch.
+    subbed_full, _ = color_process._prepare(
+        full, opts["subtract_background"], opts["mesh"], opts["white_pct"], ha_gain=None)
 
     # The inset cannot go through the gradient mesh — on a 480 px patch the
     # mesh would eat the nebulosity — so it gets the offset the full-frame
     # background model has over its footprint, read off the downscaled frame.
+    # Measured before the Ha blend, which is not a background term.
     inset_offset: dict[str, float] = {}
     inset_box_ds = None
     if crop is not None:
@@ -410,13 +410,26 @@ def make_stacking_movie(
             region_sub = subbed_full[c][ys:ye, xs:xe]
             inset_offset[c] = float(np.nanmedian(region_raw - region_sub))
 
+    ha_ratio = None
+    if "HA" in subbed_full:
+        ha_ratio = color_process.ha_continuum_ratio(subbed_full["HA"], subbed_full["R"])
+        subbed_full, _ = color_process.apply_ha_blend(subbed_full, opts["ha_gain"], ratio=ha_ratio)
+    white = color_process.shared_white(subbed_full, opts["white_pct"])
+    primaries = {c: subbed_full[c] for c in ("R", "G", "B", "L") if c in subbed_full}
+    blacks = color_process.sky_anchored_blacks(primaries, black_sigma, opts["black_pct"],
+                                               log=lambda m: _logger.info(m.strip()))
+    _logger.info("Movie stretch: white %.2f ADU, blacks %s", white,
+                 {c: round(b, 3) for c, b in blacks.items()})
+
     dso_label = dso_dir.name
     stills: list = []
     for k, counts in enumerate(plan, 1):
         ckpt()
         chans = channels_for(counts)
         subbed, _ = color_process._prepare(
-            chans, opts["subtract_background"], opts["mesh"], opts["white_pct"])
+            chans, opts["subtract_background"], opts["mesh"], opts["white_pct"], ha_gain=None)
+        if ha_ratio is not None:
+            subbed, _ = color_process.apply_ha_blend(subbed, opts["ha_gain"], ratio=ha_ratio)
         rgb = color_process.compose_prepared(subbed, blacks, white,
                                              softening=opts["softening"], scnr=opts["scnr"])
         arr8 = stacker.sky_parity((rgb * 255.0 + 0.5).astype(np.uint8))
@@ -433,6 +446,8 @@ def make_stacking_movie(
         if crop is not None:
             pch = channels_for(counts, patch=True)
             psub = {c: pch[c] - inset_offset[c] for c in pch}
+            if ha_ratio is not None:
+                psub, _ = color_process.apply_ha_blend(psub, opts["ha_gain"], ratio=ha_ratio)
             prgb = color_process.compose_prepared(psub, blacks, white,
                                                   softening=opts["softening"], scnr=opts["scnr"])
             pimg = Image.fromarray(stacker.sky_parity((prgb * 255.0 + 0.5).astype(np.uint8)), mode="RGB")
@@ -472,7 +487,9 @@ def make_stacking_movie(
         "channels": {c: resolved[c] for c in resolved},
         "frames": totals, "plan": plan, "reference": ref_path.name,
         "size": stills[0].size, "seconds": round(len(stills) * (hold_s + fade_s), 1),
-        "stretch": {"white": white, "blacks": blacks, "softening": opts["softening"]},
+        "stretch": {"white": white, "blacks": blacks, "softening": opts["softening"],
+                    **({"ha_gain": opts["ha_gain"], "ha_ratio": ha_ratio}
+                       if ha_ratio is not None else {})},
         "poster": poster, "bytes": out_path.stat().st_size, "inset": crop,
         "elapsed": round(time.perf_counter() - t0, 1),
     }
