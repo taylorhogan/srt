@@ -699,6 +699,12 @@ class ShadowConductor:
             if event == "CHECKS_PASSED" and self.state == "IDLE_DAY":
                 self.slots = max(1, self._read_slot_count())
                 payload["unplanned"] = True
+                self._unplanned = True
+            # A failed fire returns to "the day the open was attempted from";
+            # for an unplanned run that day had no plan, and the slot count
+            # synthesized above must not read as one (ARMED) on the way back.
+            if event == "ROOF_FIRE_FAILED" and getattr(self, "_unplanned", False):
+                self.slots = 0
             evidence_snap = self._current_evidence()
             if operator_weather:
                 evidence_snap = evidence_snap.replace(weather_ok=True)
@@ -722,6 +728,8 @@ class ShadowConductor:
                                         data=payload)
                 self.state = out.state
                 self._state_since = time.time()
+                if self.state in ("IDLE_DAY", "ARMED"):
+                    self._unplanned = False
                 return Verdict("transition", self.state, would_refuse=would, seq=e.seq)
             if out.kind == "rejected":
                 e = self.journal.append("rejected", event, source,
