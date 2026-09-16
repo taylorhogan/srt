@@ -207,13 +207,13 @@ def _wait_for_roof_relay(max_s: float = ROOF_RELAY_BOOT_MAX_S) -> bool:
     while True:
         if utl_shelly.roof_relay_status() is not None:
             _logger.info("roof relay reachable %.0f s after the motor plug went on",
-                         10.0 + time.monotonic() - t0)
+                         time.monotonic() - t0)
             return True
         if time.monotonic() - t0 > max_s:
             _logger.error("roof relay still unreachable %.0f s after the motor plug "
-                          "went on; firing anyway", 10.0 + max_s)
+                          "went on; firing anyway", max_s)
             return False
-        time.sleep(2.0)
+        time.sleep(1.0)
 
 
 def toggle_roof(dev_map: dict, capture_direction: Optional[str] = None) -> None:
@@ -229,14 +229,14 @@ def toggle_roof(dev_map: dict, capture_direction: Optional[str] = None) -> None:
     """
     inst = {"Roof motor": 'on'}
     asyncio.run(ku.kasa_do(dev_map, inst))
-    time.sleep(10)
     # The relay Shelly is powered THROUGH that plug: it boots when the plug
-    # goes on and needs Wi-Fi before it can take the fire. Ten seconds was
-    # enough for 26 moves and not for the 27th (2026-09-16 11:11: connect
-    # timeout, the run died, the plug stayed on). So after the fixed ten
-    # seconds, wait until it actually answers a read-only status query,
-    # and log how long that took -- the boot time is now measured on every
-    # move instead of assumed.
+    # goes on and needs Wi-Fi before it can take the fire. A blind ten-second
+    # sleep was enough for 26 moves and not for the 27th (2026-09-16 11:11:
+    # connect timeout, the run died, the plug stayed on). So poll it from
+    # the moment the plug is on until it answers a read-only status query,
+    # and log how long that took: the boot time is measured on every move
+    # (the first two measurements after the fix read "10 s" because they
+    # polled only after the old sleep -- a floor, not a number).
     _wait_for_roof_relay()
 
     # Best-effort: bank the motor's current signature for anomaly detection.
