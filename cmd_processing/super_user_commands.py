@@ -3825,6 +3825,16 @@ def doit_cmd(words: list[str], account: str) -> None:
             _logger.info("Main imaging wait aborted by emergency stop — skipping flats")
             return
         _logger.info("Imaging state is NONE — main phase complete")
+        if operand == 3:
+            # A rehearsal (home and park, no imaging) has nothing to
+            # calibrate or measure: no flats, no end-of-night SNR. It is the
+            # mechanical dry run of a night -- roof, prelude, park, close --
+            # and ends there (2026-09-16, the operator's call).
+            _logger.info("operand 3: rehearsal run, skipping flats and SNR")
+            social_server.post_social_message(
+                "Rehearsal run (image!! 3) complete — no flats, no SNR")
+            _kill_nina()
+            return
 
         # Kill NINA before starting flats so there is no leftover process
         # from the main sequence holding a lock or confusing the new instance.

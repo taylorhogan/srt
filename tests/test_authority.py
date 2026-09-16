@@ -328,3 +328,26 @@ def test_relay_failure_reported_with_the_roof_still_shut_returns_to_idle(tmp_pat
     c.offer("CHECKS_PASSED", "operator", {}, evidence=GOOD)
     v = c.offer("ROOF_FIRE_FAILED", "operator", {}, evidence={**GOOD, "roof": "UNKNOWN"})
     assert not v.accepted and c.state == "OPENING_ROOF"
+
+
+def test_nina_killed_before_flats_is_not_a_capture_lost(tmp_path, monkeypatch):
+    """2026-09-16 11:43: end.py's posts had walked the machine to FLATS while
+    imaging.txt still read IN_MAIN; the deliberate kill of NINA before the
+    flats then fired CAPTURE_LOST from FLATS. Capture liveness only matters
+    while the machine has a capture running."""
+    root = _mkroot(tmp_path)
+    c = _conductor(root)
+    (root / "imaging.txt").write_text("IMAGING_STATE IN_MAIN")
+    alive = {"nina": True}
+    monkeypatch.setattr(ShadowConductor, "_nina_running", lambda self: alive["nina"])
+    c._nina = True
+    c._imaging = "IN_MAIN"
+    c.state = "FLATS"
+    alive["nina"] = False
+    c.poll()
+    assert c.state == "FLATS"
+    assert not any(e.event == "CAPTURE_LOST" for e in _entries(c))
+    # ...but mid-slot it still is.
+    c.state, c._nina = "SLOT_IMAGING", True
+    c.poll()
+    assert c.state == "PARKING"
