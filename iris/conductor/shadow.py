@@ -971,7 +971,12 @@ class ShadowConductor:
 
         # --- NINA process liveness edge
         nina = self._nina_running()
-        if self._nina and not nina and self._imaging in ("IN_PRELUDE", "IN_MAIN"):
+        # Only while the MACHINE still has a capture running. With roof
+        # authority end.py's posts walk the machine to FLATS before the state
+        # file catches up, and the deliberate kill of NINA before the flats
+        # (2026-09-16 11:43) then read as a capture lost from FLATS.
+        if (self._nina and not nina and self._imaging in ("IN_PRELUDE", "IN_MAIN")
+                and self.state in ("PRELUDE", "SLOT_SETUP", "SLOT_IMAGING")):
             self.offer("CAPTURE_LOST", "watchdog", {"imaging": self._imaging})
         self._nina = nina
 
