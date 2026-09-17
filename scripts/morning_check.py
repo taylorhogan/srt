@@ -36,6 +36,7 @@ exits if the whole run passes HARD_TIMEOUT_S.
 import argparse
 import asyncio
 import json
+import logging
 import os
 import sys
 import threading
@@ -46,9 +47,11 @@ if __package__ is None or __package__ == "":
     if project_root not in sys.path:
         sys.path.insert(0, project_root)
 
-from utils import utils
-
-_logger = utils.set_logger()
+# utils (and through it kasa, config) is imported in main(), not here: CI runs
+# these tests with nothing but pytest installed, and a module-level import made
+# test_morning_check a collection error that failed every run from 779202d on.
+# set_logger configures the root logger, so this module logger reaches iris.log.
+_logger = logging.getLogger(__name__)
 
 LOG_PATH = "local/morning_check_log.jsonl"
 HARD_TIMEOUT_S = 600
@@ -183,6 +186,8 @@ def main():
                     help="as --always-push, through this date inclusive; silent on "
                          "success afterwards, so a trial period cannot be forgotten on")
     args = ap.parse_args()
+    from utils import utils
+    utils.set_logger()
     _watchdog(args.dry_run)
     if args.always_push_until:
         until = datetime.strptime(args.always_push_until, "%Y-%m-%d").date()
