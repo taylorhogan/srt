@@ -507,9 +507,12 @@ class PublicConfig():
             # cycle_roof ask first and refuse on a refusal). False = the
             # same requests are posted and journaled, the verdict is
             # advisory ("conductor would have refused: ...") and nothing
-            # behavioural changes. Flip only after a supervised daytime
-            # cycle_roof and a deliberate refusal have been seen.
-            "roof_authority": False,
+            # behavioural changes. Flipped True 2026-09-17 (operator) after
+            # the supervised daytime cycle (roof!! open 09:26 / close 09:30)
+            # and refusal drill stage 1 (scripts/conductor_drill.py) passed;
+            # stage 2 of the drill runs with this on. Set False to go back to
+            # advisory if a verdict is ever wrong at the wrong moment.
+            "roof_authority": True,
         },
 
         "transit": {
