@@ -176,7 +176,7 @@ from datetime import datetime, timedelta, timezone
 
 T0 = datetime(2026, 9, 17, 0, 33, 37, tzinfo=timezone.utc)
 CLEAR = dict(mount_state="not_parked",
-             mount_motion={"connected": True, "moving": True, "alt": 72.4},
+             mount_motion={"connected": True, "tracking": True, "alt": 72.4},
              mount_powered=True, camera_ok=True,
              frame_roof_verdicts=["unknown"] * 3,
              open_confirmed=T0 - timedelta(hours=5, minutes=36),     # 18:57
@@ -195,9 +195,11 @@ def test_blind_park_allowed_with_no_fire_on_record():
 @pytest.mark.parametrize("change, word", [
     (dict(mount_state="unknown"), "PWI4"),
     (dict(mount_state="parked"), "PWI4"),
-    (dict(mount_motion={"connected": False, "moving": True, "alt": 72.4}), "not connected"),
-    (dict(mount_motion={"connected": True, "moving": False, "alt": 72.4}), "not be homed"),
-    (dict(mount_motion={"connected": True, "moving": True, "alt": -48.7}), "not plausible"),
+    (dict(mount_motion={"connected": False, "tracking": True, "alt": 72.4}), "not connected"),
+    (dict(mount_motion={"connected": True, "tracking": False, "alt": 72.4}), "not be homed"),
+    (dict(mount_motion={"connected": True, "tracking": False, "slewing": True, "alt": 40.0}),
+     "FindHome"),
+    (dict(mount_motion={"connected": True, "tracking": True, "alt": -48.7}), "not plausible"),
     (dict(mount_motion={}), "not connected"),
     (dict(mount_powered=None), "mount plug"),
     (dict(mount_powered=False), "mount plug"),
@@ -247,7 +249,7 @@ def stop_env(tmp_path, monkeypatch):
     monkeypatch.setattr(suc.pwi4_utils, "park_scope", lambda: pytest.fail("blind park must not connect"))
     monkeypatch.setattr(suc, "_park_connected_mount", lambda: calls.append("park") or True)
     monkeypatch.setattr(suc, "_read_mount_motion",
-                        lambda: calls.append("read") or {"connected": True, "moving": True, "alt": 72.4})
+                        lambda: calls.append("read") or {"connected": True, "tracking": True, "alt": 72.4})
     monkeypatch.setattr(suc.end, "do_main", lambda: calls.append("close") or True)
     monkeypatch.setattr(kasa_state, "last_detail",
                         {"camera": True, "per_frame": [{"roof": "unknown"}] * 3})

@@ -1282,9 +1282,14 @@ def blind_park_refusal(*, mount_state, mount_motion, mount_powered, camera_ok, f
     open earlier, and nothing that could move the roof since":
 
       1. the mount is powered and PWI4 answers and says NOT parked, AND it
-         was already connected and TRACKING or slewing when stop! read it,
-         with a plausible altitude. Tracking means it was homed this session
-         (the prelude homes it after the roof opens). An unhomed mount also
+         was already connected and TRACKING when stop! read it, with a
+         plausible altitude. Tracking means it was homed this session: every
+         NINA main sequence (full_for_tonight.json, and no_imaging.json for
+         image!! 3) opens with cdk17_start_sequence = ConnectEquipment ->
+         FindHome -> ParkScope -> UnparkScope, and nothing tracks before that
+         (the prelude only starts PWI4 and powers the switch; PWI4 does not
+         home on connect). Slewing alone is NOT enough: the FindHome itself
+         slews an unhomed mount. An unhomed mount also
          reads "not parked" -- after a power cycle PWI4 reported alt -48.7
          for a parked scope (2026-08-19) -- and a park from there slews to a
          meaningless position. Nothing here connects or homes the mount.
@@ -1305,9 +1310,9 @@ def blind_park_refusal(*, mount_state, mount_motion, mount_powered, camera_ok, f
     motion = mount_motion or {}
     if motion.get("connected") is not True:
         return "mount not connected in PWI4 (a park would need a connect)"
-    if motion.get("moving") is not True:
-        return ("mount was not tracking or slewing, so it may not be homed; "
-                "a park could slew to a meaningless position")
+    if motion.get("tracking") is not True:
+        return ("mount was not tracking, so it may not be homed (a stop! during "
+                "FindHome, or before it); a park could slew to a meaningless position")
     alt = motion.get("alt")
     if alt is None or not (0.0 <= alt <= 90.0):
         return "mount altitude %s is not plausible; position unknown" % alt
@@ -1333,12 +1338,13 @@ def blind_park_refusal(*, mount_state, mount_motion, mount_powered, camera_ok, f
 
 
 def _read_mount_motion() -> dict:
-    """{connected, moving, alt} from PWI4, read BEFORE anything is stopped. Never connects."""
+    """{connected, tracking, slewing, alt} from PWI4, read BEFORE anything is stopped. Never connects."""
     try:
         from hardware_control.pwi4_client import PWI4
         st = PWI4().status()
         return {"connected": bool(st.mount.is_connected),
-                "moving": bool(st.mount.is_tracking or st.mount.is_slewing),
+                "tracking": bool(st.mount.is_tracking),
+                "slewing": bool(st.mount.is_slewing),
                 "alt": st.mount.altitude_degs}
     except Exception:  # noqa: BLE001
         _logger.exception("emergency: PWI4 status read failed")
