@@ -21,6 +21,8 @@ def fire_roof_relay(timeout=10):
     There is no separate open/close — callers must enforce the hardware safety
     rule (scope parked) before calling this.
     """
+    from sentry import roof_evidence
+    roof_evidence.record_motion_possible("fire_roof_relay")
     url = config.data()["hardware"]["roof_relay_url"]
     return _get(url, timeout=timeout)
 

@@ -31,6 +31,7 @@ from utils import utils, pushover
 from sentry import vision_safety
 from sentry import roof_current_signature as rcs
 from sentry import kasa_audio
+from sentry import roof_evidence
 from end_points import end
 from iris_astronomy import astro_dso_visibility
 from nina_gen import nina_sequence_gen
@@ -227,6 +228,10 @@ def toggle_roof(dev_map: dict, capture_direction: Optional[str] = None) -> None:
     `capture_direction` ("open"/"close") only labels the banked current
     signature; it does not change which way the roof moves.
     """
+    # Before the plug: from here on the roof may move, whatever happens next.
+    # A stop! that cannot see the roof trusts an earlier OPEN only if nothing
+    # like this came after it (sentry/roof_evidence.py).
+    roof_evidence.record_motion_possible("toggle_roof direction=%s" % capture_direction)
     inst = {"Roof motor": 'on'}
     asyncio.run(ku.kasa_do(dev_map, inst))
     # The relay Shelly is powered THROUGH that plug: it boots when the plug
@@ -1257,6 +1262,130 @@ def _scope_confirmed_parked(mount_state: str, vision_parked: bool) -> bool:
     return bool(vision_parked)
 
 
+# How old the last confirmed OPEN may be for a blind park: one night, not last week.
+BLIND_PARK_OPEN_MAX_AGE_H = 16.0
+
+
+def blind_park_refusal(*, mount_state, mount_powered, camera_ok, frame_roof_verdicts,
+                       open_confirmed, motion_possible, roof_plug, roof_lock_held,
+                       now) -> str | None:
+    """Why a stop! must NOT park a scope whose roof it cannot see, or None to park. Pure.
+
+    The hardware rule is "never move the scope unless the roof is confirmed
+    open". On 2026-09-17 00:33 the unparked scope itself hid the scope tag, the
+    roof tag and the gold star, so the stop! read the roof as ambiguous, did not
+    park, and left the mount TRACKING -- still moving, roof unconfirmed -- until
+    the operator arrived. The roof was open.
+
+    Operator decision 2026-09-17: in that case, park when the roof is provably
+    where it was last SEEN open. "Confirmed open now" is replaced by "confirmed
+    open earlier, and nothing that could move the roof since":
+
+      1. the mount is powered and PWI4 answers and says NOT parked
+      2. the camera returned frames, and no frame decoded the roof tag at its
+         shut position (positive evidence of shut refuses outright)
+      3. a gating read confirmed OPEN within BLIND_PARK_OPEN_MAX_AGE_H, the
+         roof has not been powered/fired since, the roof motor plug reads OFF
+         now, and no roof move holds the lock
+
+    The failure this guards is a roof that moved after it was seen open (relay
+    misfire, physical control, stall part way) -- a half-closed roof over a
+    tracking scope looks exactly like 00:33. Condition 3 is what catches it,
+    except a move by hand with the motor plug off, which nothing here can see;
+    the open limit switch will.
+    """
+    if mount_state != "not_parked":
+        return "PWI4 does not report the mount unparked (%s)" % mount_state
+    if mount_powered is not True:
+        return "telescope mount plug not confirmed ON"
+    if not camera_ok:
+        return "the camera returned no frames"
+    if "shut" in (frame_roof_verdicts or ()):
+        return "a frame read the roof tag at its SHUT position"
+    if open_confirmed is None:
+        return "no record of the roof being confirmed open"
+    age_h = (now - open_confirmed).total_seconds() / 3600.0
+    if age_h > BLIND_PARK_OPEN_MAX_AGE_H or age_h < 0:
+        return "roof last confirmed open %.1f h ago" % age_h
+    if motion_possible is not None and motion_possible >= open_confirmed:
+        return ("the roof was powered/fired at %s, after it was last confirmed open at %s"
+                % (motion_possible.strftime("%H:%M:%S"), open_confirmed.strftime("%H:%M:%S")))
+    if roof_plug != 0:
+        return "roof motor plug not confirmed OFF (%s)" % roof_plug
+    if roof_lock_held:
+        return "a roof move is in progress"
+    return None
+
+
+def _stop_mount_motion() -> str:
+    """Stop any slew and turn tracking off. Not a move: it ends one. Returns a word for the log."""
+    try:
+        from hardware_control.pwi4_client import PWI4
+        pwi4 = PWI4()
+        pwi4.mount_stop()
+        pwi4.mount_tracking_off()
+        return "stopped"
+    except Exception as exc:  # noqa: BLE001
+        _logger.exception("emergency: could not stop the mount")
+        return "NOT stopped (%s)" % type(exc).__name__
+
+
+def _blind_park(dev_map, inside_view, parked, closed, is_open, mount_state):
+    """stop! with the roof ambiguous and the mount unparked: stop it, then park if the evidence allows.
+
+    Returns the (parked, closed, is_open, mount_state) the caller should branch
+    on: a fresh read after a park, or the inputs unchanged after a refusal.
+    """
+    stopped = _stop_mount_motion()
+    _logger.info("emergency: roof ambiguous, mount unparked -- tracking %s", stopped)
+
+    from sentry import kasa_state
+    det = dict(kasa_state.last_detail or {})
+    frames = det.get("per_frame") or []
+    ev = roof_evidence.read()
+    mount_powered = roof_plug = None
+    try:
+        if dev_map is None:
+            dev_map = asyncio.run(ku.make_discovery_map(expect=("Telescope mount", "Roof motor")))
+        if "Telescope mount" in dev_map:
+            mount_powered = ku.legacy_relay(dev_map["Telescope mount"]) == 1
+        if "Roof motor" in dev_map:
+            roof_plug = ku.legacy_relay(dev_map["Roof motor"])
+    except Exception:  # noqa: BLE001
+        _logger.exception("emergency: plug reads for the blind park failed")
+    why = blind_park_refusal(
+        mount_state=mount_state, mount_powered=mount_powered,
+        camera_ok=bool(det.get("camera")) and bool(frames),
+        frame_roof_verdicts=[f.get("roof") for f in frames],
+        open_confirmed=ev["open_confirmed"], motion_possible=ev["motion_possible"],
+        roof_plug=roof_plug, roof_lock_held=_roof_lock.locked(),
+        now=datetime.now().astimezone())
+    _logger.info("emergency: blind park evidence: open_confirmed=%s motion_possible=%s "
+                 "roof_plug=%s mount_powered=%s frames=%s -> %s",
+                 ev["open_confirmed"], ev["motion_possible"], roof_plug, mount_powered,
+                 [f.get("roof") for f in frames], why or "PARK")
+    if why:
+        msg = ("EMERGENCY: roof not visible and scope NOT parked; tracking %s. Not parking: %s. "
+               "Park in PWI4, check the roof, then roof!! close" % (stopped, why))
+        social_server.post_social_message(msg)
+        pushover.push_message(msg, inside_view)
+        return parked, closed, is_open, mount_state
+
+    social_server.post_social_message(
+        "Roof not visible (scope in the way) but last confirmed open at %s with no roof "
+        "movement since — tracking %s, parking scope" % (ev["open_confirmed"].strftime("%H:%M"), stopped))
+    try:
+        pwi4_utils.park_scope()
+    except Exception:
+        _logger.exception("emergency: blind park_scope failed")
+        social_server.post_social_message("Park command FAILED (see log)")
+    mount_state = pwi4_utils.mount_park_state()
+    parked, closed, is_open, _ = get_status_with_lights()
+    _logger.info("emergency: after blind park: vision parked=%s closed=%s open=%s; mount=%s",
+                 parked, closed, is_open, mount_state)
+    return parked, closed, is_open, mount_state
+
+
 def _emergency_stop_sequence() -> None:
     """Body of the emergency stop (see :func:`unsafe_cmd`).
 
@@ -1319,6 +1448,14 @@ def _emergency_stop_body() -> None:
         "emergency: vision parked=%s closed=%s open=%s; mount=%s",
         parked, closed, is_open, mount_state,
     )
+
+    # 3b. Roof unreadable with the mount unparked: the scope may be what hides
+    #     the tags (2026-09-17). Stop it, and park if the roof provably has not
+    #     moved since it was last seen open; then branch on a fresh read.
+    blind_park_tried = not is_open and not closed and mount_state == "not_parked"
+    if blind_park_tried:
+        parked, closed, is_open, mount_state = _blind_park(
+            dev_map, inside_view, parked, closed, is_open, mount_state)
 
     # 4. Branch on roof position (safety-critical).
     if is_open:
@@ -1411,10 +1548,12 @@ def _emergency_stop_body() -> None:
             set_imaging_state(ImagingState.NONE)
 
     else:
-        # Roof position ambiguous (neither confidently open nor closed).
+        # Roof position ambiguous (neither confidently open nor closed). A blind
+        # park that refused has already said why; do not push twice.
         msg = "EMERGENCY: roof position ambiguous — no safe automatic action, manual help needed"
         social_server.post_social_message(msg)
-        pushover.push_message(msg, inside_view)
+        if not blind_park_tried or mount_state == "parked":
+            pushover.push_message(msg, inside_view)
         set_imaging_state(ImagingState.NONE)
 
 

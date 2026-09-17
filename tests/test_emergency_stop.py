@@ -168,3 +168,108 @@ def test_image_cmd_refusal_is_loud_and_returns_false(monkeypatch):
     assert suc.image_cmd(["", "image!!", "1"], "iris") is False
     assert posted and "REFUSED" in posted[0] and "N.I.N.A" in posted[0]
     assert pushed and "REFUSED" in pushed[0]
+
+
+# ------------------------------------------------------- blind park (2026-09-17)
+
+from datetime import datetime, timedelta, timezone
+
+T0 = datetime(2026, 9, 17, 0, 33, 37, tzinfo=timezone.utc)
+CLEAR = dict(mount_state="not_parked", mount_powered=True, camera_ok=True,
+             frame_roof_verdicts=["unknown"] * 3,
+             open_confirmed=T0 - timedelta(hours=5, minutes=36),     # 18:57
+             motion_possible=T0 - timedelta(hours=5, minutes=40),    # the open's own fire
+             roof_plug=0, roof_lock_held=False, now=T0)
+
+
+def test_blind_park_allowed_on_the_2026_09_17_evidence():
+    assert suc.blind_park_refusal(**CLEAR) is None
+
+
+def test_blind_park_allowed_with_no_fire_on_record():
+    assert suc.blind_park_refusal(**dict(CLEAR, motion_possible=None)) is None
+
+
+@pytest.mark.parametrize("change, word", [
+    (dict(mount_state="unknown"), "PWI4"),
+    (dict(mount_state="parked"), "PWI4"),
+    (dict(mount_powered=None), "mount plug"),
+    (dict(mount_powered=False), "mount plug"),
+    (dict(camera_ok=False), "no frames"),
+    (dict(frame_roof_verdicts=["unknown", "shut", "unknown"]), "SHUT"),
+    (dict(open_confirmed=None), "no record"),
+    (dict(open_confirmed=T0 - timedelta(hours=17)), "h ago"),
+    (dict(motion_possible=T0 - timedelta(minutes=10)), "after it was last confirmed open"),
+    (dict(roof_plug=1), "plug not confirmed OFF"),
+    (dict(roof_plug=None), "plug not confirmed OFF"),
+    (dict(roof_lock_held=True), "in progress"),
+])
+def test_blind_park_refuses(change, word):
+    why = suc.blind_park_refusal(**dict(CLEAR, **change))
+    assert why and word in why, why
+
+
+@pytest.fixture
+def stop_env(tmp_path, monkeypatch):
+    """_emergency_stop_body with every hardware touch recorded, nothing real."""
+    from fits_processing import frame_watcher
+    from sentry import kasa_state
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(suc.utils, "set_install_dir", lambda: None)
+    monkeypatch.setattr(suc, "ABORT_FLAG_PATH", str(tmp_path / "abort.flag"))
+    monkeypatch.setattr(suc, "_kill_nina", lambda: None)
+    monkeypatch.setattr(frame_watcher, "stop", lambda: None)
+    monkeypatch.setattr(suc.time, "sleep", lambda s: None)
+    monkeypatch.setattr(suc, "turn_inside_light_on", lambda d: None)
+    monkeypatch.setattr(suc, "set_imaging_state", lambda s: None)
+    monkeypatch.setattr(suc, "_power_down_after_close", lambda: calls.append("power_down"))
+
+    async def fake_map(*a, **k):
+        return {"Telescope mount": "m", "Roof motor": "r", "Iris inside light": "l"}
+
+    async def fake_do(dev_map, inst):
+        calls.append(("kasa", dict(inst)))
+        return {k: True for k in inst}
+
+    calls, posts, pushes = [], [], []
+    monkeypatch.setattr(suc.ku, "make_discovery_map", fake_map)
+    monkeypatch.setattr(suc.ku, "kasa_do", fake_do)
+    monkeypatch.setattr(suc.ku, "legacy_relay", lambda host: {"m": 1, "r": 0}[host])
+    monkeypatch.setattr(suc.social_server, "post_social_message", posts.append)
+    monkeypatch.setattr(suc.pushover, "push_message", lambda m, *a, **k: pushes.append(m))
+    monkeypatch.setattr(suc, "_stop_mount_motion", lambda: calls.append("stop") or "stopped")
+    monkeypatch.setattr(suc.pwi4_utils, "park_scope", lambda: calls.append("park"))
+    monkeypatch.setattr(suc.end, "do_main", lambda: calls.append("close") or True)
+    monkeypatch.setattr(kasa_state, "last_detail",
+                        {"camera": True, "per_frame": [{"roof": "unknown"}] * 3})
+    now = datetime.now().astimezone()
+    monkeypatch.setattr(suc.roof_evidence, "read", lambda: {
+        "open_confirmed": now - timedelta(hours=5), "motion_possible": now - timedelta(hours=5, minutes=2)})
+
+    def script(vision, mount):
+        v, m = iter(vision), iter(mount)
+        monkeypatch.setattr(suc, "get_status_with_lights", lambda: next(v))
+        monkeypatch.setattr(suc.pwi4_utils, "mount_park_state", lambda: next(m))
+
+    return calls, posts, pushes, script
+
+
+BLIND = (False, False, False, None)
+
+
+def test_stop_blind_parks_then_closes_on_a_fresh_read(stop_env):
+    calls, posts, pushes, script = stop_env
+    script([BLIND, (True, False, True, None)], ["not_parked", "parked"])
+    suc._emergency_stop_body()
+    assert calls.index("stop") < calls.index("park") < calls.index("close")
+    assert "power_down" in calls
+    assert any("parking scope" in p for p in posts)
+
+
+def test_stop_blind_refusal_stops_tracking_and_pushes_once(stop_env, monkeypatch):
+    calls, posts, pushes, script = stop_env
+    monkeypatch.setattr(suc.ku, "legacy_relay", lambda host: {"m": 1, "r": 1}[host])   # roof plug ON
+    script([BLIND], ["not_parked"])
+    suc._emergency_stop_body()
+    assert "stop" in calls and "park" not in calls and "close" not in calls
+    assert len(pushes) == 1 and "roof motor plug not confirmed OFF" in pushes[0]

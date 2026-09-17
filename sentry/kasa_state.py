@@ -661,6 +661,9 @@ def kasa_status(quick=False, verify_pose=False, frames=1):
                  float(sdet.get("worst_corner_px", 0.0) or 0.0),
                  ("%.1f px off shut" % rdet["worst_corner_px"]) if "worst_corner_px" in rdet else "not seen",
                  star_word)
+    if verify_pose and roof == "open":
+        from sentry import roof_evidence
+        roof_evidence.record_open_confirmed("kasa_status %d frames" % n)
     return scope == "safe", roof == "shut", roof == "open", when
 
 
