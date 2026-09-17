@@ -1485,19 +1485,41 @@ _abort_event = threading.Event()
 _roof_lock = threading.Lock()
 
 
+# The Event alone only reaches runs in THIS process. The auto night runs in the
+# scheduler process (scheduler_server -> image_cmd) while stop! runs in the web
+# chat's, so on 2026-09-17 00:32 the run never saw the abort: stop! set imaging
+# state NONE, the run read that as "main phase complete", powered the mount back
+# on and launched flats with the roof open. The file carries the signal across.
+ABORT_FLAG_PATH = os.path.join(
+    os.path.abspath(os.path.join(os.path.dirname(__file__), '..')), "local", "emergency_abort.flag")
+
+
 def request_abort() -> None:
-    """Signal any in-progress imaging run to abort at its next checkpoint."""
+    """Signal any in-progress imaging run, in any process, to abort at its next checkpoint."""
     _abort_event.set()
+    try:
+        os.makedirs(os.path.dirname(ABORT_FLAG_PATH), exist_ok=True)
+        with open(ABORT_FLAG_PATH, "w") as fh:
+            fh.write("%s pid=%d\n" % (datetime.now().isoformat(timespec="seconds"), os.getpid()))
+    except OSError:
+        _logger.exception("emergency: could not write %s -- runs in other processes "
+                          "will NOT see this abort", ABORT_FLAG_PATH)
 
 
 def clear_abort() -> None:
     """Clear the abort flag. Called when starting a fresh imaging/flats run."""
     _abort_event.clear()
+    try:
+        os.remove(ABORT_FLAG_PATH)
+    except FileNotFoundError:
+        pass
+    except OSError:
+        _logger.exception("could not remove %s", ABORT_FLAG_PATH)
 
 
 def is_aborting() -> bool:
-    """Return True if an emergency abort has been requested."""
-    return _abort_event.is_set()
+    """Return True if an emergency abort has been requested, by this process or another."""
+    return _abort_event.is_set() or os.path.exists(ABORT_FLAG_PATH)
 
 
 def set_imaging_state(state: ImagingState) -> None:
@@ -3888,30 +3910,27 @@ def _newest_fits_mtime(image_dir: Path) -> float:
     return newest
 
 
-def do_flats() -> None:
-    """Run a flats sequence via NINA.
+def do_flats() -> bool:
+    """Run a flats sequence via NINA. Returns False if it refused to start.
 
     Sequence:
-        1. Power on the telescope mount.
-        2. Set imaging state to IN_FLATS.
-        3. Launch nina_flats.bat (non-blocking Popen).
-        4. Poll imaging state every 30 seconds until DONE_FLATS.
-        5. Power off the mount and return.
+        1. Refuse if an emergency stop is in effect (any process).
+        2. Vision: REFUSE unless the scope is parked and the roof closed.
+        3. Power on the telescope mount.
+        4. Set imaging state to IN_FLATS.
+        5. Launch nina_flats.bat (non-blocking Popen).
+        6. Poll imaging state every 30 seconds until DONE_FLATS.
+        7. Power off the mount and return.
     """
+    if is_aborting():
+        _logger.info("Flats not started: emergency stop in effect")
+        social_server.post_social_message("Flats not started — emergency stop in effect")
+        return False
+
     _logger.info("Begin flats sequence")
     social_server.post_social_message("Starting flats sequence")
 
     dev_map = asyncio.run(ku.make_discovery_map())
-    # The result is CHECKED. This line used to log "Mount powered on"
-    # unconditionally, so on 2026-08-16 it recorded success while the switch had
-    # not moved, and the operator had to power the mount by hand. A log that
-    # cannot fail is not evidence.
-    if asyncio.run(ku.kasa_do(dev_map, {"Telescope mount": 'on'})).get("Telescope mount"):
-        _logger.info("Mount powered on (verified)")
-    else:
-        _logger.error("Mount power-on FAILED -- flats will run with no mount power")
-        social_server.post_social_message(
-            "Flats: could not power the mount on — switch it on in the Kasa app")
 
     # Flats must be dark — force the inside light off before capturing, regardless
     # of what the End Sequence left it at (a failed shutdown step can leave it on
@@ -3924,21 +3943,31 @@ def do_flats() -> None:
     except Exception:
         _logger.exception("Failed to force inside light off before flats")
 
-    # Visually verify mount is parked and roof is closed before flats.
-    # Only checks — does not move the scope or roof.
+    # Parked and closed are REQUIRED, and checked BEFORE the mount is powered, so
+    # a refusal leaves it off. These were warnings until 2026-09-17, when a run
+    # that missed a stop! powered the mount and launched flats under an open roof.
     _logger.info("Visual safety check before flats")
     parked, closed, is_open, mod_date = get_status_with_lights()
+    if not (parked and closed):
+        why = " and ".join(w for w, ok in (("roof not confirmed closed", closed),
+                                           ("scope not confirmed parked", parked)) if not ok)
+        msg = "Flats REFUSED: %s — mount left off" % why
+        _logger.warning(msg)
+        social_server.post_social_message(msg)
+        pushover.push_message(msg, config.data()["camera safety"]["scope_view"])
+        return False
+    _logger.info("Visual check: mount parked, roof closed")
 
-    if parked:
-        _logger.info("Visual check: mount is parked")
+    # The result is CHECKED. This line used to log "Mount powered on"
+    # unconditionally, so on 2026-08-16 it recorded success while the switch had
+    # not moved, and the operator had to power the mount by hand. A log that
+    # cannot fail is not evidence.
+    if asyncio.run(ku.kasa_do(dev_map, {"Telescope mount": 'on'})).get("Telescope mount"):
+        _logger.info("Mount powered on (verified)")
     else:
-        social_server.post_social_message("WARNING: Mount does not appear parked before flats")
-        _logger.warning("Visual check: mount does not appear parked before flats")
-    if closed:
-        _logger.info("Visual check: roof is closed")
-    else:
-        social_server.post_social_message("WARNING: Roof does not appear closed before flats")
-        _logger.warning("Visual check: roof does not appear closed before flats")
+        _logger.error("Mount power-on FAILED -- flats will run with no mount power")
+        social_server.post_social_message(
+            "Flats: could not power the mount on — switch it on in the Kasa app")
 
     set_imaging_state(ImagingState.IN_FLATS)
 
@@ -3956,6 +3985,10 @@ def do_flats() -> None:
     _logger.info("Waiting for flats to complete (state = DONE_FLATS, idle timeout 10 min)")
     while get_imaging_state() != ImagingState.DONE_FLATS:
         time.sleep(30)
+        if is_aborting():
+            # stop! has killed NINA; do not sit out the 10 min stall timer.
+            _logger.info("Flats wait aborted by emergency stop")
+            break
         mtime = _newest_fits_mtime(image_dir)
         if mtime > last_mtime:
             last_mtime = mtime
@@ -3987,6 +4020,7 @@ def do_flats() -> None:
             "Flats done, but the mount could NOT be powered off — switch it off "
             "in the Kasa app, or the roof cannot be closed")
     social_server.post_social_message("Flats sequence complete")
+    return True
 
 
 def doflats_cmd(words: list[str], account: str) -> None:
