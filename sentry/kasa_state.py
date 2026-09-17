@@ -85,9 +85,10 @@ import contextlib
 import io
 import json
 import os
+import shutil
 import sys
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 
 if __package__ is None or __package__ == "":
     project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
@@ -508,16 +509,55 @@ def _annotate(img, found, parked_ref, shut_ref, scope, roof, star_ref=None, star
     return out
 
 
-def _write_view(img, found, parked_ref, shut_ref, scope, roof, star_ref=None, star=None):
-    """Write the annotated decision picture to the configured scope_view path."""
+def _write_view(img, found, parked_ref, shut_ref, scope, roof, star_ref=None, star=None,
+                archive_when=None):
+    """Write the annotated decision picture to the configured scope_view path.
+
+    With *archive_when* (gating reads) the picture is also kept under
+    ARCHIVE_DIR, since scope_view is overwritten by the next read.
+    """
     try:
         path = config.data()["camera safety"]["scope_view"]
         os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-        cv2.imwrite(path, _annotate(img, found, parked_ref, shut_ref, scope, roof,
-                                    star_ref, star),
-                    [cv2.IMWRITE_JPEG_QUALITY, 82])
+        view = _annotate(img, found, parked_ref, shut_ref, scope, roof, star_ref, star)
+        cv2.imwrite(path, view, [cv2.IMWRITE_JPEG_QUALITY, 82])
     except Exception:  # noqa: BLE001 -- a picture must never cost a verdict
         _logger.exception("kasa_state: could not write the decision picture")
+        return
+    if archive_when is not None:
+        _archive_view(view, img, scope, roof, archive_when)
+
+
+# Every gating read's picture, kept. scope_view and SNAP_PATH are overwritten by
+# the next read, so on 2026-09-17 the frame from the 00:33 stop! -- the scope
+# hiding both tags -- was gone 68 s later, replaced by the pre-flats read, and
+# survived only as a Pushover attachment on a phone. The annotated view (~175 KB)
+# is kept for every gating read; the full-resolution frame (~1 MB) only when the
+# verdict was not clean (scope not safe, or roof neither shut nor open), which is
+# when someone will want to look closely.
+ARCHIVE_DIR = "local/vision_archive"
+ARCHIVE_KEEP_DAYS = 60
+
+
+def _archive_view(view, img, scope, roof, when):
+    try:
+        day = os.path.join(ARCHIVE_DIR, when.strftime("%Y-%m-%d"))
+        os.makedirs(day, exist_ok=True)
+        stem = os.path.join(day, "%s_scope-%s_roof-%s" % (when.strftime("%H%M%S"), scope, roof))
+        cv2.imwrite(stem + ".jpg", view, [cv2.IMWRITE_JPEG_QUALITY, 82])
+        if scope != "safe" or roof not in ("shut", "open"):
+            cv2.imwrite(stem + "_raw.jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 90])
+        _prune_archive(when)
+    except Exception:  # noqa: BLE001 -- the archive must never cost a verdict
+        _logger.exception("kasa_state: could not archive the decision picture")
+
+
+def _prune_archive(when):
+    """Drop day folders older than ARCHIVE_KEEP_DAYS (names are YYYY-MM-DD)."""
+    cutoff = (when - timedelta(days=ARCHIVE_KEEP_DAYS)).strftime("%Y-%m-%d")
+    for name in os.listdir(ARCHIVE_DIR):
+        if len(name) == 10 and name < cutoff and os.path.isdir(os.path.join(ARCHIVE_DIR, name)):
+            shutil.rmtree(os.path.join(ARCHIVE_DIR, name), ignore_errors=True)
 
 
 # ------------------------------------------------------------------ entry
@@ -604,7 +644,8 @@ def kasa_status(quick=False, verify_pose=False, frames=1):
                    "star": star[0] if star else "unknown", "star_seen": star_seen,
                    "frames": n, "per_frame": per_frame,
                    "pose_verified": verified is not None}
-    _write_view(img, found, parked_ref, shut_ref, scope, roof, star_ref, star)
+    _write_view(img, found, parked_ref, shut_ref, scope, roof, star_ref, star,
+                archive_when=when if verify_pose else None)
     # Wording coupled to _KASA_RE in iris/conductor/shadow.py; change together.
     # The offsets ride on the line so the stops' repeatability accumulates in
     # the log for free: the roof tag is 1.2 px/mm, so a shut-stop drift shows

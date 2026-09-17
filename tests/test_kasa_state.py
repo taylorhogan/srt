@@ -233,3 +233,24 @@ def test_star_on_every_archived_colour_frame():
         else:
             assert v == "seen", (p, d)
             assert d["star_px"] <= 20, (p, d)
+
+
+# ------------------------------------------------------------------ archive
+
+def test_gating_pictures_are_archived_raw_only_when_unclean(tmp_path, monkeypatch):
+    """scope_view is overwritten by the next read; the 2026-09-17 stop! frame was lost."""
+    from datetime import datetime, timedelta
+    monkeypatch.setattr(ks, "ARCHIVE_DIR", str(tmp_path))
+    img = np.zeros((40, 60, 3), np.uint8)
+    when = datetime(2026, 9, 17, 0, 33, 37)
+    old = tmp_path / (when - timedelta(days=ks.ARCHIVE_KEEP_DAYS + 1)).strftime("%Y-%m-%d")
+    old.mkdir()
+
+    ks._archive_view(img, img, "safe", "shut", when)
+    ks._archive_view(img, img, "unknown", "unknown", when.replace(second=38))
+
+    day = sorted(os.listdir(tmp_path / "2026-09-17"))
+    assert day == ["003337_scope-safe_roof-shut.jpg",
+                   "003338_scope-unknown_roof-unknown.jpg",
+                   "003338_scope-unknown_roof-unknown_raw.jpg"]
+    assert not old.exists()
