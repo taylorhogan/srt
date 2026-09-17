@@ -1266,7 +1266,7 @@ def _scope_confirmed_parked(mount_state: str, vision_parked: bool) -> bool:
 BLIND_PARK_OPEN_MAX_AGE_H = 16.0
 
 
-def blind_park_refusal(*, mount_state, mount_powered, camera_ok, frame_roof_verdicts,
+def blind_park_refusal(*, mount_state, mount_motion, mount_powered, camera_ok, frame_roof_verdicts,
                        open_confirmed, motion_possible, roof_plug, roof_lock_held,
                        now) -> str | None:
     """Why a stop! must NOT park a scope whose roof it cannot see, or None to park. Pure.
@@ -1281,7 +1281,13 @@ def blind_park_refusal(*, mount_state, mount_powered, camera_ok, frame_roof_verd
     where it was last SEEN open. "Confirmed open now" is replaced by "confirmed
     open earlier, and nothing that could move the roof since":
 
-      1. the mount is powered and PWI4 answers and says NOT parked
+      1. the mount is powered and PWI4 answers and says NOT parked, AND it
+         was already connected and TRACKING or slewing when stop! read it,
+         with a plausible altitude. Tracking means it was homed this session
+         (the prelude homes it after the roof opens). An unhomed mount also
+         reads "not parked" -- after a power cycle PWI4 reported alt -48.7
+         for a parked scope (2026-08-19) -- and a park from there slews to a
+         meaningless position. Nothing here connects or homes the mount.
       2. the camera returned frames, and no frame decoded the roof tag at its
          shut position (positive evidence of shut refuses outright)
       3. a gating read confirmed OPEN within BLIND_PARK_OPEN_MAX_AGE_H, the
@@ -1296,6 +1302,15 @@ def blind_park_refusal(*, mount_state, mount_powered, camera_ok, frame_roof_verd
     """
     if mount_state != "not_parked":
         return "PWI4 does not report the mount unparked (%s)" % mount_state
+    motion = mount_motion or {}
+    if motion.get("connected") is not True:
+        return "mount not connected in PWI4 (a park would need a connect)"
+    if motion.get("moving") is not True:
+        return ("mount was not tracking or slewing, so it may not be homed; "
+                "a park could slew to a meaningless position")
+    alt = motion.get("alt")
+    if alt is None or not (0.0 <= alt <= 90.0):
+        return "mount altitude %s is not plausible; position unknown" % alt
     if mount_powered is not True:
         return "telescope mount plug not confirmed ON"
     if not camera_ok:
@@ -1317,6 +1332,32 @@ def blind_park_refusal(*, mount_state, mount_powered, camera_ok, frame_roof_verd
     return None
 
 
+def _read_mount_motion() -> dict:
+    """{connected, moving, alt} from PWI4, read BEFORE anything is stopped. Never connects."""
+    try:
+        from hardware_control.pwi4_client import PWI4
+        st = PWI4().status()
+        return {"connected": bool(st.mount.is_connected),
+                "moving": bool(st.mount.is_tracking or st.mount.is_slewing),
+                "alt": st.mount.altitude_degs}
+    except Exception:  # noqa: BLE001
+        _logger.exception("emergency: PWI4 status read failed")
+        return {}
+
+
+def _park_connected_mount() -> bool:
+    """mount_park on an already-connected mount. Unlike park_scope it never
+    connects (so never risks a connect-time home) and never homes."""
+    from hardware_control.pwi4_client import PWI4
+    pwi4 = PWI4()
+    if not pwi4.status().mount.is_connected:
+        _logger.warning("emergency: blind park skipped -- mount no longer connected")
+        return False
+    pwi4.mount_park()
+    time.sleep(30)
+    return True
+
+
 def _stop_mount_motion() -> str:
     """Stop any slew and turn tracking off. Not a move: it ends one. Returns a word for the log."""
     try:
@@ -1336,8 +1377,9 @@ def _blind_park(dev_map, inside_view, parked, closed, is_open, mount_state):
     Returns the (parked, closed, is_open, mount_state) the caller should branch
     on: a fresh read after a park, or the inputs unchanged after a refusal.
     """
+    motion = _read_mount_motion()          # before the stop: was it tracking?
     stopped = _stop_mount_motion()
-    _logger.info("emergency: roof ambiguous, mount unparked -- tracking %s", stopped)
+    _logger.info("emergency: roof ambiguous, mount unparked (%s) -- tracking %s", motion, stopped)
 
     from sentry import kasa_state
     det = dict(kasa_state.last_detail or {})
@@ -1354,7 +1396,7 @@ def _blind_park(dev_map, inside_view, parked, closed, is_open, mount_state):
     except Exception:  # noqa: BLE001
         _logger.exception("emergency: plug reads for the blind park failed")
     why = blind_park_refusal(
-        mount_state=mount_state, mount_powered=mount_powered,
+        mount_state=mount_state, mount_motion=motion, mount_powered=mount_powered,
         camera_ok=bool(det.get("camera")) and bool(frames),
         frame_roof_verdicts=[f.get("roof") for f in frames],
         open_confirmed=ev["open_confirmed"], motion_possible=ev["motion_possible"],
@@ -1375,9 +1417,9 @@ def _blind_park(dev_map, inside_view, parked, closed, is_open, mount_state):
         "Roof not visible (scope in the way) but last confirmed open at %s with no roof "
         "movement since — tracking %s, parking scope" % (ev["open_confirmed"].strftime("%H:%M"), stopped))
     try:
-        pwi4_utils.park_scope()
+        _park_connected_mount()
     except Exception:
-        _logger.exception("emergency: blind park_scope failed")
+        _logger.exception("emergency: blind park failed")
         social_server.post_social_message("Park command FAILED (see log)")
     mount_state = pwi4_utils.mount_park_state()
     parked, closed, is_open, _ = get_status_with_lights()

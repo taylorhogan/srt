@@ -175,7 +175,9 @@ def test_image_cmd_refusal_is_loud_and_returns_false(monkeypatch):
 from datetime import datetime, timedelta, timezone
 
 T0 = datetime(2026, 9, 17, 0, 33, 37, tzinfo=timezone.utc)
-CLEAR = dict(mount_state="not_parked", mount_powered=True, camera_ok=True,
+CLEAR = dict(mount_state="not_parked",
+             mount_motion={"connected": True, "moving": True, "alt": 72.4},
+             mount_powered=True, camera_ok=True,
              frame_roof_verdicts=["unknown"] * 3,
              open_confirmed=T0 - timedelta(hours=5, minutes=36),     # 18:57
              motion_possible=T0 - timedelta(hours=5, minutes=40),    # the open's own fire
@@ -193,6 +195,10 @@ def test_blind_park_allowed_with_no_fire_on_record():
 @pytest.mark.parametrize("change, word", [
     (dict(mount_state="unknown"), "PWI4"),
     (dict(mount_state="parked"), "PWI4"),
+    (dict(mount_motion={"connected": False, "moving": True, "alt": 72.4}), "not connected"),
+    (dict(mount_motion={"connected": True, "moving": False, "alt": 72.4}), "not be homed"),
+    (dict(mount_motion={"connected": True, "moving": True, "alt": -48.7}), "not plausible"),
+    (dict(mount_motion={}), "not connected"),
     (dict(mount_powered=None), "mount plug"),
     (dict(mount_powered=False), "mount plug"),
     (dict(camera_ok=False), "no frames"),
@@ -238,7 +244,10 @@ def stop_env(tmp_path, monkeypatch):
     monkeypatch.setattr(suc.social_server, "post_social_message", posts.append)
     monkeypatch.setattr(suc.pushover, "push_message", lambda m, *a, **k: pushes.append(m))
     monkeypatch.setattr(suc, "_stop_mount_motion", lambda: calls.append("stop") or "stopped")
-    monkeypatch.setattr(suc.pwi4_utils, "park_scope", lambda: calls.append("park"))
+    monkeypatch.setattr(suc.pwi4_utils, "park_scope", lambda: pytest.fail("blind park must not connect"))
+    monkeypatch.setattr(suc, "_park_connected_mount", lambda: calls.append("park") or True)
+    monkeypatch.setattr(suc, "_read_mount_motion",
+                        lambda: calls.append("read") or {"connected": True, "moving": True, "alt": 72.4})
     monkeypatch.setattr(suc.end, "do_main", lambda: calls.append("close") or True)
     monkeypatch.setattr(kasa_state, "last_detail",
                         {"camera": True, "per_frame": [{"roof": "unknown"}] * 3})
@@ -261,7 +270,7 @@ def test_stop_blind_parks_then_closes_on_a_fresh_read(stop_env):
     calls, posts, pushes, script = stop_env
     script([BLIND, (True, False, True, None)], ["not_parked", "parked"])
     suc._emergency_stop_body()
-    assert calls.index("stop") < calls.index("park") < calls.index("close")
+    assert calls.index("read") < calls.index("stop") < calls.index("park") < calls.index("close")
     assert "power_down" in calls
     assert any("parking scope" in p for p in posts)
 
