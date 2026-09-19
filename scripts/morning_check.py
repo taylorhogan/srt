@@ -6,11 +6,18 @@
     python scripts/morning_check.py --always-push-until 2026-09-19  # ... through that date
 
 Run daily at 09:00 by the scheduled task IrisMorningCheck (morning_check.cmd).
-User request 2026-09-16. Every morning all of these must hold:
+It pushes ONLY when something is wrong (operator, 2026-09-19, after the daily
+trial); the speed test is measured and logged every morning either way and its
+numbers ride along on an alert. User request 2026-09-16. Every morning all of
+these must hold:
 
   roof closed        vision: roof tag decoded at its shut position
   scope parked       vision: scope tag within tolerance of the park pose
   mount off          Kasa "Telescope mount" relay read back as off
+  roof motor off     Kasa "Roof motor" relay read back as off. Its Shelly is powered
+                     through that plug, so a live circuit is one stray relay fire away
+                     from a roof move (left on after the 2026-09-17 limit-switch visit,
+                     and this check passed it for two mornings)
   Pegasus ports off  UPBv3 ports 1-3 (camera, gemini, fan) read back at level 0
   Kasa reachable     every plug the system commands resolves by name AND
                      answers a relay read (the inside camera is covered by
@@ -61,10 +68,37 @@ HARD_TIMEOUT_S = 600
 # import the web chat stack. Advisory lights are deliberately not checked.
 KASA_DEVICES = ("Telescope mount", "Roof motor", "Iris inside light")
 MOUNT = "Telescope mount"
+ROOF_MOTOR = "Roof motor"
+# A speed test is measured every morning and logged; it only raises a warning when it
+# fails outright or has collapsed against this target's own history, since what counts
+# as slow here is whatever this line usually does.
+NOT_MEASURED = object()      # distinct from None, which means "the test failed"
+SPEED_MIN_SAMPLES = 5
+SPEED_FRACTION_OF_MEDIAN = 0.5
 SCOPE_TAG_ID = 0
 
 
-def evaluate(vision, kasa, pegasus):
+def speed_warning(speed, history):
+    """Warning text for this morning's speed test, or None. Pure.
+
+    *history* is previous download_mbps values, newest last. NOT_MEASURED (no
+    test run) is silent; None means the test ran and failed.
+    """
+    if speed is NOT_MEASURED:
+        return None
+    if speed is None:
+        return "internet speed test failed (no result)"
+    past = [float(v) for v in (history or []) if v]
+    if len(past) < SPEED_MIN_SAMPLES:
+        return None
+    med = sorted(past)[len(past) // 2]
+    if speed.get("download_mbps", 0) < SPEED_FRACTION_OF_MEDIAN * med:
+        return ("internet download %.1f Mbps is below half the usual %.1f Mbps"
+                % (speed["download_mbps"], med))
+    return None
+
+
+def evaluate(vision, kasa, pegasus, speed=NOT_MEASURED, speed_history=()):
     """(problems, warnings) from the three readings. Pure, so it can be tested.
 
     vision  : {"closed", "parked", "camera", "why", "scope_tag_frames", "frames",
@@ -100,6 +134,8 @@ def evaluate(vision, kasa, pegasus):
     mount = resolved.get(MOUNT)
     if mount == 1:
         problems.append("telescope mount is powered ON")
+    if resolved.get(ROOF_MOTOR) == 1:
+        problems.append("roof motor is powered ON (its relay is live)")
 
     if pegasus is None:
         problems.append("Pegasus could not be read (Unity not running?): ports 1-3 unconfirmed")
@@ -108,6 +144,10 @@ def evaluate(vision, kasa, pegasus):
         if on:
             problems.append("Pegasus port(s) not off: %s"
                             % ", ".join("%d=%s" % (p, pegasus.get(p)) for p in on))
+
+    warn = speed_warning(speed, speed_history)
+    if warn:
+        warnings.append(warn)
     return problems, warnings
 
 
@@ -129,6 +169,37 @@ def read_pegasus():
     except Exception:  # noqa: BLE001
         _logger.warning("morning check: Pegasus read raised", exc_info=True)
         return None
+
+
+def read_speed():
+    """This morning's speed test, or None. Never raises; never blocks past its timeout."""
+    from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
+    try:
+        from sentry.internet_classify import get_speed
+        with ThreadPoolExecutor(max_workers=1) as ex:
+            return ex.submit(get_speed).result(timeout=150)
+    except FuturesTimeout:
+        _logger.warning("morning check: speed test timed out")
+    except Exception:  # noqa: BLE001
+        _logger.warning("morning check: speed test raised", exc_info=True)
+    return None
+
+
+def _speed_history(limit=14):
+    """download_mbps from the last *limit* logged runs that measured one, newest last."""
+    out = []
+    try:
+        with open(LOG_PATH) as fh:
+            for line in fh:
+                try:
+                    sp = (json.loads(line).get("speed") or {}).get("download_mbps")
+                except ValueError:
+                    continue
+                if sp:
+                    out.append(float(sp))
+    except OSError:
+        return []
+    return out[-limit:]
 
 
 def read_vision():
@@ -198,15 +269,21 @@ def main():
     kasa = read_kasa()
     pegasus = read_pegasus()
     vision = read_vision()
-    problems, warnings = evaluate(vision, kasa, pegasus)
+    history = _speed_history()
+    speed = read_speed()
+    problems, warnings = evaluate(vision, kasa, pegasus, speed, history)
 
     entry = {"when": datetime.now().astimezone().isoformat(timespec="seconds"),
              "ok": not problems, "problems": problems, "warnings": warnings,
-             "vision": vision, "kasa": kasa, "pegasus": pegasus}
+             "vision": vision, "kasa": kasa, "pegasus": pegasus, "speed": speed}
     _append_log(entry)
     print(json.dumps(entry, indent=2, default=str))
 
+    speed_line = ("internet %.0f down / %.0f up Mbps, %.0f ms"
+                  % (speed["download_mbps"], speed["upload_mbps"], speed["ping_ms"])
+                  if speed else "internet speed test failed")
     if not problems and not warnings and not args.always_push:
+        _logger.info("morning check: %s", speed_line)
         _logger.info("morning check: all clear (scope tag %s/%s frames, %.1f px off park)",
                      vision.get("scope_tag_frames"), vision.get("frames"),
                      float(vision.get("worst_corner_px") or 0.0))
@@ -218,9 +295,11 @@ def main():
         lines = ["Iris morning check: OK, with a warning:"]
     else:
         lines = ["Iris morning check: all clear (roof closed, scope parked, mount off, "
-                 "Pegasus 1-3 off, Kasa reachable; scope tag %s/%s frames, %.1f px off park)"
+                 "roof motor off, Pegasus 1-3 off, Kasa reachable; scope tag %s/%s frames, "
+                 "%.1f px off park)"
                  % (vision.get("scope_tag_frames"), vision.get("frames"),
                     float(vision.get("worst_corner_px") or 0.0))]
+    lines.append(speed_line)
     lines += ["- warning: " + w for w in warnings]
     msg = "\n".join(lines)
     _logger.warning(msg.replace("\n", " | "))

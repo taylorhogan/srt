@@ -213,9 +213,15 @@ FRAMES = sorted(glob.glob(str(ROOT / "sentry" / "roof_frames_kasa" / "open" / "*
                     reason="archived roof-move frames and the star reference are gitignored")
 def test_star_on_every_archived_colour_frame():
     """Every lit/daylight OPEN frame on file shows the star; every SHUT frame
-    does not; IR frames abstain. The one known exception is a dusk frame the
-    camera took mid-switch (purple, blurred), which reads absent -- the safe
-    direction."""
+    does not; IR frames abstain. Two known exceptions, both reading absent --
+    the safe direction: a dusk frame the camera took mid-switch (purple,
+    blurred), and every frame from the 2026-09-17 10:00 hour, where late-morning sun glare washed
+    the wall out (blob at the right place, 9.6 px, but template ncc 0.38 against
+    the 0.40 floor; 0.37 on the close-before frame). That hour cost a forced close: the open never confirmed, the
+    conductor faulted, and under authority a plain close was refused. The floor
+    is NOT lowered to let it in -- the nearest pine blob on a shut frame reaches
+    0.33, so 0.38 is already close. The fix is a positive OPEN sense that does
+    not depend on the star (far-end camera / open limit switch)."""
     os.chdir(ROOT)
     ref = ks._star_reference()
     for p in FRAMES:
@@ -228,7 +234,7 @@ def test_star_on_every_archived_colour_frame():
             assert v == "unknown", p
         elif state == "shut":
             assert v == "absent", (p, d)
-        elif "19-45-30" in p:                  # the dusk mid-switch frame
+        elif "19-45-30" in p or "20260917T10-" in p:   # dusk mid-switch; the 09-17 glare hour
             assert v != "seen", (p, d)
         else:
             assert v == "seen", (p, d)

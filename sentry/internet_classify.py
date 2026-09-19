@@ -13,10 +13,19 @@ def get_speed():
     """
     try:
         print("Speed test: launching speedtest-cli --json …")
+        import os
         import shutil
-        exe = shutil.which("speedtest") or shutil.which("speedtest-cli")
+        # The exe is installed in the venv's Scripts/, which is on PATH only
+        # when the venv is ACTIVATED. The web chat runs activated and found it;
+        # a scheduled task calling .venv\Scripts\python.exe directly does not,
+        # and the morning check's first speed test came back None for that
+        # reason alone (2026-09-19). So look beside this interpreter too.
+        beside = os.path.dirname(sys.executable)
+        exe = (shutil.which("speedtest") or shutil.which("speedtest-cli")
+               or shutil.which("speedtest", path=beside)
+               or shutil.which("speedtest-cli", path=beside))
         if not exe:
-            print("Speed test: speedtest-cli not found in PATH")
+            print("Speed test: speedtest-cli not found in PATH or beside %s" % sys.executable)
             return None
         result = subprocess.run(
             [exe, "--json"],
