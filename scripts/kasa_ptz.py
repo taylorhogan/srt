@@ -22,7 +22,7 @@ import json
 import os
 import sys
 import time
-from itertools import product
+from collections import deque
 
 if __package__ is None or __package__ == "":
     project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
@@ -189,21 +189,49 @@ def day_night(dev, mode=None):
     return body.get("value")
 
 
-def solve(delta, max_moves=5):
+def solve(delta, max_moves=8, origin=None, span=None):
     """Shortest [(speed, sign)] whose step sizes sum to *delta*, or None.
 
     A single step is at least 50 units, so any smaller correction has to be
-    built from larger moves that cancel: +83 +83 -50 -50 -62 nets +4. Without
-    this, an off-lattice target is simply unreachable and a naive loop hunts
-    around it forever.
+    built from larger moves that cancel: +83 +83 -50 -50 -62 nets +4.
+
+    Breadth-first over the step sizes, NOT a product over fixed-length tuples.
+    The sizes share no common factor (gcd(50, 55, 62) == 1), so every integer
+    delta is reachable given enough moves -- but the number needed is not
+    bounded by any small constant, and the old 5-deep search silently gave up
+    on the ones needing six. That was not academic: on 2026-09-21 Iris North
+    sat at y=-123 with its home at y=-9, and +114 needs SIX moves
+    (+62 +62 +50 +50 -55 -55). ensure_at returned None, so the camera could
+    not be driven home and every reading from it refused -- a safety sensor
+    disabled by arithmetic. BFS also returns the SHORTEST plan, which the
+    product search only did by accident of iteration order.
+
+    *origin* and *span*, when given, keep the intermediate positions inside
+    the axis: a plan is no use if it drives into an end stop half way and
+    lands somewhere else. origin is the current absolute position and span the
+    axis maximum from capability(), the travel being -span..+span.
     """
     if delta == 0:
         return []
     options = [(sp, sg) for sp in sorted(STEP_UNITS) for sg in (1, -1)]
-    for n in range(1, max_moves + 1):
-        for combo in product(options, repeat=n):
-            if sum(STEP_UNITS[sp] * sg for sp, sg in combo) == delta:
-                return list(combo)
+    biggest = max(STEP_UNITS.values())
+    reach = abs(delta) + 2 * biggest
+    seen = {0}
+    queue = deque([(0, [])])
+    while queue:
+        value, path = queue.popleft()
+        if len(path) >= max_moves:
+            continue
+        for speed, sign in options:
+            moved = value + STEP_UNITS[speed] * sign
+            if origin is not None and span is not None and abs(origin + moved) > span:
+                continue                      # would run into an end stop
+            if moved == delta:
+                return path + [(speed, sign)]
+            if abs(moved) > reach or moved in seen:
+                continue
+            seen.add(moved)
+            queue.append((moved, path + [(speed, sign)]))
     return None
 
 
@@ -242,13 +270,17 @@ def goto(dev, want_x, want_y, verbose=True, settle=True):
     target -- the y axis steps 337 <-> 387 and never lands on 363 between them.
     """
     pos = position(dev)
+    try:
+        span = capability(dev)
+    except PTZError:
+        span = (None, None)          # no range known: plan without the guard
     for axis, index, want in (("x", 0, want_x), ("y", 1, want_y)):
         delta = want - pos[index]
-        plan = solve(delta)
+        plan = solve(delta, origin=pos[index], span=span[index])
         if plan is None:
             raise PTZError(
                 "cannot reach %s=%d from %d: no combination of step sizes %s "
-                "within 5 moves sums to %+d"
+                "sums to %+d without running into an end stop"
                 % (axis, want, pos[index], sorted(STEP_UNITS.values()), delta))
         if verbose and plan:
             print("  %s: %+d in %d move(s)" % (axis, delta, len(plan)))
