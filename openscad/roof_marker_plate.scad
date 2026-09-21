@@ -80,6 +80,13 @@ rib_width     = 2.5;
 ribs_x        = 2;
 ribs_y        = 2;
 
+/* [Velcro pad] */
+// A solid block in the middle of the BACK, flush with the rim and ribs, so a
+// square of industrial hook-and-loop bonds to one continuous surface instead
+// of to 2.5 mm rib strips with air between them. Square, centred, in mm;
+// 0 = no pad. 50.8 = 2 in, which is what the truss tag uses.
+velcro_pad    = 0;
+
 /* [Straps] */
 // Standard 3.6 mm zip tie plus clearance. Slots sit in the tabs, clear of the
 // tag and of the stiffening rim.
@@ -125,6 +132,16 @@ module up_arrow() {
                [2, -6], [2, -1], [5, -1]]);
 }
 
+// Flush with rib_height so the pad, the ribs and the rim share one plane: the
+// pad must BE the contact surface, not sit below the ribs that would otherwise
+// hold the plate off its mount.
+module velcro_block() {
+  if (velcro_pad > 0)
+    translate([0, 0, plate_thick - EPS])
+      linear_extrude(rib_height + EPS)
+        square([velcro_pad, velcro_pad], center = true);
+}
+
 module stiffeners() {
   inner_w = plate_w - 2 * rim_width;
   inner_h = plate_h - 2 * tab;            // keep the tabs flat for the straps
@@ -153,6 +170,7 @@ difference() {
   union() {
     rounded_plate(plate_w, plate_h, plate_thick, corner_radius);
     stiffeners();
+    velcro_block();
     up_arrow();
   }
   // tag pocket, in the FACE (z=0, the build-plate side)
@@ -166,3 +184,5 @@ difference() {
 echo(str("plate ", plate_w, " x ", plate_h, " x ", plate_thick, " mm",
          straps ? "" : " (no strap tabs)"));
 echo(str("tag area ", tag_size, " mm sq, recess ", tag_recess, " mm"));
+if (velcro_pad > 0)
+  echo(str("velcro pad ", velcro_pad, " mm sq, flush at z = ", plate_thick + rib_height, " mm"));
