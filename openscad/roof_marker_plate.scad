@@ -86,6 +86,10 @@ ribs_y        = 2;
 // of to 2.5 mm rib strips with air between them. Square, centred, in mm;
 // 0 = no pad. 50.8 = 2 in, which is what the truss tag uses.
 velcro_pad    = 0;
+// true: instead of a centred square, the pad runs from the plate's centre line
+// down to the BOTTOM edge, still velcro_pad wide -- a long strip for a mount
+// that carries the plate from below rather than at its middle.
+velcro_to_bottom = false;
 
 /* [Straps] */
 // Standard 3.6 mm zip tie plus clearance. Slots sit in the tabs, clear of the
@@ -139,7 +143,9 @@ module velcro_block() {
   if (velcro_pad > 0)
     translate([0, 0, plate_thick - EPS])
       linear_extrude(rib_height + EPS)
-        square([velcro_pad, velcro_pad], center = true);
+        translate(velcro_to_bottom ? [0, -plate_h/4] : [0, 0])
+          square(velcro_to_bottom ? [velcro_pad, plate_h/2]
+                                  : [velcro_pad, velcro_pad], center = true);
 }
 
 module stiffeners() {
@@ -185,4 +191,7 @@ echo(str("plate ", plate_w, " x ", plate_h, " x ", plate_thick, " mm",
          straps ? "" : " (no strap tabs)"));
 echo(str("tag area ", tag_size, " mm sq, recess ", tag_recess, " mm"));
 if (velcro_pad > 0)
-  echo(str("velcro pad ", velcro_pad, " mm sq, flush at z = ", plate_thick + rib_height, " mm"));
+  echo(str("velcro pad ", velcro_pad, " x ",
+           velcro_to_bottom ? plate_h/2 : velcro_pad,
+           " mm, flush at z = ", plate_thick + rib_height, " mm",
+           velcro_to_bottom ? " (centre to bottom edge)" : ""));
