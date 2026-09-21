@@ -83,6 +83,10 @@ ribs_y        = 2;
 /* [Straps] */
 // Standard 3.6 mm zip tie plus clearance. Slots sit in the tabs, clear of the
 // tag and of the stiffening rim.
+// straps=false drops the tabs AND their slots: the plate becomes tag + border,
+// for a mount that is screwed, bonded or clamped rather than strapped. Added
+// 2026-09-21 for the truss tag, whose bracket does not use ties.
+straps        = true;
 tie_w         = 4.2;
 tie_l         = 14;
 tab_h         = 18;           // strap tab depth at each end
@@ -96,10 +100,15 @@ module rounded_plate(w, h, t, r) {
     translate([x, y, 0]) cylinder(r = r, h = t);
 }
 
+// Tab depth actually in force: zero when there are no straps, so the rim and
+// ribs run to the plate edge instead of stopping short of tabs that are not
+// there.
+tab = straps ? tab_h : 0;
+
 module tie_slots() {
   for (sy = [-1, 1], sx = [-1, 1])
     translate([sx * (plate_w/2 - tie_inset - tie_w/2),
-               sy * (plate_h/2 - tab_h/2),
+               sy * (plate_h/2 - tab/2),
                plate_thick/2])
       cube([tie_w, tie_l, plate_thick + 2], center = true);
 }
@@ -107,7 +116,10 @@ module tie_slots() {
 // Raised on the BACK so it cannot disturb the tag face, and outside the tag
 // area so it never shades it.
 module up_arrow() {
-  translate([0, plate_h/2 - tab_h/2, plate_thick - EPS])
+  // Clear of the stiffening rim's inner wall. Sitting exactly against it gives
+  // two coincident faces and a non-manifold export, which slicers repair
+  // differently and some not at all.
+  translate([0, plate_h/2 - (straps ? tab_h/2 : rim_width + 9), plate_thick - EPS])
     linear_extrude(1.2 + EPS)
       polygon([[0, 6], [-5, -1], [-2, -1], [-2, -6],
                [2, -6], [2, -1], [5, -1]]);
@@ -115,7 +127,7 @@ module up_arrow() {
 
 module stiffeners() {
   inner_w = plate_w - 2 * rim_width;
-  inner_h = plate_h - 2 * tab_h;          // keep the tabs flat for the straps
+  inner_h = plate_h - 2 * tab;            // keep the tabs flat for the straps
   // perimeter rim, inset from the tabs
   difference() {
     translate([0, 0, plate_thick - EPS])
@@ -148,8 +160,9 @@ difference() {
     translate([0, 0, -EPS])
       linear_extrude(tag_recess + EPS)
         square([tag_size, tag_size], center = true);
-  tie_slots();
+  if (straps) tie_slots();
 }
 
-echo(str("plate ", plate_w, " x ", plate_h, " x ", plate_thick, " mm"));
+echo(str("plate ", plate_w, " x ", plate_h, " x ", plate_thick, " mm",
+         straps ? "" : " (no strap tabs)"));
 echo(str("tag area ", tag_size, " mm sq, recess ", tag_recess, " mm"));
