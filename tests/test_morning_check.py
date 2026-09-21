@@ -78,3 +78,56 @@ def test_failed_speed_test_warns_but_does_not_fail_the_check():
     problems, warnings = evaluate(GOOD_VISION, GOOD_KASA, GOOD_PEG, None, [300.0] * 5)
     assert problems == []
     assert warnings == ["internet speed test failed (no result)"]
+
+
+# ------------------------------------------- suspect speed results (2026-09-21)
+
+from scripts.morning_check import read_speed, suspect_reason
+
+GOOD_SPEED = {"download_mbps": 91.7, "upload_mbps": 38.2, "ping_ms": 47.2, "server": "B"}
+# What 2026-09-21 09:01 actually returned: half an hour of ping, 7 Mbps, odd server.
+BOGUS = {"download_mbps": 7.0, "upload_mbps": 7.6, "ping_ms": 1800000.0, "server": "Nitel"}
+HIST = [91.7, 88.0, 95.0, 90.0, 93.0]
+
+
+def test_suspect_reason_catches_the_2026_09_21_result():
+    assert suspect_reason(GOOD_SPEED, HIST) is None
+    assert "implausible ping" in suspect_reason(BOGUS, HIST)
+    assert "no result" in suspect_reason(None, HIST)
+    assert "non-positive" in suspect_reason(dict(GOOD_SPEED, download_mbps=0), HIST)
+    # A collapsed download with a sane ping is suspect too — usually a bad server.
+    assert "below half" in suspect_reason(dict(GOOD_SPEED, download_mbps=9.0), HIST)
+    # ... but not before there is history to judge against.
+    assert suspect_reason(dict(GOOD_SPEED, download_mbps=9.0), []) is None
+
+
+def test_retries_until_believable_and_records_every_attempt():
+    seq = iter([BOGUS, BOGUS, GOOD_SPEED])
+    speed, tries = read_speed(HIST, pause_s=0, run=lambda: next(seq))
+    assert speed == GOOD_SPEED
+    assert [t["attempt"] for t in tries] == [1, 2, 3]
+    assert [t["suspect"] is None for t in tries] == [False, False, True]
+
+
+def test_stops_at_the_first_believable_result():
+    calls = []
+    speed, tries = read_speed(HIST, pause_s=0,
+                              run=lambda: calls.append(1) or GOOD_SPEED)
+    assert speed == GOOD_SPEED and len(calls) == 1 and len(tries) == 1
+
+
+def test_all_suspect_keeps_the_last_numbers_rather_than_discarding_them():
+    speed, tries = read_speed(HIST, pause_s=0, run=lambda: BOGUS)
+    assert speed == BOGUS and len(tries) == 3
+    assert all(t["suspect"] for t in tries)
+
+
+def test_implausible_records_are_kept_out_of_the_baseline(tmp_path, monkeypatch):
+    """The 09-21 record (7 Mbps, half-hour ping) must not become the norm."""
+    import json as _json
+    import scripts.morning_check as mc
+    p = tmp_path / "log.jsonl"
+    p.write_text("\n".join(_json.dumps({"speed": s}) for s in
+                           (GOOD_SPEED, BOGUS, dict(GOOD_SPEED, download_mbps=88.0))) + "\n")
+    monkeypatch.setattr(mc, "LOG_PATH", str(p))
+    assert mc._speed_history() == [91.7, 88.0]

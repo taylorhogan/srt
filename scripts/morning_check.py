@@ -14,6 +14,7 @@ these must hold:
   roof closed        vision: roof tag decoded at its shut position
   scope parked       vision: scope tag within tolerance of the park pose
   mount off          Kasa "Telescope mount" relay read back as off
+  internet           speed test, re-run up to 3x when a result looks suspect
   roof motor off     Kasa "Roof motor" relay read back as off. Its Shelly is powered
                      through that plug, so a live circuit is one stray relay fire away
                      from a roof move (left on after the 2026-09-17 limit-switch visit,
@@ -47,6 +48,7 @@ import logging
 import os
 import sys
 import threading
+import time
 from datetime import datetime
 
 if __package__ is None or __package__ == "":
@@ -75,7 +77,54 @@ ROOF_MOTOR = "Roof motor"
 NOT_MEASURED = object()      # distinct from None, which means "the test failed"
 SPEED_MIN_SAMPLES = 5
 SPEED_FRACTION_OF_MEDIAN = 0.5
+# A single run can pick a bad server and report nonsense: 2026-09-21 returned
+# 7.0 Mbps with a ping of 1,800,000 ms (half an hour) from a Chicago server, two
+# days after 91.7 Mbps from the usual one. So an implausible or collapsed result
+# is RE-RUN rather than believed, and every attempt is kept in the log entry --
+# a retried morning should be visible, not silently smoothed over.
+SPEED_ATTEMPTS = 3
+SPEED_RETRY_PAUSE_S = 5.0
+SPEED_MAX_PING_MS = 1000.0   # a real ping past a second is already pathological
 SCOPE_TAG_ID = 0
+
+
+def implausible(speed):
+    """Why this result cannot be true of any working line, or None. Pure.
+
+    Values only, no history -- so it can also screen the stored log when the
+    history median is built, and one bad morning cannot skew the baseline that
+    later mornings are judged against.
+    """
+    if not speed:
+        return "no result"
+    ping = speed.get("ping_ms")
+    if ping is None or ping <= 0 or ping > SPEED_MAX_PING_MS:
+        return "implausible ping %s ms" % ping
+    down = speed.get("download_mbps") or 0
+    up = speed.get("upload_mbps")
+    if down <= 0 or up is None or up <= 0:
+        return "non-positive throughput (%s down / %s up)" % (down, up)
+    return None
+
+
+def suspect_reason(speed, history):
+    """Why this speed result should not be believed, or None. Pure.
+
+    Two kinds of doubt: values that cannot be true of any working line, and a
+    download that has collapsed against this line's own history (which is far
+    more often a bad server pick than a real outage -- worth one more try
+    before it becomes an alert).
+    """
+    bad = implausible(speed)
+    if bad:
+        return bad
+    down = speed.get("download_mbps") or 0
+    past = [float(v) for v in (history or []) if v]
+    if len(past) >= SPEED_MIN_SAMPLES:
+        med = sorted(past)[len(past) // 2]
+        if down < SPEED_FRACTION_OF_MEDIAN * med:
+            return "download %.1f Mbps is below half the usual %.1f" % (down, med)
+    return None
 
 
 def speed_warning(speed, history):
@@ -171,8 +220,8 @@ def read_pegasus():
         return None
 
 
-def read_speed():
-    """This morning's speed test, or None. Never raises; never blocks past its timeout."""
+def _speed_once():
+    """One speed test, or None. Never raises; never blocks past its timeout."""
     from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
     try:
         from sentry.internet_classify import get_speed
@@ -185,18 +234,49 @@ def read_speed():
     return None
 
 
+def read_speed(history=(), attempts=SPEED_ATTEMPTS, pause_s=SPEED_RETRY_PAUSE_S,
+               run=None):
+    """(speed, tries): the first believable result, and every attempt made.
+
+    A suspect result is re-run up to *attempts* times with a short pause. When
+    they are all suspect the LAST one is still returned, marked, so the numbers
+    reach the log and the alert rather than vanishing into "no result".
+    """
+    run = run or _speed_once
+    tries = []
+    for i in range(1, max(1, attempts) + 1):
+        if i > 1:
+            time.sleep(pause_s)
+        result = run()
+        why = suspect_reason(result, history)
+        tries.append({"attempt": i, "result": result, "suspect": why})
+        if why is None:
+            if i > 1:
+                _logger.info("morning check: speed test believable on attempt %d of %d",
+                             i, attempts)
+            return result, tries
+        _logger.warning("morning check: speed attempt %d/%d rejected (%s): %s",
+                        i, attempts, why, result)
+    return (tries[-1]["result"], tries) if tries else (None, tries)
+
+
 def _speed_history(limit=14):
-    """download_mbps from the last *limit* logged runs that measured one, newest last."""
+    """download_mbps from the last *limit* logged runs that measured a believable one.
+
+    Implausible records are skipped rather than averaged in: the 2026-09-21
+    run stored 7.0 Mbps with a half-hour ping, and a baseline that includes it
+    is a baseline that excuses the next bad morning.
+    """
     out = []
     try:
         with open(LOG_PATH) as fh:
             for line in fh:
                 try:
-                    sp = (json.loads(line).get("speed") or {}).get("download_mbps")
+                    sp = json.loads(line).get("speed")
                 except ValueError:
                     continue
-                if sp:
-                    out.append(float(sp))
+                if sp and not implausible(sp):
+                    out.append(float(sp["download_mbps"]))
     except OSError:
         return []
     return out[-limit:]
@@ -270,18 +350,23 @@ def main():
     pegasus = read_pegasus()
     vision = read_vision()
     history = _speed_history()
-    speed = read_speed()
+    speed, speed_tries = read_speed(history)
     problems, warnings = evaluate(vision, kasa, pegasus, speed, history)
 
     entry = {"when": datetime.now().astimezone().isoformat(timespec="seconds"),
              "ok": not problems, "problems": problems, "warnings": warnings,
-             "vision": vision, "kasa": kasa, "pegasus": pegasus, "speed": speed}
+             "vision": vision, "kasa": kasa, "pegasus": pegasus, "speed": speed,
+             "speed_attempts": speed_tries}
     _append_log(entry)
     print(json.dumps(entry, indent=2, default=str))
 
     speed_line = ("internet %.0f down / %.0f up Mbps, %.0f ms"
                   % (speed["download_mbps"], speed["upload_mbps"], speed["ping_ms"])
                   if speed else "internet speed test failed")
+    if len(speed_tries) > 1:
+        speed_line += " (after %d attempts; %s)" % (
+            len(speed_tries),
+            "; ".join(t["suspect"] for t in speed_tries if t["suspect"]))
     if not problems and not warnings and not args.always_push:
         _logger.info("morning check: %s", speed_line)
         _logger.info("morning check: all clear (scope tag %s/%s frames, %.1f px off park)",
