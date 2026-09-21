@@ -86,10 +86,11 @@ ribs_y        = 2;
 // of to 2.5 mm rib strips with air between them. Square, centred, in mm;
 // 0 = no pad. 50.8 = 2 in, which is what the truss tag uses.
 velcro_pad    = 0;
-// true: instead of a centred square, the pad runs from the plate's centre line
-// down to the BOTTOM edge, still velcro_pad wide -- a long strip for a mount
-// that carries the plate from below rather than at its middle.
-velcro_to_bottom = false;
+// Pad HEIGHT in mm, and where its centre sits in y. 0 = a square velcro_pad
+// on a side. Set velcro_h = plate_h for a full-height strip; velcro_h =
+// plate_h/2 with velcro_y = -plate_h/4 for centre-to-bottom.
+velcro_h      = 0;
+velcro_y      = 0;
 
 /* [Straps] */
 // Standard 3.6 mm zip tie plus clearance. Slots sit in the tabs, clear of the
@@ -126,11 +127,18 @@ module tie_slots() {
 
 // Raised on the BACK so it cannot disturb the tag face, and outside the tag
 // area so it never shades it.
+arrow_y  = plate_h/2 - (straps ? tab_h/2 : rim_width + 9);
+pad_top  = velcro_y + (velcro_h > 0 ? velcro_h : velcro_pad)/2;
+arrow_x  = (velcro_pad > 0 && pad_top > arrow_y - 8) ? velcro_pad/2 + 12 : 0;
+
 module up_arrow() {
   // Clear of the stiffening rim's inner wall. Sitting exactly against it gives
   // two coincident faces and a non-manifold export, which slicers repair
   // differently and some not at all.
-  translate([0, plate_h/2 - (straps ? tab_h/2 : rim_width + 9), plate_thick - EPS])
+  // Shifted clear of the velcro pad in x when the pad is tall enough to reach
+  // it: buried under the pad the arrow is invisible, and raised ON to the pad
+  // it would be a bump exactly where the hook-and-loop must lie flat.
+  translate([arrow_x, plate_h/2 - (straps ? tab_h/2 : rim_width + 9), plate_thick - EPS])
     linear_extrude(1.2 + EPS)
       polygon([[0, 6], [-5, -1], [-2, -1], [-2, -6],
                [2, -6], [2, -1], [5, -1]]);
@@ -143,9 +151,8 @@ module velcro_block() {
   if (velcro_pad > 0)
     translate([0, 0, plate_thick - EPS])
       linear_extrude(rib_height + EPS)
-        translate(velcro_to_bottom ? [0, -plate_h/4] : [0, 0])
-          square(velcro_to_bottom ? [velcro_pad, plate_h/2]
-                                  : [velcro_pad, velcro_pad], center = true);
+        translate([0, velcro_y])
+          square([velcro_pad, velcro_h > 0 ? velcro_h : velcro_pad], center = true);
 }
 
 module stiffeners() {
@@ -192,6 +199,5 @@ echo(str("plate ", plate_w, " x ", plate_h, " x ", plate_thick, " mm",
 echo(str("tag area ", tag_size, " mm sq, recess ", tag_recess, " mm"));
 if (velcro_pad > 0)
   echo(str("velcro pad ", velcro_pad, " x ",
-           velcro_to_bottom ? plate_h/2 : velcro_pad,
-           " mm, flush at z = ", plate_thick + rib_height, " mm",
-           velcro_to_bottom ? " (centre to bottom edge)" : ""));
+           velcro_h > 0 ? velcro_h : velcro_pad,
+           " mm at y = ", velcro_y, ", flush at z = ", plate_thick + rib_height, " mm"));
