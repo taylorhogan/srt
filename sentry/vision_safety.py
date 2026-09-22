@@ -586,6 +586,50 @@ def _unresolved_reason():
     return None
 
 
+# The north camera reads the roof from a tag at BOTH ends of travel
+# (sentry/north_roof.py). It decides nothing yet: every gating read simply asks
+# it too and journals both answers, so the tag earns its authority on real roof
+# cycles the way the conductor did, rather than on the afternoon it was
+# installed. What we are waiting to see is both edges several times over, no
+# disagreement of the wrong kind (open claimed with the roof shut, or the
+# reverse), and at least one of the RIGHT kind -- the star failing at a glare
+# hour while the tag holds, which is the failure that forced a close on
+# 2026-09-17. Set cfg["camera safety"]["north_shadow"] False to stop asking.
+NORTH_SHADOW_LOG = "local/north_shadow_log.jsonl"
+
+
+def _shadow_north(closed, is_open):
+    """Ask the north camera the same question and record both answers.
+
+    Best-effort in every direction: it must never raise, never change the
+    verdict it is shadowing, and never leave anything switched. A failure here
+    is a missing row in a log, nothing more.
+    """
+    try:
+        from configs import config
+        if not config.data().get("camera safety", {}).get("north_shadow", True):
+            return
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        import json
+        from datetime import datetime
+        from sentry import north_roof
+        state, detail = north_roof.read()
+        star = "open" if is_open else ("shut" if closed else "unknown")
+        agree = (state == star)
+        _logger.info("north shadow: tag says %s, vision says %s -- %s",
+                     state, star, "agree" if agree else "DISAGREE")
+        row = {"when": datetime.now().astimezone().isoformat(timespec="seconds"),
+               "north": state, "vision": star, "agree": agree,
+               "verdicts": detail.get("verdicts"), "why": detail.get("why"),
+               "per_frame": detail.get("per_frame")}
+        with open(NORTH_SHADOW_LOG, "a") as fh:
+            print(json.dumps(row, default=str), file=fh)
+    except Exception:  # noqa: BLE001 -- an observer must never cost a verdict
+        _logger.warning("north shadow failed (ignored)", exc_info=True)
+
+
 def _with_inside_light(fn):
     """Run *fn* with the inside light on, restoring its prior state after.
 
@@ -719,6 +763,7 @@ def visual_status(retries: int = 1, delay: float = 3.0, frames: int | None = Non
         v["closed"], v["open"],
         "verified" if last_match["pose_verified"] else "UNVERIFIED", why,
     )
+    _shadow_north(closed, is_open)
     mod_date = when.strftime("%a %b %d %H:%M:%S %Y") if when else time.ctime()
     return parked, closed, is_open, mod_date
 

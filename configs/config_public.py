@@ -369,6 +369,12 @@ class PublicConfig():
             "exposure_capture_min_sun_alt": -6.0,
             "exposure_capture_dir": "./base_images/exposure_sets",
             "exposure_capture_keep": 30,      # rolling cap on saved ladders
+            # The north camera reads the roof from a tag at both ends of
+            # travel (sentry/north_roof.py). True = every gating vision read
+            # also asks it and journals both answers, deciding nothing; the
+            # tag earns its authority on real roof cycles before it replaces
+            # the gold star. False stops asking.
+            "north_shadow": True,
             "scope_view": "./base_images/scope_view.jpg",
             "processed_view": "./base_images/processed.jpg",
             "no_image": "./base_images/no_image.jpg",
