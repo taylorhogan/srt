@@ -284,3 +284,14 @@ def test_stop_blind_refusal_stops_tracking_and_pushes_once(stop_env, monkeypatch
     suc._emergency_stop_body()
     assert "stop" in calls and "park" not in calls and "close" not in calls
     assert len(pushes) == 1 and "roof motor plug not confirmed OFF" in pushes[0]
+
+
+# ------------------------------------------------- end-of-night snr words
+
+def test_end_of_night_snr_names_its_target_where_the_parser_reads_it():
+    """2026-09-24: a two-target night analysed m33 twice and ngc7380 never,
+    because the target was passed at index 1 and read from words[2:]."""
+    for dso in ("ngc7380", "m33"):
+        words = suc.eon_snr_words(dso)
+        assert " ".join(words[2:]).strip() == dso          # what _snr_run_locked reads
+    assert " ".join(suc.eon_snr_words(None)[2:]).strip() == ""

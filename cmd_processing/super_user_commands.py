@@ -4067,7 +4067,7 @@ def doit_cmd(words: list[str], account: str) -> None:
                 one = instr.get("dso") if instr else None
             eon_dsos = [one] if one else [None]
         for eon_dso in eon_dsos:
-            eon_words = ["snr", eon_dso] if eon_dso else ["snr"]
+            eon_words = eon_snr_words(eon_dso)
             social_server.post_social_message(
                 f"End of night: SNR analysis for {eon_dso or 'most recent DSO'}…"
             )
@@ -4233,6 +4233,21 @@ def snr_cmd(words: list[str], account: str) -> None:
     core without GIL contention with a concurrent hr/other command.
     """
     jobs.spawn_process(_snr_run, args=(words,))
+
+
+def eon_snr_words(dso) -> list:
+    """The words the end-of-night loop hands _snr_run for one target. Pure.
+
+    Chat commands arrive as ["@iris", "snr", "<dso>"] and _snr_run_locked
+    reads the target from words[2:], like every other command here (and like
+    the scheduler's own image_cmd(["", "image!!", "1"])). Until 2026-09-24 the
+    loop passed ["snr", dso] -- two words -- so the target landed at index 1,
+    was never read, and the run fell through to "the DSO last imaged". On a
+    two-target night that is the SECOND target both times: m33 was analysed
+    twice and ngc7380 not at all. It looked right on 09-17 only because that
+    night had one target.
+    """
+    return ["", "snr", dso] if dso else ["", "snr"]
 
 
 def _snr_run(words: list[str]) -> None:
