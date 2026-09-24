@@ -34,6 +34,7 @@ Outputs an annotated JPEG and a JSON summary beside the recording.
 """
 import argparse
 import json
+import math
 import os
 import sys
 from datetime import datetime, timedelta
@@ -63,6 +64,26 @@ MIN_INLIERS   = 12
 ITERS         = 4000
 MIN_SPEED     = 2.0    # px/s. Below this it is drifting cloud, not a station.
 MAX_SPEED     = 400.0
+
+# How far the fitted track may sit from where the satellite actually was.
+# The watcher computed that path to arm the recorder in the first place, so
+# checking against it costs nothing and is far stronger evidence than the
+# inlier count. It exists because both ISS recordings to date produced a
+# confident straight track -- annotated image, quoted angular rate -- that was
+# NOT the station: 2026-09-23 fitted 27 of 10588 candidates at 0.145 deg/s in
+# the south-west while the ISS was in the north-west and then in eclipse. A
+# real pass scores 281-484 inliers at 0.7-1.05 deg/s. 20 degrees is generous:
+# a genuine track lands within a degree or two once the plate solution is good.
+MAX_MISS_DEG  = 20.0
+SAMPLES       = 7      # points along the track compared with the TLE
+# A station in low orbit cannot crawl. Overhead the ISS sweeps ~1.1 deg/s and
+# even down at 35 degrees elevation it manages ~0.4, so anything slower is an
+# aircraft, a cloud edge or a line fitted through noise. Measured here: real
+# tracks 0.70-1.05 deg/s, the three false ones 0.076, 0.117 and 0.145 -- a
+# factor of five, which is a far cleaner separation than the positional miss
+# (real 3-18 deg against false 26-62) because that one also carries the
+# straight-line model's own error on a near-zenith pass.
+MIN_DEG_PER_S = 0.30
 
 
 def detect(video, fps, downscale=1, verbose=True):
@@ -110,6 +131,42 @@ def detect(video, fps, downscale=1, verbose=True):
     if verbose:
         print("  %d frames, %d candidates total" % (idx, len(dets)))
     return dets, idx
+
+
+def angular_sep(alt1, az1, alt2, az2):
+    """Great-circle separation between two alt/az directions, in degrees. Pure."""
+    a1, a2 = math.radians(alt1), math.radians(alt2)
+    dz = math.radians(az1 - az2)
+    c = (math.sin(a1) * math.sin(a2)
+         + math.cos(a1) * math.cos(a2) * math.cos(dz))
+    return math.degrees(math.acos(max(-1.0, min(1.0, c))))
+
+
+def where_was_it(sat_name, times):
+    """[(alt, az, sunlit)] for *sat_name* at each datetime, or None.
+
+    Straight from the TLE the watcher used. None means the check could not be
+    made (no TLE, no ephemeris, no network) and is treated as "unchecked"
+    rather than as a failure -- an absent cross-check must not invent a
+    verdict either way.
+    """
+    try:
+        from skyfield.api import EarthSatellite
+        from sentry import station_watch as sw
+        site, eph, ts = sw._sky()
+        defn = next(d for d in sw.SATELLITES if d["name"] == sat_name)
+        l1, l2 = sw.get_tle(defn)
+        sat = EarthSatellite(l1, l2, sat_name, ts)
+        out = []
+        for when in times:
+            tx = ts.from_datetime(when)
+            alt, az, _ = (sat - site).at(tx).altaz()
+            out.append((float(alt.degrees), float(az.degrees),
+                        bool(sat.at(tx).is_sunlit(eph))))
+        return out
+    except Exception as exc:              # noqa: BLE001
+        print("  (could not check against the TLE: %s: %s)" % (type(exc).__name__, exc))
+        return None
 
 
 def consensus(dets, iters=ITERS, tol=TOL_PX, seed=7):
@@ -223,6 +280,7 @@ def main():
         sol = plate_solve.load()
         if sol is not None:
             pts = []
+            track_altaz = []            # sampled along the whole track
             for tt in (fit["t_first"], fit["t_last"]):
                 x = fit["x0"] + fit["vx"] * tt
                 y = fit["y0"] + fit["vy"] * tt
@@ -245,10 +303,68 @@ def main():
             print("  %.1f deg of sky in %.1f s -> %.3f deg/s"
                   % (sep, span, sep / span))
             print("  from alt %.1f az %.1f to alt %.1f az %.1f" % (a1, z1, a2, z2))
+            # Sampled ALONG the track, not just its ends. The fit is a
+            # straight line in pixels while the true path curves across a
+            # 104-degree fisheye, so the ends are exactly where the two
+            # disagree most: the near-zenith Tiangong passes miss by 16-19
+            # deg at the endpoints and a couple of degrees in the middle.
+            # Comparing the whole track and taking the median keeps the
+            # cross-check about identity rather than about the model's shape.
+            for k in range(SAMPLES):
+                tt = fit["t_first"] + (fit["t_last"] - fit["t_first"]) * k / (SAMPLES - 1.0)
+                x = fit["x0"] + fit["vx"] * tt
+                y = fit["y0"] + fit["vy"] * tt
+                alt, az = plate_solve.pixel_to_altaz(sol, x, y)
+                track_altaz.append((tt, float(np.ravel(alt)[0]), float(np.ravel(az)[0])))
         else:
             print("  (no plate solution stored; pixel rate only)")
     except Exception as exc:                      # noqa: BLE001
         print("  (angular rate unavailable: %s: %s)" % (type(exc).__name__, exc))
+
+    # Is this the satellite at all? The inlier count cannot answer that -- a
+    # straight line through noise looks exactly like a short faint pass -- but
+    # the TLE can, because we know where the thing was supposed to be.
+    track_altaz = locals().get("track_altaz") or []
+    ok, why = True, None
+    if track_altaz:
+        pred = where_was_it(p["sat"],
+                            [t0 + timedelta(seconds=tt) for tt, _, _ in track_altaz])
+        if pred is None:
+            out["checked_against_tle"] = False
+        else:
+            misses = [angular_sep(a, z, pa, pz)
+                      for (_, a, z), (pa, pz, _) in zip(track_altaz, pred)]
+            lit = [q[2] for q in pred]
+            median_miss = float(np.median(misses))
+            out.update(checked_against_tle=True,
+                       miss_deg_median=round(median_miss, 1),
+                       miss_deg_samples=[round(m, 1) for m in misses],
+                       sunlit_during_track=lit,
+                       predicted_first=[round(pred[0][0], 1), round(pred[0][1], 1)],
+                       predicted_last=[round(pred[-1][0], 1), round(pred[-1][1], 1)])
+            print("  %s was at alt %.1f az %.1f -> alt %.1f az %.1f (sunlit %s)"
+                  % (p["sat"], pred[0][0], pred[0][1], pred[-1][0], pred[-1][1],
+                     "yes" if any(lit) else "NO, in eclipse"))
+            print("  track misses it by %.0f deg (median of %d samples: %s)"
+                  % (median_miss, len(misses),
+                     " ".join("%.0f" % m for m in misses)))
+            if median_miss > MAX_MISS_DEG:
+                ok = False
+                why = ("track sits %.0f deg from where %s actually was"
+                       % (median_miss, p["sat"]))
+            elif out.get("deg_per_s") and out["deg_per_s"] < MIN_DEG_PER_S:
+                ok = False
+                why = ("%.3f deg/s is too slow for anything in low orbit"
+                       % out["deg_per_s"])
+            elif not any(lit):
+                ok = False
+                why = "%s was in Earth's shadow for the whole track" % p["sat"]
+    out["is_satellite"] = ok
+    if why:
+        out["reject_reason"] = why
+        print("  REJECTED: %s" % why)
+        print("  The recording is fine; there was simply no %s in it to find."
+              % p["sat"])
 
     # Annotate the frame nearest the peak, with the track drawn across it.
     cap = cv2.VideoCapture(video)
@@ -267,20 +383,25 @@ def main():
         y1 = int(fit["y0"] + fit["vy"] * fit["t_first"])
         x2 = int(fit["x0"] + fit["vx"] * fit["t_last"])
         y2 = int(fit["y0"] + fit["vy"] * fit["t_last"])
-        cv2.line(frame, (x1, y1), (x2, y2), (0, 215, 255), 3)
-        cv2.circle(frame, (x1, y1), 26, (0, 215, 255), 3)
-        cv2.circle(frame, (x2, y2), 26, (0, 215, 255), 3)
+        colour = (0, 215, 255) if ok else (60, 60, 255)
+        cv2.line(frame, (x1, y1), (x2, y2), colour, 3)
+        cv2.circle(frame, (x1, y1), 26, colour, 3)
+        cv2.circle(frame, (x2, y2), 26, colour, 3)
         A = np.array([(d[0], d[1], d[2]) for d in dets])
         for (tt, xx, yy) in A[fit["mask"]]:
             cv2.circle(frame, (int(xx), int(yy)), 7, (0, 255, 120), 2)
-        cv2.putText(frame, "%s  %s  peak alt %.0f deg"
-                    % (p["sat"], p["peak"][:19].replace("T", " "), p["peak_alt_deg"]),
-                    (40, 1330), cv2.FONT_HERSHEY_SIMPLEX, 1.6, (0, 215, 255), 4)
+        cv2.putText(frame, "%s%s  %s  peak alt %.0f deg"
+                    % ("" if ok else "NOT ", p["sat"],
+                       p["peak"][:19].replace("T", " "), p["peak_alt_deg"]),
+                    (40, 1330), cv2.FONT_HERSHEY_SIMPLEX, 1.6, colour, 4)
         cv2.putText(frame, "%d frames agree of %d candidates   %s"
                     % (fit["n_inliers"], len(dets),
                        ("%.3f deg/s" % out["deg_per_s"]) if out.get("deg_per_s")
                        else "%.0f px/s" % speed_px),
-                    (40, 1390), cv2.FONT_HERSHEY_SIMPLEX, 1.3, (0, 215, 255), 3)
+                    (40, 1390), cv2.FONT_HERSHEY_SIMPLEX, 1.3, colour, 3)
+        if why:
+            cv2.putText(frame, why, (40, 1440 - 4),
+                        cv2.FONT_HERSHEY_SIMPLEX, 1.1, colour, 3)
         img_out = base + "_track.jpg"
         cv2.imwrite(img_out, frame)
         out["image"] = img_out
@@ -289,7 +410,7 @@ def main():
     with open(base + "_track.json", "w") as fh:
         json.dump(out, fh, indent=2)
     print("  wrote %s" % (base + "_track.json"))
-    return 0
+    return 0 if ok else 1
 
 
 if __name__ == "__main__":
