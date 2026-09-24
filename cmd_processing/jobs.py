@@ -75,6 +75,7 @@ _CLASSIFY = {
     "status":      ("quick",  "quick"),
     "calendar":    ("quick",  "quick"),
     "speedtest":   ("quick",  "quick"),
+    "ci":          ("quick",  "quick"),
     "history":     ("quick",  "quick"),
     "help":        ("quick",  "quick"),
     "?":           ("quick",  "quick"),

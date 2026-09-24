@@ -619,6 +619,14 @@ def speedtest_cmd(words: list[str], index: int, m: Mastodon, account: str) -> No
     jobs.spawn(_run)
 
 
+def ci_cmd(words: list[str], index: int, m: Mastodon, account: str) -> None:
+    """Is CI green? Compares the main and release tips on origin. example: ci"""
+    def _run():
+        from scripts import ci_watch
+        post_social_message(ci_watch.report())
+    jobs.spawn(_run)
+
+
 keywords = {
     "tonight": tonight_cmd,
     "best": best_cmd,
@@ -632,6 +640,7 @@ keywords = {
     "calendar": calendar_cmd,
     "show": show_cmd,
     "speedtest": speedtest_cmd,
+    "ci": ci_cmd,
     "history": history_cmd,
     "help": help_cmd,
     "?": help_cmd

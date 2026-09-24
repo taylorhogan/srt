@@ -92,6 +92,13 @@ HELP: dict[str, dict] = {
         "summary": "Run an internet speed test and post results.",
         "usage": ["speedtest"],
     },
+    "ci": {
+        "category": "general",
+        "summary": ("Is CI green? Compares the main and release branch tips on origin. "
+                    "release = main means the last push passed and `update` is safe; "
+                    "the IrisCIWatch task announces the transitions on its own."),
+        "usage": ["ci"],
+    },
     "history": {
         "category": "general",
         "summary": "Show recent command history (defaults to last few entries).",
