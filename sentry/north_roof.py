@@ -94,6 +94,34 @@ def classify(corners, shut_ref, open_ref, tolerance):
     return "elsewhere"
 
 
+def decide(north_state, cam_closed, cam_open):
+    """(closed, is_open, source): the roof from both cameras. Pure.
+
+    Operator decision 2026-09-24: the north tag DECIDES. Iris cam may veto
+    but never overrule it, and the gold star is a fallback for when the north
+    camera cannot answer at all -- so a dead Iris North degrades to the
+    behaviour of 2026-09-23, not to "cannot confirm open", which under roof
+    authority would mean a forced close.
+
+      north OPEN  and Iris cam SHUT  -> contradiction, refuse
+      north SHUT  and Iris cam OPEN  -> contradiction, refuse
+      north OPEN                     -> open   (a positive decode; the star is not consulted)
+      north SHUT                     -> closed (Iris cam's tag 1 agreeing is a second witness)
+      north unknown                  -> whatever Iris cam says, as before
+    """
+    north_open = north_state == "open"
+    north_shut = north_state == "shut"
+    if (north_open and cam_closed) or (north_shut and cam_open):
+        return False, False, "contradiction"
+    if north_open:
+        return False, True, "north"
+    if north_shut:
+        return True, False, "north+cam" if cam_closed else "north"
+    if cam_closed or cam_open:
+        return bool(cam_closed), bool(cam_open), "cam-fallback"
+    return False, False, "none"
+
+
 def combine(frames):
     """One verdict from per-frame answers ('shut'/'open'/'elsewhere'/'absent'/'blind').
 
@@ -151,6 +179,35 @@ def _grab(host, user, pw, path, retries=GRAB_RETRIES):
     return None
 
 
+VIEW_WIDTH = 1280        # Pushover caps attachments at 2.5 MB; a full 2560 frame sits near it
+
+
+def _write_view(img, corners, state, detail_line, view_path):
+    """The picture the operator sees: the north frame with the tag and verdict drawn on."""
+    try:
+        import cv2
+        import numpy as np
+        out = img.copy()
+        if corners is not None:
+            pts = np.array(corners, np.int32).reshape(-1, 1, 2)
+            colour = (0, 220, 0) if state in ("shut", "open") else (0, 140, 255)
+            cv2.polylines(out, [pts], True, colour, 4)
+        colour = (0, 220, 0) if state in ("shut", "open") else (0, 0, 255)
+        cv2.putText(out, "Iris North  roof: %s" % state.upper(), (30, out.shape[0] - 70),
+                    cv2.FONT_HERSHEY_SIMPLEX, 1.6, colour, 4)
+        cv2.putText(out, detail_line, (30, out.shape[0] - 24),
+                    cv2.FONT_HERSHEY_SIMPLEX, 1.0, colour, 3)
+        if out.shape[1] > VIEW_WIDTH:
+            h = int(out.shape[0] * VIEW_WIDTH / out.shape[1])
+            out = cv2.resize(out, (VIEW_WIDTH, h), interpolation=cv2.INTER_AREA)
+        os.makedirs(os.path.dirname(view_path) or ".", exist_ok=True)
+        cv2.imwrite(view_path, out, [cv2.IMWRITE_JPEG_QUALITY, 82])
+        return view_path
+    except Exception:  # noqa: BLE001 -- a picture must never cost a verdict
+        _logger.exception("north_roof: could not write the decision picture")
+        return None
+
+
 def read(frames=FRAMES, path=REFERENCE_PATH):
     """(state, detail): 'shut' | 'open' | 'unknown' from the north camera.
 
@@ -190,6 +247,7 @@ def read(frames=FRAMES, path=REFERENCE_PATH):
     stamp = datetime.now()
     day = os.path.join(ARCHIVE_DIR, stamp.strftime("%Y-%m-%d"))
     per_frame, verdicts, kept = [], [], []
+    shown = None                              # (img, corners, off_shut, off_open) of the deciding frame
     for i in range(max(1, frames)):
         img = _grab(ref["host"], user, pw, snap)
         if img is None:
@@ -201,12 +259,15 @@ def read(frames=FRAMES, path=REFERENCE_PATH):
         if tag not in found:
             v = "absent"
             per_frame.append({"camera": True, "ir": ir, "tags": sorted(found), "tag": False})
+            if shown is None:
+                shown = (img, None, None, None)
         else:
             corners = [list(map(float, c)) for c in found[tag]]
             v = classify(corners, shut_ref, open_ref, tol)
+            off_s, off_o = worst_corner(corners, shut_ref), worst_corner(corners, open_ref)
             per_frame.append({"camera": True, "ir": ir, "tags": sorted(found), "verdict": v,
-                              "off_shut_px": round(worst_corner(corners, shut_ref), 1),
-                              "off_open_px": round(worst_corner(corners, open_ref), 1)})
+                              "off_shut_px": round(off_s, 1), "off_open_px": round(off_o, 1)})
+            shown = (img, corners, off_s, off_o)
         verdicts.append(v)
         try:
             import cv2
@@ -226,8 +287,21 @@ def read(frames=FRAMES, path=REFERENCE_PATH):
         pass
 
     state = combine(verdicts)
+    view = None
+    if shown is not None:
+        img, corners, off_s, off_o = shown
+        decoded = sum(1 for f in per_frame if f.get("verdict"))
+        if corners is None:
+            line = "tag not decoded in %d/%d frames  %s" % (len(per_frame) - decoded, len(per_frame),
+                                                            stamp.strftime("%Y-%m-%d %H:%M:%S"))
+        else:
+            line = ("tag %.0f px off shut, %.0f px off open | %d/%d frames | %s"
+                    % (off_s, off_o, decoded, len(per_frame), stamp.strftime("%Y-%m-%d %H:%M:%S")))
+        view_path = (config.data().get("camera safety", {}).get("scope_view")
+                     or "./base_images/scope_view.jpg")
+        view = _write_view(img, corners, state, line, view_path)
     last_detail = {"state": state, "verdicts": verdicts, "per_frame": per_frame,
-                   "pose": list(want), "tolerance_px": tol, "archive": kept}
+                   "pose": list(want), "tolerance_px": tol, "archive": kept, "view": view}
     _logger.info("north_roof: %s (%s; tolerance %.0f px; %d/%d frames decoded id %d)",
                  state, ", ".join(verdicts), tol,
                  sum(1 for f in per_frame if f.get("verdict")), len(per_frame), tag)

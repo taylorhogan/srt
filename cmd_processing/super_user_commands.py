@@ -382,6 +382,14 @@ def _post_vision_decision_image(parked: bool, closed: bool, is_open: bool) -> No
             f"frames parked {votes.get('parked', 0)} closed {votes.get('closed', 0)} "
             f"open {votes.get('open', 0)} of {lm.get('rungs', 0)}; "
             f"pose {'verified' if lm.get('pose_verified') else 'UNVERIFIED'}"
+            + (f" | north tag {lm['north'].get('state')}"
+               + (f" {lm['north'].get('off_shut_px'):.0f}px off shut"
+                  if lm['north'].get('state') == 'shut' and lm['north'].get('off_shut_px') is not None
+                  else f" {lm['north'].get('off_open_px'):.0f}px off open"
+                  if lm['north'].get('state') == 'open' and lm['north'].get('off_open_px') is not None
+                  else "")
+               + f", roof by {lm.get('roof_source')}"
+               if lm.get('north') else "")
             + (f" | {fails}" if fails else "")
             + (f" | {lm['error']}" if lm.get("error") else "")
         )

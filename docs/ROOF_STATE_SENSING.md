@@ -471,3 +471,31 @@ that *decided* the verdict. On 2026-08-15 that produced a photograph plainly
 showing an open roof, with the marker correctly boxed, captioned "roof is not
 open, stopping". When a state is refused for ambiguity the useful picture is the
 contradicting rung.
+
+
+## 2026-09-24 — the north camera decides
+
+A second camera, "Iris North" (KC410S, 192.168.87.78, north wall looking south), reads one
+AprilTag (id 2, 150 mm) on the moving south truss at BOTH ends of travel: shut at 72 px low in
+the frame, open at 351 px high, 650 px apart on the worst matched corner. Each state is a
+positive decode at recorded corners (`local/north_roof_marker.json`); absence means unknown;
+a roof caught part way lands between the references and is unknown. Measured: frame-to-frame
+scatter ≤ 3 px, the shut reading reproduced to 1–2 px across a full open/close, 6/6 decodes in
+pure IR with no light. Two nights of shadow (nine reads, both edges) had one disagreement, a
+false unknown 6 s after the inside light switched off — the camera's ~9 s IR/colour swap —
+fixed by reading the north camera first, before the light is touched.
+
+`north_roof.decide()` combines the two cameras: the north tag decides; Iris cam (tag 1 at its
+shut corners, the gold star for open) may veto — the two disagreeing is unknown — and is the
+fallback when the north camera cannot answer, so a dead Iris North degrades to the 2026-09-23
+behaviour rather than to "cannot confirm open" (a forced close under roof authority).
+
+This retires the star as the decider. The 2026-09-17 failures — glare washing out the wall the
+star is painted on, and the unparked scope hiding both of Iris cam's tags — cannot happen to a
+tag that sits above the tube in a view the scope does not cross. A roof stopping 10 in short of
+open now reads unknown (167 px from the open reference against a 100 px tolerance) where the
+star, being merely revealed or not, would have read open.
+
+The operator's picture — `status`, every Pushover attachment of `scope_view` — is now the north
+frame that decided, with the tag and verdict drawn on. `cfg["camera safety"]["north_decides"]`
+False reverts to Iris cam deciding while the tag is still read and journaled.

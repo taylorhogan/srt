@@ -625,26 +625,47 @@ def _north_shadow_read():
         return None
 
 
-def _shadow_north(closed, is_open, north):
-    """Journal the north verdict against the one just decided. Never raises."""
-    if north is None:
-        return
+def _north_decides():
+    """cfg["camera safety"]["north_decides"]: the north tag decides roof state."""
+    try:
+        from configs import config
+        return bool(config.data().get("camera safety", {}).get("north_decides", True))
+    except Exception:  # noqa: BLE001
+        return True
+
+
+def _north_row(cam_closed, cam_open, north, closed, is_open, source):
+    """Journal both cameras' answers and what was decided. Never raises."""
     try:
         import json
         from datetime import datetime
-        state, detail = north
-        star = "open" if is_open else ("shut" if closed else "unknown")
-        agree = (state == star)
-        _logger.info("north shadow: tag says %s, vision says %s -- %s",
-                     state, star, "agree" if agree else "DISAGREE")
+        state, detail = north if north else ("unread", {})
+        cam = "open" if cam_open else ("shut" if cam_closed else "unknown")
+        final = "open" if is_open else ("shut" if closed else "unknown")
+        _logger.info("north roof: tag says %s, Iris cam says %s -> %s (by %s)",
+                     state, cam, final, source)
         row = {"when": datetime.now().astimezone().isoformat(timespec="seconds"),
-               "north": state, "vision": star, "agree": agree,
+               "north": state, "vision": cam, "decided": final, "by": source,
+               "agree": state == cam,
                "verdicts": detail.get("verdicts"), "why": detail.get("why"),
                "per_frame": detail.get("per_frame"), "archive": detail.get("archive")}
         with open(NORTH_SHADOW_LOG, "a") as fh:
             print(json.dumps(row, default=str), file=fh)
     except Exception:  # noqa: BLE001
-        _logger.warning("north shadow log failed (ignored)", exc_info=True)
+        _logger.warning("north roof log failed (ignored)", exc_info=True)
+
+
+def _picture_from_cam():
+    """The north camera gave no frame: push Iris cam's picture, the one that decided."""
+    try:
+        import shutil
+        from configs import config
+        cs = config.data().get("camera safety", {})
+        src, dst = cs.get("cam_view"), cs.get("scope_view")
+        if src and dst and os.path.exists(src):
+            shutil.copyfile(src, dst)
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def _with_inside_light(fn):
@@ -727,16 +748,26 @@ def _match_from_detail(det, parked, closed, is_open):
 
 
 def visual_status(retries: int = 1, delay: float = 3.0, frames: int | None = None):
-    """(parked, closed, open, mod_date) from the inside Kasa camera.
+    """(parked, closed, open, mod_date) from the two inside Kasa cameras.
 
     This is the single vision entry point for every mount/roof safety
     decision (roof open/close, end-of-night shutdown, pre-flats check,
-    ``status``). Each read drives the camera to the reference pose, switches
-    the inside light on as the old ladder did, takes ``frames`` frames
-    (kasa_state.GATE_FRAMES by default) and combines them: UNSAFE in any
-    frame is not parked; OPEN needs every frame; SHUT needs one decoded roof
-    tag at its shut position and none elsewhere. The whole read is retried
-    once if the camera returned no frame at all.
+    ``status``).
+
+    PARKED comes from Iris cam: the scope tag against the recorded park
+    pose, UNSAFE in any frame is not parked.
+
+    ROOF STATE, since 2026-09-24, comes from the north camera (sentry/
+    north_roof.py): one tag on the moving truss decoded at its recorded shut
+    OR open corners, read FIRST, before the inside light is touched, with no
+    light needed. Iris cam's own roof read (tag 1 at shut; the gold star for
+    open) may veto it -- the two disagreeing is unknown -- and is the fallback
+    when the north camera cannot answer (north_roof.decide). The picture the
+    operator sees is the north frame that decided; Iris cam's is copied in
+    only when the north camera gave no frame.
+
+    Never fabricates a state: every failure returns False for what could not
+    be confirmed, with ``last_match["error"]`` explaining, and callers refuse.
 
     Never fabricates a state: every failure returns all-False with
     ``last_match["error"]`` explaining, and callers refuse exactly as before.
@@ -761,28 +792,57 @@ def visual_status(retries: int = 1, delay: float = 3.0, frames: int | None = Non
         if attempt < retries:
             time.sleep(delay)
     det = dict(kasa_state.last_detail or {})
+    from sentry import north_roof
+    north_state = north[0] if north else "unknown"
+    nd = north[1] if north else {}
+    if not nd.get("view"):
+        _picture_from_cam()                 # north gave no frame: push the picture that decided
     if not det.get("camera"):
+        # Iris cam blind: parked is unknown, but the roof need not be -- the
+        # north tag is a positive decode and callers that only need the roof
+        # (stop!'s branches) get a real answer instead of "ambiguous".
+        closed, is_open, source = (north_roof.decide(north_state, False, False)
+                                   if _north_decides() else (False, False, "cam"))
         last_match = {"source": "kasa", "error": det.get("why") or "no frame from the camera",
-                      "trusted": False, "is_parked": False, "is_closed": False,
-                      "is_open": False}
-        _logger.warning("vision parked=False closed=False open=False -- votes parked 0/0 lit "
-                        "(0 frames); %s", last_match["error"])
-        _shadow_north(False, False, north)
-        return False, False, False, time.ctime()
+                      "trusted": False, "is_parked": False, "is_closed": bool(closed),
+                      "is_open": bool(is_open), "roof_source": source,
+                      "north": {"state": north_state, "verdicts": nd.get("verdicts")}}
+        _logger.warning("vision parked=False closed=%s open=%s -- votes parked 0/0 lit "
+                        "(0 frames); %s; roof by %s (north %s)",
+                        closed, is_open, last_match["error"], source, north_state)
+        _north_row(False, False, north, closed, is_open, source)
+        return False, closed, is_open, time.ctime()
 
+    cam_closed, cam_open = closed, is_open
+    if _north_decides():
+        closed, is_open, source = north_roof.decide(north_state, cam_closed, cam_open)
+    else:
+        source = "cam"
     last_match = _match_from_detail(det, parked, closed, is_open)
+    last_match["roof_source"] = source
+    seen = next((f for f in reversed(nd.get("per_frame") or []) if f.get("verdict")), {})
+    last_match["north"] = {"state": north_state, "verdicts": nd.get("verdicts"),
+                           "off_shut_px": seen.get("off_shut_px"),
+                           "off_open_px": seen.get("off_open_px"), "why": nd.get("why")}
+    if source == "contradiction":
+        last_match["error"] = ("cameras disagree: north tag says %s, Iris cam says %s -- refusing"
+                               % (north_state, "open" if cam_open else "shut"))
     v = last_match["votes"]
     resolved = parked and (closed or is_open)
     why = ("; " + str(last_match["why"])) if last_match.get("why") and not resolved else ""
     # Wording coupled to _VISION_RE in iris/conductor/shadow.py; change together.
+    # (The regex reads the prefix and the votes; the roof-by suffix is free text.)
     _logger.info(
         "vision parked=%s closed=%s open=%s -- votes parked %d/%d lit (%d frames), "
-        "closed %d, open %d; kasa pose %s%s",
+        "closed %d, open %d; kasa pose %s%s; roof by %s (north %s%s)",
         parked, closed, is_open, v["parked"], last_match["lit_rungs"], last_match["rungs"],
         v["closed"], v["open"],
         "verified" if last_match["pose_verified"] else "UNVERIFIED", why,
+        source, north_state,
+        (" %.0f px off %s" % (seen.get("off_shut_px") if north_state == "shut" else seen.get("off_open_px"),
+                              north_state)) if seen and north_state in ("shut", "open") else "",
     )
-    _shadow_north(closed, is_open, north)
+    _north_row(cam_closed, cam_open, north, closed, is_open, source)
     mod_date = when.strftime("%a %b %d %H:%M:%S %Y") if when else time.ctime()
     return parked, closed, is_open, mod_date
 

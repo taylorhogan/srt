@@ -85,3 +85,36 @@ def test_absence_alone_never_means_open():
     """The rule this whole module exists to replace."""
     assert combine(["absent", "absent", "absent"]) != "open"
     assert combine(["blind", "absent", "blind"]) != "open"
+
+
+# ---------------------------------------------------------------- two cameras
+
+from sentry.north_roof import decide
+
+
+def test_north_decides_and_the_star_is_not_consulted():
+    assert decide("open", False, False) == (False, True, "north")
+    assert decide("shut", False, False) == (True, False, "north")
+    # the star saying open while the tag says open changes nothing
+    assert decide("open", False, True) == (False, True, "north")
+
+
+def test_iris_cam_may_veto_but_not_overrule():
+    assert decide("open", True, False) == (False, False, "contradiction")
+    assert decide("shut", False, True) == (False, False, "contradiction")
+    assert decide("shut", True, False) == (True, False, "north+cam")
+
+
+def test_star_is_only_a_fallback_when_the_north_camera_cannot_answer():
+    assert decide("unknown", True, False) == (True, False, "cam-fallback")
+    assert decide("unknown", False, True) == (False, True, "cam-fallback")
+    assert decide("unknown", False, False) == (False, False, "none")
+
+
+def test_a_false_open_needs_both_cameras_to_be_wrong_the_same_way():
+    """The collision case: OPEN is only ever returned on a north decode at the
+    open corners, and Iris cam reading SHUT at the same moment refuses it."""
+    for cam_closed in (False, True):
+        c, o, _ = decide("shut", cam_closed, False)
+        assert o is False
+    assert decide("open", True, False)[1] is False

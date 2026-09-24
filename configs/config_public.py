@@ -375,7 +375,19 @@ class PublicConfig():
             # tag earns its authority on real roof cycles before it replaces
             # the gold star. False stops asking.
             "north_shadow": True,
+            # True (operator decision 2026-09-24): the north tag DECIDES roof
+            # state; Iris cam may veto, and the gold star is only a fallback
+            # for when the north camera cannot answer. False = the tag is
+            # read and journaled but Iris cam's verdict stands, as before.
+            "north_decides": True,
+            # THE picture the operator sees -- `status`, every Pushover.
+            # Written by the north camera's roof read (sentry/north_roof.py):
+            # the frame that decided, tag and verdict drawn on. When the
+            # north camera returned no frame, Iris cam's picture is copied
+            # here instead, so what is pushed is always what decided.
             "scope_view": "./base_images/scope_view.jpg",
+            # Iris cam's own annotated park/roof read (sentry/kasa_state.py).
+            "cam_view": "./base_images/cam_view.jpg",
             "processed_view": "./base_images/processed.jpg",
             "no_image": "./base_images/no_image.jpg",
             # Output of the `live` command: a no-light, exposure-optimized view of

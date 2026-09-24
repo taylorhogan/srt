@@ -150,8 +150,10 @@ SUN_DAY_DEG = 0.0
 RETRIES = 3
 
 # Width of the annotated decision picture written to cfg["camera safety"]
-# ["scope_view"] (what Pushover attaches; its cap is 2.5 MB, a full 2560 px
-# frame sits near it).
+# ["cam_view"] (Pushover's cap is 2.5 MB; a full 2560 px frame sits near it).
+# Since 2026-09-24 the picture the operator SEES -- status, every Pushover --
+# is the north camera's (sentry/north_roof.py writes "scope_view"); this one
+# is Iris cam's own park/roof read, kept beside it and in the archive.
 VIEW_WIDTH = 1280
 
 # Introspection for callers that want to log why, mirroring
@@ -511,13 +513,14 @@ def _annotate(img, found, parked_ref, shut_ref, scope, roof, star_ref=None, star
 
 def _write_view(img, found, parked_ref, shut_ref, scope, roof, star_ref=None, star=None,
                 archive_when=None):
-    """Write the annotated decision picture to the configured scope_view path.
+    """Write the annotated decision picture to the configured cam_view path.
 
     With *archive_when* (gating reads) the picture is also kept under
-    ARCHIVE_DIR, since scope_view is overwritten by the next read.
+    ARCHIVE_DIR, since cam_view is overwritten by the next read.
     """
     try:
-        path = config.data()["camera safety"]["scope_view"]
+        path = (config.data()["camera safety"].get("cam_view")
+                or "./base_images/cam_view.jpg")
         os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
         view = _annotate(img, found, parked_ref, shut_ref, scope, roof, star_ref, star)
         cv2.imwrite(path, view, [cv2.IMWRITE_JPEG_QUALITY, 82])
