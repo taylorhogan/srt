@@ -112,6 +112,23 @@ BG_MESH_FRACTION = 4      # mesh boxes across the short axis
 # (see _scnr), so it has to be asked for rather than assumed.
 SCNR_AMOUNT = 0.0
 
+# Star white balance, "none" or "stars". The channels are stretched on a
+# shared scale so their MEASURED ratios survive into the picture -- which is
+# right, but those ratios are the instrument's (filter widths, QE), not the
+# sky's, and on m33 they came out yellow-green where the arms are blue-white.
+# "stars" scales R and B so the median star in the field is neutral: the
+# standard "average field star = white" reference, measured with aperture
+# photometry and a local sky annulus so stars on the galaxy do not carry its
+# light. G and L are never touched -- this is hue, not brightness. Off by
+# default because HOO and SHO are palettes, not colour, and must not be
+# balanced.
+WHITE_BALANCE = "none"
+STAR_WB_MIN_STARS = 20
+STAR_WB_MAX_STARS = 300
+STAR_WB_THRESH_SIGMA = 10.0
+STAR_WB_MAX_NPIX = 600
+STAR_WB_EDGE_PX = 40
+
 # --- HALRGB: how much Ha excess goes into R and L ---------------------------
 #
 # An Ha filter still passes continuum: a star is (bandwidth ratio) as bright
@@ -307,6 +324,90 @@ def apply_ha_blend(subbed: dict[str, np.ndarray], gain: float = HA_GAIN,
     return out, ratio
 
 
+def star_white_balance(subbed: dict[str, np.ndarray],
+                       max_stars: int = STAR_WB_MAX_STARS,
+                       min_stars: int = STAR_WB_MIN_STARS) -> tuple[dict, dict]:
+    """({R, G, B: factor}, info): the scaling that makes the median star neutral.
+
+    Stars are found on L (or G) with sep, kept if compact, round, unsaturated
+    and away from the edge, and the brightest *max_stars* are measured in R, G
+    and B through one aperture with a local annulus. The factors are the
+    inverse of the median R/G and B/G. Fewer than *min_stars* usable stars
+    means no change at all -- an identity with a reason -- never a guess.
+    """
+    identity = {"R": 1.0, "G": 1.0, "B": 1.0}
+    if not all(c in subbed for c in ("R", "G", "B")):
+        return identity, {"why": "needs R, G and B"}
+    try:
+        import sep
+    except ImportError:
+        return identity, {"why": "sep not installed"}
+    ref_name = "L" if "L" in subbed else "G"
+    ref = np.ascontiguousarray(np.nan_to_num(subbed[ref_name]), dtype=np.float32)
+    try:
+        bkg = sep.Background(ref)
+        data = ref - bkg.back()
+        rms = float(bkg.globalrms) or 1.0
+        objs = sep.extract(data, STAR_WB_THRESH_SIGMA, err=rms, minarea=7)
+    except Exception as exc:  # noqa: BLE001
+        return identity, {"why": "star detection failed: %s" % exc}
+    h, w = ref.shape
+    e = STAR_WB_EDGE_PX
+    keep = ((objs["b"] / np.maximum(objs["a"], 1e-6)) > 0.6)
+    keep &= (objs["npix"] >= 7) & (objs["npix"] <= STAR_WB_MAX_NPIX)
+    keep &= (objs["x"] > e) & (objs["x"] < w - e) & (objs["y"] > e) & (objs["y"] < h - e)
+    keep &= objs["peak"] < float(np.nanpercentile(ref, 99.995))     # saturated cores
+    objs = objs[keep]
+    if len(objs) < min_stars:
+        return identity, {"why": "only %d usable stars (need %d)" % (len(objs), min_stars),
+                          "stars": int(len(objs))}
+    objs = objs[np.argsort(objs["flux"])[::-1][:max_stars]]
+    # Aperture from the stars themselves, so this works at any binning.
+    a_med = float(np.median(objs["a"]))
+    r_ap = float(np.clip(4.0 * a_med, 4.0, 16.0))
+    ann = (r_ap * 1.8, r_ap * 3.0)
+    flux = {}
+    for c in ("R", "G", "B"):
+        plane = np.ascontiguousarray(np.nan_to_num(subbed[c]), dtype=np.float32)
+        f, _err, _flag = sep.sum_circle(plane, objs["x"], objs["y"], r_ap, bkgann=ann, subpix=5)
+        flux[c] = np.asarray(f, dtype=np.float64)
+    good = (flux["G"] > 0) & (flux["R"] > 0) & (flux["B"] > 0)
+    if int(good.sum()) < min_stars:
+        return identity, {"why": "only %d stars with positive flux in all three channels"
+                                 % int(good.sum()), "stars": int(good.sum())}
+    rr = flux["R"][good] / flux["G"][good]
+    bb = flux["B"][good] / flux["G"][good]
+    med_r, med_b = float(np.median(rr)), float(np.median(bb))
+    info = {"stars": int(good.sum()), "reference": ref_name,
+            "aperture_px": round(r_ap, 1),
+            "median_R_over_G": round(med_r, 4), "median_B_over_G": round(med_b, 4),
+            "mad_R": round(float(np.median(np.abs(rr - med_r)) / med_r), 4),
+            "mad_B": round(float(np.median(np.abs(bb - med_b)) / med_b), 4)}
+    return {"R": 1.0 / med_r, "G": 1.0, "B": 1.0 / med_b}, info
+
+
+def apply_white_balance(subbed: dict[str, np.ndarray], mode) -> tuple[dict, dict]:
+    """(channels, info) with R and B scaled per *mode*; "none" returns the input."""
+    if not mode or str(mode).lower() in ("none", "off", "0", "false"):
+        return subbed, {"mode": "none", "factors": {"R": 1.0, "G": 1.0, "B": 1.0}}
+    if str(mode).lower() != "stars":
+        raise ValueError("wb must be 'none' or 'stars', not %r" % (mode,))
+    factors, info = star_white_balance(subbed)
+    out = dict(subbed)
+    for c in ("R", "B"):
+        if c in out and factors[c] != 1.0:
+            out[c] = out[c] * np.float32(factors[c])
+    if info.get("why"):
+        _logger.warning("White balance: left alone -- %s", info["why"])
+    else:
+        _logger.info("White balance from %d stars on %s: R x%.3f  B x%.3f "
+                     "(median R/G %.3f, B/G %.3f; scatter %.1f%% / %.1f%%)",
+                     info["stars"], info["reference"], factors["R"], factors["B"],
+                     info["median_R_over_G"], info["median_B_over_G"],
+                     100 * info["mad_R"], 100 * info["mad_B"])
+    return out, {"mode": "stars", "factors": factors, **info}
+
+
 def shared_white(subbed: dict[str, np.ndarray], white_pct: float) -> float:
     """The one white point every channel is stretched against: a percentile
     of the brightest primary at each pixel. Separate so a caller that blends
@@ -317,7 +418,8 @@ def shared_white(subbed: dict[str, np.ndarray], white_pct: float) -> float:
 
 def _prepare(channels: dict[str, np.ndarray], subtract_background: bool,
              mesh: int, white_pct: float,
-             ha_gain: Optional[float] = HA_GAIN) -> tuple[dict, float]:
+             ha_gain: Optional[float] = HA_GAIN,
+             white_balance: str = WHITE_BALANCE) -> tuple[dict, float]:
     """Background-subtract every channel and find the shared white point.
 
     Factored out of compose() because the per-channel exports have to be the
@@ -329,6 +431,10 @@ def _prepare(channels: dict[str, np.ndarray], subtract_background: bool,
         subbed = {k: _remove_gradient(v, mesh) for k, v in channels.items()}
     else:
         subbed = {k: v - float(np.nanmedian(v)) for k, v in channels.items()}
+    # Balance BEFORE the Ha blend: the excess is measured against R and added
+    # to R, so scaling R first changes the ratio and the subtraction together
+    # and the excess itself is unchanged; balancing afterwards would rescale it.
+    subbed, _ = apply_white_balance(subbed, white_balance)
     # HALRGB: the blend happens here, on subtracted linear data, so the
     # shared white point and every per-channel export see the blended R.
     # ha_gain=None leaves it to the caller (the movie pins one ratio for
@@ -501,7 +607,7 @@ def effective_options(**overrides) -> dict:
     opts = {"black_pct": BLACK_PCT, "white_pct": WHITE_PCT,
             "softening": SOFTENING, "mesh": BG_MESH_FRACTION,
             "subtract_background": SUBTRACT_BACKGROUND, "scnr": SCNR_AMOUNT,
-            "ha_gain": HA_GAIN}
+            "ha_gain": HA_GAIN, "white_balance": WHITE_BALANCE}
     opts.update({k: v for k, v in overrides.items() if k in opts})
     return opts
 
@@ -510,6 +616,8 @@ def describe_options(opts: dict, scale: int = 1) -> str:
     """One line of compose settings, in the spelling the command accepts."""
     parts = [f"black={opts['black_pct']:g}", f"white={opts['white_pct']:g}",
              f"soft={opts['softening']:g}"]
+    if str(opts.get("white_balance", "none")).lower() not in ("none", ""):
+        parts.append(f"wb={opts['white_balance']}")
     if opts.get("subtract_background", True):
         parts.append(f"mesh={opts['mesh']:g}")
     else:
@@ -567,14 +675,16 @@ def compose(channels: dict[str, np.ndarray], black_pct: float = BLACK_PCT,
             softening: float = SOFTENING,
             mesh: int = BG_MESH_FRACTION,
             scnr: float = SCNR_AMOUNT,
-            ha_gain: float = HA_GAIN) -> np.ndarray:
+            ha_gain: float = HA_GAIN,
+            white_balance: str = WHITE_BALANCE) -> np.ndarray:
     """Combine channel stacks into an RGB image in 0..1.
 
     channels holds any of R/G/B plus an optional L, and for HALRGB an HA plane
     that _prepare folds into R and L. Every channel must already be on the
     same pixel grid — that is what the shared reference guarantees.
     """
-    subbed, white = _prepare(channels, subtract_background, mesh, white_pct, ha_gain)
+    subbed, white = _prepare(channels, subtract_background, mesh, white_pct, ha_gain,
+                             white_balance)
     _logger.info("Compose: shared white point %.2f ADU (p%.1f)", white, white_pct)
 
     rgb = np.dstack([_stretch(subbed[c], black_pct, white, softening, label=c)
@@ -1061,7 +1171,8 @@ def save_channel_jpgs(channels: dict[str, np.ndarray], out_dir: Path, dso: str,
                       softening: float = SOFTENING,
                       mesh: int = BG_MESH_FRACTION,
                       max_px: int = CHANNEL_JPG_MAX_PX,
-                      ha_gain: float = HA_GAIN) -> list[Path]:
+                      ha_gain: float = HA_GAIN,
+                      white_balance: str = WHITE_BALANCE) -> list[Path]:
     """Write one mono JPEG per channel, on the composite's shared scale.
 
     Deliberately not per-channel autostretch: these are meant to explain the
@@ -1076,7 +1187,8 @@ def save_channel_jpgs(channels: dict[str, np.ndarray], out_dir: Path, dso: str,
     """
     from PIL import Image
     from stacking import stacker
-    subbed, white = _prepare(channels, subtract_background, mesh, white_pct, ha_gain)
+    subbed, white = _prepare(channels, subtract_background, mesh, white_pct, ha_gain,
+                             white_balance)
     out_dir.mkdir(parents=True, exist_ok=True)
     written = []
     # For HALRGB, R and L here are the BLENDED planes (what the composite

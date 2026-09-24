@@ -5415,6 +5415,10 @@ def process_cmd(words: list[str], account: str) -> None:
         mesh=4      background mesh boxes across the short axis; higher removes
                     gradients harder but eats large nebulosity
         scnr=0      average-neutral green removal, g = min(g, (r+b)/2), 0..1.
+        wb=none     white balance: `stars` scales R and B so the median star in
+                    the field is neutral (aperture photometry, local sky
+                    annulus); G and L untouched. For LRGB/HALRGB -- never for
+                    HOO/SHO, which are palettes.
                     Off by default. Right on LRGB, taste on SHO, and wrong on
                     HOO — there G and B are the same O-III data, so any amount
                     breaks G==B and shifts the teal toward blue
@@ -5502,7 +5506,7 @@ def _process_run(words: list[str]) -> None:
     _KEYS = {"black": ("black_pct", float), "white": ("white_pct", float),
              "soft": ("softening", float), "mesh": ("mesh", int),
              "scnr": ("scnr", float), "scale": ("scale", int),
-             "ha": ("ha_gain", float)}
+             "ha": ("ha_gain", float), "wb": ("white_balance", str)}
     opts = {"use_flats": True, "reuse": False}
     rest = []
     bad = []
