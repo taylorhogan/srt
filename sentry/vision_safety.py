@@ -598,24 +598,41 @@ def _unresolved_reason():
 NORTH_SHADOW_LOG = "local/north_shadow_log.jsonl"
 
 
-def _shadow_north(closed, is_open):
-    """Ask the north camera the same question and record both answers.
+def _north_shadow_read():
+    """The north camera's verdict, taken BEFORE anything touches the inside light.
 
-    Best-effort in every direction: it must never raise, never change the
-    verdict it is shadowing, and never leave anything switched. A failure here
-    is a missing row in a log, nothing more.
+    It needs no light -- the tag decodes in pure IR -- and it must not be read
+    just after the light changes: Iris North takes ~9 s to swap between IR and
+    colour, and frames grabbed inside that swap are mis-exposed. On 2026-09-24
+    04:13 the read fell 6 s after the pre-flats check switched the light off
+    and decoded 0/3, one minute after decoding 3/3 with the light steady and
+    hours after every other read decoded 3/3. A false unknown is the safe
+    direction, but under authority it would have refused the flats gate for
+    nothing. Reading first, with the camera in whatever steady state it was
+    left in, removes the window. Returns (state, detail) or None.
     """
     try:
         from configs import config
         if not config.data().get("camera safety", {}).get("north_shadow", True):
-            return
+            return None
     except Exception:  # noqa: BLE001
         pass
     try:
+        from sentry import north_roof
+        return north_roof.read()
+    except Exception:  # noqa: BLE001 -- an observer must never cost a verdict
+        _logger.warning("north shadow read failed (ignored)", exc_info=True)
+        return None
+
+
+def _shadow_north(closed, is_open, north):
+    """Journal the north verdict against the one just decided. Never raises."""
+    if north is None:
+        return
+    try:
         import json
         from datetime import datetime
-        from sentry import north_roof
-        state, detail = north_roof.read()
+        state, detail = north
         star = "open" if is_open else ("shut" if closed else "unknown")
         agree = (state == star)
         _logger.info("north shadow: tag says %s, vision says %s -- %s",
@@ -623,11 +640,11 @@ def _shadow_north(closed, is_open):
         row = {"when": datetime.now().astimezone().isoformat(timespec="seconds"),
                "north": state, "vision": star, "agree": agree,
                "verdicts": detail.get("verdicts"), "why": detail.get("why"),
-               "per_frame": detail.get("per_frame")}
+               "per_frame": detail.get("per_frame"), "archive": detail.get("archive")}
         with open(NORTH_SHADOW_LOG, "a") as fh:
             print(json.dumps(row, default=str), file=fh)
-    except Exception:  # noqa: BLE001 -- an observer must never cost a verdict
-        _logger.warning("north shadow failed (ignored)", exc_info=True)
+    except Exception:  # noqa: BLE001
+        _logger.warning("north shadow log failed (ignored)", exc_info=True)
 
 
 def _with_inside_light(fn):
@@ -727,6 +744,7 @@ def visual_status(retries: int = 1, delay: float = 3.0, frames: int | None = Non
     global last_match
     from sentry import kasa_state
     n = kasa_state.GATE_FRAMES if frames is None else max(1, int(frames))
+    north = _north_shadow_read()          # before the light is touched, see above
 
     def _read():
         return kasa_state.kasa_status(verify_pose=True, frames=n)
@@ -749,6 +767,7 @@ def visual_status(retries: int = 1, delay: float = 3.0, frames: int | None = Non
                       "is_open": False}
         _logger.warning("vision parked=False closed=False open=False -- votes parked 0/0 lit "
                         "(0 frames); %s", last_match["error"])
+        _shadow_north(False, False, north)
         return False, False, False, time.ctime()
 
     last_match = _match_from_detail(det, parked, closed, is_open)
@@ -763,7 +782,7 @@ def visual_status(retries: int = 1, delay: float = 3.0, frames: int | None = Non
         v["closed"], v["open"],
         "verified" if last_match["pose_verified"] else "UNVERIFIED", why,
     )
-    _shadow_north(closed, is_open)
+    _shadow_north(closed, is_open, north)
     mod_date = when.strftime("%a %b %d %H:%M:%S %Y") if when else time.ctime()
     return parked, closed, is_open, mod_date
 

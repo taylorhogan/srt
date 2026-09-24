@@ -51,6 +51,12 @@ if __package__ is None or __package__ == "":
 _logger = logging.getLogger(__name__)
 
 REFERENCE_PATH = "local/north_roof_marker.json"
+# Every frame of every read is kept, because the one read that mattered on
+# 2026-09-24 (0/3 decodes at 04:13, a minute after 3/3) had its frames
+# overwritten by the next read before anyone could look. Same lesson as the
+# 2026-09-17 stop! frame that survived only as a Pushover attachment.
+ARCHIVE_DIR = "local/north_archive"
+ARCHIVE_KEEP_DAYS = 60
 FRAMES = 3
 GRAB_RETRIES = 2          # per frame; a dropped stream is noise, not a verdict
 
@@ -179,28 +185,49 @@ def read(frames=FRAMES, path=REFERENCE_PATH):
     user, pw = credentials(config.data())
     snap = ref.get("snapshot", "local/north_roof_frame.jpg")
 
-    per_frame, verdicts = [], []
-    for _ in range(max(1, frames)):
+    from datetime import datetime, timedelta
+    from sentry.kasa_state import is_ir
+    stamp = datetime.now()
+    day = os.path.join(ARCHIVE_DIR, stamp.strftime("%Y-%m-%d"))
+    per_frame, verdicts, kept = [], [], []
+    for i in range(max(1, frames)):
         img = _grab(ref["host"], user, pw, snap)
         if img is None:
             verdicts.append("blind")
             per_frame.append({"camera": False})
             continue
+        ir = bool(is_ir(img))
         found = find_markers(img, ref.get("dict", "APRILTAG_36h11"))
         if tag not in found:
-            verdicts.append("absent")
-            per_frame.append({"camera": True, "tags": sorted(found), "tag": False})
-            continue
-        corners = [list(map(float, c)) for c in found[tag]]
-        v = classify(corners, shut_ref, open_ref, tol)
+            v = "absent"
+            per_frame.append({"camera": True, "ir": ir, "tags": sorted(found), "tag": False})
+        else:
+            corners = [list(map(float, c)) for c in found[tag]]
+            v = classify(corners, shut_ref, open_ref, tol)
+            per_frame.append({"camera": True, "ir": ir, "tags": sorted(found), "verdict": v,
+                              "off_shut_px": round(worst_corner(corners, shut_ref), 1),
+                              "off_open_px": round(worst_corner(corners, open_ref), 1)})
         verdicts.append(v)
-        per_frame.append({"camera": True, "tags": sorted(found), "verdict": v,
-                          "off_shut_px": round(worst_corner(corners, shut_ref), 1),
-                          "off_open_px": round(worst_corner(corners, open_ref), 1)})
+        try:
+            import cv2
+            os.makedirs(day, exist_ok=True)
+            name = "%s_%d_%s%s.jpg" % (stamp.strftime("%H%M%S"), i, v, "_ir" if ir else "")
+            cv2.imwrite(os.path.join(day, name), img, [cv2.IMWRITE_JPEG_QUALITY, 85])
+            kept.append(os.path.join(day, name))
+        except Exception:  # noqa: BLE001 -- the archive must never cost a verdict
+            _logger.warning("north_roof: could not archive a frame", exc_info=True)
+    try:
+        import shutil
+        cutoff = (stamp - timedelta(days=ARCHIVE_KEEP_DAYS)).strftime("%Y-%m-%d")
+        for d in (os.listdir(ARCHIVE_DIR) if os.path.isdir(ARCHIVE_DIR) else []):
+            if len(d) == 10 and d < cutoff:
+                shutil.rmtree(os.path.join(ARCHIVE_DIR, d), ignore_errors=True)
+    except Exception:  # noqa: BLE001
+        pass
 
     state = combine(verdicts)
     last_detail = {"state": state, "verdicts": verdicts, "per_frame": per_frame,
-                   "pose": list(want), "tolerance_px": tol}
+                   "pose": list(want), "tolerance_px": tol, "archive": kept}
     _logger.info("north_roof: %s (%s; tolerance %.0f px; %d/%d frames decoded id %d)",
                  state, ", ".join(verdicts), tol,
                  sum(1 for f in per_frame if f.get("verdict")), len(per_frame), tag)
