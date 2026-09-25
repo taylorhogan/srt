@@ -54,6 +54,7 @@ from iris.core.journal import Journal
 from iris.core.machine import (HOLD_STATES, INITIAL_STATE, ROOF_MOVING_STATES,
                                TRANSITIONS, step)
 from iris.core.snapshot import SensorSnapshot, Tri
+from iris.core.machine import MOUNT_DECISION_EVENTS
 
 _logger = logging.getLogger(__name__)
 
@@ -87,14 +88,23 @@ class Verdict:
 
     @property
     def accepted(self) -> bool:
-        """May the caller act? A transition, or a close permitted in a hold."""
-        return self.kind in ("transition", "allowed_in_hold")
+        """May the caller act? A transition, a permission row (the mount's
+        requests), or a close / park permitted in a hold."""
+        return self.kind in ("transition", "allowed", "allowed_in_hold")
 
 
 def _read_roof_authority():
     try:
         from configs import config
         return bool(config.data().get("conductor", {}).get("roof_authority", False))
+    except Exception:
+        return False
+
+
+def _read_mount_authority():
+    try:
+        from configs import config
+        return bool(config.data().get("conductor", {}).get("mount_authority", False))
     except Exception:
         return False
 
@@ -217,7 +227,7 @@ class ShadowConductor:
     _flats_grace_polls = 60
 
     def __init__(self, repo_root: Path, journal: Journal, sun_probe=None,
-                 roof_authority=None):
+                 roof_authority=None, mount_authority=None):
         self.root = Path(repo_root)
         self.journal = journal
         self.state = INITIAL_STATE
@@ -228,6 +238,8 @@ class ShadowConductor:
         self._state_since = time.time()
         self.roof_authority = (_read_roof_authority() if roof_authority is None
                                else bool(roof_authority))
+        self.mount_authority = (_read_mount_authority() if mount_authority is None
+                                else bool(mount_authority))
         self._none_streak = 0         # consecutive polls reading NONE (debounce)
         # Slow sensors (network round-trips) polled every N fast polls.
         # Injectable so tests drive them without a mount or a Shelly.
@@ -652,6 +664,37 @@ class ShadowConductor:
         e = self.journal.append("note", "ROOF_CLOSE_ALLOWED_IN_HOLD", source, data=payload)
         return Verdict("allowed_in_hold", self.state, would_refuse=refusal, seq=e.seq)
 
+    def _park_in_hold(self, source: str, payload: dict) -> Verdict:
+        """Parking inside a hold: decided by Invariant B's guard on the
+        evidence, not by the table, and the hold is not left.
+
+        stop! parks before it closes, and since 2026-09-25 it runs in ESTOP
+        by design. Parking is the safe direction for the scope exactly as
+        closing is for the roof, so it is answered like _close_in_hold:
+        roof_open on the posted evidence. The one exception is the blind
+        park (CLAUDE.md, operator decision 2026-09-17): the scope hides the
+        roof, and stop!'s own rule has proved the roof open earlier and
+        unmoved since. That request carries blind_park=True and is journaled
+        as an assertion, never as a sensor read.
+        """
+        ev = self._current_evidence()
+        refusal = G.evaluate((G.roof_open,), ev)
+        if refusal and payload.get("blind_park"):
+            refusal = None
+            payload["asserted"] = "blind park rule (stop!)"
+        payload["in_hold"] = self.state
+        if self.mount_authority:
+            payload["guards"] = "enforced"
+            if refusal:
+                e = self.journal.append("rejected", "MOUNT_MOVE_REQUESTED", source,
+                                        from_state=self.state, guard=refusal, data=payload)
+                return Verdict("rejected", self.state, guard=refusal, seq=e.seq)
+            e = self.journal.append("note", "MOUNT_PARK_ALLOWED_IN_HOLD", source, data=payload)
+            return Verdict("allowed_in_hold", self.state, seq=e.seq)
+        payload["guard_would"] = refusal
+        e = self.journal.append("note", "MOUNT_PARK_ALLOWED_IN_HOLD", source, data=payload)
+        return Verdict("allowed_in_hold", self.state, would_refuse=refusal, seq=e.seq)
+
     def _absorb_evidence(self, evidence: dict, payload: dict):
         """A live sensor read posted with a request replaces the log-derived
         one, fresh as of now. Recorded on the entry so the journal shows what
@@ -688,7 +731,12 @@ class ShadowConductor:
             live = source != "shadow"
             if live and event == "ROOF_CLOSE_REQUESTED" and self.state in HOLD_STATES:
                 return self._close_in_hold(source, payload)
-            enforced = live and self.roof_authority and event in ROOF_DECISION_EVENTS
+            if (live and event == "MOUNT_MOVE_REQUESTED" and self.state in HOLD_STATES
+                    and str(payload.get("direction", "")).lower() == "park"):
+                return self._park_in_hold(source, payload)
+            enforced = live and (
+                (self.roof_authority and event in ROOF_DECISION_EVENTS)
+                or (self.mount_authority and event in MOUNT_DECISION_EVENTS))
             # An operator starting a run is the weather verdict for that run:
             # the planner's "will image tonight" describes the planner's plan,
             # not the operator's decision to image anyway.
@@ -714,8 +762,31 @@ class ShadowConductor:
                 payload["guards"] = "enforced"
             else:
                 snap = _PERMISSIVE.replace(slots_remaining=self.slots)
-            out = step(self.state, event, snap)
             would = None
+            if event in MOUNT_DECISION_EVENTS and not enforced:
+                # A permission row wants the roof at the position its state
+                # implies (open for a move, shut for flats power), so no one
+                # permissive roof value fits every row. Step on the evidence;
+                # if the guards refuse, step again on the permissive snapshot
+                # that fits and carry the refusal as the decision-diff.
+                out = step(self.state, event, evidence_snap)
+                if out.kind == "rejected":
+                    for roof in (Tri.CONFIRMED, Tri.DENIED):
+                        alt = step(self.state, event,
+                                   _PERMISSIVE.replace(slots_remaining=self.slots, roof=roof))
+                        if alt.kind == "allowed":
+                            would, out = out.guard, alt
+                            break
+            else:
+                out = step(self.state, event, snap)
+            if out.kind == "allowed":
+                # A permission row: the mount may act, the night stays put.
+                if not enforced:
+                    payload["guard_would"] = would
+                payload["allowed_in_state"] = self.state
+                e = self.journal.append("note", event.replace("_REQUESTED", "_ALLOWED"),
+                                        source, data=payload)
+                return Verdict("allowed", self.state, would_refuse=would, seq=e.seq)
             if out.kind == "transition":
                 if not enforced:
                     row = self._fired_row(self.state, event, snap)

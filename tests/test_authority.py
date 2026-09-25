@@ -79,9 +79,10 @@ def _no_real_nina(monkeypatch):
     monkeypatch.setattr(ShadowConductor, "_nina_running", lambda self: False)
 
 
-def _conductor(root, authority=True):
+def _conductor(root, authority=True, mount=True):
     c = ShadowConductor(root, Journal(root / "local" / "journal"),
-                        sun_probe=lambda: None, roof_authority=authority)
+                        sun_probe=lambda: None, roof_authority=authority,
+                        mount_authority=mount)
     c.pwi4_probe = lambda: "unreachable"
     c.limits_probe = lambda: ("not_configured", "")
     return c
@@ -257,6 +258,87 @@ def test_without_authority_a_bad_request_moves_and_carries_the_verdict(tmp_path)
 
 # ------------------------------------------------------------ HTTP surface
 
+# ------------------------------------------------------- the mount asks (2b)
+
+def _open_night(c):
+    c.offer("CHECKS_PASSED", "operator", {}, evidence=GOOD)      # unplanned run
+    c.offer("ROOF_OPEN_CONFIRMED", "operator", {"confirmed": True}, evidence=OPEN)
+    assert c.state == "PRELUDE"
+
+
+def test_mount_move_is_allowed_only_under_a_confirmed_open_roof(tmp_path):
+    c = _conductor(_mkroot(tmp_path))
+    _open_night(c)
+    v = c.offer("MOUNT_MOVE_REQUESTED", "operator", {"direction": "nina prelude"}, evidence=OPEN)
+    assert v.accepted and v.kind == "allowed" and c.state == "PRELUDE"
+    assert [e.event for e in _entries(c, "note")][-1] == "MOUNT_MOVE_ALLOWED"
+    v = c.offer("MOUNT_MOVE_REQUESTED", "operator", {}, evidence={**OPEN, "roof": "UNKNOWN"})
+    assert not v.accepted and v.kind == "rejected" and "roof" in v.guard
+    assert c.state == "PRELUDE"
+
+
+def test_mount_move_is_refused_by_day_and_in_a_hold(tmp_path):
+    c = _conductor(_mkroot(tmp_path))
+    v = c.offer("MOUNT_MOVE_REQUESTED", "operator", {"direction": "slew"}, evidence=OPEN)
+    assert not v.accepted                        # IDLE_DAY has no row
+    _open_night(c)
+    assert c.offer("ESTOP_REQUESTED", "operator").state == "ESTOP"
+    assert not c.offer("MOUNT_MOVE_REQUESTED", "operator", {"direction": "slew"},
+                       evidence=OPEN).accepted
+    assert not c.offer("MOUNT_POWER_REQUESTED", "operator", {"why": "flats"},
+                       evidence=GOOD).accepted
+    assert c.state == "ESTOP"
+
+
+def test_a_park_in_estop_follows_the_roof_evidence_or_the_blind_park_rule(tmp_path):
+    c = _conductor(_mkroot(tmp_path))
+    _open_night(c)
+    c.offer("ESTOP_REQUESTED", "operator")
+    v = c.offer("MOUNT_MOVE_REQUESTED", "stop!", {"direction": "park"}, evidence=OPEN)
+    assert v.accepted and v.kind == "allowed_in_hold" and c.state == "ESTOP"
+    blind = {**OPEN, "roof": "UNKNOWN"}
+    v = c.offer("MOUNT_MOVE_REQUESTED", "stop!", {"direction": "park"}, evidence=blind)
+    assert not v.accepted and "roof" in v.guard
+    v = c.offer("MOUNT_MOVE_REQUESTED", "stop!", {"direction": "park", "blind_park": True},
+                evidence=blind)
+    assert v.accepted and v.kind == "allowed_in_hold"
+    notes = [e for e in _entries(c, "note") if e.event == "MOUNT_PARK_ALLOWED_IN_HOLD"]
+    assert notes and notes[-1].data.get("asserted")
+    assert c.state == "ESTOP"                    # the hold is never left by a park
+
+
+def test_mount_power_by_day_needs_parked_and_shut(tmp_path):
+    c = _conductor(_mkroot(tmp_path))
+    v = c.offer("MOUNT_POWER_REQUESTED", "operator", {"why": "flats"}, evidence=GOOD)
+    assert v.accepted and v.kind == "allowed" and c.state == "IDLE_DAY"
+    v = c.offer("MOUNT_POWER_REQUESTED", "operator", {"why": "flats"},
+                evidence={**GOOD, "parked_vision": "UNKNOWN"})
+    assert not v.accepted and "parked" in v.guard
+
+
+def test_without_mount_authority_the_action_proceeds_with_the_verdict(tmp_path):
+    c = _conductor(_mkroot(tmp_path), mount=False)
+    _open_night(c)
+    v = c.offer("MOUNT_MOVE_REQUESTED", "operator", {}, evidence={**OPEN, "roof": "UNKNOWN"})
+    assert v.accepted and v.kind == "allowed"
+    assert v.would_refuse and "roof" in v.would_refuse
+    allowed, reason = client.decide({"accepted": True, "would_refuse": v.would_refuse}, False)
+    assert allowed and reason.startswith("conductor would have refused")
+
+
+def test_estop_from_stop_holds_the_roof_until_resolve(tmp_path):
+    """stop! posts ESTOP_REQUESTED first; end.py's close inside the hold is
+    still answered on the evidence, and nothing opens until resolve!."""
+    c = _conductor(_mkroot(tmp_path))
+    _open_night(c)
+    assert c.offer("ESTOP_REQUESTED", "operator", {"pid": 1}).state == "ESTOP"
+    assert c.offer("MOUNT_PARK_CONFIRMED", "end.py", {}, evidence=OPEN).kind == "ignored"
+    v = c.offer("ROOF_CLOSE_REQUESTED", "end.py", {}, evidence=OPEN)
+    assert v.accepted and v.kind == "allowed_in_hold"
+    assert not c.offer("ROOF_OPEN_REQUESTED", "operator", {}, evidence=GOOD).accepted
+    assert c.offer("OPERATOR_RESOLVE", "operator").state == "IDLE_DAY"
+
+
 def test_api_reports_kind_guard_and_authority(tmp_path):
     fastapi = pytest.importorskip("fastapi")
     pytest.importorskip("httpx")
@@ -266,7 +348,7 @@ def test_api_reports_kind_guard_and_authority(tmp_path):
     app = build_app(c, c.journal, lambda: {})
     t = TestClient(app)
     st = t.get("/v1/state").json()
-    assert st["authority"] == {"roof": True} and st["shadow"] is False
+    assert st["authority"] == {"roof": True, "mount": True} and st["shadow"] is False
     r = t.post("/v1/events", json={"event": "ROOF_OPEN_REQUESTED", "source": "operator",
                                    "evidence": BLIND}).json()
     assert r["accepted"] is False and r["kind"] == "rejected" and r["guard"].startswith("mount_parked")

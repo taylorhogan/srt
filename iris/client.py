@@ -52,6 +52,12 @@ def roof_authority() -> bool:
     return bool(_cfg().get("roof_authority", False))
 
 
+def mount_authority() -> bool:
+    """True when the conductor's verdict is binding for mount motion and
+    mount power (Phase 2b). Off = decision-diff, as the roof began."""
+    return bool(_cfg().get("mount_authority", False))
+
+
 # ------------------------------------------------------------------ evidence
 
 def evidence_from_vision(parked: bool, closed: bool, is_open: bool) -> dict:
@@ -154,6 +160,22 @@ def request_roof_move(event: str, source: str, evidence: dict,
     decision-diff a night's operator reads the next morning."""
     reply = post_event(event, source, data, evidence)
     allowed, reason = decide(reply, roof_authority())
+    _logger.info("conductor %s for %s: allowed=%s%s", "reply" if reply else "unreachable",
+                 event, allowed, (" (%s)" % reason) if reason else "")
+    return allowed, reason, reply
+
+
+def request_mount(event: str, source: str, evidence: Optional[dict] = None,
+                  data: Optional[dict] = None) -> tuple:
+    """Ask before the mount moves (MOUNT_MOVE_REQUESTED: slew, home, park,
+    unpark) or is powered on (MOUNT_POWER_REQUESTED). Same contract as
+    request_roof_move, bound by conductor.mount_authority. Evidence is
+    optional: a caller with no fresh vision read posts none and the
+    conductor decides on what it last saw (15-minute decay)."""
+    reply = post_event(event, source, data, evidence)
+    allowed, reason = decide(reply, mount_authority())
+    if reason and reply is None:
+        reason = "conductor unreachable — no verdict on this mount action"
     _logger.info("conductor %s for %s: allowed=%s%s", "reply" if reply else "unreachable",
                  event, allowed, (" (%s)" % reason) if reason else "")
     return allowed, reason, reply

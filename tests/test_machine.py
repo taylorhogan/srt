@@ -15,7 +15,9 @@ from iris.core import guards as G
 from iris.core.machine import (EVENTS, HOLD_STATES, INITIAL_STATE, MANUAL_STATES,
                                NIGHT_PATH, ROOF_MOVING_STATES, STATES, TRANSITIONS,
                                Outcome, step)
-from iris.core.snapshot import SensorSnapshot, Tri
+from iris.core.snapshot import SensorSnapshot, Tri, enumerate_snapshots
+from iris.core import guards as G
+from iris.core.machine import MOUNT_DECISION_EVENTS
 
 # A snapshot in which every guard passes: night is go, scope parked and
 # confirmed both ways, roof confirmed CLOSED (known), plan has slots.
@@ -82,8 +84,11 @@ def test_every_state_event_pair_is_deterministic_and_classified():
                 a = step(state, event, snap)
                 b = step(state, event, snap)
                 assert a == b, f"non-deterministic: {state} x {event}"
-                assert a.kind in ("transition", "rejected", "ignored")
+                assert a.kind in ("transition", "rejected", "ignored", "allowed")
                 assert a.state in STATES
+                if a.kind == "allowed":
+                    assert a.state == state, "a permission must not move the machine"
+                    assert event in MOUNT_DECISION_EVENTS
                 if a.kind == "rejected":
                     assert a.guard, "rejection without a reason"
                     assert a.state == state, "rejection must not move the machine"
@@ -100,6 +105,65 @@ def test_estop_reaches_estop_from_every_non_hold_state():
             assert out.kind == "ignored", f"{state} must not wildcard out"
         else:
             assert out == Outcome("transition", "ESTOP"), state
+
+
+# ------------------------------------------------------------ Invariant B
+
+def test_invariant_b_every_mount_move_permission_carries_roof_open():
+    rows = [r for r in TRANSITIONS if r.event == "MOUNT_MOVE_REQUESTED"]
+    assert rows
+    for r in rows:
+        assert r.src == r.dst, "a mount request never moves the night: %r" % (r,)
+        assert G.roof_open in r.guards, r
+        assert r.src not in HOLD_STATES
+
+
+def test_invariant_b_dynamic_no_snapshot_moves_the_mount_under_an_unopen_roof():
+    """Every state x every snapshot: MOUNT_MOVE_REQUESTED is allowed only
+    with the roof CONFIRMED open, and never from a hold."""
+    for state in STATES:
+        for snap in enumerate_snapshots():
+            out = step(state, "MOUNT_MOVE_REQUESTED", snap)
+            if out.kind == "allowed":
+                assert snap.roof is Tri.CONFIRMED, (state, snap)
+                assert state not in HOLD_STATES
+
+
+def test_mount_power_never_under_an_unknown_roof_and_never_in_a_hold():
+    """Power under a shut roof needs the scope confirmed parked; under an
+    open roof it is a mount action like any other; with the roof unknown it
+    is refused everywhere."""
+    for state in STATES:
+        for snap in enumerate_snapshots():
+            out = step(state, "MOUNT_POWER_REQUESTED", snap)
+            if out.kind == "allowed":
+                assert snap.roof is not Tri.UNKNOWN, (state, snap)
+                assert state not in HOLD_STATES
+                if snap.roof is Tri.DENIED:
+                    assert G.mount_parked(snap) is None, (state, snap)
+
+
+def test_mount_requests_never_move_the_machine():
+    for state in STATES:
+        for event in MOUNT_DECISION_EVENTS:
+            for snap in (ALL_GO, ALL_STOP, ALL_GO.replace(roof=Tri.CONFIRMED)):
+                out = step(state, event, snap)
+                assert out.state == state, (state, event, out)
+
+
+def test_the_night_drives_the_mount_and_the_day_does_not():
+    night_open = ALL_GO.replace(roof=Tri.CONFIRMED, parked_vision=Tri.UNKNOWN,
+                                parked_kasa=Tri.UNKNOWN, parked_pwi4=Tri.DENIED)
+    for state in ("PRELUDE", "SLOT_SETUP", "SLOT_IMAGING", "PARKING", "MANUAL_OPEN"):
+        assert step(state, "MOUNT_MOVE_REQUESTED", night_open).kind == "allowed", state
+    for state in ("IDLE_DAY", "ARMED", "NIGHT_DONE", "FLATS", "OPENING_ROOF",
+                  "CLOSING_ROOF", "SAFE_HOLD", "ESTOP", "FAULT_ROOF_UNKNOWN"):
+        assert step(state, "MOUNT_MOVE_REQUESTED", night_open).kind != "allowed", state
+    # flats: mount power under a shut roof with the scope parked
+    assert step("FLATS", "MOUNT_POWER_REQUESTED", ALL_GO).kind == "allowed"
+    assert step("IDLE_DAY", "MOUNT_POWER_REQUESTED", ALL_GO).kind == "allowed"
+    assert step("FLATS", "MOUNT_POWER_REQUESTED", ALL_GO.replace(parked_vision=Tri.UNKNOWN)).kind == "rejected"
+    assert step("SAFE_HOLD", "MOUNT_POWER_REQUESTED", ALL_GO).kind == "ignored"
 
 
 def test_safe_hold_exits_only_by_operator_arming():

@@ -531,6 +531,15 @@ class PublicConfig():
             # stage 2 of the drill runs with this on. Set False to go back to
             # advisory if a verdict is ever wrong at the wrong moment.
             "roof_authority": True,
+            # Phase 2b (2026-09-25): the mount asks too. Every slew / home /
+            # park launch (stop!'s park, the NINA prelude and main sequence)
+            # and every mount power-on (the prelude's start.py, flats) posts
+            # MOUNT_MOVE_REQUESTED / MOUNT_POWER_REQUESTED with its evidence
+            # and Invariant B is decided in iris/core. False = advisory: the
+            # verdict is journaled and posted, the action proceeds. True = a
+            # refusal stops it. Flip after a night of clean advisories, as
+            # roof_authority was. stop! -> ESTOP is live regardless.
+            "mount_authority": False,
         },
 
         "transit": {

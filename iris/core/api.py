@@ -54,7 +54,8 @@ def build_app(conductor, journal, registry_fn):
             # True until the conductor owns everything (Phase 3); the roof
             # is the first thing it decides (Phase 2), reported separately.
             "shadow": not authority,
-            "authority": {"roof": authority},
+            "authority": {"roof": authority,
+                          "mount": bool(getattr(conductor, "mount_authority", False))},
             "context": {
                 "slots_remaining": conductor.slots,
                 "safety": "armed" if ev.safety_armed else "cleared",
@@ -77,7 +78,8 @@ def build_app(conductor, journal, registry_fn):
         return {"accepted": v.accepted, "kind": v.kind,
                 "guard": v.guard, "would_refuse": v.would_refuse,
                 "seq": v.seq or journal.head(), "state": v.state, "was": before,
-                "authority": bool(getattr(conductor, "roof_authority", False))}
+                "authority": bool(getattr(conductor, "roof_authority", False)),
+                "mount_authority": bool(getattr(conductor, "mount_authority", False))}
 
     @app.get("/v1/journal")
     def journal_page(since: int = 0, limit: int = 500):

@@ -68,6 +68,8 @@ These rules are absolute and must be enforced in any code that moves observatory
 
 Before writing any code that calls `toggle_roof()`, `pwi4.mount_park()`, `pwi4.mount_goto()`, or any other hardware-moving function, verify the precondition is met — either via `vision_safety.visual_status()` or `pwi4_utils.get_is_parked()` — and abort with a logged warning if it is not.
 
+Since 2026-09-25 the conductor decides both invariants (ADR 0014): every roof fire asks through `_ask_conductor` / `iris.client.request_roof_move` (binding, `conductor.roof_authority`), and every mount move or mount power-on asks through `_ask_mount` / `iris.client.request_mount` (`MOUNT_MOVE_REQUESTED` / `MOUNT_POWER_REQUESTED`; advisory until `conductor.mount_authority` is flipped). `stop!` posts `ESTOP_REQUESTED` first, and only `resolve!` releases the hold. New code that moves or powers the mount must ask; the table in `iris/core/machine.py` is where the rule lives.
+
 ### Key Subsystems
 
 - **`cmd_processing/jobs.py`** — Job registry behind the web chat's cards. Long commands run in their own OS process via `jobs.spawn_process`; the child binds the job id so its `/api/post` messages route to that card. Those children hold one end of a parent-death pipe and exit the moment the server does — `update` restarts via `os._exit`, so without it a stack outlives the restart, keeps saturating the disk, and posts to a card that no longer exists. Posts carrying an unknown job id are labelled `[orphan <id>]` in the Observatory feed rather than blending in.

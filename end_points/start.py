@@ -41,6 +41,24 @@ if __name__ == "__main__":
         }
     ))
 
+    # Phase 2b (2026-09-25): mount power asks the conductor (Invariant B).
+    # The prelude runs this right after the roof was confirmed open, so the
+    # conductor's evidence is fresh. A refusal leaves the mount off; the
+    # prelude then fails at the connect, which is the intended outcome.
+    from iris import client as conductor
+    allowed, reason, _reply = conductor.request_mount(
+        "MOUNT_POWER_REQUESTED", "start.py", None, {"why": "prelude"})
+    if not allowed:
+        logger.error('Start sequence: mount NOT powered -- conductor refused: %s', reason)
+        instructions.pop("Telescope mount", None)
+        try:
+            from utils import pushover
+            pushover.push_message("Prelude: mount not powered -- conductor refused: %s" % reason)
+        except Exception:
+            logger.exception('pushover failed')
+    elif reason:
+        logger.warning('Start sequence: %s (mount power proceeding)', reason)
+
     results = asyncio.run(ku.kasa_do(dev_map, instructions))
     failed = [n for n, ok in results.items() if not ok]
     if failed:

@@ -612,6 +612,52 @@ def _asserted_evidence(direction: str) -> dict:
     return conductor.asserted_evidence(direction)
 
 
+# Phase 2b (2026-09-25): the mount asks too. Every slew / home / park launch
+# and every mount power-on posts its request and evidence; the conductor
+# answers Invariant B from iris/core. With conductor.mount_authority OFF the
+# verdict is advisory and posted; ON, a refusal stops the action.
+def _ask_mount(event: str, what: str, evidence: dict | None = None,
+               data: dict | None = None, source: str = "operator") -> bool:
+    """True when the mount may do *what*. Refusals and advisories go to the
+    chat, so the verdict is visible where the command was typed."""
+    from iris import client as conductor
+    allowed, reason, _reply = conductor.request_mount(event, source, evidence, data)
+    if not allowed:
+        msg = f"Mount will not {what}: conductor refused — {reason}"
+        _logger.warning(msg)
+        social_server.post_social_message(msg)
+        return False
+    if reason:
+        social_server.post_social_message(
+            f"ℹ️ {reason} (mount {what} proceeding: conductor not yet authoritative for the mount)")
+    return True
+
+
+def _tell_conductor_estop() -> None:
+    """stop! -> ESTOP_REQUESTED. The conductor reaches ESTOP from any state
+    and leaves it only on resolve!, so nothing that asks it -- a roof open,
+    a mount move, mount power -- restarts until an operator has looked.
+    Best effort: the physical stop never waits on the brain."""
+    try:
+        from iris import client as conductor
+        reply = conductor.post_event("ESTOP_REQUESTED", "operator", {"pid": os.getpid()})
+        if reply is None:
+            _logger.warning("emergency: conductor unreachable -- ESTOP not journaled")
+        else:
+            _logger.info("emergency: conductor %s -> %s", reply.get("was"), reply.get("state"))
+    except Exception:  # noqa: BLE001
+        _logger.exception("emergency: could not post ESTOP_REQUESTED")
+
+
+def _note_conductor(event: str, data: dict | None = None) -> None:
+    """A journal note (never a transition), best effort."""
+    try:
+        from iris import client as conductor
+        conductor.post_event(event, "operator", data or {}, kind="note")
+    except Exception:  # noqa: BLE001
+        _logger.exception("could not post %s to the conductor", event)
+
+
 def _roof_move_blocked_reason(imaging_run: bool = False, dev_map: dict | None = None) -> str | None:
     """Return why the roof must not MOVE right now, or None if movement may proceed.
 
@@ -876,7 +922,8 @@ def open_roof(force: bool = False, imaging_run: bool = False,
         _roof_lock.release()
         holding = False
         ok = confirm_roof_state("open", imaging_run, my_seq)
-        _report_roof_outcome("open", ok, source)
+        _report_roof_outcome("open", ok, source,
+                             {"roof": "CONFIRMED", "ts": time.time()} if ok else None)
         return ok
     finally:
         if holding:
@@ -970,7 +1017,8 @@ def close_roof(force: bool = False, imaging_run: bool = False,
         _roof_lock.release()
         holding = False
         ok = confirm_roof_state("closed", imaging_run, my_seq)
-        _report_roof_outcome("close", ok, source)
+        _report_roof_outcome("close", ok, source,
+                             {"roof": "DENIED", "ts": time.time()} if ok else None)
         return ok
     finally:
         if holding:
@@ -1431,7 +1479,12 @@ def _blind_park(dev_map, inside_view, parked, closed, is_open, mount_state):
         "Roof not visible (scope in the way) but last confirmed open at %s with no roof "
         "movement since — tracking %s, parking scope" % (ev["open_confirmed"].strftime("%H:%M"), stopped))
     try:
-        _park_connected_mount()
+        if _ask_mount("MOUNT_MOVE_REQUESTED", "blind park",
+                      _roof_evidence(parked, closed, is_open),
+                      {"direction": "park", "blind_park": True,
+                       "why": "stop!: roof hidden by the scope",
+                       "open_confirmed": ev["open_confirmed"].isoformat()}):
+            _park_connected_mount()
     except Exception:
         _logger.exception("emergency: blind park failed")
         social_server.post_social_message("Park command FAILED (see log)")
@@ -1456,10 +1509,12 @@ def _emergency_stop_sequence() -> None:
     """
     try:
         _emergency_stop_body()
+        _note_conductor("ESTOP_DONE")
     except Exception as exc:  # noqa: BLE001 -- the job runner would only log it
         _logger.exception("emergency: stop sequence FAILED")
         msg = "EMERGENCY STOP FAILED (%s: %s) -- check the observatory" % (type(exc).__name__, exc)
         social_server.post_social_message(msg)
+        _note_conductor("ESTOP_FAILED", {"error": "%s: %s" % (type(exc).__name__, exc)})
         try:
             pushover.push_message(msg, priority=2)
         except Exception:
@@ -1478,6 +1533,11 @@ def _emergency_stop_body() -> None:
             file.write("USER UNSAFE")
     except Exception:
         _logger.exception("emergency: failed to write safety.txt")
+
+    # 1b. The conductor holds the night (ESTOP). Until 2026-09-25 stop! never
+    #     told it: on 09-17 it sat in SAFE_HOLD, learned from safety.txt,
+    #     while legacy code powered the mount and launched flats.
+    _tell_conductor_estop()
 
     # 2. Kill NINA only — PWI4 must stay alive so we can park the mount.
     _kill_nina()
@@ -1519,7 +1579,10 @@ def _emergency_stop_body() -> None:
         if mount_state == "not_parked":
             social_server.post_social_message("Roof open — parking scope")
             try:
-                pwi4_utils.park_scope()
+                if _ask_mount("MOUNT_MOVE_REQUESTED", "park",
+                              _roof_evidence(parked, closed, is_open),
+                              {"direction": "park", "why": "stop!"}):
+                    pwi4_utils.park_scope()
             except Exception:
                 _logger.exception("emergency: park_scope failed")
                 social_server.post_social_message("Park command FAILED (see log)")
@@ -3968,6 +4031,11 @@ def doit_cmd(words: list[str], account: str) -> None:
         # know what phase we are in. The bat file signals completion by        #
         # calling: set_imaging_state.bat DONE_PRELUDE                          #
         # ------------------------------------------------------------------ #
+        if not _ask_mount("MOUNT_MOVE_REQUESTED", "run the prelude (connect, home, slew)",
+                          None, {"direction": "nina prelude", "operand": operand},
+                          source="scheduler" if account == "iris" else "operator"):
+            set_imaging_state(ImagingState.NONE)
+            return
         set_imaging_state(ImagingState.IN_PRELUDE)
         on_nina(None, None)
 
@@ -4023,6 +4091,12 @@ def doit_cmd(words: list[str], account: str) -> None:
         # For finer tracking, image_nina*.bat can call                         #
         # set_imaging_state.bat DONE_MAIN when the NINA sequence finishes.     #
         # ------------------------------------------------------------------ #
+        if not _ask_mount("MOUNT_MOVE_REQUESTED", "run the main sequence",
+                          _roof_evidence(parked, closed, open),
+                          {"direction": "nina main", "operand": operand},
+                          source="scheduler" if account == "iris" else "operator"):
+            set_imaging_state(ImagingState.NONE)
+            return
         set_imaging_state(ImagingState.IN_MAIN)
         if operand == 1:
             image_nina1(None, None)
@@ -4157,6 +4231,9 @@ def do_flats() -> bool:
     # unconditionally, so on 2026-08-16 it recorded success while the switch had
     # not moved, and the operator had to power the mount by hand. A log that
     # cannot fail is not evidence.
+    if not _ask_mount("MOUNT_POWER_REQUESTED", "power on for flats",
+                      _roof_evidence(parked, closed, is_open), {"why": "flats"}):
+        return False
     if asyncio.run(ku.kasa_do(dev_map, {"Telescope mount": 'on'})).get("Telescope mount"):
         _logger.info("Mount powered on (verified)")
     else:

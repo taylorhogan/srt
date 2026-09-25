@@ -246,6 +246,11 @@ def stop_env(tmp_path, monkeypatch):
     monkeypatch.setattr(suc.social_server, "post_social_message", posts.append)
     monkeypatch.setattr(suc.pushover, "push_message", lambda m, *a, **k: pushes.append(m))
     monkeypatch.setattr(suc, "_stop_mount_motion", lambda: calls.append("stop") or "stopped")
+    # The conductor is asked, never reached: every post is recorded and
+    # answered "unreachable" (None), which advisory mode lets proceed.
+    import iris.client as _ic
+    monkeypatch.setattr(_ic, "post_event",
+                        lambda event, *a, **k: calls.append("conductor:" + event) or None)
     monkeypatch.setattr(suc.pwi4_utils, "park_scope", lambda: pytest.fail("blind park must not connect"))
     monkeypatch.setattr(suc, "_park_connected_mount", lambda: calls.append("park") or True)
     monkeypatch.setattr(suc, "_read_mount_motion",
@@ -275,6 +280,19 @@ def test_stop_blind_parks_then_closes_on_a_fresh_read(stop_env):
     assert calls.index("read") < calls.index("stop") < calls.index("park") < calls.index("close")
     assert "power_down" in calls
     assert any("parking scope" in p for p in posts)
+
+
+def test_stop_tells_the_conductor_before_anything_and_asks_before_the_park(stop_env):
+    """ESTOP_REQUESTED is the first thing stop! does (2026-09-25); the blind
+    park asks as a park with the blind assertion; the end is a note."""
+    calls, posts, pushes, script = stop_env
+    script([BLIND, (True, False, True, None)], ["not_parked", "parked"])
+    suc._emergency_stop_sequence()
+    conductor = [c for c in calls if isinstance(c, str) and c.startswith("conductor:")]
+    assert calls[0] == "conductor:ESTOP_REQUESTED"
+    assert conductor[1] == "conductor:MOUNT_MOVE_REQUESTED"
+    assert calls.index("conductor:MOUNT_MOVE_REQUESTED") < calls.index("park")
+    assert conductor[-1] == "conductor:ESTOP_DONE"
 
 
 def test_stop_blind_refusal_stops_tracking_and_pushes_once(stop_env, monkeypatch):

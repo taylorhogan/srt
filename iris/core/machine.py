@@ -15,6 +15,11 @@ Design rules, enforced by tests/test_machine.py:
   * Any transition INTO a roof-moving state carries mount_parked and
     roof_state_known; any transition INTO a mount-moving state carries
     roof_open. The guards, not the callers, are the safety system.
+  * The mount does not change the night's state, so a mount request is a
+    PERMISSION row (dst == src, Outcome "allowed"), and every
+    MOUNT_MOVE_REQUESTED row carries roof_open -- Invariant B, decided here
+    and nowhere else since 2026-09-25. No hold has such a row: after a
+    stop! nothing moves or powers the mount until resolve!.
 
 The interpreter is ~60 lines because the machine is data. Rows are matched in
 table order; the first row whose guards all pass wins, which is how one event
@@ -95,8 +100,11 @@ EVENTS = (
     # SLOT_IMAGING. One name, one meaning.
     "NINA_PRELUDE_DONE", "SLOT_STARTED", "NINA_SLOT_DONE", "SLOT_WINDOW_END",
     "NINA_FLATS_DONE", "CAPTURE_LOST",
-    # mount
-    "MOUNT_PARK_CONFIRMED",
+    # mount. The two REQUESTED events are permissions (Phase 2b): a slew /
+    # home / park / unpark launch, and switching the mount's power on. They
+    # are answered by rows whose dst == src -- the caller may act, the night
+    # does not move.
+    "MOUNT_PARK_CONFIRMED", "MOUNT_MOVE_REQUESTED", "MOUNT_POWER_REQUESTED",
     # night lifecycle
     "NIGHT_END_REQUESTED", "SHUTDOWN_DONE", "DAY_TICK",
     # weather
@@ -135,6 +143,10 @@ MANUAL_STATES = frozenset({"MANUAL_OPENING", "MANUAL_OPEN", "MANUAL_CLOSING"})
 # into ROOF_TIMEOUT.
 ROOF_MOVING_STATES = frozenset({"OPENING_ROOF", "CLOSING_ROOF",
                                 "MANUAL_OPENING", "MANUAL_CLOSING"})
+
+# The mount's requests: answered by permission rows (dst == src) below, and
+# under conductor.mount_authority stepped with the real evidence.
+MOUNT_DECISION_EVENTS = frozenset({"MOUNT_MOVE_REQUESTED", "MOUNT_POWER_REQUESTED"})
 
 # The night's progression, in order, for consoles that show "where the night
 # stands" (the website's Live tab). DERIVED from STATES' declaration order --
@@ -304,6 +316,37 @@ TRANSITIONS = (
     T("MANUAL_CLOSING", "ROOF_FIRE_FAILED",  "MANUAL_OPEN",
       guards=(G.roof_open,)),
 
+    # --- the mount asks (Phase 2b, 2026-09-25). Permission rows: dst == src,
+    # the machine stays put, the caller may act. A MOVE (slew, home, park,
+    # unpark, tracking on) only under a confirmed-open roof -- Invariant B --
+    # and only in the states where a night or an operator legitimately
+    # drives the scope. POWER additionally where the roof is confirmed shut
+    # and the scope confirmed parked (flats after the close, a daytime
+    # doflats): powering does not move the mount, and that is the safe
+    # geometry. No row in a hold or in any other state, so the request is
+    # refused: on 2026-09-17 a run that missed a stop! powered the mount and
+    # launched flats while the conductor sat in SAFE_HOLD. A park inside a
+    # hold is the one exception, decided by the conductor on the evidence
+    # (shadow._park_in_hold), because stop! parks before it closes.
+    T("PRELUDE",      "MOUNT_MOVE_REQUESTED",  "PRELUDE",      guards=(G.roof_open,)),
+    T("SLOT_SETUP",   "MOUNT_MOVE_REQUESTED",  "SLOT_SETUP",   guards=(G.roof_open,)),
+    T("SLOT_IMAGING", "MOUNT_MOVE_REQUESTED",  "SLOT_IMAGING", guards=(G.roof_open,)),
+    T("PARKING",      "MOUNT_MOVE_REQUESTED",  "PARKING",      guards=(G.roof_open,)),
+    T("MANUAL_OPEN",  "MOUNT_MOVE_REQUESTED",  "MANUAL_OPEN",  guards=(G.roof_open,)),
+    T("PRELUDE",      "MOUNT_POWER_REQUESTED", "PRELUDE",      guards=(G.roof_open,)),
+    T("SLOT_SETUP",   "MOUNT_POWER_REQUESTED", "SLOT_SETUP",   guards=(G.roof_open,)),
+    T("SLOT_IMAGING", "MOUNT_POWER_REQUESTED", "SLOT_IMAGING", guards=(G.roof_open,)),
+    T("PARKING",      "MOUNT_POWER_REQUESTED", "PARKING",      guards=(G.roof_open,)),
+    T("MANUAL_OPEN",  "MOUNT_POWER_REQUESTED", "MANUAL_OPEN",  guards=(G.roof_open,)),
+    T("IDLE_DAY",     "MOUNT_POWER_REQUESTED", "IDLE_DAY",
+      guards=(G.mount_parked, G.roof_closed)),
+    T("ARMED",        "MOUNT_POWER_REQUESTED", "ARMED",
+      guards=(G.mount_parked, G.roof_closed)),
+    T("NIGHT_DONE",   "MOUNT_POWER_REQUESTED", "NIGHT_DONE",
+      guards=(G.mount_parked, G.roof_closed)),
+    T("FLATS",        "MOUNT_POWER_REQUESTED", "FLATS",
+      guards=(G.mount_parked, G.roof_closed)),
+
     # --- operator: the holds
     T("*",            "SAFETY_CLEARED",      "SAFE_HOLD"),
     T("SAFE_HOLD",    "SAFETY_ARMED",        "IDLE_DAY"),
@@ -318,7 +361,7 @@ TRANSITIONS = (
 @dataclass(frozen=True)
 class Outcome:
     """What offering one event to the machine produced."""
-    kind: str                     # "transition" | "rejected" | "ignored"
+    kind: str                     # "transition" | "rejected" | "ignored" | "allowed"
     state: str                    # the (possibly new) current state
     guard: Optional[str] = None   # refusal reason, for "rejected"
 
@@ -332,6 +375,8 @@ def step(state: str, event: str, snapshot: SensorSnapshot,
     REJECTED with the first row's refusal (the most specific complaint). If no
     row matched at all, the event is IGNORED — which is not an error: sensors
     report unconditionally and most reports are irrelevant to most states.
+    A row whose dst is its src is a PERMISSION: the outcome is ALLOWED and
+    the state is unchanged (the mount's requests).
     """
     first_refusal = None
     for row in table:
@@ -346,6 +391,8 @@ def step(state: str, event: str, snapshot: SensorSnapshot,
             continue
         refusal = G.evaluate(row.guards, snapshot)
         if refusal is None:
+            if row.dst == row.src:
+                return Outcome("allowed", state)
             return Outcome("transition", row.dst)
         if first_refusal is None:
             first_refusal = refusal
