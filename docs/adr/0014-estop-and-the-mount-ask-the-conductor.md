@@ -72,7 +72,8 @@ still routed around it, and the 2026-09-17 stop! showed both at once:
 * `scripts/dither_now.py` and the lab scripts that call `mount_offset` do
   not ask yet; the plan's "narrow dither guard" is still open.
 * Still 2b: the relay fire into `iris/hardware/roof.py` with a CI grep, and
-  `roof_evidence` / the limit switches as a third roof sense.
+  `roof_evidence` / the north camera's verdict as the second roof sense (the
+  owner dropped the limit switches on 2026-09-25).
 
 ## Verification
 
