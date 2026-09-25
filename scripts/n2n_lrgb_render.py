@@ -548,7 +548,7 @@ def routine(args) -> int:
                 if ch in mapping and mapping[ch] in d}
 
     opts = color_process.effective_options(
-        white_pct=args.white_pct, black_pct=args.black_pct,
+        white_pct=args.white_pct, black_pct=args.black_pct, white_balance=args.wb,
         **({"softening": args.soft} if args.soft is not None else {}))
     log(f"compose: {color_process.describe_options(opts)}")
 
@@ -558,7 +558,8 @@ def routine(args) -> int:
     # black per channel by percentile, which lands at a different ADU on a
     # denoised channel and manufactures a colour shift.
     subbed_raw, white = color_process._prepare(
-        to_channels(raw), opts["subtract_background"], opts["mesh"], opts["white_pct"])
+        to_channels(raw), opts["subtract_background"], opts["mesh"], opts["white_pct"],
+        white_balance=opts["white_balance"])
     if args.auto_stretch:
         log("auto stretch:")
         auto = color_process.auto_stretch(subbed_raw, white, lum="L", log=log)
@@ -615,7 +616,7 @@ def routine(args) -> int:
     if den:
         subbed_den, _ = color_process._prepare(
             to_channels(den), opts["subtract_background"], opts["mesh"],
-            opts["white_pct"])
+            opts["white_pct"], white_balance=opts["white_balance"])
         emit(subbed_den, "denoised")
 
     log("")
@@ -666,6 +667,10 @@ def main() -> int:
     ap.add_argument("--soft", type=float, default=None,
                     help="asinh softening; lower = harder stretch "
                          f"(compose default {0.025})")
+    ap.add_argument("--wb", default="none", choices=("none", "stars"),
+                    help="white balance as the process command's wb=: `stars` "
+                         "scales R and B so the field's median star is neutral. "
+                         "LRGB/HALRGB only; the palettes are not colours")
     ap.add_argument("--auto-stretch", action="store_true",
                     help="black points and softening from the data "
                          "(color_process.auto_stretch) instead of the fixed "

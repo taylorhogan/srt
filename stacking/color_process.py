@@ -1380,5 +1380,12 @@ def save_rgb(rgb: np.ndarray, path: Path, max_px: Optional[int] = None) -> Path:
         img = img.resize((max(1, int(img.width * ratio)),
                           max(1, int(img.height * ratio))), Image.LANCZOS)
     path.parent.mkdir(parents=True, exist_ok=True)
-    img.save(path, quality=92, optimize=True)
+    # Full chroma (4:4:4) at quality 95, not the JPEG default of 4:2:0 at 92.
+    # Found 2026-09-25 on a denoised NGC 7380: smooth colour gradients with
+    # no grain to hide behind quantise into an 8 px lattice (16 px in the
+    # subsampled chroma), visible at high zoom and absent from a lossless
+    # save. Raw composites hide the same blocks under their noise. The cost
+    # is ~1.6x the file size; a denoised deliverable is the wrong place to
+    # save it.
+    img.save(path, quality=95, subsampling=0, optimize=True)
     return path
