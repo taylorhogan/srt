@@ -1,0 +1,85 @@
+#!/bin/bash
+#
+# sync_state_to_spark.bsh
+# Copies the observatory's irreplaceable state from the Windows box to Spark,
+# the same way the morning jobs copy the Targets and the sentry library.
+#
+# Two things, in this order:
+#
+#   1. The dated, verified snapshot zips that scripts/backup_state.py writes
+#      every day at 11:23 (the IrisBackupState task). On the PC they land in
+#      ~/OneDrive/IrisBackup, and that OneDrive is not syncing anywhere, so
+#      THIS pull is what makes them a backup. Zips are immutable, hence
+#      --ignore-existing and no --delete: the Spark keeps every snapshot it
+#      has ever received while the PC prunes to 30. The newest one is opened
+#      with `unzip -t` after the pull; a torn transfer is deleted so the next
+#      run fetches it again rather than leaving a bad file that looks good.
+#
+#   2. A plain mirror of the live files -- the same list backup_state.py
+#      zips: the instructions queue, convergence, the park-pose and roof-tag
+#      references, the conductor journal, the logs, config_public,
+#      safety.txt, my_calendar.json -- readable without unzipping. A mirror
+#      copies a corrupt file over a good one as faithfully as a good one, so
+#      the mirror is the convenience and the zips are the backup.
+#
+# Secrets (configs/config_private.py) are NOT copied. To include them, add
+#     --include='configs/config_private.py'
+# to the mirror's filter list below; the Spark is on the tailnet only.
+#
+# No arguments -- source and destination are hardcoded.
+#
+# Source:      iriso@100.95.7.19 (the observatory PC, over Tailscale)
+# Destination: /home/taylor/Desktop/iris_state/{snapshots,live}
+#
+# Cron (11:40 daily, after the 11:23 zip) -- add via `crontab -e`:
+#   40 11 * * * /home/taylor/Documents/srt/scripts/sync_state_to_spark.bsh
+#
+# Logs to /tmp/state_sync.log (self-redirected below).
+
+PC="iriso@100.95.7.19"
+RSYNC_PATH="C:/Users/iriso/Documents/cwrsync_6.4.7_x64_free/bin/rsync"
+SRT="/cygdrive/c/Users/iriso/Documents/development/srt"
+ZIPS="/cygdrive/c/Users/iriso/OneDrive/IrisBackup"
+DEST="/home/taylor/Desktop/iris_state"
+LOG="/tmp/state_sync.log"
+
+exec >>"$LOG" 2>&1
+echo "=== $(/bin/date) ==="
+mkdir -p "$DEST/snapshots" "$DEST/live"
+
+# ---- 1. the snapshots -------------------------------------------------------
+rsync -avz --ignore-existing \
+    --include='iris_state_*.zip' --exclude='*' \
+    --rsync-path="$RSYNC_PATH" \
+    "$PC:$ZIPS/" "$DEST/snapshots/"
+
+newest=$(ls -t "$DEST/snapshots"/iris_state_*.zip 2>/dev/null | head -1)
+if [ -z "$newest" ]; then
+    echo "WARNING: no snapshot zips on the Spark after the pull"
+elif unzip -tq "$newest" >/dev/null 2>&1; then
+    echo "newest snapshot OK: $(basename "$newest") ($(du -h "$newest" | cut -f1))"
+else
+    echo "WARNING: $(basename "$newest") failed unzip -t -- removed; tomorrow re-pulls it"
+    rm -f "$newest"
+fi
+echo "snapshots held: $(ls "$DEST/snapshots" 2>/dev/null | grep -c '^iris_state_.*\.zip$')"
+
+# ---- 2. the live mirror -----------------------------------------------------
+# The filter list is backup_state.py's INCLUDE, spelled as rsync rules: every
+# directory on the way has to be let in explicitly, and the closing
+# --exclude='*' keeps rsync out of local/'s bulk capture directories entirely
+# (they are not even listed). Keep the two lists in step.
+rsync -avz --update --prune-empty-dirs \
+    --include='local/' \
+    --include='local/*.json' \
+    --include='local/*.jsonl' \
+    --include='local/parked_refs/' --include='local/parked_refs/*' \
+    --include='local/journal/'     --include='local/journal/*.jsonl' \
+    --include='configs/' --include='configs/config_public.py' \
+    --include='safety.txt' \
+    --include='my_calendar.json' \
+    --exclude='*' \
+    --rsync-path="$RSYNC_PATH" \
+    "$PC:$SRT/" "$DEST/live/"
+
+echo "live mirror: $(find "$DEST/live" -type f | wc -l) files, $(du -sh "$DEST/live" | cut -f1)"

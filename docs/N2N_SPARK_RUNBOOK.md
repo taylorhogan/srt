@@ -21,6 +21,7 @@ Cron on the Spark, as of 2026-08-21:
 | 05:00 | `sync_nina_targets_to_spark.bsh` | rsync last night's frames from the observatory |
 | 06:00 | `sync_sentry_library_to_spark.bsh` | rsync the sentry audio library |
 | 07:00 | `spark_morning_render.bsh` | render targets that gained frames overnight |
+| 11:40 | `sync_state_to_spark.bsh` | pull the day's verified state snapshot zip (+ a live mirror of the queue, journal, references) -- added 2026-09-25 because the PC's OneDrive folder syncs nowhere |
 
 **The render job is the only automated N2N path.** It runs
 `spark_morning_render.py`, which picks the targets whose LIGHT frames changed in
