@@ -69,6 +69,12 @@ echo "snapshots held: $(ls "$DEST/snapshots" 2>/dev/null | grep -c '^iris_state_
 # directory on the way has to be let in explicitly, and the closing
 # --exclude='*' keeps rsync out of local/'s bulk capture directories entirely
 # (they are not even listed). Keep the two lists in step.
+# One retry. On the first run (2026-09-25) the Windows sender dropped the
+# socket ("safe_write failed ... Resource temporarily unavailable", code 12)
+# when this session opened straight after the 113 MB snapshot pull; the same
+# command succeeded seconds later. Unattended, a day's mirror is not worth
+# losing to that.
+mirror() {
 rsync -avz --update --prune-empty-dirs \
     --include='local/' \
     --include='local/*.json' \
@@ -81,5 +87,7 @@ rsync -avz --update --prune-empty-dirs \
     --exclude='*' \
     --rsync-path="$RSYNC_PATH" \
     "$PC:$SRT/" "$DEST/live/"
+}
+mirror || { echo "live mirror failed (rc $?) -- retrying in 15 s"; sleep 15; mirror; }
 
 echo "live mirror: $(find "$DEST/live" -type f | wc -l) files, $(du -sh "$DEST/live" | cut -f1)"
