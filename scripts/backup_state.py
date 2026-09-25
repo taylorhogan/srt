@@ -73,6 +73,10 @@ INCLUDE = [
     "local/*.json",
     "local/*.jsonl",
     "local/parked_refs/*",          # reference frames for the parked detector
+    "local/journal/*.jsonl",        # the conductor's system of record: one small
+                                    # append-only file per day, ~150 KB in total,
+                                    # and the only history of what the machine
+                                    # decided and why. Missed until 2026-09-25.
     "configs/config_public.py",     # not secret, but pairs with the private one
     "safety.txt",
     "my_calendar.json",
