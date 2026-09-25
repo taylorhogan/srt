@@ -408,6 +408,122 @@ def apply_white_balance(subbed: dict[str, np.ndarray], mode) -> tuple[dict, dict
     return out, {"mode": "stars", "factors": factors, **info}
 
 
+# --- RGB stars on a narrowband palette ---------------------------------------
+#
+# A narrowband palette gives every star the palette's colour: in HSO a G2
+# star is whatever Ha:S-II:O-III its continuum happens to be, which is not a
+# colour any star has. `stars=rgb` keeps the palette's brightness inside a
+# star mask and takes the hue there from an RGB stack of the same field —
+# the LRGB rule (luminance from one image, chroma from another) applied only
+# where the mask is on. Outside the mask the palette is untouched, so the
+# nebula never sees the RGB data.
+#
+# The mask is built from stars detected on the reference stack, kept only if
+# compact and round (a nebula knot or a galaxy core fails the size cut and
+# stays palette), each drawn as a flat disc a few times its own size with a
+# Gaussian skirt so the hue change has no edge.
+STAR_MASK_THRESH_SIGMA = 5.0
+STAR_MASK_MIN_AXIS_RATIO = 0.5
+STAR_MASK_MAX_NPIX = 2500       # bigger is a knot or a core, not a star
+STAR_MASK_RADIUS_A = 3.0        # disc radius in units of sep's semi-major axis a
+STAR_MASK_MIN_RADIUS_PX = 3.0
+STAR_MASK_MAX_RADIUS_PX = 60.0
+STAR_MASK_FEATHER = 0.6         # skirt sigma as a fraction of the disc radius
+STAR_CHROMA_FLOOR = 0.04        # RGB luminance (0..1) below which the palette keeps its colour
+
+
+def star_mask(chan: np.ndarray, thresh_sigma: float = STAR_MASK_THRESH_SIGMA,
+              max_npix: int = STAR_MASK_MAX_NPIX) -> tuple[np.ndarray, dict]:
+    """(mask 0..1, info) — feathered discs on the stars of *chan*.
+
+    *chan* is a linear stack (background-subtracted or not; sep models the
+    background itself). Sources are kept if round, not too large and not on
+    the edge; the disc radius follows sep's isophotal size, so a bright star
+    with a wide profile gets a wider disc than a faint one.
+    """
+    import sep
+    a = np.ascontiguousarray(np.nan_to_num(chan), dtype=np.float32)
+    h, w = a.shape
+    mask = np.zeros((h, w), np.float32)
+    try:
+        bkg = sep.Background(a)
+        data = a - bkg.back()
+        rms = float(bkg.globalrms) or 1.0
+        objs = sep.extract(data, thresh_sigma, err=rms, minarea=5)
+    except Exception as exc:  # noqa: BLE001
+        return mask, {"stars": 0, "why": "star detection failed: %s" % exc}
+    keep = (objs["b"] / np.maximum(objs["a"], 1e-6)) >= STAR_MASK_MIN_AXIS_RATIO
+    keep &= objs["npix"] <= max_npix
+    objs = objs[keep]
+    yy_full, xx_full = None, None
+    n = 0
+    for o in objs:
+        r = float(np.clip(STAR_MASK_RADIUS_A * float(o["a"]),
+                          STAR_MASK_MIN_RADIUS_PX, STAR_MASK_MAX_RADIUS_PX))
+        sig = STAR_MASK_FEATHER * r
+        reach = int(np.ceil(r + 3.0 * sig))
+        cx, cy = float(o["x"]), float(o["y"])
+        x0, x1 = max(0, int(cx) - reach), min(w, int(cx) + reach + 1)
+        y0, y1 = max(0, int(cy) - reach), min(h, int(cy) + reach + 1)
+        if x1 <= x0 or y1 <= y0:
+            continue
+        yy, xx = np.mgrid[y0:y1, x0:x1]
+        d = np.hypot(yy - cy, xx - cx)
+        disc = np.where(d <= r, 1.0, np.exp(-0.5 * ((d - r) / sig) ** 2)).astype(np.float32)
+        np.maximum(mask[y0:y1, x0:x1], disc, out=mask[y0:y1, x0:x1])
+        n += 1
+    return mask, {"stars": n, "detected": int(len(keep)), "kept": int(keep.sum()),
+                  "coverage": float(mask.mean())}
+
+
+def rgb_stars(palette: np.ndarray, stars: np.ndarray, mask: np.ndarray) -> np.ndarray:
+    """Palette brightness, RGB hue, inside *mask*; the palette elsewhere.
+
+    Both images are stretched 0..1 on the same grid. Inside the mask the
+    output pixel is the palette's luminance times the RGB image's chroma
+    (its colour with the brightness divided out), so the star keeps the
+    profile the narrowband stack gave it and takes the colour the RGB stack
+    measured. A pixel where the RGB image is black has no chroma and keeps
+    the palette.
+    """
+    lw = np.array([0.299, 0.587, 0.114], dtype=np.float32)
+    lum_p = palette @ lw
+    lum_s = stars @ lw
+    with np.errstate(divide="ignore", invalid="ignore"):
+        chroma = np.where(lum_s[:, :, None] > 1e-4, stars / np.maximum(lum_s, 1e-4)[:, :, None], 1.0)
+    recol = np.clip(lum_p[:, :, None] * chroma, 0.0, 1.0)
+    # Only star light sets a hue. In a disc's feathered skirt the RGB image
+    # is sky, whose "colour" is per-channel offset noise; on the first M33
+    # dry run that painted every skirt pink. The gate ramps in over the
+    # first few percent of RGB brightness so the hue arrives with the star.
+    # The floor is the larger of a fixed few percent and 5x the star image's
+    # own sky noise (robust sigma of its luminance), so a noisy RGB stack
+    # does not hand its grain a colour inside the discs.
+    med = float(np.nanmedian(lum_s))
+    sig = 1.4826 * float(np.nanmedian(np.abs(lum_s - med)))
+    floor = max(STAR_CHROMA_FLOOR, med + 5.0 * sig)
+    # zero at the floor, full at twice it: nothing at noise level gets a hue
+    conf = np.clip((lum_s - floor) / max(floor, 1e-6), 0.0, 1.0)
+    m = (np.clip(mask, 0.0, 1.0) * conf)[:, :, None]
+    return np.clip(palette * (1.0 - m) + recol * m, 0.0, 1.0)
+
+
+def stars_image(rgb_stacks: dict[str, np.ndarray], **compose_kw) -> np.ndarray:
+    """The RGB image the star colours come from.
+
+    R, G and B background-subtracted, star white balance on so the median
+    star is neutral, and black at each channel's sky *exactly* — not a
+    percentile — so sky is zero in all three and carries no colour into the
+    skirts. Stretched with the palette's white percentile and softening.
+    """
+    opts = effective_options(**{k: v for k, v in compose_kw.items() if k in effective_options()})
+    subbed, white = _prepare({c: rgb_stacks[c] for c in ("R", "G", "B")},
+                             opts["subtract_background"], opts["mesh"], opts["white_pct"],
+                             ha_gain=None, white_balance="stars")
+    blacks = {c: float(np.nanmedian(subbed[c])) for c in subbed}
+    return compose_prepared(subbed, blacks, white, softening=opts["softening"], scnr=0.0)
+
+
 def shared_white(subbed: dict[str, np.ndarray], white_pct: float) -> float:
     """The one white point every channel is stretched against: a percentile
     of the brightest primary at each pixel. Separate so a caller that blends
@@ -798,13 +914,26 @@ def channel_cache_path(cache_dir: Path, dso: str, tag: str, chan: str) -> Path:
     return cache_dir / f"channels_{dso}_{tag}_{chan}.npy"
 
 
-def load_cached_channels(cache_dir: Path, dso: str, tag: str) -> Optional[dict]:
+def load_cached_channels(cache_dir: Path, dso: str, tag: str,
+                         roles: Optional[tuple] = None) -> Optional[dict]:
     """Return the stacked channels from a previous run, or None if incomplete.
+
+    *roles* names the cached planes to load instead of the recipe's channels
+    — ("STARS_R", "STARS_G", "STARS_B") for the star-colour stacks, which
+    come back keyed R/G/B.
 
     Stacking is ~17 minutes and the stretch is a second; caching the channels is
     what makes the display parameters worth exposing at all, because otherwise
     every tweak costs a re-stack.
     """
+    if roles:
+        out = {}
+        for role in roles:
+            f = channel_cache_path(cache_dir, dso, tag, role)
+            if not f.exists():
+                return None
+            out[role.replace("STARS_", "")] = np.load(f)
+        return out or None
     mapping = RECIPES.get(tag.upper().replace("_NOFLAT", ""))
     if mapping is None:
         return None
@@ -819,6 +948,21 @@ def load_cached_channels(cache_dir: Path, dso: str, tag: str) -> Optional[dict]:
     return out or None
 
 
+def apply_rgb_stars(rgb: np.ndarray, stacks: dict[str, np.ndarray],
+                    star_stacks: dict[str, np.ndarray], compose_kw: dict) -> tuple[np.ndarray, dict]:
+    """Recolour the stars of a composed palette *rgb* from R/G/B stacks.
+
+    The mask is detected on the sum of the RGB stacks: those are the stars
+    that have a colour to give, and on a shallow narrowband stack (M33's
+    7-sub Ha found 300 stars where the field has thousands) the palette
+    plane misses most of them.
+    """
+    ref = star_stacks["R"] + star_stacks["G"] + star_stacks["B"]
+    mask, info = star_mask(ref)
+    stars = stars_image(star_stacks, **compose_kw)
+    return rgb_stars(rgb, stars, mask), info
+
+
 def process_dso(
     dso_dir: Path,
     recipe: str,
@@ -829,9 +973,15 @@ def process_dso(
     cache_dir: Optional[Path] = None,
     reuse: bool = False,
     products_dir: Optional[Path] = None,
+    star_source: str = "none",
     **compose_kw,
 ) -> tuple[np.ndarray, dict]:
     """Stack every filter a recipe needs and return (rgb 0..1, info).
+
+    star_source="rgb" also stacks R, G and B onto the same reference and
+    recolours the stars from them (see rgb_stars); the palette is untouched
+    everywhere else. The extra stacks are cached beside the channels as
+    STARS_R/G/B, so `reuse` re-renders them too.
 
     scale > 1 bins the output, trading resolution for speed and SNR — useful for
     a quick look, but the command defaults to 1 (full resolution).
@@ -861,8 +1011,24 @@ def process_dso(
             if scale > 1:
                 cached = {c: stacker._downsample_mean(a, scale)
                           for c, a in cached.items()}
+            star_cached = {}
+            if str(star_source).lower() == "rgb":
+                star_cached = load_cached_channels(cache_dir, dso_dir.name, tag,
+                                                   roles=("STARS_R", "STARS_G", "STARS_B")) or {}
+                if scale > 1:
+                    star_cached = {c: stacker._downsample_mean(a, scale)
+                                   for c, a in star_cached.items()}
             rgb = compose(cached, **compose_kw)
-            out = {"recipe": recipe, "reused": True,
+            star_info = None
+            if str(star_source).lower() == "rgb":
+                if len(star_cached) == 3:
+                    rgb, star_info = apply_rgb_stars(rgb, cached, star_cached, compose_kw)
+                    if progress_cb:
+                        progress_cb(f"stars from RGB: {star_info['stars']} stars, "
+                                    f"{100 * star_info['coverage']:.2f}% of the field")
+                elif progress_cb:
+                    progress_cb("stars=rgb: no cached STARS_R/G/B — run without reuse once")
+            out = {"recipe": recipe, "reused": True, "stars": star_info,
                    "channels": {c: c for c in cached}, "frames": {},
                    "reference": "(cached)", "shape": rgb.shape[:2],
                    "flats": use_flats}
@@ -961,10 +1127,41 @@ def process_dso(
         if progress_cb:
             progress_cb(f"{filt}: {used[filt]} frames stacked")
 
+    # stars=rgb: R, G and B onto the same reference, kept apart from the
+    # palette channels so a narrowband recipe never composes them.
+    star_stacks: dict[str, np.ndarray] = {}
+    if str(star_source).lower() == "rgb":
+        for chan in ("R", "G", "B"):
+            filt = resolve_filter(chan, list(by_filter))
+            if not filt:
+                if progress_cb:
+                    progress_cb(f"stars=rgb: no {chan} frames — stars stay palette")
+                star_stacks = {}
+                break
+            if filt in used and chan in stacks and resolved.get(chan) == filt:
+                star_stacks[chan] = stacks[chan]          # LRGB already stacked it
+                continue
+            paths = by_filter[filt]
+            if progress_cb:
+                progress_cb(f"{filt}: stacking {len(paths)} frames for star colour…")
+            bias, dark, flat = stacker.calibration_paths_from_config(filt)
+            if not use_flats:
+                flat = []
+            pre = load_precomputed_fwhm_stars(dso_dir, paths, arcsec)
+            data, info = stacker.stack(
+                paths, method=stacker.StackMethod.SIGMA_CLIP_FWHM,
+                bias_paths=bias, dark_paths=dark, flat_paths=flat,
+                precomputed_fwhm_stars=pre, shared_reference=(det_target, ref_shape),
+                progress_cb=(lambda m, _f=filt: progress_cb(f"{_f}: {m}")) if progress_cb else None,
+                cancel_cb=cancel_cb,
+            )
+            star_stacks[chan] = data if scale <= 1 else stacker._downsample_mean(data, scale)
+            used[filt] = info.get("n_frames", len(paths))
+
     # Under a shared reference stack() skips its per-filter coverage crop, so
     # every channel is on the identical grid. Trimming to a common size from the
     # corner would silently mis-align them if that ever stopped being true.
-    shapes = {v.shape for v in stacks.values()}
+    shapes = {v.shape for v in list(stacks.values()) + list(star_stacks.values())}
     if len(shapes) != 1:
         raise ValueError(f"channels are on different grids: {shapes} — "
                          "they cannot be combined without re-registration")
@@ -972,6 +1169,7 @@ def process_dso(
     m = int(EDGE_CROP * min(h, w))
     if m > 0:
         stacks = {k: v[m:-m, m:-m] for k, v in stacks.items()}
+        star_stacks = {k: v[m:-m, m:-m] for k, v in star_stacks.items()}
 
     if cache_dir is not None:
         for c, v in stacks.items():
@@ -980,9 +1178,22 @@ def process_dso(
                         v.astype(np.float32))
             except Exception:
                 _logger.warning("could not cache channel %s", c, exc_info=True)
+        for c, v in star_stacks.items():
+            try:
+                np.save(channel_cache_path(cache_dir, dso_dir.name, tag, f"STARS_{c}"),
+                        v.astype(np.float32))
+            except Exception:
+                _logger.warning("could not cache star channel %s", c, exc_info=True)
 
     rgb = compose(stacks, **compose_kw)
+    star_info = None
+    if len(star_stacks) == 3:
+        rgb, star_info = apply_rgb_stars(rgb, stacks, star_stacks, compose_kw)
+        if progress_cb:
+            progress_cb(f"stars from RGB: {star_info['stars']} stars, "
+                        f"{100 * star_info['coverage']:.2f}% of the field recoloured")
     info = {
+        "stars": star_info,
         "recipe": recipe,
         "flats": use_flats,
         "channels": {c: resolved[c] for c in resolved},

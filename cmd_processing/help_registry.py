@@ -338,6 +338,10 @@ HELP: dict[str, dict] = {
                     "'auto' sweeps the standard black/white/soft grid (27 "
                     "variants, ~1 min) without enumerating it, leaving any axis "
                     "you set explicitly alone. "
+                    "stars=rgb stacks R, G and B onto the same reference and "
+                    "recolours the stars from them inside a star mask, palette "
+                    "brightness kept and the nebula untouched — for HOO/SHO/HSO, "
+                    "whose stars have no natural colour; 10-15 x 60 s per filter. "
                     "Saves the colour image, plus each stacked channel as linear "
                     "FITS (with WCS) and as a mono JPEG, to <image_dir>/Iris/<dso>/."),
         "usage": ["process <dso> <recipe>", "process <dso> <recipe> noflat",

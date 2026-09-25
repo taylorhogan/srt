@@ -5492,6 +5492,12 @@ def process_cmd(words: list[str], account: str) -> None:
         mesh=4      background mesh boxes across the short axis; higher removes
                     gradients harder but eats large nebulosity
         scnr=0      average-neutral green removal, g = min(g, (r+b)/2), 0..1.
+        stars=none  `rgb` also stacks R, G and B onto the same reference and
+                    gives the stars their RGB colour inside a star mask, the
+                    palette's brightness kept; the nebula never sees the RGB.
+                    For HOO/SHO/HSO, where palette stars have no natural
+                    colour. Shoot 10-15 x 60 s per filter: colour lives in
+                    unsaturated cores. Cached as STARS_R/G/B, so reuse works.
         wb=none     white balance: `stars` scales R and B so the median star in
                     the field is neutral (aperture photometry, local sky
                     annulus); G and L untouched. For LRGB/HALRGB -- never for
@@ -5583,7 +5589,8 @@ def _process_run(words: list[str]) -> None:
     _KEYS = {"black": ("black_pct", float), "white": ("white_pct", float),
              "soft": ("softening", float), "mesh": ("mesh", int),
              "scnr": ("scnr", float), "scale": ("scale", int),
-             "ha": ("ha_gain", float), "wb": ("white_balance", str)}
+             "ha": ("ha_gain", float), "wb": ("white_balance", str),
+             "stars": ("star_source", str)}
     opts = {"use_flats": True, "reuse": False}
     rest = []
     bad = []

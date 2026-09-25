@@ -87,6 +87,13 @@ def recipe_filters(args) -> list[str]:
         if f and f not in seen:
             seen.add(f)
             out.append(f)
+    # --stars rgb: the star-colour stacks ride along, on the same reference.
+    # They are never palette channels; routine() keeps them out of to_channels.
+    if getattr(args, "stars", "none") == "rgb":
+        for f in ("R", "G", "B"):
+            if f not in seen:
+                seen.add(f)
+                out.append(f)
     return out
 
 
@@ -521,6 +528,23 @@ def routine(args) -> int:
     w = min(a.shape[1] for a in raw.values())
     raw = {k: v[:h, :w] for k, v in raw.items()}
 
+    # Star colour from RGB: mask and star image are built once from the raw
+    # R, G, B stacks and applied to every composite, raw and denoised alike.
+    star_mask_arr, star_img = None, None
+    palette_filters = {mapping[c] for c in mapping}
+    if args.stars == "rgb":
+        if all(f in raw for f in ("R", "G", "B")):
+            sst = {c: raw[c] for c in ("R", "G", "B")}
+            star_mask_arr, sinfo = color_process.star_mask(sst["R"] + sst["G"] + sst["B"])
+            star_img = color_process.stars_image(
+                sst, white_pct=args.white_pct,
+                **({"softening": args.soft} if args.soft is not None else {}))
+            log(f"stars from RGB: {sinfo['stars']} stars, {100 * sinfo['coverage']:.2f}% of the field")
+        else:
+            log("--stars rgb: no R, G and B stacks — stars stay palette")
+        # the star stacks are not palette channels: never denoise or compose them
+        filters = [f for f in filters if f in palette_filters]
+
     den = {}
     if model_path:
         import torch
@@ -607,6 +631,8 @@ def routine(args) -> int:
             with np.errstate(divide="ignore", invalid="ignore"):
                 sc = np.where(rl > 1e-4, lum / np.maximum(rl, 1e-4), 0.0)
             rgb = rgb * np.clip(sc, 0.0, color_process.MAX_LUM_BOOST)[:, :, None]
+        if star_mask_arr is not None:
+            rgb = color_process.rgb_stars(np.clip(np.nan_to_num(rgb), 0, 1), star_img, star_mask_arr)
         pth = color_process.save_rgb(np.clip(np.nan_to_num(rgb), 0, 1),
                                      out_dir / f"{args.dso}_{args.recipe}_{tag}.jpg",
                                      max_px=args.max_px)
@@ -667,6 +693,10 @@ def main() -> int:
     ap.add_argument("--soft", type=float, default=None,
                     help="asinh softening; lower = harder stretch "
                          f"(compose default {0.025})")
+    ap.add_argument("--stars", default="none", choices=("none", "rgb"),
+                    help="rgb: also stack R, G and B onto the shared reference and "
+                         "recolour the stars from them (process's stars=rgb); the "
+                         "palette keeps its brightness, the nebula is untouched")
     ap.add_argument("--wb", default="none", choices=("none", "stars"),
                     help="white balance as the process command's wb=: `stars` "
                          "scales R and B so the field's median star is neutral. "
