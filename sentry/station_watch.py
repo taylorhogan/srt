@@ -382,6 +382,15 @@ def record(p):
     meta = {"pass": p, "burst": str(path), "frames": n,
             "capture_start": started.isoformat(timespec="seconds"),
             "capture_end": ended.isoformat(timespec="seconds")}
+    # The elements this pass was predicted from. Elements age: re-checking a
+    # 17-day-old recording against a fresh TLE put Tiangong 20 deg from its
+    # own track, so the cross-check has to use the TLE of the day.
+    try:
+        defn = next(d for d in SATELLITES if d["name"] == p.get("sat", "ISS"))
+        l1, l2 = get_tle(defn)
+        meta["tle"] = {"l1": l1, "l2": l2}
+    except Exception:  # noqa: BLE001
+        _logger.warning("could not attach the TLE to the sidecar", exc_info=True)
     json.dump(meta, open(os.path.join(OUT_DIR, "%s_%s.json" % (sat, stamp)), "w"),
               indent=1)
 
@@ -396,6 +405,57 @@ def record(p):
                       timeout=10)
     except Exception:  # noqa: BLE001
         _logger.warning("could not post ISS capture notice", exc_info=True)
+
+    _analyse_and_post(os.path.join(OUT_DIR, "%s_%s.json" % (sat, stamp)))
+
+
+def _post(message, image=None, video=None):
+    """Post to the web chat from this detached process (no message bus here).
+    A video_path is rendered by the chat as an inline movie."""
+    import requests
+    data = {"message": message}
+    if image:
+        data["image_path"] = image
+    if video:
+        data["video_path"] = video
+    requests.post("http://127.0.0.1:8095/api/post", data=data, timeout=30)
+
+
+def _analyse_and_post(sidecar):
+    """Measure the recording just made and post the answer either way.
+
+    Detection is a full decode of the burst (minutes), which is why it runs
+    here in the detached recorder and not in the monitor's tick. The movie is
+    posted only for a track confirmed against the TLE; a rejected pass gets
+    the annotated still and the reason. Never raises: the recording is on
+    disk and can be re-run by hand with scripts/station_track.py --clip.
+    """
+    try:
+        scripts_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                                   "scripts")
+        if scripts_dir not in sys.path:
+            sys.path.insert(0, scripts_dir)
+        import station_track                      # cv2 + numpy, so imported here only
+        out = station_track.analyse(sidecar)
+        msg = station_track.summary_line(out)
+        video = None
+        if out.get("is_satellite"):
+            try:
+                video = station_track.make_clip(out)
+            except Exception:  # noqa: BLE001
+                _logger.exception("station clip failed; posting the still only")
+        _logger.info(msg)
+        _post(msg, image=out.get("image"), video=video)
+        if out.get("is_satellite"):
+            from utils import pushover
+            pushover.push_message(msg, image=out.get("image"))
+    except Exception:  # noqa: BLE001
+        _logger.exception("station analysis after the recording failed")
+        try:
+            _post("Station recording made but the analysis failed -- see iris.log; "
+                  "python scripts/station_track.py %s --clip re-runs it." % sidecar)
+        except Exception:  # noqa: BLE001
+            pass
 
 
 def main():

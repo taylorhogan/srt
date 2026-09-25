@@ -142,20 +142,24 @@ def angular_sep(alt1, az1, alt2, az2):
     return math.degrees(math.acos(max(-1.0, min(1.0, c))))
 
 
-def where_was_it(sat_name, times):
+def where_was_it(sat_name, times, tle=None):
     """[(alt, az, sunlit)] for *sat_name* at each datetime, or None.
 
-    Straight from the TLE the watcher used. None means the check could not be
-    made (no TLE, no ephemeris, no network) and is treated as "unchecked"
-    rather than as a failure -- an absent cross-check must not invent a
-    verdict either way.
+    From the TLE stored in the recording's sidecar when there is one (the
+    elements the watcher armed the pass with), else the current cache. None
+    means the check could not be made (no TLE, no ephemeris, no network) and
+    is treated as "unchecked" rather than as a failure -- an absent
+    cross-check must not invent a verdict either way.
     """
     try:
         from skyfield.api import EarthSatellite
         from sentry import station_watch as sw
         site, eph, ts = sw._sky()
-        defn = next(d for d in sw.SATELLITES if d["name"] == sat_name)
-        l1, l2 = sw.get_tle(defn)
+        if tle and tle.get("l1") and tle.get("l2"):
+            l1, l2 = tle["l1"], tle["l2"]
+        else:
+            defn = next(d for d in sw.SATELLITES if d["name"] == sat_name)
+            l1, l2 = sw.get_tle(defn)
         sat = EarthSatellite(l1, l2, sat_name, ts)
         out = []
         for when in times:
@@ -210,18 +214,15 @@ def consensus(dets, iters=ITERS, tol=TOL_PX, seed=7):
             "t_first": float(t.min()), "t_last": float(t.max())}
 
 
-def main():
-    ap = argparse.ArgumentParser(description=__doc__,
-                                 formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("recording", help="the pass .json (or .h264) written by station_watch")
-    ap.add_argument("--downscale", type=int, default=2,
-                    help="detect on a reduced frame; centroids are scaled back up")
-    ap.add_argument("--tol", type=float, default=TOL_PX)
-    ap.add_argument("--refresh", action="store_true",
-                    help="re-detect even if a candidate cache exists")
-    args = ap.parse_args()
+def analyse(recording, downscale=2, tol=TOL_PX, refresh=False):
+    """Measure one recording: the dict that goes into <base>_track.json.
 
-    base = os.path.splitext(args.recording)[0]
+    Always returns a dict with "is_satellite" -- False with a "reject_reason"
+    when nothing coherent was found -- so a caller can post either answer.
+    Private keys (_fit, _dets, _video, _fps, _nframes) carry what make_clip
+    needs; they are never written to the JSON.
+    """
+    base = os.path.splitext(recording)[0]
     meta = json.load(open(base + ".json"))
     video = base + ".h264"
     t0 = datetime.fromisoformat(meta["capture_start"])
@@ -243,24 +244,30 @@ def main():
     # 2560x1440) and the fitting is the half worth iterating on, so the
     # candidates are cached beside the recording. Keyed on the downscale, and
     # invalidated if the video is newer than the cache.
-    cache = "%s_dets_d%d.npz" % (base, args.downscale)
-    if (not args.refresh and os.path.exists(cache)
+    cache = "%s_dets_d%d.npz" % (base, downscale)
+    if (not refresh and os.path.exists(cache)
             and os.path.getmtime(cache) >= os.path.getmtime(video)):
         dets = [tuple(r) for r in np.load(cache)["dets"]]
         print("re-using %d cached candidates (%s)" % (len(dets), cache))
     else:
         print("detecting movers...")
-        dets, _ = detect(video, fps, downscale=args.downscale)
+        dets, _ = detect(video, fps, downscale=downscale)
         np.savez_compressed(cache, dets=np.array(dets))
         print("cached %d candidates -> %s" % (len(dets), cache))
     print("finding the consensus track...")
-    fit = consensus(dets, tol=args.tol)
+    fit = consensus(dets, tol=tol)
     if fit is None:
         print("NO TRACK: no straight constant-speed path collected "
               "%d agreeing frames." % MIN_INLIERS)
         print("That is a real answer, not a failure -- an overcast pass "
               "leaves nothing coherent to find.")
-        return 1
+        out = {"sat": p["sat"], "peak_alt_deg": p["peak_alt_deg"], "peak": p["peak"],
+               "candidates": len(dets), "is_satellite": False,
+               "reject_reason": ("no straight constant-speed path collected %d "
+                                 "agreeing frames" % MIN_INLIERS)}
+        with open(base + "_track.json", "w") as fh:
+            json.dump(out, fh, indent=2)
+        return out
 
     speed_px = float(np.hypot(fit["vx"], fit["vy"]))
     span = fit["t_last"] - fit["t_first"]
@@ -328,7 +335,8 @@ def main():
     ok, why = True, None
     if track_altaz:
         pred = where_was_it(p["sat"],
-                            [t0 + timedelta(seconds=tt) for tt, _, _ in track_altaz])
+                            [t0 + timedelta(seconds=tt) for tt, _, _ in track_altaz],
+                            tle=meta.get("tle"))
         if pred is None:
             out["checked_against_tle"] = False
         else:
@@ -410,7 +418,166 @@ def main():
     with open(base + "_track.json", "w") as fh:
         json.dump(out, fh, indent=2)
     print("  wrote %s" % (base + "_track.json"))
-    return 0 if ok else 1
+    out.update(_fit=fit, _dets=dets, _video=video, _fps=fps, _nframes=nframes)
+    return out
+
+
+# The clip: the seconds around the fitted track, cropped to where it happened,
+# at real speed, with the agreeing detections drawn as a trail. Cut only for a
+# confirmed track -- a line fitted through noise makes an equally convincing
+# movie, and the annotated still has fooled the eye that way before.
+CLIP_PAD_S    = 5.0    # seconds of context either side of the track
+CLIP_MAX_S    = 60.0
+CLIP_SIZE     = 800    # output square, px
+CLIP_MARGIN   = 120    # px of frame kept around the track's ends
+CLIP_STRIP    = 56     # caption strip height
+CLIP_TRAIL_LAG_S = 1.5 # the trail stops this far behind the station, so the
+                       # dots never sit on top of the thing being shown
+CLIP_STRETCH  = (1.0, 99.7)   # percentiles of the first crop mapped to 0..255,
+                              # fixed for the whole clip so it does not flicker
+
+
+def _stretch_lut(crop, pcts=CLIP_STRETCH):
+    """A 256-entry LUT that maps the crop's own dark range onto full scale."""
+    lo, hi = np.percentile(cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY), pcts)
+    hi = max(hi, lo + 8)
+    lut = np.clip((np.arange(256) - lo) * 255.0 / (hi - lo), 0, 255)
+    return lut.astype(np.uint8)
+
+
+def _fit_caption(label, width, scale=0.85, thickness=2, pad=12):
+    """Shrink the font until the caption fits the strip."""
+    while scale > 0.45:
+        (w, _), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, scale, thickness)
+        if w <= width - 2 * pad:
+            break
+        scale -= 0.05
+    return scale
+
+
+def clip_window(t_first, t_last, fps, nframes, pad_s=CLIP_PAD_S, max_s=CLIP_MAX_S):
+    """(first, last) frame indices, last exclusive, around the track.
+
+    Padded either side, clamped to the recording, and if that is longer than
+    max_s, trimmed symmetrically about the track's middle.
+    """
+    a = int(math.floor((t_first - pad_s) * fps))
+    b = int(math.ceil((t_last + pad_s) * fps)) + 1
+    a, b = max(0, a), min(int(nframes), b)
+    limit = int(max_s * fps)
+    if b - a > limit:
+        mid = int(round((t_first + t_last) / 2.0 * fps))
+        a = max(0, mid - limit // 2)
+        b = min(int(nframes), a + limit)
+        a = max(0, b - limit)
+    return a, b
+
+
+def crop_box(x1, y1, x2, y2, frame_w, frame_h, margin=CLIP_MARGIN, min_size=CLIP_SIZE):
+    """(x, y, side): a square holding both ends of the track plus a margin,
+    at least min_size, never larger than the frame, clamped inside it."""
+    side = int(math.ceil(max(abs(x2 - x1), abs(y2 - y1)) + 2 * margin))
+    side = min(max(min_size, side), int(frame_w), int(frame_h))
+    cx, cy = (x1 + x2) / 2.0, (y1 + y2) / 2.0
+    x = int(round(cx - side / 2.0))
+    y = int(round(cy - side / 2.0))
+    x = min(max(0, x), int(frame_w) - side)
+    y = min(max(0, y), int(frame_h) - side)
+    return x, y, side
+
+
+def summary_line(out):
+    """One sentence for the chat and the push: the verdict and the numbers."""
+    head = "%s pass %s, peak alt %.0f deg: " % (
+        out["sat"], out["peak"][:16].replace("T", " "), out["peak_alt_deg"])
+    if not out.get("is_satellite"):
+        return head + "no %s found -- %s." % (out["sat"], out.get("reject_reason", "no track"))
+    parts = ["%d frames agree" % out["frames_agreeing"]]
+    if out.get("deg_per_s") and out.get("arc_deg") is not None:
+        parts.append("%.2f deg/s over a %.0f deg arc" % (out["deg_per_s"], out["arc_deg"]))
+    if out.get("alt_first") is not None:
+        parts.append("alt %.0f az %.0f -> alt %.0f az %.0f"
+                     % (out["alt_first"], out["az_first"], out["alt_last"], out["az_last"]))
+    if out.get("checked_against_tle"):
+        parts.append("within %.0f deg of the TLE" % out["miss_deg_median"])
+    return head + "FOUND. " + ", ".join(parts) + "."
+
+
+def make_clip(out, out_path=None):
+    """Write <base>_clip.mp4 (H.264, plays inline in the chat) and return its path."""
+    fit, dets, video, fps = out["_fit"], out["_dets"], out["_video"], out["_fps"]
+    a, b = clip_window(fit["t_first"], fit["t_last"], fps, out["_nframes"])
+    cap = cv2.VideoCapture(video)
+    if not cap.isOpened():
+        raise RuntimeError("could not open %s" % video)
+    fw = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)) or 2560
+    fh = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)) or 1440
+    ends = [(fit["x0"] + fit["vx"] * t, fit["y0"] + fit["vy"] * t)
+            for t in (fit["t_first"], fit["t_last"])]
+    x, y, side = crop_box(ends[0][0], ends[0][1], ends[1][0], ends[1][1], fw, fh)
+    scale = CLIP_SIZE / float(side)
+    A = np.array([(d[0], d[1], d[2]) for d in dets])[fit["mask"]]      # t, x, y agreeing
+    out_path = out_path or os.path.splitext(video)[0] + "_clip.mp4"
+    # Media Foundation is the backend that writes real H.264 on this machine;
+    # the ffmpeg build lacks openh264 and would fall back to MPEG-4 part 2,
+    # which browsers do not play.
+    writer = cv2.VideoWriter(out_path, cv2.CAP_MSMF, cv2.VideoWriter_fourcc(*"avc1"),
+                             float(fps), (CLIP_SIZE, CLIP_SIZE + CLIP_STRIP))
+    if not writer.isOpened():
+        cap.release()
+        raise RuntimeError("H.264 writer would not open for %s" % out_path)
+    label = "%s  %s  peak alt %.0f deg" % (out["sat"], out["peak"][:16].replace("T", " "),
+                                          out["peak_alt_deg"])
+    if out.get("deg_per_s"):
+        label += "  %.2f deg/s" % out["deg_per_s"]
+    font_scale = _fit_caption(label, CLIP_SIZE)
+    gold, green = (0, 215, 255), (0, 255, 120)
+    lut = None
+    i = 0
+    while i < b:
+        ok, frame = cap.read()
+        if not ok:
+            break
+        if i >= a:
+            t = i / fps
+            crop = frame[y:y + side, x:x + side]
+            if side != CLIP_SIZE:
+                crop = cv2.resize(crop, (CLIP_SIZE, CLIP_SIZE), interpolation=cv2.INTER_AREA)
+            if lut is None:
+                lut = _stretch_lut(crop)
+            crop = cv2.LUT(crop, lut)
+            for (_, xx, yy) in A[A[:, 0] <= t - CLIP_TRAIL_LAG_S]:
+                cv2.circle(crop, (int((xx - x) * scale), int((yy - y) * scale)), 3, green, -1)
+            if fit["t_first"] <= t <= fit["t_last"]:
+                px = fit["x0"] + fit["vx"] * t
+                py = fit["y0"] + fit["vy"] * t
+                cv2.circle(crop, (int((px - x) * scale), int((py - y) * scale)), 18, gold, 2)
+            canvas = np.zeros((CLIP_SIZE + CLIP_STRIP, CLIP_SIZE, 3), np.uint8)
+            canvas[CLIP_STRIP:] = crop
+            cv2.putText(canvas, label, (12, 38), cv2.FONT_HERSHEY_SIMPLEX, font_scale, gold, 2)
+            writer.write(canvas)
+        i += 1
+    cap.release()
+    writer.release()
+    return out_path
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("recording", help="the pass .json (or .h264) written by station_watch")
+    ap.add_argument("--downscale", type=int, default=2,
+                    help="detect on a reduced frame; centroids are scaled back up")
+    ap.add_argument("--tol", type=float, default=TOL_PX)
+    ap.add_argument("--refresh", action="store_true",
+                    help="re-detect even if a candidate cache exists")
+    ap.add_argument("--clip", action="store_true",
+                    help="also cut <base>_clip.mp4 when the track is confirmed")
+    args = ap.parse_args()
+    out = analyse(args.recording, downscale=args.downscale, tol=args.tol, refresh=args.refresh)
+    if args.clip and out.get("is_satellite"):
+        print("  wrote %s" % make_clip(out))
+    return 0 if out.get("is_satellite") else 1
 
 
 if __name__ == "__main__":
