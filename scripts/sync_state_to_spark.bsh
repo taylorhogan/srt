@@ -22,9 +22,9 @@
 #      copies a corrupt file over a good one as faithfully as a good one, so
 #      the mirror is the convenience and the zips are the backup.
 #
-# Secrets (configs/config_private.py) are NOT copied. To include them, add
-#     --include='configs/config_private.py'
-# to the mirror's filter list below; the Spark is on the tailnet only.
+# Secrets (configs/config_private.py) ARE copied -- the owner's call,
+# 2026-09-25: in the zips (the PC task runs backup_state.py --include-secrets)
+# and in the mirror below. The Spark is on the tailnet only.
 #
 # No arguments -- source and destination are hardcoded.
 #
@@ -82,6 +82,7 @@ rsync -avz --update --prune-empty-dirs \
     --include='local/parked_refs/' --include='local/parked_refs/*' \
     --include='local/journal/'     --include='local/journal/*.jsonl' \
     --include='configs/' --include='configs/config_public.py' \
+    --include='configs/config_private.py' \
     --include='safety.txt' \
     --include='my_calendar.json' \
     --exclude='*' \
