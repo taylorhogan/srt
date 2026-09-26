@@ -8,6 +8,18 @@ GOOD_PEG = {1: 0, 2: 0, 3: 0, 4: 100}
 
 def test_all_clear():
     assert evaluate(GOOD_VISION, GOOD_KASA, GOOD_PEG) == ([], [])
+    assert evaluate(GOOD_VISION, GOOD_KASA, GOOD_PEG,
+                    cameras={"Iris cam": "on", "Iris North": "on"}) == ([], [])
+
+
+def test_a_camera_switched_off_in_the_app_is_a_problem_even_after_re_enabling():
+    p, w = evaluate(GOOD_VISION, GOOD_KASA, GOOD_PEG,
+                    cameras={"Iris cam": "switched_on", "Iris North": "on"})
+    assert p == ["camera 'Iris cam' was switched OFF in the Kasa app -- switched back on by this check"]
+    p, w = evaluate(GOOD_VISION, GOOD_KASA, GOOD_PEG, cameras={"Iris North": "off"})
+    assert p == ["camera 'Iris North' is switched OFF in the Kasa app"]
+    p, w = evaluate(GOOD_VISION, GOOD_KASA, GOOD_PEG, cameras={"Iris cam": "unknown"})
+    assert p == [] and len(w) == 1 and "could not ask" in w[0]
 
 
 def test_inside_light_on_is_not_a_problem():

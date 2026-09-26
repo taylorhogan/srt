@@ -147,16 +147,30 @@ def speed_warning(speed, history):
     return None
 
 
-def evaluate(vision, kasa, pegasus, speed=NOT_MEASURED, speed_history=()):
-    """(problems, warnings) from the three readings. Pure, so it can be tested.
+def evaluate(vision, kasa, pegasus, speed=NOT_MEASURED, speed_history=(),
+             cameras=None):
+    """(problems, warnings) from the readings. Pure, so it can be tested.
 
     vision  : {"closed", "parked", "camera", "why", "scope_tag_frames", "frames",
                "worst_corner_px"}
     kasa    : {"resolved": {name: relay 0/1/None}, "error": str|None}
                a name absent from resolved did not answer discovery
     pegasus : {port: level} or None when the box could not be read
+    cameras : {alias: "on" | "switched_on" | "off" | "unknown"} for the cameras
+              the safety reads depend on. The plugs above are LAN relay reads;
+              a camera switched off in the Kasa app is a cloud fact, and until
+              2026-09-26 it surfaced only as "vision read failed".
     """
     problems, warnings = [], []
+
+    for name, st in sorted((cameras or {}).items()):
+        if st == "off":
+            problems.append("camera '%s' is switched OFF in the Kasa app" % name)
+        elif st == "switched_on":
+            problems.append("camera '%s' was switched OFF in the Kasa app -- "
+                            "switched back on by this check" % name)
+        elif st == "unknown":
+            warnings.append("camera '%s': could not ask the Kasa cloud whether it is on" % name)
 
     if not vision.get("camera"):
         problems.append("vision read failed (%s): roof and park unconfirmed"
@@ -282,6 +296,31 @@ def _speed_history(limit=14):
     return out[-limit:]
 
 
+# The cameras every safety read depends on, by Kasa alias.
+CAMERAS = ("Iris cam", "Iris North")
+
+
+def read_cameras():
+    """{alias: 'on' | 'switched_on' | 'off' | 'unknown'}. Runs AFTER the
+    vision read, whose grabs switch a camera back on themselves; a camera that
+    read finds off is reported as switched_on so the operator learns it was
+    off, and one still off after that is a problem in its own right."""
+    out = {}
+    try:
+        from scripts import kasa_ptz
+    except Exception as exc:  # noqa: BLE001
+        return {name: "unknown" for name in CAMERAS}
+    for name in CAMERAS:
+        try:
+            if name in kasa_ptz.last_switched_on:
+                out[name] = "switched_on"
+            else:
+                out[name] = kasa_ptz.ensure_enabled(name)
+        except Exception:  # noqa: BLE001
+            out[name] = "unknown"
+    return out
+
+
 def read_vision():
     from sentry import vision_safety, kasa_state
     try:
@@ -349,14 +388,15 @@ def main():
     kasa = read_kasa()
     pegasus = read_pegasus()
     vision = read_vision()
+    cameras = read_cameras()
     history = _speed_history()
     speed, speed_tries = read_speed(history)
-    problems, warnings = evaluate(vision, kasa, pegasus, speed, history)
+    problems, warnings = evaluate(vision, kasa, pegasus, speed, history, cameras)
 
     entry = {"when": datetime.now().astimezone().isoformat(timespec="seconds"),
              "ok": not problems, "problems": problems, "warnings": warnings,
              "vision": vision, "kasa": kasa, "pegasus": pegasus, "speed": speed,
-             "speed_attempts": speed_tries}
+             "speed_attempts": speed_tries, "cameras": cameras}
     _append_log(entry)
     print(json.dumps(entry, indent=2, default=str))
 

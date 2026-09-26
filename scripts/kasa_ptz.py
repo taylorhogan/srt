@@ -149,6 +149,38 @@ def set_enabled(dev, on):
     return enabled(dev)
 
 
+# Cameras this process switched back on, name -> time. The morning check reads
+# it to say "was OFF in the app" rather than "vision read failed".
+last_switched_on = {}
+
+ENABLE_SETTLE_S = 12.0     # the stream comes up several seconds after the switch
+
+
+def ensure_enabled(name, settle_s=ENABLE_SETTLE_S):
+    """'on' | 'switched_on' | 'off' | 'unknown'.
+
+    A camera switched off in the Kasa app looks exactly like one that is
+    unreachable: the stream simply gives nothing. Only the cloud can tell the
+    two apart, and it can also undo the first. A reader that got no frame asks
+    here before giving up, and if the camera was off it is switched on and the
+    reader tries again (operator decision 2026-09-26: "if off, just turn it on
+    if you need to read from it"). Never raises.
+    """
+    try:
+        dev = _device(name)
+        if enabled(dev):
+            return "on"
+        if not set_enabled(dev, True):
+            return "off"
+        last_switched_on[name] = time.time()
+        time.sleep(settle_s)
+        return "switched_on"
+    except Exception as exc:  # noqa: BLE001 -- a cloud hiccup must not fail the read
+        print("kasa_ptz: could not check/enable %r: %s: %s" % (name, type(exc).__name__, exc),
+              file=sys.stderr)
+        return "unknown"
+
+
 # Day/night mode, which drives the mechanical IR-cut filter. Measured: "day"
 # gives a colour frame (mean channel spread 31.6), "night" gives a monochrome
 # one (spread exactly 0.00, i.e. the filter is out and the sensor is seeing

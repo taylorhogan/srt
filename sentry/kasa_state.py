@@ -170,7 +170,14 @@ def _sun_altitude():
     return float(elevation(li.observer, datetime.now(pytz.timezone(loc["timezone"]))))
 
 
-def _grab(retries=RETRIES, timeout=20, wait_stream=True):
+def _grab(retries=RETRIES, timeout=20, wait_stream=True, enable_if_off=True):
+    """One frame from the inside camera, or None.
+
+    enable_if_off: when every attempt gives nothing, ask the cloud whether the
+    camera was switched off in the Kasa app and switch it back on, then try
+    once more (2026-09-26). The shadow's quick samples pass False: a 12 s
+    settle inside a 5-minute tick is not theirs to spend.
+    """
     from scripts.probe_kasa_camera import probe_kc_stream
     from sentry.sky_camera import credentials
     if wait_stream:
@@ -182,13 +189,27 @@ def _grab(retries=RETRIES, timeout=20, wait_stream=True):
         except Exception:  # noqa: BLE001 -- the wait is a courtesy, never a gate
             pass
     user, pw = credentials(config.data())
-    for _ in range(retries):
+
+    def once():
         with contextlib.redirect_stdout(io.StringIO()):
             ok = probe_kc_stream(HOST, user, pw, snapshot_path=SNAP_PATH, timeout=timeout)
         if ok:
             img = cv2.imread(SNAP_PATH)
             if img is not None and img.size:
                 return img
+        return None
+
+    for _ in range(retries):
+        img = once()
+        if img is not None:
+            return img
+    if enable_if_off:
+        from scripts import kasa_ptz
+        cam = (_parked_reference() or {}).get("camera", "Iris cam")
+        if kasa_ptz.ensure_enabled(cam) == "switched_on":
+            _logger.warning("kasa_state: %r was switched OFF in the Kasa app -- "
+                            "switched it back on, grabbing again", cam)
+            return once()
     return None
 
 
@@ -612,7 +633,8 @@ def kasa_status(quick=False, verify_pose=False, frames=1):
     for i in range(n):
         if i:
             time.sleep(0.5)
-        img_i = _grab(retries=1, timeout=8, wait_stream=False) if quick else _grab()
+        img_i = (_grab(retries=1, timeout=8, wait_stream=False, enable_if_off=False)
+                 if quick else _grab())
         if img_i is not None and i == 0 and not quick and star_ref and is_ir(img_i):
             img_i = _await_colour(img_i)
         if img_i is None:

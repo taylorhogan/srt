@@ -164,18 +164,34 @@ def reference(path=REFERENCE_PATH):
         return None
 
 
-def _grab(host, user, pw, path, retries=GRAB_RETRIES):
+def _grab(host, user, pw, path, retries=GRAB_RETRIES, camera=None):
+    """One frame, or None. With `camera` (the Kasa alias), a camera that gives
+    nothing is checked against the cloud and switched back on if it was turned
+    off in the app, then tried once more (2026-09-26)."""
     import contextlib
     import io as _io
     import cv2
     from scripts.probe_kasa_camera import probe_kc_stream
-    for _ in range(retries + 1):
+
+    def once():
         with contextlib.redirect_stdout(_io.StringIO()):
             ok = probe_kc_stream(host, user, pw, snapshot_path=path, timeout=25)
         if ok:
             img = cv2.imread(path)
             if img is not None and img.size:
                 return img
+        return None
+
+    for _ in range(retries + 1):
+        img = once()
+        if img is not None:
+            return img
+    if camera:
+        from scripts import kasa_ptz
+        if kasa_ptz.ensure_enabled(camera) == "switched_on":
+            _logger.warning("north_roof: %r was switched OFF in the Kasa app -- "
+                            "switched it back on, grabbing again", camera)
+            return once()
     return None
 
 
@@ -249,7 +265,8 @@ def read(frames=FRAMES, path=REFERENCE_PATH):
     per_frame, verdicts, kept = [], [], []
     shown = None                              # (img, corners, off_shut, off_open) of the deciding frame
     for i in range(max(1, frames)):
-        img = _grab(ref["host"], user, pw, snap)
+        img = _grab(ref["host"], user, pw, snap,
+                    camera=None if i else ref.get("camera", "Iris North"))
         if img is None:
             verdicts.append("blind")
             per_frame.append({"camera": False})
