@@ -55,11 +55,13 @@ if __package__ is None or __package__ == "":
         sys.path.insert(0, project_root)
 
 from configs import config
+from iris_astronomy import weather
 
-# The blend (`best_match`) is logged alongside the raw models deliberately: it is
-# what iris_astronomy/weather.py actually consumes today, so its error is the
-# error the observatory is currently exposed to, and dropping it would hide the
-# baseline the others need to beat.
+# The blend (`best_match`) is logged alongside the raw models deliberately: it
+# was what iris_astronomy/weather.py consumed until 2026-09-30, when cloud cover
+# moved to the NWS grid on scripts/forecast_score.py's numbers. It is still
+# weather.py's fallback for any hour NWS does not answer, and it is the baseline
+# any future switch has to be scored against.
 MODELS = [
     "best_match",
     "ecmwf_ifs025",
@@ -74,9 +76,6 @@ MODELS = [
 ]
 
 OPEN_METEO = "https://api.open-meteo.com/v1/forecast"
-NWS_POINTS = "https://api.weather.gov/points/%.4f,%.4f"
-# api.weather.gov rejects requests without a contact in the User-Agent.
-NWS_HEADERS = {"User-Agent": "iris-observatory (taylor.hogan@gmail.com)"}
 
 LOG_PATH = "local/forecast_log.jsonl"
 DEFAULT_HOURS = 24
@@ -131,54 +130,14 @@ def fetch_open_meteo(lat, lon, hours):
     return start, out
 
 
-def _expand_nws(values, start, hours):
-    """NWS gives value + ISO-8601 duration intervals; flatten to hourly.
-
-    A single entry can cover many hours (a settled forecast is published as one
-    long interval), so reading one value per entry would both misalign the array
-    and drop most of the horizon.
-    """
-    grid = {}
-    for v in values:
-        span = v["validTime"]
-        head, _, dur = span.partition("/")
-        t = datetime.fromisoformat(head).astimezone(timezone.utc)
-
-        # PnDTnH -- days and hours are the only units NWS uses here.
-        days = hrs = 0
-        num = ""
-        in_time = False
-        for ch in dur.lstrip("P"):
-            if ch.isdigit():
-                num += ch
-            elif ch == "T":
-                in_time = True
-                num = ""
-            elif ch == "D":
-                days = int(num or 0)
-                num = ""
-            elif ch == "H":
-                hrs = int(num or 0)
-                num = ""
-            else:
-                num = ""
-        total = days * 24 + hrs or 1
-        for k in range(total):
-            grid[_floor_hour(t + timedelta(hours=k))] = v["value"]
-
-    return [grid.get(start + timedelta(hours=k)) for k in range(hours)]
-
-
 def fetch_nws(lat, lon, start, hours):
-    p = requests.get(NWS_POINTS % (lat, lon), headers=NWS_HEADERS, timeout=45)
-    p.raise_for_status()
-    props = p.json()["properties"]
-    g = requests.get(props["forecastGridData"], headers=NWS_HEADERS, timeout=45)
-    g.raise_for_status()
-    sky = g.json()["properties"]["skyCover"]["values"]
+    # The grid parser lives in iris_astronomy/weather.py, which since
+    # 2026-09-30 takes the observatory's cloud cover from it; one copy, so the
+    # logged NWS series is exactly what the scheduler read.
+    office, grid = weather.get_nws_sky_cover(lat, lon, timeout=45, use_cache=False)
     return {
-        "office": "%s %d,%d" % (props["gridId"], props["gridX"], props["gridY"]),
-        "sky": _expand_nws(sky, start, hours),
+        "office": office,
+        "sky": [grid.get(start + timedelta(hours=k)) for k in range(hours)],
     }
 
 

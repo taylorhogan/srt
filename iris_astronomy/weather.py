@@ -1,4 +1,5 @@
-from datetime import datetime
+import time
+from datetime import datetime, timedelta, timezone as dt_timezone
 from zoneinfo import ZoneInfo
 import pytz
 import requests
@@ -41,6 +42,80 @@ def get_sunrise_sunset() -> tuple[datetime, datetime]:
     return sunrise, sunset
 
 
+# Where cloud cover comes from. Scored against the sky camera on 2026-09-30
+# (scripts/forecast_score.py, ~30 moon-free nights 08-14..09-25): Open-Meteo's
+# default best_match was identical to GFS/HRRR in every logged hour and the
+# worst source at the noon check's 9-18 h lead (rank correlation 0.49, Heidke
+# 0.28, half its "clear" calls cloudy), while the NWS grid was the steadiest at
+# every lead (0.66-0.69, Heidke 0.47-0.50). Only cloud cover moves: rain,
+# wind and humidity stay on Open-Meteo, and so does cloud for any hour NWS does
+# not answer. "open_meteo" in cfg["weather"]["cloud_source"] reverts.
+CLOUD_SOURCE = (cfg.get("weather") or {}).get("cloud_source", "nws")
+
+NWS_POINTS = "https://api.weather.gov/points/%.4f,%.4f"
+# api.weather.gov rejects requests without a contact in the User-Agent.
+NWS_HEADERS = {"User-Agent": "iris-observatory (taylor.hogan@gmail.com)"}
+# The grid is re-issued roughly hourly; the live skymap asks every 5 minutes.
+NWS_CACHE_S = 30 * 60
+_nws_cache: dict = {}
+
+
+def _floor_hour_utc(dt: datetime) -> datetime:
+    return dt.astimezone(dt_timezone.utc).replace(minute=0, second=0, microsecond=0)
+
+
+def expand_nws(values: list) -> dict:
+    """NWS gives value + ISO-8601 duration intervals; flatten to {UTC hour: value}.
+
+    A single entry can cover many hours (a settled forecast is published as one
+    long interval), so reading one value per entry would both misalign the
+    series and drop most of the horizon.
+    """
+    grid = {}
+    for v in values:
+        head, _, dur = v["validTime"].partition("/")
+        t = datetime.fromisoformat(head).astimezone(dt_timezone.utc)
+
+        # PnDTnH -- days and hours are the only units NWS uses here.
+        days = hrs = 0
+        num = ""
+        for ch in dur.lstrip("P"):
+            if ch.isdigit():
+                num += ch
+            elif ch == "D":
+                days = int(num or 0)
+                num = ""
+            elif ch == "H":
+                hrs = int(num or 0)
+                num = ""
+            else:
+                num = ""
+        total = days * 24 + hrs or 1
+        for k in range(total):
+            grid[_floor_hour_utc(t + timedelta(hours=k))] = v["value"]
+    return grid
+
+
+def get_nws_sky_cover(lat: float, lon: float, timeout: float = 10, use_cache: bool = True) -> tuple[str, dict]:
+    """(office, {UTC hour: sky cover %}) from the NWS forecast grid.
+
+    Raises on any failure; callers decide what falling back means.
+    """
+    key = (round(lat, 4), round(lon, 4))
+    hit = _nws_cache.get(key)
+    if use_cache and hit and time.monotonic() - hit[0] < NWS_CACHE_S:
+        return hit[1], hit[2]
+    p = requests.get(NWS_POINTS % (lat, lon), headers=NWS_HEADERS, timeout=timeout)
+    p.raise_for_status()
+    props = p.json()["properties"]
+    g = requests.get(props["forecastGridData"], headers=NWS_HEADERS, timeout=timeout)
+    g.raise_for_status()
+    office = "%s %d,%d" % (props["gridId"], props["gridX"], props["gridY"])
+    grid = expand_nws(g.json()["properties"]["skyCover"]["values"])
+    _nws_cache[key] = (time.monotonic(), office, grid)
+    return office, grid
+
+
 def get_weather_by_hour(lat: float, lon: float, hours: int) -> tuple[list, list, list, list, list]:
     # Open-Meteo Forecast API (no key needed)
     forecast_url = "https://api.open-meteo.com/v1/forecast"
@@ -80,6 +155,14 @@ def get_weather_by_hour(lat: float, lon: float, hours: int) -> tuple[list, list,
 
         now = datetime.now(local_tz)
 
+        nws_sky: dict = {}
+        if CLOUD_SOURCE == "nws":
+            try:
+                _office, nws_sky = get_nws_sky_cover(lat, lon)
+            except (requests.RequestException, KeyError, ValueError) as e:
+                print(f"NWS sky cover unavailable, using Open-Meteo cloud: {e}")
+        n_nws = 0
+
 
         for i in range(len(cloud_times)):
             forecast_time = datetime.fromisoformat(cloud_times[i])
@@ -89,13 +172,19 @@ def get_weather_by_hour(lat: float, lon: float, hours: int) -> tuple[list, list,
 
             time_str = forcast_time_local.strftime("%Y-%m-%d %H:%M")
             hour = forcast_time_local.hour
-            print(f"{hour}: {cloud_covers[i]}% cloud cover")
+            cover = nws_sky.get(_floor_hour_utc(forcast_time_local))
+            if cover is None:
+                cover = cloud_covers[i]
+            else:
+                n_nws += 1
+            print(f"{hour}: {cover}% cloud cover")
             local_cloud_times.append(hour)
-            local_cloud_covers.append(cloud_covers[i])
+            local_cloud_covers.append(cover)
             local_precipitation_probability.append(precipitation_probability[i])
             local_wind_speed.append(wind_speed[i])
             local_humidity.append(humidity[i])
-
+        if CLOUD_SOURCE == "nws":
+            print(f"cloud cover: NWS for {n_nws} of {len(local_cloud_covers)} hours, Open-Meteo for the rest")
 
     except requests.RequestException as e:
         print(f"Error fetching forecast: {e}")
