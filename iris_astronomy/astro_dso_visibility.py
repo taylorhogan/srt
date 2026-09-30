@@ -845,8 +845,9 @@ def weather_issues(cloud_cover: float, precipitation_probability: float,
     verdict, never allowed to veto a night. See _SMOKE_AQI_ADVISORY above.
     """
     issues = []
-    if cloud_cover > 80:
-        issues.append("heavy cloud cover")
+    max_cloud = (CFG.get("weather") or {}).get("max_cloud_pct", 40)
+    if cloud_cover > max_cloud:
+        issues.append(f"cloud cover over {max_cloud:g}%")
     if precipitation_probability > 20:
         issues.append("a chance of rain")
     return issues

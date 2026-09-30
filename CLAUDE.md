@@ -76,7 +76,7 @@ Since 2026-09-25 the conductor decides both invariants (ADR 0014): every roof fi
 
 - **`configs/config.py`** — Merges `PublicConfig` + `PrivateConfig`. Every module calls `config.data()` to get a flat dict. Private credentials live in `configs/config_private.py` (gitignored).
 
-- **`iris_astronomy/`** — Astronomy logic: DSO visibility windows, air mass, best imaging night, weather (Open-Meteo API, no key needed; since 2026-09-30 cloud cover comes from the NWS grid, Open-Meteo per-hour fallback, `cfg["weather"]["cloud_source"]`, chosen by `scripts/forecast_score.py` against the sky camera), sunrise/sunset via `astral`.
+- **`iris_astronomy/`** — Astronomy logic: DSO visibility windows, air mass, best imaging night, weather (Open-Meteo API, no key needed; since 2026-09-30 cloud cover comes from the NWS grid, Open-Meteo per-hour fallback, `cfg["weather"]["cloud_source"]`; an hour is too cloudy above `cfg["weather"]["max_cloud_pct"]` (40), chosen by `scripts/forecast_score.py` against the sky camera), sunrise/sunset via `astral`.
 
 - **`control/instructions.py`** — JSON-backed queue of DSO image requests (`my_instructions.json`). Sorted by status → priority → hours above horizon. Each instruction has: `dso`, `requestor`, `status` (waiting/in process/completed), `above_horizon`, `air_mass`, `best` (best date).
 

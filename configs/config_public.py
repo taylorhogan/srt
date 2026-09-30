@@ -419,6 +419,20 @@ class PublicConfig():
                 "Imaging Tonight": "Unknown"
             },
 
+        "weather": {
+            # Where cloud cover comes from: "nws" (NWS grid, Open-Meteo
+            # per-hour fallback) or "open_meteo" (best_match). See
+            # iris_astronomy/weather.py and scripts/forecast_score.py.
+            "cloud_source": "nws",
+            # An hour with cloud cover ABOVE this percent is not imaging
+            # weather. Was a hard-coded 80, set for best_match, which reads
+            # 100% on about half of all hours; NWS reads above 80% on only
+            # ~22%, so 80 let nearly every NWS hour through. Scored against
+            # the sky camera (forecast_score.py, 3-9 h lead), NWS separates
+            # clear from cloudy best at ~30%; owner set 40 on 2026-09-30.
+            "max_cloud_pct": 40,
+        },
+
         "web_chat": {
             "enabled": True,
             "port": 8095,
