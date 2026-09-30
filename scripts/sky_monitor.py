@@ -262,6 +262,14 @@ def main() -> int:
     dropped = sky_camera.prune()
     if dropped:
         print("pruned %d old frames" % dropped)
+
+    # Once per evening, when enough dark frames are in the log: is the sky
+    # actually clear, and does that agree with tonight's plan? After
+    # append_index, because it reads this frame back from the log. Advisory
+    # only, marker-guarded, and never raises -- see sentry/dusk_check.py.
+    if night and "--frame" not in sys.argv:
+        from sentry import dusk_check
+        dusk_check.step()
     return 0
 
 
