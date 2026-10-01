@@ -19,6 +19,24 @@ def _get_unity_url():
     return config.data().get("pegasus", {}).get("unity_url", _UNITY_URL)
 
 
+def unity_status():
+    """"down" (Unity not answering), "no_device" (Unity up, box not connected), or "connected".
+
+    The two failures need different fixes. On 2026-09-10 and 2026-10-01 Unity
+    was running and answering while reporting `Connected Devices :0`: the box
+    had dropped out, and cycling its 12 V supply brought it back with Unity
+    left running.
+    """
+    try:
+        r = requests.get(f"{_get_unity_url()}/Server/DeviceManager/Connected", timeout=5)
+        r.raise_for_status()
+        data = r.json()
+    except (requests.RequestException, ValueError):
+        return "down"
+    devices = data.get("data") or data.get("devices") or []
+    return "connected" if isinstance(devices, list) and devices else "no_device"
+
+
 def _get_driver_info():
     """Query the Unity DeviceManager and return (driver_name, driver_key) for the first connected device."""
     unity_url = _get_unity_url()

@@ -193,6 +193,109 @@ def legacy_relay(host, state=None, timeout=2.0, retries=1):
     return None
 
 
+def _legacy_call(host, req, timeout=3.0, retries=2):
+    """One request over the legacy protocol on TCP 9999 -> reply dict, or None."""
+    for _ in range(retries + 1):
+        try:
+            s = socket.create_connection((host, 9999), timeout=timeout)
+        except OSError:
+            time.sleep(0.5)
+            continue
+        try:
+            body = _xor(json.dumps(req).encode())
+            s.sendall(struct.pack(">I", len(body)) + body)
+            head = s.recv(4)
+            if len(head) < 4:
+                raise OSError("short header")
+            n = struct.unpack(">I", head)[0]
+            if n > (1 << 20):
+                raise OSError("implausible length")
+            buf = b""
+            while len(buf) < n:
+                chunk = s.recv(n - len(buf))
+                if not chunk:
+                    raise OSError("truncated")
+                buf += chunk
+            return json.loads(_xor(buf, decrypt=True))
+        except (OSError, ValueError, struct.error):
+            time.sleep(0.5)
+        finally:
+            s.close()
+    return None
+
+
+# Outlets that no automatic power action may ever switch, whatever a caller
+# asks for. 'Iris pc' is on the SAME HS300 strip as 'Iris 12v supply': cutting
+# it would take down the machine running this code, and with it the scheduler,
+# the chat and every safety check.
+NEVER_SWITCH_OUTLETS = ("iris pc",)
+
+
+def find_strip_outlet(ips, outlet_alias):
+    """(strip_ip, child_id) of the ONE strip outlet named *outlet_alias*, or None.
+
+    Matched by exact alias (case-insensitive) on every strip among *ips*, never
+    by position: outlet order on a strip is an accident of where things were
+    plugged in. Two outlets with the same name anywhere is treated as not found.
+    """
+    want = outlet_alias.strip().lower()
+    hits = []
+    for ip in ips:
+        reply = _legacy_call(ip, {"system": {"get_sysinfo": {}}})
+        try:
+            children = reply["system"]["get_sysinfo"].get("children") or []
+        except (KeyError, TypeError, AttributeError):
+            continue
+        for c in children:
+            if str(c.get("alias", "")).strip().lower() == want:
+                hits.append((ip, c.get("id")))
+    if len(hits) != 1:
+        if len(hits) > 1:
+            _logger.error("strip outlet %r is ambiguous: %d outlets carry that name",
+                          outlet_alias, len(hits))
+        return None
+    return hits[0]
+
+
+def strip_outlet_state(strip_ip, child_id):
+    """0/1 for one strip outlet, or None if it cannot be read."""
+    reply = _legacy_call(strip_ip, {"system": {"get_sysinfo": {}}})
+    try:
+        for c in reply["system"]["get_sysinfo"].get("children") or []:
+            if c.get("id") == child_id:
+                return int(c.get("state"))
+    except (KeyError, TypeError, ValueError, AttributeError):
+        pass
+    return None
+
+
+def set_strip_outlet(strip_ip, child_id, outlet_alias, on):
+    """Switch one strip outlet; returns the state READ BACK (0/1) or None.
+
+    Refuses any outlet in NEVER_SWITCH_OUTLETS, and re-checks that *child_id*
+    still carries *outlet_alias* immediately before switching, so a renamed or
+    re-plugged outlet cannot be switched under an old identity.
+    """
+    if outlet_alias.strip().lower() in NEVER_SWITCH_OUTLETS:
+        _logger.error("set_strip_outlet: refusing to switch %r", outlet_alias)
+        return None
+    reply = _legacy_call(strip_ip, {"system": {"get_sysinfo": {}}})
+    try:
+        names = {c.get("id"): str(c.get("alias", "")).strip().lower()
+                 for c in reply["system"]["get_sysinfo"].get("children") or []}
+    except (KeyError, TypeError, AttributeError):
+        return None
+    current = names.get(child_id)
+    if current != outlet_alias.strip().lower() or current in NEVER_SWITCH_OUTLETS:
+        _logger.error("set_strip_outlet: outlet %s is now %r, not %r -- not switched",
+                      child_id, current, outlet_alias)
+        return None
+    _legacy_call(strip_ip, {"context": {"child_ids": [child_id]},
+                            "system": {"set_relay_state": {"state": 1 if on else 0}}})
+    time.sleep(1.0)
+    return strip_outlet_state(strip_ip, child_id)
+
+
 async def kasa_do(cfg, instructions):
     """Switch named devices. Returns {name: True/False}, True only if VERIFIED.
 

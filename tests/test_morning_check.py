@@ -1,3 +1,5 @@
+import pytest
+
 from scripts.morning_check import evaluate, KASA_DEVICES
 
 GOOD_VISION = {"camera": True, "closed": True, "parked": True, "scope_verdict": "safe",
@@ -143,3 +145,48 @@ def test_implausible_records_are_kept_out_of_the_baseline(tmp_path, monkeypatch)
                            (GOOD_SPEED, BOGUS, dict(GOOD_SPEED, download_mbps=88.0))) + "\n")
     monkeypatch.setattr(mc, "LOG_PATH", str(p))
     assert mc._speed_history() == [91.7, 88.0]
+
+
+# --- Pegasus self-recovery (owner, 2026-10-01) ------------------------------
+
+from scripts.morning_check import pegasus_cycle_refusal
+
+AT_REST = dict(unity="no_device", mount_relay=0, nina_running=False,
+               imaging_state="NONE", scheduler_state="WAITING_FOR_NOON", night=False)
+
+
+def test_cycle_allowed_only_at_rest_with_unity_up_and_no_box():
+    assert pegasus_cycle_refusal(**AT_REST) is None
+
+
+@pytest.mark.parametrize("change", [
+    {"unity": "down"}, {"unity": "connected"}, {"unity": None},
+    {"night": True}, {"night": None},
+    {"nina_running": True}, {"nina_running": None},
+    {"imaging_state": "IN_MAIN"}, {"imaging_state": None},
+    {"scheduler_state": "IMAGING"}, {"scheduler_state": None},
+    {"mount_relay": 1}, {"mount_relay": None},
+])
+def test_anything_unknown_or_busy_refuses_the_cycle(change):
+    assert pegasus_cycle_refusal(**dict(AT_REST, **change))
+
+
+def test_recovered_box_is_a_warning_not_a_problem():
+    rec = {"unity": "no_device", "cycled": True, "outlet": "Iris 12v supply", "reconnect_s": 15}
+    p, w = evaluate(GOOD_VISION, GOOD_KASA, GOOD_PEG, pegasus_recovery=rec)
+    assert p == [] and len(w) == 1 and "reconnected in 15s" in w[0]
+
+
+def test_pegasus_messages_name_the_actual_failure():
+    p, _ = evaluate(GOOD_VISION, GOOD_KASA, None, pegasus_recovery={"unity": "down"})
+    assert "Unity is not answering" in p[0]
+    p, _ = evaluate(GOOD_VISION, GOOD_KASA, None,
+                    pegasus_recovery={"unity": "no_device", "refused": "N.I.N.A may be running"})
+    assert "Unity is running" in p[0] and "N.I.N.A may be running" in p[0]
+    p, _ = evaluate(GOOD_VISION, GOOD_KASA, None,
+                    pegasus_recovery={"unity": "no_device", "cycled": True, "outlet": "Iris 12v supply"})
+    assert "still not connected" in p[0] and "restart the Unity app" in p[0]
+    p, _ = evaluate(GOOD_VISION, GOOD_KASA, None,
+                    pegasus_recovery={"cycled": True, "outlet": "Iris 12v supply",
+                                      "error": "outlet did NOT come back ON -- the box is unpowered"})
+    assert "unpowered" in p[0]

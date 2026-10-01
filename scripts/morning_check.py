@@ -27,7 +27,10 @@ these must hold:
 Anything that cannot be READ counts as a failure, the same way it does at the
 roof gates: "could not confirm off" is not "off". Nothing here moves hardware
 except what a normal vision read does (camera to its reference pose, inside
-light on then restored). The mount is expected to be unpowered, so PWI4 has no
+light on then restored), and one power action: when Unity is running but the
+Pegasus box has dropped out of it, and the observatory is known to be at rest,
+the box's 12 V supply outlet is cycled to bring it back (owner, 2026-10-01; see
+recover_pegasus). The mount is expected to be unpowered, so PWI4 has no
 park state to offer and is not asked; the tag is the park sensor.
 
 SCOPE TAG HEALTH. The trigger for this check was the scope tag's corner starting
@@ -148,7 +151,7 @@ def speed_warning(speed, history):
 
 
 def evaluate(vision, kasa, pegasus, speed=NOT_MEASURED, speed_history=(),
-             cameras=None):
+             cameras=None, pegasus_recovery=None):
     """(problems, warnings) from the readings. Pure, so it can be tested.
 
     vision  : {"closed", "parked", "camera", "why", "scope_tag_frames", "frames",
@@ -200,9 +203,27 @@ def evaluate(vision, kasa, pegasus, speed=NOT_MEASURED, speed_history=(),
     if resolved.get(ROOF_MOTOR) == 1:
         problems.append("roof motor is powered ON (its relay is live)")
 
+    rec = pegasus_recovery or {}
     if pegasus is None:
-        problems.append("Pegasus could not be read (Unity not running?): ports 1-3 unconfirmed")
+        if rec.get("error"):
+            problems.append("Pegasus: cycled %r but %s"
+                            % (rec.get("outlet"), rec["error"]))
+        elif rec.get("cycled"):
+            problems.append("Pegasus box still not connected in Unity after cycling %r -- "
+                            "restart the Unity app; ports 1-3 unconfirmed" % rec.get("outlet"))
+        elif rec.get("unity") == "down":
+            problems.append("Pegasus could not be read: Unity is not answering; "
+                            "ports 1-3 unconfirmed")
+        elif rec.get("unity") == "no_device":
+            problems.append("Pegasus box not connected in Unity (Unity is running); not "
+                            "power-cycled automatically because %s; ports 1-3 unconfirmed"
+                            % rec.get("refused", "of an unknown reason"))
+        else:
+            problems.append("Pegasus could not be read: ports 1-3 unconfirmed")
     else:
+        if rec.get("cycled"):
+            warnings.append("Pegasus box had dropped out of Unity; cycled %r and it "
+                            "reconnected in %ss" % (rec.get("outlet"), rec.get("reconnect_s")))
         on = [p for p in (1, 2, 3) if pegasus.get(p) != 0]
         if on:
             problems.append("Pegasus port(s) not off: %s"
@@ -232,6 +253,158 @@ def read_pegasus():
     except Exception:  # noqa: BLE001
         _logger.warning("morning check: Pegasus read raised", exc_info=True)
         return None
+
+
+# --- Pegasus self-recovery ---------------------------------------------------
+#
+# Owner, 2026-10-01: "in the spirit of continuous up time, if the same situation
+# occurs again in the morning check, you can cycle the power". The situation is
+# Unity running and answering but reporting no device (2026-09-10, 2026-10-01).
+# Cycling the box's 12 V supply fixed it on 10-01 with Unity left running, so
+# no app is restarted here -- this task runs where it could not show one anyway.
+#
+# The outlet is on the same HS300 strip as 'Iris pc'. It is found by exact name,
+# re-checked before each switch, and kasa_utils refuses 'Iris pc' outright.
+PEGASUS_SUPPLY_OUTLET = "Iris 12v supply"
+PEGASUS_CYCLE_OFF_S = 10
+PEGASUS_RECONNECT_WAIT_S = 120
+PEGASUS_POLL_S = 5
+
+
+def pegasus_cycle_refusal(unity, mount_relay, nina_running, imaging_state,
+                          scheduler_state, night):
+    """Why the box's supply must NOT be cycled now, or None if it may be. Pure.
+
+    Every input that could not be read arrives as None and refuses: a power cut
+    is only made when the observatory is KNOWN to be at rest.
+    """
+    if unity != "no_device":
+        return "Unity is %s, not running-without-the-box" % (unity or "unknown")
+    if night is not False:
+        return "it is not confirmed daytime"
+    if nina_running is not False:
+        return "N.I.N.A may be running"
+    if imaging_state != "NONE":
+        return "imaging state is %s" % (imaging_state or "unknown")
+    if scheduler_state is None or scheduler_state == "IMAGING":
+        return "the scheduler is %s" % (scheduler_state or "unknown")
+    if mount_relay != 0:
+        return "the mount is not confirmed off"
+    return None
+
+
+def _nina_running():
+    """True/False, or None if the process list could not be read."""
+    import subprocess
+    try:
+        out = subprocess.run(["tasklist", "/FI", "IMAGENAME eq NINA.exe"],
+                             capture_output=True, text=True, timeout=30).stdout or ""
+    except Exception:  # noqa: BLE001
+        return None
+    return "NINA.exe" in out
+
+
+def _first_line(path):
+    try:
+        with open(path) as fh:
+            return fh.readline().strip()
+    except OSError:
+        return None
+
+
+def _pegasus_context():
+    """The facts pegasus_cycle_refusal needs, read here so that stays pure."""
+    from hardware_control import pegasus
+    from iris_astronomy import sun
+    line = _first_line("imaging.txt")
+    parts = (line or "").split()
+    imaging = parts[1] if len(parts) == 2 and parts[0] == "IMAGING_STATE" else None
+    if line is None:
+        imaging = "NONE"          # same default as super_user_commands.get_imaging_state
+    try:
+        with open("scheduler_state.json") as fh:
+            sched = json.load(fh).get("state")
+    except (OSError, ValueError):
+        sched = None
+    try:
+        night = bool(sun.is_night()[0])
+    except Exception:  # noqa: BLE001
+        night = None
+    return {"unity": pegasus.unity_status(), "nina_running": _nina_running(),
+            "imaging_state": imaging, "scheduler_state": sched, "night": night}
+
+
+def recover_pegasus(kasa):
+    """Cycle the box's 12 V supply if, and only if, it is the known failure and safe.
+
+    Returns (levels, recovery): levels is a fresh port read (None if still
+    unreadable); recovery records what was decided and done, for the log and the
+    message.
+    """
+    from hardware_control import kasa_utils as ku
+    ctx = _pegasus_context()
+    mount = (kasa.get("resolved") or {}).get(MOUNT)
+    rec = dict(ctx, outlet=PEGASUS_SUPPLY_OUTLET, cycled=False)
+    try:
+        from configs import config
+        enabled = (config.data().get("pegasus") or {}).get("auto_power_cycle", True)
+    except Exception:  # noqa: BLE001
+        enabled = True
+    why = None if enabled else "auto_power_cycle is off in config"
+    why = why or pegasus_cycle_refusal(ctx["unity"], mount, ctx["nina_running"],
+                                       ctx["imaging_state"], ctx["scheduler_state"],
+                                       ctx["night"])
+    if why:
+        rec["refused"] = why
+        _logger.warning("morning check: Pegasus not recovered automatically: %s", why)
+        return None, rec
+
+    try:
+        dev_map = asyncio.run(ku.make_discovery_map())
+    except Exception as exc:  # noqa: BLE001
+        rec["refused"] = "Kasa discovery failed (%s)" % type(exc).__name__
+        return None, rec
+    hit = ku.find_strip_outlet(sorted(set(dev_map.values())), PEGASUS_SUPPLY_OUTLET)
+    if hit is None:
+        rec["refused"] = "outlet %r not found on any strip" % PEGASUS_SUPPLY_OUTLET
+        return None, rec
+    strip, child = hit
+
+    _logger.warning("morning check: Pegasus box not connected in Unity -- cycling %r",
+                    PEGASUS_SUPPLY_OUTLET)
+    off = ku.set_strip_outlet(strip, child, PEGASUS_SUPPLY_OUTLET, on=False)
+    rec["off_readback"] = off
+    if off != 0:
+        rec["error"] = "outlet did not read back OFF (%s); left as it was" % off
+        if off is None:
+            ku.set_strip_outlet(strip, child, PEGASUS_SUPPLY_OUTLET, on=True)
+        return None, rec
+    rec["cycled"] = True
+    time.sleep(PEGASUS_CYCLE_OFF_S)
+    on = None
+    for _ in range(3):
+        on = ku.set_strip_outlet(strip, child, PEGASUS_SUPPLY_OUTLET, on=True)
+        if on == 1:
+            break
+        time.sleep(2)
+    rec["on_readback"] = on
+    if on != 1:
+        rec["error"] = "outlet did NOT come back ON -- the box is unpowered"
+        _logger.error("morning check: %r did not come back on", PEGASUS_SUPPLY_OUTLET)
+        return None, rec
+
+    t0 = time.monotonic()
+    levels = None
+    while time.monotonic() - t0 < PEGASUS_RECONNECT_WAIT_S:
+        time.sleep(PEGASUS_POLL_S)
+        levels = read_pegasus()
+        if levels is not None:
+            break
+    rec["reconnect_s"] = round(time.monotonic() - t0) if levels is not None else None
+    _logger.warning("morning check: after the cycle Pegasus %s",
+                    "reconnected in %ss" % rec["reconnect_s"] if levels is not None
+                    else "is still not connected")
+    return levels, rec
 
 
 def _speed_once():
@@ -387,15 +560,24 @@ def main():
     # inside light, which would be pointless to do before knowing the plugs answer.
     kasa = read_kasa()
     pegasus = read_pegasus()
+    recovery = None
+    if pegasus is None:
+        if args.dry_run:
+            from hardware_control import pegasus as peg
+            recovery = {"unity": peg.unity_status(), "refused": "this is a --dry-run"}
+        else:
+            pegasus, recovery = recover_pegasus(kasa)
     vision = read_vision()
     cameras = read_cameras()
     history = _speed_history()
     speed, speed_tries = read_speed(history)
-    problems, warnings = evaluate(vision, kasa, pegasus, speed, history, cameras)
+    problems, warnings = evaluate(vision, kasa, pegasus, speed, history, cameras,
+                                  pegasus_recovery=recovery)
 
     entry = {"when": datetime.now().astimezone().isoformat(timespec="seconds"),
              "ok": not problems, "problems": problems, "warnings": warnings,
-             "vision": vision, "kasa": kasa, "pegasus": pegasus, "speed": speed,
+             "vision": vision, "kasa": kasa, "pegasus": pegasus,
+             "pegasus_recovery": recovery, "speed": speed,
              "speed_attempts": speed_tries, "cameras": cameras}
     _append_log(entry)
     print(json.dumps(entry, indent=2, default=str))
