@@ -7,7 +7,10 @@ def _rows(night, n, a=1.0, sigma=1.0):
 
 
 def test_night_is_the_session_folder():
-    p = r"C:\T\ngc7380\cdk17\2026-10-01\LIGHT\2026-10-02_01-54-41_S-II_2_300.00s_0021.fits"
+    # Forward slashes: CI runs on Linux, where a backslash is not a path
+    # separator (this test failed there written with backslashes, 2026-10-02).
+    # Path() on Windows accepts both, so real Windows paths are covered too.
+    p = "C:/T/ngc7380/cdk17/2026-10-01/LIGHT/2026-10-02_01-54-41_S-II_2_300.00s_0021.fits"
     assert night_of(p) == "2026-10-01"
 
 
