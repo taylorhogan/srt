@@ -806,7 +806,12 @@ def visual_status(retries: int = 1, delay: float = 3.0, frames: int | None = Non
         last_match = {"source": "kasa", "error": det.get("why") or "no frame from the camera",
                       "trusted": False, "is_parked": False, "is_closed": bool(closed),
                       "is_open": bool(is_open), "roof_source": source,
-                      "north": {"state": north_state, "verdicts": nd.get("verdicts")}}
+                      "north": {"state": north_state, "verdicts": nd.get("verdicts"),
+                                "off_shut_px": next((f.get("off_shut_px") for f in reversed(
+                                    nd.get("per_frame") or []) if f.get("verdict")), None),
+                                "off_open_px": next((f.get("off_open_px") for f in reversed(
+                                    nd.get("per_frame") or []) if f.get("verdict")), None),
+                                "why": nd.get("why")}}
         _logger.warning("vision parked=False closed=%s open=%s -- votes parked 0/0 lit "
                         "(0 frames); %s; roof by %s (north %s)",
                         closed, is_open, last_match["error"], source, north_state)

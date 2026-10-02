@@ -118,3 +118,24 @@ def test_a_false_open_needs_both_cameras_to_be_wrong_the_same_way():
         c, o, _ = decide("shut", cam_closed, False)
         assert o is False
     assert decide("open", True, False)[1] is False
+
+
+# --- what the operator is told (north camera only, 2026-10-02) -------------
+
+from sentry.north_roof import user_line
+
+
+def test_user_line_reports_only_the_north_tag():
+    n = {"state": "shut", "verdicts": ["shut"] * 3, "off_shut_px": 0.8, "off_open_px": 649.0}
+    assert user_line(n) == "North camera: roof SHUT, tag 1 px off its shut position (3/3 frames)"
+    n = {"state": "open", "verdicts": ["open"] * 3, "off_shut_px": 564.0, "off_open_px": 7.2}
+    assert user_line(n) == "North camera: roof OPEN, tag 7 px off its open position (3/3 frames)"
+
+
+def test_user_line_unknown_says_why():
+    assert "tag not at either position" in user_line(
+        {"state": "unknown", "verdicts": ["elsewhere", "shut", "shut"]})
+    assert "tag not decoded (0/3 frames)" in user_line(
+        {"state": "unknown", "verdicts": ["absent"] * 3})
+    assert "camera not at" in user_line({"state": "unknown", "why": "camera not at (102, -9)"})
+    assert user_line(None) == "North camera: no reading"

@@ -360,38 +360,15 @@ def _post_vision_decision_image(parked: bool, closed: bool, is_open: bool) -> No
         img = cfg["camera safety"]["scope_view"]
         lm = vision_safety.last_match or {}
         roof = "closed" if closed else ("open" if is_open else "unknown")
-        # Name which gate a template failed (position vs confidence) — but only
-        # for templates whose failure explains a negative/ambiguous verdict.
-        # A closed roof makes the "open" template fail by design (and vice
-        # versa); listing that reads like a problem when the read is clean.
-        suspects = []
-        if not parked:
-            suspects.append("parked")
-        if not closed and not is_open:
-            suspects.extend(["closed", "open"])
-        fails = " ".join(
-            f"{name}:{lm.get(name, {}).get('verdict')}"
-            for name in suspects
-            if lm.get(name, {}).get("verdict") not in (None, "ok")
-        )
-        votes = lm.get("votes") or {}
+        # North camera ONLY in what the operator reads (operator decision
+        # 2026-10-02); Iris cam's offsets, votes and template verdicts stay in
+        # iris.log, where the vision line above already records them.
+        from sentry import north_roof
+        unconfirmed = lm.get("roof_source") not in ("north", "north+cam")
         caption = (
             f"Vision: roof={roof} scope={'parked' if parked else 'unparked'} | "
-            f"scope tag {lm.get('parked', {}).get('error', 0):.0f}px off park, "
-            f"roof tag {lm.get('closed', {}).get('error', 0):.0f}px off shut | "
-            f"frames parked {votes.get('parked', 0)} closed {votes.get('closed', 0)} "
-            f"open {votes.get('open', 0)} of {lm.get('rungs', 0)}; "
-            f"pose {'verified' if lm.get('pose_verified') else 'UNVERIFIED'}"
-            + (f" | north tag {lm['north'].get('state')}"
-               + (f" {lm['north'].get('off_shut_px'):.0f}px off shut"
-                  if lm['north'].get('state') == 'shut' and lm['north'].get('off_shut_px') is not None
-                  else f" {lm['north'].get('off_open_px'):.0f}px off open"
-                  if lm['north'].get('state') == 'open' and lm['north'].get('off_open_px') is not None
-                  else "")
-               + f", roof by {lm.get('roof_source')}"
-               if lm.get('north') else "")
-            + (f" | {fails}" if fails else "")
-            + (f" | {lm['error']}" if lm.get("error") else "")
+            + north_roof.user_line(lm.get("north"))
+            + (" | roof not confirmed by the north camera" if unconfirmed else "")
         )
         pushover.push_message(caption, img)
     except Exception:
@@ -403,7 +380,14 @@ def _vision_fail_reason(state: str) -> str:
     which gate failed — template found in the wrong place ('position') or match
     confidence under the threshold ('confidence') — with the measured values.
     Empty string when the state passed or no verdict is available."""
-    info = (vision_safety.last_match or {}).get(state) or {}
+    lm = vision_safety.last_match or {}
+    if state in ("closed", "open") and lm.get("north") is not None:
+        # The roof is reported from the north camera only (operator decision
+        # 2026-10-02). 'parked' keeps Iris cam's scope tag: the north camera
+        # cannot see the scope at all.
+        from sentry import north_roof
+        return " — " + north_roof.user_line(lm.get("north"))
+    info = lm.get(state) or {}
     verdict = info.get("verdict")
     if not verdict or verdict == "ok":
         return ""

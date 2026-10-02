@@ -122,6 +122,38 @@ def decide(north_state, cam_closed, cam_open):
     return False, False, "none"
 
 
+def user_line(north):
+    """The roof as the OPERATOR is told it: the north camera only. Pure.
+
+    Operator decision 2026-10-02: every message to the user reports the north
+    camera alone ("any message to the user should only use the north camera.
+    You may continue internally using both"). Iris cam still vetoes and falls
+    back inside vision_safety; its tag offsets just stop appearing in chat and
+    Pushover, where a 4 px Iris cam roof tag beside a 92 px north tag read as
+    two contradictory answers to one question.
+
+    *north* is vision_safety.last_match["north"]: {"state", "verdicts",
+    "off_shut_px", "off_open_px", "why"}.
+    """
+    if not north:
+        return "North camera: no reading"
+    state = north.get("state") or "unknown"
+    verdicts = north.get("verdicts") or []
+    decoded = sum(1 for v in verdicts if v in ("shut", "open", "elsewhere"))
+    frames = " (%d/%d frames)" % (decoded, len(verdicts)) if verdicts else ""
+    if state == "shut" and north.get("off_shut_px") is not None:
+        return "North camera: roof SHUT, tag %.0f px off its shut position%s" % (
+            north["off_shut_px"], frames)
+    if state == "open" and north.get("off_open_px") is not None:
+        return "North camera: roof OPEN, tag %.0f px off its open position%s" % (
+            north["off_open_px"], frames)
+    if state in ("shut", "open"):
+        return "North camera: roof %s%s" % (state.upper(), frames)
+    why = north.get("why") or ("tag not at either position" if "elsewhere" in verdicts
+                               else "tag not decoded" if verdicts else "no frame")
+    return "North camera: roof UNKNOWN: %s%s" % (why, frames)
+
+
 def combine(frames):
     """One verdict from per-frame answers ('shut'/'open'/'elsewhere'/'absent'/'blind').
 
