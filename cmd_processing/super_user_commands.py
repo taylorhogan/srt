@@ -3747,6 +3747,7 @@ def get_super_user_commands() -> dict[str, Callable]:
         "stats": image_stats_cmd,
         "seen": seen_cmd,
         "snr": snr_cmd,
+        "night": night_cmd,
         "transit": transit_cmd,
         "transient": transient_cmd,
         "diff": transient_cmd,
@@ -4157,6 +4158,16 @@ def doit_cmd(words: list[str], account: str) -> None:
                 _snr_run(eon_words)
             except Exception:
                 _logger.exception("End-of-night SNR failed for %s", eon_dso)
+        # How much tonight helped or hurt each filter (owner, 2026-10-02). After
+        # the SNR loop, not inside it: it re-registers every frame of each
+        # filter, and a second heavy pass alongside the convergence run is what
+        # the single-flight SNR lock exists to prevent.
+        eon_named = [d for d in eon_dsos if d]
+        if eon_named:
+            try:
+                _night_run(["", "night"] + eon_named)
+            except Exception:
+                _logger.exception("End-of-night night contribution failed")
 
 
 def _newest_fits_mtime(image_dir: Path) -> float:
@@ -4318,6 +4329,34 @@ def snr_cmd(words: list[str], account: str) -> None:
     core without GIL contention with a concurrent hr/other command.
     """
     jobs.spawn_process(_snr_run, args=(words,))
+
+
+def night_cmd(words: list[str], account: str) -> None:
+    """How much one night helped or hurt each filter's stack. Background job.
+
+    Usage: night <dso> [<dso> ...] [YYYY-MM-DD]   (default: each target's newest night)
+    """
+    jobs.spawn_process(_night_run, args=(words,))
+
+
+def _night_run(words: list[str]) -> None:
+    """Worker for night_cmd and the end-of-night report (fits_processing/night_contribution)."""
+    from fits_processing import night_contribution as nc
+    args = [w for w in words[2:] if w.strip()]
+    night = next((a for a in args if len(a) == 10 and a[4] == "-" and a[7] == "-"), None)
+    dsos = [a.lower() for a in args if a != night]
+    if not dsos:
+        social_server.post_social_message("Usage: night <dso> [<dso> ...] [YYYY-MM-DD]")
+        return
+    _cancel = jobs.cancel_cb_for(jobs.get_current_job())
+    for dso in dsos:
+        try:
+            n, results = nc.analyse(dso, night, progress_cb=social_server.post_social_message,
+                                    cancel_cb=_cancel)
+            social_server.post_social_message(nc.report(dso, n, results))
+        except Exception:
+            _logger.exception("night contribution failed for %s", dso)
+            social_server.post_social_message(f"Night contribution failed for {dso} -- see iris.log")
 
 
 def eon_snr_words(dso) -> list:

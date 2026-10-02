@@ -224,6 +224,14 @@ HELP: dict[str, dict] = {
         "usage": ["snr", "snr <dso>"],
         "examples": ["snr", "snr m31"],
     },
+    "night": {
+        "category": "super",
+        "summary": "How much one night helped or hurt each filter's stack (SNR with vs without it).",
+        "usage": ["night <dso> [<dso> ...]", "night <dso> YYYY-MM-DD"],
+        "examples": ["night ngc7380 m33", "night ngc7380 2026-10-01"],
+        "notes": ["Runs automatically at the end of a night, after the SNR analysis.",
+                  "Default night: each target's newest session folder."],
+    },
     "transit": {
         "category": "super",
         "summary": "Search saved subs for transit-like dips on every star in the field.",
