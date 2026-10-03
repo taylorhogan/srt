@@ -439,6 +439,7 @@ def plot_my_dso_and_horizon(dso: FixedTarget, my_observatory: Observer, observe_
     clipped_seeing = []  # 850 hPa wind in real km/h — drawn on its own right axis
     weather_ok = True
     issues: set[str] = set()
+    window_hours_with_forecast = 0
     # Judge weather only during the imaging window (dark + above horizon).
     # If the object never rises tonight, fall back to the whole plotted span.
     window_finish = finish_time if finish_time is not None else local_datetime[-1]
@@ -479,6 +480,26 @@ def plot_my_dso_and_horizon(dso: FixedTarget, my_observatory: Observer, observe_
 
             if found_hour:
                 break
+        if not found_hour:
+            # No forecast for this hour (past hours are dropped by the fetch,
+            # and an outage drops them all). Every series must still carry one
+            # point per plotted time: on 2026-10-02 22:00 a failed fetch left
+            # them empty and `tonight` died in ax.plot with shapes (55,) and (0,).
+            clipped_cloud.append(float('nan'))
+            clipped_pp.append(float('nan'))
+            clipped_wsp.append(float('nan'))
+            clipped_hum.append(float('nan'))
+            clipped_smoke.append(float('nan'))
+            clipped_seeing.append(float('nan'))
+        elif start_time is None or start_time <= local_datetime[i] <= window_finish:
+            window_hours_with_forecast += 1
+
+    if window_hours_with_forecast == 0:
+        # Nothing to judge: say so rather than "good". An empty forecast used
+        # to leave weather_ok True. (The scheduler's planner already counts a
+        # missing hour as not good, so this never let a night through.)
+        weather_ok = False
+        issues.add("no forecast available")
 
     if start_time is not None:
         window_txt = f"between {format_local_time(start_time)} and {format_local_time(window_finish)}"
@@ -492,13 +513,6 @@ def plot_my_dso_and_horizon(dso: FixedTarget, my_observatory: Observer, observe_
         else:
             weather_msg = f"Weather not ok tonight: {' and '.join(sorted(issues))}"
 
-        if not found_hour:
-            clipped_cloud.append(float('nan'))
-            clipped_pp.append(float('nan'))
-            clipped_wsp.append(float('nan'))
-            clipped_hum.append(float('nan'))
-            clipped_smoke.append(float('nan'))
-            clipped_seeing.append(float('nan'))
 
     # Always report the smoke level for the imaging window, even when it's clear.
     if peak_pm25_aqi is not None:

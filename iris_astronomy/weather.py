@@ -1,3 +1,4 @@
+import logging
 import time
 from datetime import datetime, timedelta, timezone as dt_timezone
 from zoneinfo import ZoneInfo
@@ -16,6 +17,7 @@ if __package__ is None or __package__ == "":
 from configs import config
 
 cfg = config.data()
+_logger = logging.getLogger(__name__)
 
 
 
@@ -160,7 +162,9 @@ def get_weather_by_hour(lat: float, lon: float, hours: int) -> tuple[list, list,
             try:
                 _office, nws_sky = get_nws_sky_cover(lat, lon)
             except (requests.RequestException, KeyError, ValueError) as e:
-                print(f"NWS sky cover unavailable, using Open-Meteo cloud: {e}")
+                # Logged, not just printed: a print goes nowhere from the chat
+                # server, and on 2026-10-02 22:00 a failed fetch left no trace.
+                _logger.warning("NWS sky cover unavailable, using Open-Meteo cloud: %s", e)
         n_nws = 0
 
 
@@ -187,7 +191,9 @@ def get_weather_by_hour(lat: float, lon: float, hours: int) -> tuple[list, list,
             print(f"cloud cover: NWS for {n_nws} of {len(local_cloud_covers)} hours, Open-Meteo for the rest")
 
     except requests.RequestException as e:
-        print(f"Error fetching forecast: {e}")
+        # Logged: an empty forecast crashed `tonight` at 22:00 on 2026-10-02 and
+        # the print that said why went to a console nobody reads.
+        _logger.warning("Open-Meteo forecast fetch failed: %s", e)
 
     return local_cloud_times, local_cloud_covers, local_precipitation_probability, local_wind_speed, local_humidity
 
