@@ -423,16 +423,15 @@ def analyse(recording, downscale=2, tol=TOL_PX, refresh=False):
 
 
 # The clip: the seconds around the fitted track, cropped to where it happened,
-# at real speed, with the agreeing detections drawn as a trail. Cut only for a
+# at real speed, and NOTHING drawn on it -- the owner wants "no annotations,
+# just the clip" (2026-10-03); the trail, the tracking circle and the caption
+# live on the annotated still and in the chat message. Still cut only for a
 # confirmed track -- a line fitted through noise makes an equally convincing
 # movie, and the annotated still has fooled the eye that way before.
 CLIP_PAD_S    = 5.0    # seconds of context either side of the track
 CLIP_MAX_S    = 60.0
 CLIP_SIZE     = 800    # output square, px
 CLIP_MARGIN   = 120    # px of frame kept around the track's ends
-CLIP_STRIP    = 56     # caption strip height
-CLIP_TRAIL_LAG_S = 1.5 # the trail stops this far behind the station, so the
-                       # dots never sit on top of the thing being shown
 CLIP_STRETCH  = (1.0, 99.7)   # percentiles of the first crop mapped to 0..255,
                               # fixed for the whole clip so it does not flicker
 
@@ -443,16 +442,6 @@ def _stretch_lut(crop, pcts=CLIP_STRETCH):
     hi = max(hi, lo + 8)
     lut = np.clip((np.arange(256) - lo) * 255.0 / (hi - lo), 0, 255)
     return lut.astype(np.uint8)
-
-
-def _fit_caption(label, width, scale=0.85, thickness=2, pad=12):
-    """Shrink the font until the caption fits the strip."""
-    while scale > 0.45:
-        (w, _), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, scale, thickness)
-        if w <= width - 2 * pad:
-            break
-        scale -= 0.05
-    return scale
 
 
 def clip_window(t_first, t_last, fps, nframes, pad_s=CLIP_PAD_S, max_s=CLIP_MAX_S):
@@ -504,8 +493,10 @@ def summary_line(out):
 
 
 def make_clip(out, out_path=None):
-    """Write <base>_clip.mp4 (H.264, plays inline in the chat) and return its path."""
-    fit, dets, video, fps = out["_fit"], out["_dets"], out["_video"], out["_fps"]
+    """Write <base>_clip.mp4 (H.264, plays inline in the chat) and return its path.
+
+    The pass region, cropped and brightness-stretched, with no overlays."""
+    fit, video, fps = out["_fit"], out["_video"], out["_fps"]
     a, b = clip_window(fit["t_first"], fit["t_last"], fps, out["_nframes"])
     cap = cv2.VideoCapture(video)
     if not cap.isOpened():
@@ -515,23 +506,15 @@ def make_clip(out, out_path=None):
     ends = [(fit["x0"] + fit["vx"] * t, fit["y0"] + fit["vy"] * t)
             for t in (fit["t_first"], fit["t_last"])]
     x, y, side = crop_box(ends[0][0], ends[0][1], ends[1][0], ends[1][1], fw, fh)
-    scale = CLIP_SIZE / float(side)
-    A = np.array([(d[0], d[1], d[2]) for d in dets])[fit["mask"]]      # t, x, y agreeing
     out_path = out_path or os.path.splitext(video)[0] + "_clip.mp4"
     # Media Foundation is the backend that writes real H.264 on this machine;
     # the ffmpeg build lacks openh264 and would fall back to MPEG-4 part 2,
     # which browsers do not play.
     writer = cv2.VideoWriter(out_path, cv2.CAP_MSMF, cv2.VideoWriter_fourcc(*"avc1"),
-                             float(fps), (CLIP_SIZE, CLIP_SIZE + CLIP_STRIP))
+                             float(fps), (CLIP_SIZE, CLIP_SIZE))
     if not writer.isOpened():
         cap.release()
         raise RuntimeError("H.264 writer would not open for %s" % out_path)
-    label = "%s  %s  peak alt %.0f deg" % (out["sat"], out["peak"][:16].replace("T", " "),
-                                          out["peak_alt_deg"])
-    if out.get("deg_per_s"):
-        label += "  %.2f deg/s" % out["deg_per_s"]
-    font_scale = _fit_caption(label, CLIP_SIZE)
-    gold, green = (0, 215, 255), (0, 255, 120)
     lut = None
     i = 0
     while i < b:
@@ -539,23 +522,12 @@ def make_clip(out, out_path=None):
         if not ok:
             break
         if i >= a:
-            t = i / fps
             crop = frame[y:y + side, x:x + side]
             if side != CLIP_SIZE:
                 crop = cv2.resize(crop, (CLIP_SIZE, CLIP_SIZE), interpolation=cv2.INTER_AREA)
             if lut is None:
                 lut = _stretch_lut(crop)
-            crop = cv2.LUT(crop, lut)
-            for (_, xx, yy) in A[A[:, 0] <= t - CLIP_TRAIL_LAG_S]:
-                cv2.circle(crop, (int((xx - x) * scale), int((yy - y) * scale)), 3, green, -1)
-            if fit["t_first"] <= t <= fit["t_last"]:
-                px = fit["x0"] + fit["vx"] * t
-                py = fit["y0"] + fit["vy"] * t
-                cv2.circle(crop, (int((px - x) * scale), int((py - y) * scale)), 18, gold, 2)
-            canvas = np.zeros((CLIP_SIZE + CLIP_STRIP, CLIP_SIZE, 3), np.uint8)
-            canvas[CLIP_STRIP:] = crop
-            cv2.putText(canvas, label, (12, 38), cv2.FONT_HERSHEY_SIMPLEX, font_scale, gold, 2)
-            writer.write(canvas)
+            writer.write(cv2.LUT(crop, lut))
         i += 1
     cap.release()
     writer.release()
