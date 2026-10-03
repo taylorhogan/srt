@@ -119,7 +119,28 @@ def get_nws_sky_cover(lat: float, lon: float, timeout: float = 10, use_cache: bo
 
 
 def get_weather_by_hour(lat: float, lon: float, hours: int) -> tuple[list, list, list, list, list]:
-    # Open-Meteo Forecast API (no key needed)
+    """(hours, cloud, precip prob, wind, humidity) lists keyed by CLOCK HOUR only.
+    See get_weather_by_datetime for why that is ambiguous late in the evening."""
+    rows = _hourly_rows(lat, lon, hours)
+    return ([r[0].hour for r in rows], [r[1] for r in rows], [r[2] for r in rows],
+            [r[3] for r in rows], [r[4] for r in rows])
+
+
+def get_weather_by_datetime(lat: float, lon: float, hours: int) -> dict:
+    """{(year, month, day, hour) local: (cloud %, precip %, wind, humidity)}.
+
+    get_weather_by_hour keys by clock hour alone, so once tonight's early hours
+    have passed (they are dropped as past), a lookup for 20:00 finds TOMORROW's
+    20:00. On 2026-10-02 at 22:00 that painted tonight's cloudy 20:00-22:00 with
+    tomorrow evening's 0-2%. Callers that place values on a specific night key
+    by date as well.
+    """
+    return {(d.year, d.month, d.day, d.hour): (c, p, w, h)
+            for d, c, p, w, h in _hourly_rows(lat, lon, hours)}
+
+
+def _hourly_rows(lat: float, lon: float, hours: int) -> list:
+    """[(local datetime, cloud, precip prob, wind 80 m, humidity)] from this hour on."""
     forecast_url = "https://api.open-meteo.com/v1/forecast"
     forecast_days = max(1, (hours + 23) // 24)
     params = {
@@ -129,12 +150,7 @@ def get_weather_by_hour(lat: float, lon: float, hours: int) -> tuple[list, list,
         "forecast_days": forecast_days,
         "timezone": "auto"
     }
-
-    local_cloud_times: list = []
-    local_cloud_covers: list = []
-    local_precipitation_probability: list = []
-    local_wind_speed: list = []
-    local_humidity: list = []
+    rows: list = []
 
     try:
         # Timeout is not optional here. Without one this call inherits the
@@ -171,7 +187,9 @@ def get_weather_by_hour(lat: float, lon: float, hours: int) -> tuple[list, list,
         for i in range(len(cloud_times)):
             forecast_time = datetime.fromisoformat(cloud_times[i])
             forcast_time_local = forecast_time.astimezone(local_tz)
-            if forcast_time_local < now:
+            # Keep the hour that is under way: it has not ended, and dropping it
+            # left the current hour blank in every report.
+            if forcast_time_local + timedelta(hours=1) <= now:
                 continue
 
             time_str = forcast_time_local.strftime("%Y-%m-%d %H:%M")
@@ -182,20 +200,17 @@ def get_weather_by_hour(lat: float, lon: float, hours: int) -> tuple[list, list,
             else:
                 n_nws += 1
             print(f"{hour}: {cover}% cloud cover")
-            local_cloud_times.append(hour)
-            local_cloud_covers.append(cover)
-            local_precipitation_probability.append(precipitation_probability[i])
-            local_wind_speed.append(wind_speed[i])
-            local_humidity.append(humidity[i])
+            rows.append((forcast_time_local, cover, precipitation_probability[i],
+                         wind_speed[i], humidity[i]))
         if CLOUD_SOURCE == "nws":
-            print(f"cloud cover: NWS for {n_nws} of {len(local_cloud_covers)} hours, Open-Meteo for the rest")
+            print(f"cloud cover: NWS for {n_nws} of {len(rows)} hours, Open-Meteo for the rest")
 
     except requests.RequestException as e:
         # Logged: an empty forecast crashed `tonight` at 22:00 on 2026-10-02 and
         # the print that said why went to a console nobody reads.
         _logger.warning("Open-Meteo forecast fetch failed: %s", e)
 
-    return local_cloud_times, local_cloud_covers, local_precipitation_probability, local_wind_speed, local_humidity
+    return rows
 
 
 def get_air_quality_by_hour(lat: float, lon: float, hours: int) -> tuple[list, list, list, list]:

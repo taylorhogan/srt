@@ -410,7 +410,12 @@ def plot_my_dso_and_horizon(dso: FixedTarget, my_observatory: Observer, observe_
     ax.plot(local_datetime, moon_alt, color='blue', label = 'Moon(' + str(illumination) + "%)",linewidth=2)
 
     #plot the cloud cover
-    cloud_times,cloud_covers,pp,wsp,hum = weather.get_weather_by_hour(latitude, longitude, 48)
+    # Keyed by local DATE and hour, not hour alone: late in the evening the
+    # night's early hours are past and absent, and an hour-only lookup filled
+    # them with tomorrow's values (2026-10-02 22:00: tonight's cloudy 20-22h
+    # drawn and judged as tomorrow's 0-2%).
+    forecast = weather.get_weather_by_datetime(latitude, longitude, 48)
+    local_tz = pytz.timezone(CFG["location"]["timezone"])
     # Air quality (smoke) — first occurrence of each hour wins (today over tomorrow).
     aq_hours, aq_aod, aq_pm25, aq_pm25_aqi = weather.get_air_quality_by_hour(latitude, longitude, 48)
     pm25_aqi_by_hour: dict = {}
@@ -444,42 +449,41 @@ def plot_my_dso_and_horizon(dso: FixedTarget, my_observatory: Observer, observe_
     # If the object never rises tonight, fall back to the whole plotted span.
     window_finish = finish_time if finish_time is not None else local_datetime[-1]
     for i in range(len(local_datetime)):
-        hour = local_datetime[i].hour
+        t_local = local_datetime[i].astimezone(local_tz)
+        hour = t_local.hour
         found_hour = False
-        for j in range(len(cloud_times)):
-            cloud_time_hour = cloud_times[j]
-            if hour == cloud_time_hour:
-                found_hour = True
-                clipped_cloud.append(cloud_covers[j]/100*90)
-                clipped_pp.append(pp[j]/100*90)
-                clipped_wsp.append(wsp[j]/40*90)
-                clipped_hum.append(hum[j]/100*90)
-                smoke_aqi = pm25_aqi_by_hour.get(hour)
-                clipped_smoke.append(smoke_aqi/150*90 if smoke_aqi is not None else float('nan'))
-                seeing_kmh = seeing_by_hour.get(hour)
-                # Kept in real km/h, unlike every other series here: seeing gets
-                # its own right-hand axis further down. Squeezing it onto the
-                # 0-90 altitude axis is what made it invisible — see there.
-                clipped_seeing.append(seeing_kmh if seeing_kmh is not None else float('nan'))
-                in_window = (start_time is None
-                             or start_time <= local_datetime[i] <= window_finish)
-                if in_window:
-                    hour_pm25_aqi = pm25_aqi_by_hour.get(hour)
-                    hour_issues = weather_issues(cloud_covers[j], pp[j], wsp[j])
-                    if hour_issues:
-                        weather_ok = False
-                        issues.update(hour_issues)
-                    if hour_pm25_aqi is not None and (peak_pm25_aqi is None
-                                                      or hour_pm25_aqi > peak_pm25_aqi):
-                        peak_pm25_aqi = hour_pm25_aqi
-                        peak_pm25 = pm25_by_hour.get(hour)
-                    hour_wind = seeing_by_hour.get(hour)
-                    if hour_wind is not None and (peak_seeing_wind is None
-                                                  or hour_wind > peak_seeing_wind):
-                        peak_seeing_wind = hour_wind
+        f = forecast.get((t_local.year, t_local.month, t_local.day, hour))
+        if f:
+            cloud_j, pp_j, wsp_j, hum_j = f
+            found_hour = True
+            clipped_cloud.append(cloud_j/100*90)
+            clipped_pp.append(pp_j/100*90)
+            clipped_wsp.append(wsp_j/40*90)
+            clipped_hum.append(hum_j/100*90)
+            smoke_aqi = pm25_aqi_by_hour.get(hour)
+            clipped_smoke.append(smoke_aqi/150*90 if smoke_aqi is not None else float('nan'))
+            seeing_kmh = seeing_by_hour.get(hour)
+            # Kept in real km/h, unlike every other series here: seeing gets
+            # its own right-hand axis further down. Squeezing it onto the
+            # 0-90 altitude axis is what made it invisible — see there.
+            clipped_seeing.append(seeing_kmh if seeing_kmh is not None else float('nan'))
+            in_window = (start_time is None
+                         or start_time <= local_datetime[i] <= window_finish)
+            if in_window:
+                hour_pm25_aqi = pm25_aqi_by_hour.get(hour)
+                hour_issues = weather_issues(cloud_j, pp_j, wsp_j)
+                if hour_issues:
+                    weather_ok = False
+                    issues.update(hour_issues)
+                if hour_pm25_aqi is not None and (peak_pm25_aqi is None
+                                                  or hour_pm25_aqi > peak_pm25_aqi):
+                    peak_pm25_aqi = hour_pm25_aqi
+                    peak_pm25 = pm25_by_hour.get(hour)
+                hour_wind = seeing_by_hour.get(hour)
+                if hour_wind is not None and (peak_seeing_wind is None
+                                              or hour_wind > peak_seeing_wind):
+                    peak_seeing_wind = hour_wind
 
-            if found_hour:
-                break
         if not found_hour:
             # No forecast for this hour (past hours are dropped by the fetch,
             # and an outage drops them all). Every series must still carry one
