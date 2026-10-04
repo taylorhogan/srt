@@ -4176,6 +4176,19 @@ def doit_cmd(words: list[str], account: str) -> None:
         _kill_nina()
         do_flats()
 
+        # Capture is over: stop the frame watcher NOW, before the analysis. The
+        # web chat shows its Observatory feed as the "Live" card for as long
+        # as the watcher is active, and the Live view hides the feed -- which
+        # is exactly where the end-of-night posts below go. Stopped only by
+        # _run's finally, it stayed live through the whole analysis, so on
+        # 2026-10-04 the operator saw no SNR at all. stop() is idempotent;
+        # the finally still covers every early exit.
+        try:
+            from fits_processing import frame_watcher
+            frame_watcher.stop()
+        except Exception:  # noqa: BLE001 -- a UI nicety must not cost the analysis
+            _logger.exception("could not stop the frame watcher before the end-of-night analysis")
+
         # Report on what was actually imaged: every DSO that received LIGHT
         # frames since the run started, in the order they were shot
         # (control/tonight_dsos), so a two-slot night gets a curve per target.
