@@ -803,7 +803,8 @@ def visual_status(retries: int = 1, delay: float = 3.0, frames: int | None = Non
         # (stop!'s branches) get a real answer instead of "ambiguous".
         closed, is_open, source = (north_roof.decide(north_state, False, False)
                                    if _north_decides() else (False, False, "cam"))
-        last_match = {"source": "kasa", "error": det.get("why") or "no frame from the camera",
+        last_match = {"source": "kasa", "at": time.time(),
+                      "error": det.get("why") or "no frame from the camera",
                       "trusted": False, "is_parked": False, "is_closed": bool(closed),
                       "is_open": bool(is_open), "roof_source": source,
                       "north": {"state": north_state, "verdicts": nd.get("verdicts"),
@@ -825,6 +826,9 @@ def visual_status(retries: int = 1, delay: float = 3.0, frames: int | None = Non
         source = "cam"
     last_match = _match_from_detail(det, parked, closed, is_open)
     last_match["roof_source"] = source
+    # When this read was taken: the per-move roof summary only quotes a north
+    # verdict read AFTER the move (super_user_commands._post_move_summary).
+    last_match["at"] = time.time()
     seen = next((f for f in reversed(nd.get("per_frame") or []) if f.get("verdict")), {})
     last_match["north"] = {"state": north_state, "verdicts": nd.get("verdicts"),
                            "off_shut_px": seen.get("off_shut_px"),

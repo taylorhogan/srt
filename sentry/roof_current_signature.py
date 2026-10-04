@@ -344,6 +344,10 @@ def judge_and_record(sig):
         entry["golden_ok"] = None
         entry["summary"] = "no golden library — run scripts/roof_golden_freeze.py"
     _record_drift(entry)
+    # Carried on the result for the per-move summary line; callers that only
+    # read is_anomaly/reasons behave exactly as before.
+    res["golden_ok"] = entry.get("golden_ok")
+    res["golden_reasons"] = entry.get("golden_reasons", [])
     return res
 
 

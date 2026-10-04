@@ -190,3 +190,27 @@ def test_pegasus_messages_name_the_actual_failure():
                     pegasus_recovery={"cycled": True, "outlet": "Iris 12v supply",
                                       "error": "outlet did NOT come back ON -- the box is unpowered"})
     assert "unpowered" in p[0]
+
+
+# --- last night's roof moves (informational) --------------------------------
+
+from datetime import datetime as _dt
+from scripts.morning_check import roof_move_warnings
+
+SINCE = _dt.fromisoformat("2026-10-03T09:00:00-04:00")
+
+
+def test_normal_roof_moves_add_nothing():
+    entries = [{"kind": "current", "direction": "open", "rolling_ok": True, "golden_ok": True,
+                "t": "2026-10-03T18:23:15-04:00", "summary": "peak_w 362.1 vs golden 404.7±50.01"}]
+    assert roof_move_warnings(entries, SINCE) == []
+
+
+def test_a_move_outside_the_golden_range_is_reported_once():
+    entries = [{"kind": "current", "direction": "close", "rolling_ok": True, "golden_ok": False,
+                "t": "2026-10-04T03:32:05-04:00", "summary": "peak_w 520.0 vs golden 354.9±14.8"},
+               {"kind": "current", "direction": "close", "rolling_ok": False, "golden_ok": False,
+                "t": "2026-10-02T03:00:00-04:00"}]                      # before the window
+    w = roof_move_warnings(entries, SINCE)
+    assert w == ["roof close at 03:32: motor current outside the healthy (golden) range "
+                 "(peak_w 520.0 vs golden 354.9±14.8)"]

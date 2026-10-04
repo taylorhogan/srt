@@ -235,6 +235,47 @@ def evaluate(vision, kasa, pegasus, speed=NOT_MEASURED, speed_history=(),
     return problems, warnings
 
 
+ROOF_DRIFT_LOG = "local/roof_drift.jsonl"
+
+
+def roof_move_warnings(entries, since):
+    """Warnings for roof moves since *since* (aware datetime) whose motor current
+    fell outside the recent good range or the frozen healthy (golden) range. Pure.
+
+    Informational only, like every roof-current check (owner, 2026-09-16): a
+    flagged move is a line in the morning push, never a reason to refuse
+    anything. Normal moves add nothing, so a quiet morning stays quiet.
+    """
+    out = []
+    for e in entries:
+        if e.get("kind") != "current":
+            continue
+        try:
+            t = datetime.fromisoformat(e["t"])
+        except (KeyError, ValueError):
+            continue
+        if t < since:
+            continue
+        bad = [w for w, ok in (("recent", e.get("rolling_ok")), ("healthy (golden)", e.get("golden_ok")))
+               if ok is False]
+        if bad:
+            out.append("roof %s at %s: motor current outside the %s range (%s)"
+                       % (e.get("direction", "move"), t.strftime("%H:%M"), " and ".join(bad),
+                          e.get("summary") or "peak %s W" % e.get("peak_w")))
+    return out
+
+
+def read_roof_moves(hours=24):
+    """roof_move_warnings over the drift log's last *hours*. Never raises."""
+    from datetime import timedelta
+    try:
+        with open(ROOF_DRIFT_LOG, encoding="utf-8") as fh:
+            entries = [json.loads(l) for l in fh if l.strip()]
+    except (OSError, ValueError):
+        return []
+    return roof_move_warnings(entries, datetime.now().astimezone() - timedelta(hours=hours))
+
+
 def read_kasa():
     from hardware_control import kasa_utils as ku
     try:
@@ -573,6 +614,7 @@ def main():
     speed, speed_tries = read_speed(history)
     problems, warnings = evaluate(vision, kasa, pegasus, speed, history, cameras,
                                   pegasus_recovery=recovery)
+    warnings += read_roof_moves()
 
     entry = {"when": datetime.now().astimezone().isoformat(timespec="seconds"),
              "ok": not problems, "problems": problems, "warnings": warnings,

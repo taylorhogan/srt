@@ -159,6 +159,51 @@ def _wait_for_roof_travel(dev_map: dict, capture_direction: Optional[str],
         time.sleep(1)
 
 
+# The latest move per direction, for the one-line summary: toggle_roof fills
+# in the motor-current half when the motor stops; the audio callback, which
+# finishes last, adds the audio verdict and the post-move north read.
+_last_move: dict = {}
+
+
+def _move_summary(direction, verdict=None, wait_s: float = 60.0) -> Optional[str]:
+    """The move's one line (sentry/roof_move_report), or None if no move is on
+    record. Waits up to *wait_s* for a vision read taken after the motor
+    stopped, so the line quotes where the roof ended up, not where it started.
+    Never raises."""
+    try:
+        from sentry import roof_move_report
+        info = _last_move.get(direction or "")
+        if not info:
+            return None
+        north = None
+        deadline = time.monotonic() + wait_s
+        while True:
+            lm = vision_safety.last_match or {}
+            if lm.get("at", 0) > info["t_end"]:
+                north = lm.get("north")
+                break
+            if time.monotonic() > deadline:
+                break
+            time.sleep(2)
+        return roof_move_report.line(direction, info.get("feats"), info.get("cur"),
+                                     verdict, north)
+    except Exception:  # noqa: BLE001 -- a report must never touch the roof flow
+        _logger.exception("roof move summary failed")
+        return None
+
+
+def _post_move_summary_async(direction) -> None:
+    """For a move whose audio capture never started: post the line anyway."""
+    def run():
+        text = _move_summary(direction, None)
+        if text:
+            try:
+                social_server.post_social_message(text)
+            except Exception:  # noqa: BLE001
+                _logger.exception("roof move summary post failed")
+    threading.Thread(target=run, name="roof-move-summary", daemon=True).start()
+
+
 def _post_kasa_roof_audio(direction, base, detail, verdict) -> None:
     """Surface a roof move's audio (spectrogram + WAV) with its verdict.
 
@@ -170,6 +215,9 @@ def _post_kasa_roof_audio(direction, base, detail, verdict) -> None:
     try:
         caption = f"Roof {direction or 'move'} audio (Kasa mic)"
         v = verdict.get("verdict")
+        # The move's one-line report (current + audio + where it ended up)
+        # leads the post; the audio detail follows it. Owner, 2026-10-04.
+        summary = _move_summary(direction, verdict)
         if v == "good":
             caption += (f": sounds normal (score {verdict['best_score']:.3f} ≥ "
                         f"{verdict['threshold']:.3f}, best match {verdict['best_match']})"
@@ -189,7 +237,7 @@ def _post_kasa_roof_audio(direction, base, detail, verdict) -> None:
             caption += f" — {verdict.get('note') or 'not classified'}"
             png, wav = base + ".png", base + ".wav"
         social_server.post_social_message(
-            caption,
+            (summary + "\n" + caption) if summary else caption,
             image=png if os.path.exists(png) else None,
             audio=wav if os.path.exists(wav) else None,
         )
@@ -270,6 +318,7 @@ def toggle_roof(dev_map: dict, capture_direction: Optional[str] = None) -> None:
                 capture_direction, base, det, ver))
     except Exception:  # noqa: BLE001 — observer must never touch the roof flow
         _logger.exception("kasa roof audio: failed to start (ignored)")
+        audio_capture = "failed"
 
     # Log-only anchor for the shadow conductor's decision-diff: every roof
     # relay fire, from every path (roof!! commands, gated open/close, end.py),
@@ -292,6 +341,7 @@ def toggle_roof(dev_map: dict, capture_direction: Optional[str] = None) -> None:
     _wait_for_roof_travel(dev_map, capture_direction, capture, audio_capture)
     inst = {"Roof motor": 'off'}
     asyncio.run(ku.kasa_do(dev_map, inst))
+    _last_move[capture_direction or ""] = {"t_end": time.time(), "feats": None, "cur": None}
 
     if capture is not None:
         sig = rcs.finish_background_capture(capture, status="unlabeled")
@@ -299,6 +349,8 @@ def toggle_roof(dev_map: dict, capture_direction: Optional[str] = None) -> None:
             # judge_and_record = compare() plus the golden-reference distance
             # and a drift record; identical anomaly behaviour otherwise.
             res = rcs.judge_and_record(sig)
+            _last_move[capture_direction or ""].update(
+                feats=sig.get("features"), cur=res)
             if res.get("is_anomaly"):
                 reasons = "; ".join(res["reasons"])
                 _logger.warning("Roof current signature anomaly: %s", reasons)
@@ -325,6 +377,11 @@ def toggle_roof(dev_map: dict, capture_direction: Optional[str] = None) -> None:
                     rcs.label_latest(capture_direction, "good", near_timestamp=near)
                 except Exception as e:  # noqa: BLE001
                     _logger.error("Failed to auto-file good current signature: %s", e)
+
+    # The audio callback posts this move's one-line summary; if the audio
+    # capture never started there is no callback, so post it from here.
+    if audio_capture == "failed":
+        _post_move_summary_async(capture_direction)
 
 
 
