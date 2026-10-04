@@ -118,6 +118,32 @@ _OUTSIDE_AQI_TTL = 600.0
 # which draws to global pyplot state under a TkAgg backend — neither is safe
 # in a polled request handler or a worker thread. So the producer writes its
 # pick to a file and the ticker is a plain file read.
+def _live_imaging_target(ticker: Optional[dict] = None, max_age_s: float = 120) -> Optional[str]:
+    """The DSO NINA is writing frames for right now, or None when not imaging.
+
+    Read from frame_ticker.json: its heartbeat says the watcher is live, and
+    the newest frame's folder (.../Targets/<dso>/...) says for which target.
+    The noon pick is slot 1 all night, so on a two-slot night it named the
+    wrong target from the handover on (2026-10-04: "ngc7320" while m33 imaged).
+    """
+    try:
+        from datetime import datetime
+        from configs import config
+        root = Path(config.data()["nina"]["image_dir"])
+        if ticker is None:
+            with open(root / "frame_ticker.json") as fh:
+                ticker = json.load(fh)
+        if not ticker.get("active"):
+            return None
+        hb = ticker.get("last_heartbeat")
+        if not hb or (datetime.utcnow() - datetime.fromisoformat(hb)).total_seconds() > max_age_s:
+            return None
+        rel = Path((ticker.get("last_frame") or {}).get("path") or "").relative_to(root)
+        return rel.parts[0].lower() if rel.parts else None
+    except Exception:  # noqa: BLE001 -- a ticker must never fail on this
+        return None
+
+
 def _read_tonight_target() -> Optional[str]:
     """The DSO the imaging grid last selected, or None if absent/stale.
 
@@ -446,7 +472,7 @@ async def api_ticker():
         # never disagree. Cheap file read — see _read_tonight_target. Falls back
         # to the live queue, then to the scheduler's persisted pick, when the
         # grid has not run yet (fresh install, or first run of the day).
-        dso = _read_tonight_target()
+        dso = _live_imaging_target() or _read_tonight_target()
         if not dso:
             try:
                 dso = instructions.get_dso_object_tonight().get("dso", "—")
@@ -577,8 +603,43 @@ async def api_imaging_ticker():
 
                 cfg2 = config.data()
                 dso = None
+                # The target being imaged is the one NINA is writing frames for:
+                # .../Targets/<dso>/<rig>/<date>/LIGHT/x.fits. Taking the FIRST
+                # coordinates in the sequence named slot 1 for the whole night,
+                # so on a two-slot night (2026-10-04: ngc7320 -> m33) the ticker
+                # timed the set, finished slot-1 target and showed no time left.
+                live_name = _live_imaging_target(data)
                 seq_path = Path(cfg2["nina"]["sequence_output"])
-                if seq_path.exists():
+
+                def _slot_coords(obj, name):
+                    # Each slot's Target carries TargetName beside its
+                    # InputCoordinates. (The queue cannot stand in: most rows
+                    # hold no ra_deg/dec_deg.)
+                    if isinstance(obj, dict):
+                        if str(obj.get("TargetName", "")).lower() == name:
+                            ic = obj.get("InputCoordinates") or {}
+                            if "RAHours" in ic:
+                                ra_h = ic["RAHours"] + ic["RAMinutes"] / 60 + ic["RASeconds"] / 3600
+                                dec_abs = ic["DecDegrees"] + ic["DecMinutes"] / 60 + ic["DecSeconds"] / 3600
+                                return ra_h, -dec_abs if ic.get("NegativeDec") else dec_abs
+                        for v in obj.values():
+                            r = _slot_coords(v, name)
+                            if r:
+                                return r
+                    elif isinstance(obj, list):
+                        for item in obj:
+                            r = _slot_coords(item, name)
+                            if r:
+                                return r
+                    return None
+
+                if live_name and seq_path.exists():
+                    with open(seq_path) as f:
+                        coords = _slot_coords(_json.load(f), live_name)
+                    if coords:
+                        dso = _FixedTarget(coord=_SkyCoord(ra=coords[0] * _u.hour, dec=coords[1] * _u.deg),
+                                           name=live_name)
+                if dso is None and seq_path.exists():
                     def _walk_seq(obj):
                         if isinstance(obj, dict):
                             if "NINA.Astrometry.InputCoordinates" in obj.get("$type", ""):
