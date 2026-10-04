@@ -23,21 +23,23 @@ status_dict = {"in process": 3, "waiting": 2, "completed": 1}
 def delete_instruction_db(hash_value):
     with open(_INSTRUCTIONS_PATH, 'r') as f:
         instructions = json.load(f)
-    for instruction in instructions:
-        if instruction["hash"] == hash_value:
-            instructions.remove(instruction)
+    # .get: rows added without a hash (most of the queue, 2026-10) made this a
+    # KeyError. Rebuilt rather than removed while iterating, which skips rows.
+    instructions = [i for i in instructions if i.get("hash") != hash_value]
     with open(_INSTRUCTIONS_PATH, 'w') as f:
         f.writelines(json.dumps(instructions, indent=4))
 
 
 def set_completed_instruction_db(hash_value):
     logger = logging.getLogger(__name__)
-    logger.info("completing", hash_value)
+    logger.info("completing %s", hash_value)
 
     with open(_INSTRUCTIONS_PATH, 'r') as f:
         instructions = json.load(f)
     for instruction in instructions:
-        if instruction["hash"] == hash_value:
+        # .get: rows without a hash raised KeyError before anything was written
+        # (2026-10-04, completing m33/ngc7380 -- and `dbc` with them).
+        if instruction.get("hash") == hash_value:
             instruction["status"] = "completed"
     with open(_INSTRUCTIONS_PATH, 'w') as f:
         f.writelines(json.dumps(instructions, indent=4))
