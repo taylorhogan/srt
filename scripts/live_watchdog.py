@@ -46,6 +46,50 @@ def _save(d: dict) -> None:
         pass
 
 
+GEN_ERR = Path(__file__).resolve().parent.parent / "local" / "live_skymap.err"
+TAILSCALE = os.path.join(os.environ.get("ProgramFiles", r"C:\Program Files"),
+                         "Tailscale", "tailscale.exe")
+
+
+def diagnose(err_text: str, tailscale_state) -> str:
+    """Why the chart is stale and what to do, in plain words. Pure.
+
+    *err_text*: the generator's last stderr (local/live_skymap.err).
+    *tailscale_state*: Tailscale's BackendState ("Running", "NeedsLogin",
+    "Stopped", ...) or None if it could not be asked.
+
+    2026-10-05: "live sky feed is stale: last chart 21 minutes ago (target was
+    ngc7320)" reached the owner's phone and meant nothing to him. The real
+    story was that Tailscale had logged out (node key expired), so every
+    upload to the web host failed -- that is what this now says.
+    """
+    upload_failed = ("live_push" in err_text or "scp" in err_text) and (
+        "exit status 255" in err_text or "timed out" in err_text.lower())
+    if tailscale_state and tailscale_state != "Running":
+        return ("Tailscale on iris-pc is %s, so iris-pc cannot upload to the web server. "
+                "Fix: log in from the Tailscale tray icon on iris-pc, then disable key expiry "
+                "for iris-pc in the Tailscale admin console." % (
+                    "logged out" if tailscale_state == "NeedsLogin" else tailscale_state.lower()))
+    if upload_failed:
+        return ("iris-pc renders the chart but cannot upload it to the web server "
+                "(scp over Tailscale failed). Check that the web server (iris) is up and "
+                "reachable on the tailnet.")
+    if err_text.strip():
+        last = err_text.strip().splitlines()[-1][:160]
+        return "the chart generator on iris-pc is failing: %s (see local/live_skymap.err)" % last
+    return "the cause is not visible from iris-pc (check the IrisLiveSkymap scheduled task)"
+
+
+def _tailscale_state():
+    try:
+        import subprocess
+        out = subprocess.run([TAILSCALE, "status", "--json"], capture_output=True,
+                             text=True, timeout=20).stdout
+        return json.loads(out).get("BackendState")
+    except Exception:
+        return None
+
+
 def _push(msg: str) -> None:
     try:
         from utils import pushover
@@ -70,8 +114,12 @@ def main() -> None:
         gen = datetime.fromisoformat(data["generated"])
         age = (datetime.now(timezone.utc) - gen).total_seconds() / 60.0
         if age > STALE_MINUTES:
-            problem = ("live sky feed is stale: last chart %.0f minutes ago "
-                       "(target was %s)" % (age, data.get("target")))
+            try:
+                err = GEN_ERR.read_text(errors="replace")
+            except OSError:
+                err = ""
+            problem = ("the website's live sky panel stopped updating %.0f minutes ago -- %s"
+                       % (age, diagnose(err, _tailscale_state())))
     except Exception as exc:
         # Unreachable is its own failure and worth alerting on: it means the
         # tunnel, Caddy or the box is down, not just the generator.
@@ -87,7 +135,7 @@ def main() -> None:
     else:
         print("ok: chart is %.1f minutes old" % age)
         if st.get("alerted") and "--check-only" not in sys.argv:
-            _push("Iris: live sky feed recovered (chart %.0f min old)" % age)
+            _push("Iris: the website's live sky panel is updating again (chart %.0f min old)" % age)
             _save({"alerted": False})
 
 
