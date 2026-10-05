@@ -104,6 +104,13 @@ def ensure_at(name, want, tolerate_missing_ptz=False):
         final = tuple(int(v) for v in kasa_ptz.goto(dev, want[0], want[1],
                                                     verbose=False))
         record(name, final)
+        # Every move this software makes, before and after. Iris North's aim
+        # slipped ~95 px in two steps (2026-09-25, 09-26/27) with no move in
+        # the log to tie them to; with this line a future slip either follows
+        # one of these moves or rules them out.
+        import logging
+        logging.getLogger(__name__).info("kasa_pose: %s moved %s -> %s (wanted %s)",
+                                         name, now, final, want)
         return final if final == want else None
     except Exception:       # noqa: BLE001 -- unreachable is UNKNOWN, not OK
         return None

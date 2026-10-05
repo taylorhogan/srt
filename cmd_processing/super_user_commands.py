@@ -3789,6 +3789,7 @@ def get_super_user_commands() -> dict[str, Callable]:
         "seen": seen_cmd,
         "snr": snr_cmd,
         "night": night_cmd,
+        "rehome": rehome_cmd,
         "transit": transit_cmd,
         "transient": transient_cmd,
         "diff": transient_cmd,
@@ -4383,6 +4384,47 @@ def snr_cmd(words: list[str], account: str) -> None:
     core without GIL contention with a concurrent hr/other command.
     """
     jobs.spawn_process(_snr_run, args=(words,))
+
+
+def rehome_cmd(words: list[str], account: str) -> None:
+    """Power-cycle Iris North to re-home its pan/tilt, then re-read the roof tag.
+
+    Usage: rehome north
+    Refused unless the observatory is at rest (daytime, NINA closed, no imaging,
+    scheduler not imaging, roof not moving). Background job: ~1-2 min.
+    """
+    args = [w.lower() for w in words[2:]]
+    if args[:1] != ["north"]:
+        social_server.post_social_message("Usage: rehome north")
+        return
+
+    def _run():
+        from sentry import north_rehome, north_roof
+        import json as _json
+        try:
+            from iris_astronomy import sun as _sun
+            night = bool(_sun.is_night()[0])
+        except Exception:  # noqa: BLE001
+            night = None
+        try:
+            with open("scheduler_state.json") as fh:
+                sched = _json.load(fh).get("state")
+        except (OSError, ValueError):
+            sched = None
+        why = north_rehome.rehome_refusal(
+            night, bool(is_nina_running()), get_imaging_state().name, sched,
+            roof_moving=_roof_lock.locked())
+        if why:
+            social_server.post_social_message(f"Not re-homing Iris North: {why}")
+            return
+        state, det = north_roof.read(frames=3)
+        before = north_rehome.drift_verdict(det.get("per_frame"), north_roof.reference() or {})
+        social_server.post_social_message(
+            f"Re-homing Iris North (tag {before.get('offset_px')} px off {before.get('end')}) -- "
+            "power-cycling its plug, ~1-2 min…")
+        result = north_rehome.rehome()
+        social_server.post_social_message(north_rehome.describe(before, result))
+    jobs.spawn(_run)
 
 
 def night_cmd(words: list[str], account: str) -> None:

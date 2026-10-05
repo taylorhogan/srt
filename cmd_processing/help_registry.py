@@ -224,6 +224,14 @@ HELP: dict[str, dict] = {
         "usage": ["snr", "snr <dso>"],
         "examples": ["snr", "snr m31"],
     },
+    "rehome": {
+        "category": "super",
+        "summary": "Power-cycle Iris North to re-home its pan/tilt, then re-read the roof tag.",
+        "usage": ["rehome north"],
+        "examples": ["rehome north"],
+        "notes": ["Only when the observatory is at rest (daytime, NINA closed, nothing imaging).",
+                  "The 09:00 morning check does this by itself when the north tag is >60 px off."],
+    },
     "night": {
         "category": "super",
         "summary": "How much one night helped or hurt each filter's stack (SNR with vs without it).",

@@ -314,7 +314,9 @@ def read(frames=FRAMES, path=REFERENCE_PATH):
             corners = [list(map(float, c)) for c in found[tag]]
             v = classify(corners, shut_ref, open_ref, tol)
             off_s, off_o = worst_corner(corners, shut_ref), worst_corner(corners, open_ref)
+            side = math.hypot(corners[0][0] - corners[1][0], corners[0][1] - corners[1][1])
             per_frame.append({"camera": True, "ir": ir, "tags": sorted(found), "verdict": v,
+                              "side_px": round(side, 1),
                               "off_shut_px": round(off_s, 1), "off_open_px": round(off_o, 1)})
             shown = (img, corners, off_s, off_o)
         verdicts.append(v)

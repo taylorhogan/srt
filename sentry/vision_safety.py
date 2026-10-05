@@ -795,6 +795,11 @@ def visual_status(retries: int = 1, delay: float = 3.0, frames: int | None = Non
     from sentry import north_roof
     north_state = north[0] if north else "unknown"
     nd = north[1] if north else {}
+    if nd.get("per_frame"):
+        # Has Iris North's aim slipped? Warns once a day; never acts here --
+        # cutting the camera mid-decision would blind the roof check.
+        from sentry import north_rehome
+        north_rehome.note_read(nd["per_frame"], north_roof.reference())
     if not nd.get("view"):
         _picture_from_cam()                 # north gave no frame: push the picture that decided
     if not det.get("camera"):

@@ -235,6 +235,39 @@ def evaluate(vision, kasa, pegasus, speed=NOT_MEASURED, speed_history=(),
     return problems, warnings
 
 
+def north_rehome_step(dry_run=False):
+    """(warnings, problems) for Iris North's aim, re-homing it if it slipped.
+
+    Uses the north read the vision check above just made (north_roof.last_detail).
+    Re-homes only when the observatory is at rest (owner, 2026-10-05: a Kasa plug
+    on the camera "you can use this I believe to re home the device").
+    """
+    try:
+        from sentry import north_rehome, north_roof
+        ref = north_roof.reference()
+        det = dict(north_roof.last_detail or {})
+        if ref is None or not det.get("per_frame"):
+            return [], []
+        before = north_rehome.drift_verdict(det["per_frame"], ref)
+        if before["state"] != "drift":
+            return [], []
+        if dry_run:
+            return ["Iris North %.0f px off its %s reference (dry run: not re-homed)"
+                    % (before["offset_px"], before["end"])], []
+        ctx = _pegasus_context()
+        why = north_rehome.rehome_refusal(ctx["night"], ctx["nina_running"],
+                                          ctx["imaging_state"], ctx["scheduler_state"])
+        if why:
+            return [], ["Iris North %.0f px off its %s reference; not re-homed because %s"
+                        % (before["offset_px"], before["end"], why)]
+        result = north_rehome.rehome()
+        line = north_rehome.describe(before, result)
+        return ([line], []) if result.get("ok") else ([], [line])
+    except Exception as exc:  # noqa: BLE001
+        _logger.warning("morning check: north re-home step failed", exc_info=True)
+        return [], ["Iris North drift check failed (%s)" % type(exc).__name__]
+
+
 ROOF_DRIFT_LOG = "local/roof_drift.jsonl"
 
 
@@ -615,6 +648,9 @@ def main():
     problems, warnings = evaluate(vision, kasa, pegasus, speed, history, cameras,
                                   pegasus_recovery=recovery)
     warnings += read_roof_moves()
+    n_warn, n_prob = north_rehome_step(dry_run=args.dry_run)
+    warnings += n_warn
+    problems += n_prob
 
     entry = {"when": datetime.now().astimezone().isoformat(timespec="seconds"),
              "ok": not problems, "problems": problems, "warnings": warnings,
