@@ -1167,6 +1167,95 @@ def _select_by_quality(
     return accepted, rejected, summary
 
 
+# Background-structure gate. On 2026-10-05/06 ngc2146 rose through a tree limb
+# at az ~15 deg: 31 L frames carried soft, moving blotches of +-100 ADU, yet
+# kept their stars and passed the FWHM/star gate. Stacked, they terraced the
+# background (sigma-clip rejected a different subset in each region) and let a
+# satellite trail through (the per-pixel spread was wide enough to hide it).
+# Score = robust range of a frame's coarse background map minus the session's
+# median map (both normalised to their own level), after removing a plane, so
+# the target itself and smooth moon/twilight gradients cancel. Measured: tree
+# frames 0.12-0.36; clean frames <= 0.053 across ngc2146, m33 (frame-filling)
+# and m13 (bright core).
+BG_STRUCTURE_MAX = 0.08
+_BG_MIN_FRAMES = 5          # the session reference needs a few frames
+
+
+def _background_map(path: Path, ny: int = 8, nx: int = 12) -> np.ndarray:
+    """Coarse (ny x nx) block-median background of a frame, divided by its median.
+
+    Reads every 16th row/column through a memmap, so it costs a fraction of a
+    full load. Scaled by hand: the files carry BZERO/BSCALE (see _load_cube).
+    """
+    with fits.open(path, memmap=True, do_not_scale_image_data=True) as hdul:
+        hdr = hdul[0].header
+        d = (np.asarray(hdul[0].data[::16, ::16], dtype=np.float32)
+             * float(hdr.get("BSCALE", 1.0)) + float(hdr.get("BZERO", 0.0)))
+    h, w = d.shape
+    d = d[: h // ny * ny, : w // nx * nx]
+    blocks = d.reshape(ny, h // ny, nx, w // nx).transpose(0, 2, 1, 3).reshape(ny, nx, -1)
+    b = np.median(blocks, axis=2)
+    level = float(np.median(b))
+    return b / level if level > 0 else b
+
+
+def background_structure_scores(maps: list[np.ndarray]) -> list[float]:
+    """Score each normalised background map against the session median. Pure.
+
+    Residual = map - median(maps), minus its best-fit plane; score = 98th - 2nd
+    percentile of that residual, as a fraction of the frame's level.
+    """
+    ref = np.median(np.stack(maps), axis=0)
+    ny, nx = ref.shape
+    y, x = np.mgrid[0:ny, 0:nx]
+    a = np.c_[np.ones(ref.size), ((x - nx / 2) / nx).ravel(), ((y - ny / 2) / ny).ravel()]
+    out = []
+    for m in maps:
+        r = (m - ref).ravel()
+        coef, *_ = np.linalg.lstsq(a, r, rcond=None)
+        r = r - a @ coef
+        out.append(float(np.percentile(r, 98) - np.percentile(r, 2)))
+    return out
+
+
+def _background_gate(
+    paths: list[Path],
+    progress_cb: Optional[Callable[[str], None]] = None,
+) -> tuple[list[Path], list[Path]]:
+    """Drop frames whose background is blotchy against the rest of the session.
+
+    No-op below _BG_MIN_FRAMES frames, and if every frame would go (no
+    consensus to compare against, so keep them rather than return nothing).
+    """
+    if len(paths) < _BG_MIN_FRAMES:
+        return list(paths), []
+    try:
+        scores = background_structure_scores([_background_map(p) for p in paths])
+    except Exception:
+        _logger.exception("background gate: could not score frames; keeping all")
+        return list(paths), []
+    kept = [p for p, s in zip(paths, scores) if s <= BG_STRUCTURE_MAX]
+    dropped = [p for p, s in zip(paths, scores) if s > BG_STRUCTURE_MAX]
+    if not kept:
+        return list(paths), []
+    if dropped:
+        worst = max(scores)
+        _logger.info("Background gate: rejected %d/%d frames (structure > %.2f; worst %.2f): %s",
+                     len(dropped), len(paths), BG_STRUCTURE_MAX, worst,
+                     ", ".join(p.name for p in dropped))
+        if progress_cb:
+            # Named, not just counted: the owner checks each one by eye.
+            by_score = sorted(((s, p) for p, s in zip(paths, scores) if s > BG_STRUCTURE_MAX),
+                              key=lambda t: -t[0])
+            names = "\n".join(f"  {p.parent.parent.name}/{p.name}  (score {s:.2f})"
+                              for s, p in by_score[:25])
+            more = f"\n  ...and {len(by_score) - 25} more (see iris.log)" if len(by_score) > 25 else ""
+            progress_cb(f"background gate — rejected {len(dropped)}/{len(paths)} frames with "
+                        f"blotchy backgrounds (trees, cloud or stray light; limit "
+                        f"{BG_STRUCTURE_MAX:.2f}):\n{names}{more}")
+    return kept, dropped
+
+
 # ---------------------------------------------------------------------------
 # Core stacking
 # ---------------------------------------------------------------------------
@@ -1340,6 +1429,8 @@ def stack(
             f"All {len(light_paths)} frames were rejected by the quality gate "
             f"({q.get('crit_str', 'n/a')})"
         )
+    accepted, bg_rejected = _background_gate(accepted, progress_cb)
+    rejected = rejected + bg_rejected
 
     if rejected:
         _logger.info(
@@ -1908,6 +1999,8 @@ def _prepare_for_convergence(
 
     if not accepted:
         raise ValueError("All frames rejected by FWHM/star-count threshold")
+    # Same background gate as stack(), so the golden here matches the real stack.
+    accepted, _bg_rejected = _background_gate(accepted, progress_cb)
 
     if not register or not _REGISTER_AVAILABLE or len(accepted) < 2:
         if progress_cb:
