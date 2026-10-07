@@ -1,7 +1,12 @@
 """stacking.stacker.background_structure_scores: the tree-limb gate (2026-10-07)."""
-import numpy as np
+import pytest
 
-from stacking.stacker import BG_STRUCTURE_MAX, background_structure_scores
+# CI installs pytest only; the stacker needs numpy + astropy.
+np = pytest.importorskip("numpy")
+pytest.importorskip("astropy")
+stacker = pytest.importorskip("stacking.stacker")
+BG_STRUCTURE_MAX = stacker.BG_STRUCTURE_MAX
+background_structure_scores = stacker.background_structure_scores
 
 NY, NX = 8, 12
 
