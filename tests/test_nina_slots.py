@@ -337,3 +337,25 @@ def test_single_target_generate_sequence_switches_to_l_before_centering(tmp_path
     _, types = _setup_types(dso)
     i = next(i for i, ty in enumerate(types) if ty in ("Center", "CenterAndRotate"))
     assert types[i - 1] == "SwitchFilter"
+
+
+THIRD = {"name": "m31", "ra_hours": 0.712, "dec_degrees": 41.27, "seconds": None,
+         "start": datetime(2026, 9, 8, 4, 40), "end": datetime(2026, 9, 8, 5, 30)}
+
+
+def test_three_slots_give_three_containers_each_later_one_bracketed(tmp_path):
+    """2026-10-08: a third slot for Cepheid monitoring. Same shape as two."""
+    seq, plans = _gen(tmp_path, SLOTS + [THIRD])
+    dsos = [it for it in g._items_of(g._find_target_area(seq))
+            if g._short_type(it) == "DeepSkyObjectContainer"]
+    assert [d["Name"] for d in dsos] == ["squid", "ngc7380", "m31"] and len(plans) == 3
+    ids, refs = [], []
+    _ids_refs(seq, ids, refs)
+    assert len(ids) == len(set(ids)) and set(refs) <= set(ids)
+    for k, d in enumerate(dsos):
+        setup = g._items_of(g._items_of(d)[0])
+        scripts = [i["Script"] for i in setup if g._short_type(i) == "ExternalScript"]
+        if k == 0:
+            assert scripts == []
+        else:
+            assert scripts[0].endswith("DONE_MAIN") and scripts[-1].endswith("IN_MAIN")

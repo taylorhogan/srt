@@ -184,7 +184,7 @@ def tonight_cmd(words: list[str], index: int, m: Mastodon, account: str) -> bool
         try:
             from zoneinfo import ZoneInfo
             from control import slot_plan as _sp
-            post_social_message("Two slots tonight:" + chr(10) + _sp.describe(slots, ZoneInfo(cfg["location"]["timezone"])))
+            post_social_message("%d slots tonight:" % len(slots) + chr(10) + _sp.describe(slots, ZoneInfo(cfg["location"]["timezone"])))
         except Exception:
             logging.getLogger(__name__).exception("slot plan post failed")
     if grid_html:

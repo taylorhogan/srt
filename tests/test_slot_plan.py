@@ -142,3 +142,52 @@ def test_signature_changes_when_a_slot_appears_or_a_window_moves():
     assert signature(a) != signature(b)          # second slot gained (2026-09-13)
     assert signature(a) != signature(c)          # same target, longer window
     assert signature([]) == ()
+
+
+# --- a third slot (2026-10-08) --------------------------------------------
+
+def test_third_slot_fills_the_tail_after_two():
+    rows = [row("a", "++++----"), row("b", "----++--"), row("c", "------++")]
+    s = plan_slots(rows, HOURS, WX_ALL, min_slot_hours=2, max_slots=3)
+    assert [x.name for x in s] == ["a", "b", "c"]
+    assert s[2].start == HOURS[6] and s[2].end == HOURS[7] + timedelta(hours=1)
+    assert s[2].good_hours == 2
+
+
+def test_third_slot_may_go_first_in_the_gap_before_slot_one():
+    # the pick rises late; a short early target fits before it
+    rows = [row("late", "---+++--"), row("mid", "------++"), row("early", "++------")]
+    s = plan_slots(rows, HOURS, WX_ALL, min_slot_hours=2, max_slots=3)
+    assert [x.name for x in s] == ["early", "late", "mid"]
+    assert s[0].end <= s[1].start and s[1].end <= s[2].start
+
+
+def test_third_slot_never_takes_hours_from_the_first_two():
+    rows = [row("a", "++++----"), row("b", "----++++"), row("c", "++++++++")]
+    s = plan_slots(rows, HOURS, WX_ALL, min_slot_hours=2, max_slots=3)
+    assert [x.name for x in s] == ["a", "b"]
+
+
+def test_third_slot_needs_min_hours():
+    rows = [row("a", "++++----"), row("b", "----+++-"), row("c", "-------+")]
+    s = plan_slots(rows, HOURS, WX_ALL, min_slot_hours=2, max_slots=3)
+    assert [x.name for x in s] == ["a", "b"]
+
+
+def test_pinned_third_candidate_beats_a_longer_unpinned_one():
+    rows = [row("a", "+++-----"), row("b", "---++---"), row("long", "-----+++"),
+            row("pin", "-----++-", priority=9)]
+    s = plan_slots(rows, HOURS, WX_ALL, min_slot_hours=2, max_slots=3)
+    assert [x.name for x in s] == ["a", "b", "pin"]
+
+
+def test_max_slots_two_is_unchanged_by_the_third_slot_rule():
+    rows = [row("a", "++++----"), row("b", "----++--"), row("c", "------++")]
+    assert [x.name for x in plan_slots(rows, HOURS, WX_ALL, min_slot_hours=2, max_slots=2)] == ["a", "b"]
+
+
+def test_three_slots_never_overlap_and_run_in_order():
+    rows = [row("a", "++++----"), row("b", "----++--"), row("c", "------++")]
+    s = plan_slots(rows, HOURS, WX_ALL, min_slot_hours=2, max_slots=3)
+    for x, y in zip(s, s[1:]):
+        assert x.end <= y.start

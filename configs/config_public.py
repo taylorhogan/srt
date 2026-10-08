@@ -7,7 +7,7 @@ class PublicConfig():
 
         },
         "version": {
-            "date": "2026.10.8.2"
+            "date": "2026.10.8.3"
         },
 
         "logger": {
@@ -284,11 +284,13 @@ class PublicConfig():
         "nina": {
             "image_dir": "C:/Users/iriso/Documents/N.I.N.A/Targets",
             "sequence_output": "C:/Users/iriso/Documents/N.I.N.A/Sequences/full_for_tonight.json",
-            # Two-slot nights (control/slot_plan, since 2026-09-07): a second
-            # target may take the dark hours the first leaves. max_slots=1
-            # restores one-target nights; min_slot_hours is the least a second
+            # Multi-slot nights (control/slot_plan): a second target may take
+            # the dark hours the first leaves (since 2026-09-07), and a third
+            # fills any gap the two leave (since 2026-10-08, for the long
+            # winter nights and a Cepheid-monitoring block). max_slots=1
+            # restores one-target nights; min_slot_hours is the least a later
             # slot must offer to be worth the slew, centering and refocus.
-            "max_slots": 2,
+            "max_slots": 3,
             "min_slot_hours": 2.0,
             # Fraction of a target's good hours that becomes exposures; the
             # rest is centering, autofocus, filter changes and dither settles.

@@ -435,18 +435,18 @@ def _push_imaging_plan(dso_name: str, good_hours: float, best_start, output_path
 
 
 def _second_slot_message(slots) -> str:
-    """'\nThen <dso> HH:MM-HH:MM (Nh)' when the plan has a second slot."""
+    """'\nThen <dso> HH:MM-HH:MM (Nh)' per later slot when the plan has more than one."""
     if len(slots or []) < 2:
         return ""
     try:
         from zoneinfo import ZoneInfo
         tz = ZoneInfo(CFG["location"]["timezone"])
-        s = slots[1]
-        return "\nThen %s %s-%s (%dh) — second slot" % (
+        return "".join("\nThen %s %s-%s (%dh) — slot %d" % (
             s.name, s.start.astimezone(tz).strftime("%H:%M"),
-            s.end.astimezone(tz).strftime("%H:%M"), s.good_hours)
+            s.end.astimezone(tz).strftime("%H:%M"), s.good_hours, k + 2)
+            for k, s in enumerate(slots[1:]))
     except Exception:
-        return "\nThen %s — second slot" % slots[1].name
+        return "".join("\nThen %s" % s.name for s in slots[1:])
 
 
 def _generate_nina_slots_sequence(slots):
@@ -472,7 +472,7 @@ def _generate_nina_slots_sequence(slots):
     state_script = os.path.join(_PROJECT_ROOT, "scripts", "set_imaging_state.bat")
     plans = nina_sequence_gen.generate_slots_sequence(template_path, specs, output_path,
                                                       state_script=state_script)
-    LOGGER.info("Generated two-slot Nina sequence: %s",
+    LOGGER.info("Generated %d-slot Nina sequence: %s", len(slots),
                 "; ".join("%s %s" % (s.name, p) for s, p in zip(slots, plans)))
     return plans, output_path
 

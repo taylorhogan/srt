@@ -1,4 +1,4 @@
-"""slot_plan.py -- fit two targets into one night's dark hours.
+"""slot_plan.py -- fit up to max_slots targets into one night's dark hours.
 
     slots = plan_slots(rows, dark_hours, weather_by_hour)
 
@@ -37,6 +37,12 @@ second target):
     candidate never takes hours slot 1 could use.
   * If no second target clears the bar the plan is one slot, exactly as
     before. A second slot is a bonus, never a reason to lower the bar.
+  * A THIRD slot (2026-10-08, ``max_slots`` 3; the winter nights are long
+    enough, and it is where a short Cepheid-monitoring block will go) fills
+    whatever the first two leave: the gap before slot 1, between them, or
+    after slot 2. It is the candidate with the most good hours in one gap,
+    pins first, needing ``min_slot_hours`` there, and it never takes an hour
+    the first two slots could use. The same rule would give a fourth.
 """
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -98,6 +104,43 @@ def plan_slots(rows, dark_hours, weather_by_hour, min_slot_hours: float = 2.0,
     if not rows or not dark_hours:
         return []
     flags = {r[0]: _good_flags(r, dark_hours, weather_by_hour) for r in rows}
+    plan = _plan_two(rows, flags, dark_hours, weather_by_hour, min_slot_hours, max_slots)
+    while plan and len(plan) < max_slots:
+        extra = _fill_a_gap(rows, flags, plan, dark_hours, min_slot_hours)
+        if extra is None:
+            break
+        plan = sorted(plan + [extra], key=lambda s: s.start)
+    return plan
+
+
+def _fill_a_gap(rows, flags, plan, dark_hours, min_slot_hours) -> Optional[Slot]:
+    """The best further slot in the hours *plan* leaves free, or None.
+
+    Gaps are the dark hours before the first slot, between slots, and after
+    the last. Each unused target is tried in each gap; the most good hours
+    wins, a pinned target first, and an earlier row (better ranked) on a tie.
+    """
+    taken = {s.name for s in plan}
+    ordered = sorted(plan, key=lambda s: s.start)
+    edges = [None] + [s.end for s in ordered]
+    limits = [s.start for s in ordered] + [None]
+    best = None
+    for cand in rows:
+        if cand[0] in taken:
+            continue
+        pinned = int(cand[6]) > 5
+        for lo, hi in zip(edges, limits):
+            w = _window(flags[cand[0]], dark_hours, lo=lo, hi=hi)
+            if w is None or w[2] < min_slot_hours:
+                continue
+            key = (pinned, w[2])
+            if best is None or key > best[0]:
+                best = (key, Slot(cand[0], w[0], w[1], w[2], int(cand[6])))
+    return best[1] if best else None
+
+
+def _plan_two(rows, flags, dark_hours, weather_by_hour, min_slot_hours, max_slots) -> list:
+    """The original one-or-two-slot plan (rules in the module docstring)."""
     first = rows[0]
     slot1 = window_for(first, dark_hours, weather_by_hour)
     if slot1 is None:
