@@ -1,0 +1,6 @@
+
+	# Subscriptions: sign-up, confirm and unsubscribe endpoints served by
+	# iris-subscribe.service on loopback (scripts/host/iris_subscribe.py).
+	handle /api/* {
+		reverse_proxy 127.0.0.1:8097
+	}

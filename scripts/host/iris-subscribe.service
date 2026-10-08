@@ -1,0 +1,26 @@
+[Unit]
+Description=irisscience.org subscriptions (sign-up endpoint and announcement mailer)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=irismail
+Group=irismail
+EnvironmentFile=/etc/iris-mail.env
+ExecStart=/usr/bin/python3 /usr/local/bin/iris-subscribe serve
+Restart=on-failure
+RestartSec=5
+StateDirectory=iris-subscribe
+# Outbound HTTPS to the mail provider must still work: no IPAddressDeny, no DynamicUser.
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_INET AF_INET6
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+
+[Install]
+WantedBy=multi-user.target
