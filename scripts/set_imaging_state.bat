@@ -30,3 +30,6 @@ exit /b 1
 echo IMAGING_STATE %STATE%>"%~dp0..\imaging.txt"
 echo Imaging state set to %STATE%
 echo %DATE% %TIME% IMAGING_STATE set to %STATE%>>%LOG%
+REM Refresh the site's live panel now (scripts/live_trigger.py), detached so
+REM N.I.N.A's script step returns at once. Harmless if python is missing.
+start "" /b "%~dp0..\.venv\Scripts\python.exe" "%~dp0live_trigger.py" "state %STATE%" >nul 2>&1

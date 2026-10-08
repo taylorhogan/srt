@@ -288,6 +288,14 @@ def _run(image_dir: Path, arcsec_per_pixel: float, stop_event: threading.Event) 
                     _save_cache(cache_path, entries)
                     _request_artifact_rebuild(cache_path)
 
+                # The site's live panel shows this frame now (2026-10-08),
+                # not at the next 5-minute tick. Detached; never raises.
+                try:
+                    from scripts import live_trigger
+                    live_trigger.trigger("frame " + fits_path.name)
+                except Exception as exc:
+                    print(f"frame_watcher: live trigger failed: {exc}")
+
         except Exception as exc:
             print(f"frame_watcher: poll error: {exc}")
 

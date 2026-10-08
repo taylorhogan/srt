@@ -1832,6 +1832,13 @@ def set_imaging_state(state: ImagingState) -> None:
     with open("imaging.txt", "w") as file:
         file.write(f"IMAGING_STATE {state.value}")
     social_server.post_social_message(f"Imaging state: {state.value}")
+    # The site's live panel follows the state change now, not at the next
+    # 5-minute tick (scripts/live_trigger; detached, never raises).
+    try:
+        from scripts import live_trigger
+        live_trigger.trigger("state " + state.value)
+    except Exception:
+        _logger.exception("live panel trigger failed")
 
 
 def set_mode(mode: str) -> None:

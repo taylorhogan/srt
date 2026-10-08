@@ -594,4 +594,16 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    # One render at a time, scheduled or event-triggered (scripts/live_trigger):
+    # a second one finding the lock held exits, since the one running will
+    # push the same fresh state. --reason is for the log only.
+    from scripts import live_trigger
+    _reason = (sys.argv[sys.argv.index("--reason") + 1]
+               if "--reason" in sys.argv and sys.argv.index("--reason") + 1 < len(sys.argv)
+               else "scheduled")
+    try:
+        with live_trigger.render_lock():
+            print("render:", _reason)
+            main()
+    except live_trigger.RenderBusy:
+        print("another render is in progress; skipping (%s)" % _reason)
