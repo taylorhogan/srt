@@ -18,6 +18,8 @@ K=~/.ssh/id_ed25519_iris; H=taylor@100.91.17.119
 scp -q -i $K scripts/host/iris_subscribe.py scripts/host/iris-subscribe.service scripts/host/caddy_api_snippet.txt /tmp/iris_articles.json $H:/tmp/
 ssh -i $K $H "RESEND_API_KEY='$RESEND_API_KEY' bash -s" <<'EOF'
 set -e
+# The files came from a Windows checkout: strip any CR before they are installed.
+sed -i "s/$//" /tmp/iris_subscribe.py /tmp/iris-subscribe.service /tmp/caddy_api_snippet.txt
 id -u irismail >/dev/null 2>&1 || sudo useradd --system --home /var/lib/iris-subscribe --shell /usr/sbin/nologin irismail
 if [ -n "$RESEND_API_KEY" ]; then
     printf 'RESEND_API_KEY=%s\n' "$RESEND_API_KEY" | sudo tee /etc/iris-mail.env >/dev/null

@@ -1,0 +1,2 @@
+# Files copied verbatim to the Linux web host: never CRLF (bash, systemd, Caddy).
+scripts/host/* text eol=lf
