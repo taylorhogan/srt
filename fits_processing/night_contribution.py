@@ -135,7 +135,9 @@ def describe(r):
         parts.append("signal %.2fx, noise %.2fx earlier nights"
                      % (r["signal_vs_prior"], r["noise_vs_prior"]))
     if r.get("fwhm_last") and r.get("fwhm_prior"):
-        parts.append('FWHM %.2f" vs %.2f"' % (r["fwhm_last"], r["fwhm_prior"]))
+        # "now ... was ...", not "x vs y": the bare comparison never said which
+        # number was the night being judged (owner, 2026-10-08).
+        parts.append('FWHM now %.2f" was %.2f"' % (r["fwhm_last"], r["fwhm_prior"]))
     return "%s -- %s." % (head, "; ".join(parts))
 
 

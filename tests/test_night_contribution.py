@@ -44,4 +44,4 @@ def test_fwhm_and_ratios_in_the_line():
     r = summarize("ngc7380", "Ha", "B", rows, {"A": 4, "B": 4},
                   {"A": [1.9, 1.9], "B": [2.1, 2.1]})
     line = describe(r)
-    assert "signal 0.80x, noise 1.10x" in line and 'FWHM 2.10" vs 1.90"' in line
+    assert "signal 0.80x, noise 1.10x" in line and 'FWHM now 2.10" was 1.90"' in line
