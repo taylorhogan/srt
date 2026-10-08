@@ -359,3 +359,93 @@ def test_three_slots_give_three_containers_each_later_one_bracketed(tmp_path):
             assert scripts == []
         else:
             assert scripts[0].endswith("DONE_MAIN") and scripts[-1].endswith("IN_MAIN")
+
+# ------------------------------------------------------- parking across a gap
+#
+# horizon_rise is stubbed: it needs astroplan, the site config and the horizon
+# file, none of which belong in a generator unit test (and astroplan is not on
+# the CI runner). What is under test is the DECISION and the placement, given a
+# rise time -- not the astronomy, which is the planner's own function.
+
+def _slots(gap_minutes, monkeypatch):
+    """Two slots; the second's target clears the horizon *gap_minutes* after
+    the first slot's hard end."""
+    from datetime import timedelta
+    a_end = datetime(2026, 10, 9, 22, 0)
+    monkeypatch.setattr(g, "horizon_rise",
+                        lambda name, ra, dec, after: a_end + timedelta(minutes=gap_minutes))
+    return [
+        {"name": "slot one", "ra_hours": 22.79, "dec_degrees": 58.13, "seconds": 7200,
+         "start": datetime(2026, 10, 9, 20, 0), "end": a_end},
+        {"name": "slot two", "ra_hours": 1.56, "dec_degrees": 30.66, "seconds": 7200,
+         "start": a_end, "end": a_end + timedelta(hours=3)},
+    ]
+
+
+def _setup_items(path, slot_index):
+    seq = json.loads(Path(path).read_text())
+    area = g._find_target_area(seq)
+    dso = [i for i in g._items_of(area) if g._short_type(i) == "DeepSkyObjectContainer"][slot_index]
+    setup = next(i for i in g._items_of(dso) if g._short_type(i) == "SequentialContainer")
+    return [g._short_type(i) for i in g._items_of(setup)]
+
+
+def _generate(tmp_path, slots):
+    tpl = tmp_path / "t.json"; tpl.write_text(json.dumps(_template()))
+    out = tmp_path / "out.json"
+    g.generate_slots_sequence(tpl, slots, out, lint_scripts=False)
+    return out
+
+
+def test_a_target_still_below_the_trees_parks_the_scope(tmp_path, monkeypatch):
+    out = _generate(tmp_path, _slots(120, monkeypatch))
+    kinds = _setup_items(out, 1)
+    assert "ParkScope" in kinds and "UnparkScope" in kinds, kinds
+    assert kinds.index("ParkScope") == 0, kinds
+    moves = ("Tracking", "Center", "CenterAndRotate", "SwitchFilter", "RunAutofocus")
+    first_move = min(i for i, k in enumerate(kinds) if k in moves)
+    assert kinds.index("WaitForTime") < kinds.index("UnparkScope") < first_move, kinds
+    assert "ParkScope" not in _setup_items(out, 0)      # slot 1 follows the prelude
+
+
+def test_a_target_already_up_is_left_alone(tmp_path, monkeypatch):
+    """The normal hand-over: 2026-10-07 read as a two-hour gap on paper and
+    took 14 minutes, because the next target was already above the trees."""
+    out = _generate(tmp_path, _slots(0, monkeypatch))
+    assert "ParkScope" not in _setup_items(out, 1)
+
+
+def test_a_short_wait_is_not_worth_two_slews(tmp_path, monkeypatch):
+    out = _generate(tmp_path, _slots(10, monkeypatch))
+    assert "ParkScope" not in _setup_items(out, 1)
+
+
+def test_an_unanswerable_sky_does_not_park(tmp_path, monkeypatch):
+    """horizon_rise returns None when the sky cannot be computed; a missing
+    answer must not decide to park."""
+    monkeypatch.setattr(g, "horizon_rise", lambda *a, **k: None)
+    from datetime import timedelta
+    a_end = datetime(2026, 10, 9, 22, 0)
+    slots = [
+        {"name": "slot one", "ra_hours": 22.79, "dec_degrees": 58.13, "seconds": 7200,
+         "start": datetime(2026, 10, 9, 20, 0), "end": a_end},
+        {"name": "slot two", "ra_hours": 1.56, "dec_degrees": 30.66, "seconds": 7200,
+         "start": a_end, "end": a_end + timedelta(hours=3)},
+    ]
+    assert "ParkScope" not in _setup_items(_generate(tmp_path, slots), 1)
+
+
+def test_the_gap_park_keeps_ids_unique_and_refs_resolvable(tmp_path, monkeypatch):
+    out = _generate(tmp_path, _slots(120, monkeypatch))
+    seq = json.loads(out.read_text())
+    ids, refs = [], []
+    def walk(n):
+        if isinstance(n, dict):
+            if "$id" in n: ids.append(n["$id"])
+            if "$ref" in n: refs.append(n["$ref"])
+            for v in n.values(): walk(v)
+        elif isinstance(n, list):
+            for v in n: walk(v)
+    walk(seq)
+    assert len(ids) == len(set(ids)), "duplicate $id"
+    assert not set(refs) - set(ids), "dangling $ref"

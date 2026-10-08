@@ -627,6 +627,72 @@ def _rotation_for(dso_name: str):
         return None
 
 
+def _simple_item(type_name: str, parent_id: str, next_id: list) -> dict:
+    """A bare sequence item (ParkScope / UnparkScope): no settings of its own."""
+    node = {"$id": str(next_id[0]), "$type": type_name,
+            "Parent": {"$ref": parent_id}, "ErrorBehavior": 0, "Attempts": 1}
+    next_id[0] += 1
+    return node
+
+
+def horizon_rise(name: str, ra_hours: float, dec_degrees: float, after):
+    """When *name* next clears the observatory horizon at/after *after*, or None.
+
+    Uses the planner's own horizon (configs/my.hrz via
+    astro_dso_visibility.find_alt_az_horizon_times), so "above the trees" means
+    here exactly what it means when the night is ranked. None on any failure --
+    an unanswerable sky must not decide whether to park.
+    """
+    try:
+        import astropy.units as u
+        from astropy.coordinates import EarthLocation, SkyCoord
+        from astropy.time import Time
+        from astroplan import FixedTarget, Observer
+        import numpy as np
+        from configs import config
+        from iris_astronomy import astro_dso_visibility as av
+
+        loc = config.data()["location"]
+        site = EarthLocation.from_geodetic(loc["longitude"] * u.deg, loc["latitude"] * u.deg,
+                                           loc["elevation"] * u.m)
+        obs = Observer(location=site, name=loc.get("observatory_name", "obs"),
+                       timezone=loc.get("timezone", "US/Eastern"))
+        target = FixedTarget(SkyCoord(ra=ra_hours * 15.0 * u.deg, dec=dec_degrees * u.deg),
+                             name=name)
+        # Sample from `after` forward: the first sample above the horizon is
+        # the rise we care about, and if it is already up that is sample one.
+        grid = Time(after) + np.linspace(0, 10, 121) * u.hour
+        _alt, _az, _hz, start, _fin, _el, _max = av.find_alt_az_horizon_times(target, obs, grid)
+        return start
+    except Exception:  # noqa: BLE001 -- never let the sky break generation
+        logging.getLogger(__name__).warning("horizon rise for %s unavailable", name, exc_info=True)
+        return None
+
+
+def park_across_gap(setup: dict, next_id: list) -> bool:
+    """Park before this slot's wait and unpark after it. True when inserted.
+
+    The park goes FIRST, so it happens the moment the previous slot's hard end
+    fires, and the unpark immediately before the first thing that needs the
+    mount -- whichever of Tracking / Center / CenterAndRotate / SwitchFilter
+    comes first. Everything between them (the pushover, the WaitForTime, the
+    WaitUntilAboveHorizon) is waiting, which a parked mount does better.
+    """
+    items = _items_of(setup)
+    if not items:
+        return False
+    pid = setup.get("$id")
+    needs_mount = ("Tracking", "Center", "CenterAndRotate", "SwitchFilter",
+                   "SlewScopeToRaDec", "RunAutofocus")
+    at = next((i for i, it in enumerate(items)
+               if _short_type(it) in needs_mount), None)
+    if at is None:
+        return False
+    items.insert(at, _simple_item(UNPARK_TYPE, pid, next_id))
+    items.insert(0, _simple_item(PARK_TYPE, pid, next_id))
+    return True
+
+
 def _script_item(prototype: dict, script: str, parent_id: str, next_id: list) -> dict:
     item = _clone_with_fresh_ids(prototype, next_id)
     item["Script"] = script
@@ -639,6 +705,32 @@ def _script_item(prototype: dict, script: str, parent_id: str, next_id: list) ->
 # --------------------------------------------------------------------------- #
 
 FOCUS_SEED_TYPE = "NINA.Sequencer.SequenceItem.Focuser.MoveFocuserByTemperature, NINA.Sequencer"
+PARK_TYPE = "NINA.Sequencer.SequenceItem.Telescope.ParkScope, NINA.Sequencer"
+UNPARK_TYPE = "NINA.Sequencer.SequenceItem.Telescope.UnparkScope, NINA.Sequencer"
+
+# A wait between slots longer than this gets a park across it. Below it the
+# park is not worth two slews: the measured hand-over on a back-to-back night
+# is 14 minutes (journal, 2026-10-05..08) and every one of those minutes is
+# slewing, plate-solving or focusing -- the mount is working, not idling.
+#
+# Above it the mount would otherwise sit TRACKING THE PREVIOUS TARGET for the
+# whole wait, because the next slot only issues Tracking and Center when it
+# actually starts. It follows a dead field west with the roof open, and the
+# primary -- an open truss -- stares at the sky radiating to an effective
+# temperature far below ambient, which is how a mirror reaches dew point on a
+# humid night (2026-09-29: 84% RH, under 3 C of dew-point spread). Parked at
+# the horizon it looks at the tree line instead, which is AT ambient.
+#
+# THE WAIT IS NOT THE PLANNER'S GAP. A later slot's WaitForTime is the
+# template's nautical dusk, long past by then, so the slot starts the moment
+# the one before it ends and WaitUntilAboveHorizon is the only thing that
+# holds it (see _set_hard_end). On 2026-10-07 the plan read ngc7320 20:00-01:00
+# then ngc2146 03:00-06:00, a two-hour gap on paper -- and the journal shows
+# the hand-over took 14 minutes, because ngc2146 was already above the trees.
+# Parking on the planned gap would have cost two slews for nothing. So the
+# wait is measured from when the next target actually clears the observatory
+# horizon, with the same function the planner ranks by.
+GAP_PARK_MIN_S = 20 * 60
 
 
 def _focus_model():
@@ -942,6 +1034,23 @@ def generate_slots_sequence(template_path: Path, slots: list, output_path: Path,
             if setup0 is not None:
                 vals = _items_of(setup0)
                 vals[:] = [it for it in vals if _short_type(it) != "RunAutofocus"]
+        if k > 0:
+            # Park across a long wait (GAP_PARK_MIN_S). The gap is the planned
+            # one: previous slot's hard end to this slot's start. The slot's
+            # own Center re-acquires, so the park costs two slews and nothing
+            # else. Inserted BEFORE the hand-over scripts below, which then
+            # bracket the whole thing.
+            prev_end = slots[k - 1].get("end")
+            rise = (horizon_rise(slot["name"], slot["ra_hours"], slot["dec_degrees"], prev_end)
+                    if prev_end is not None else None)
+            gap_s = max(0.0, (rise - prev_end).total_seconds()) if rise is not None else 0.0
+            if gap_s >= GAP_PARK_MIN_S:
+                setup = next((it for it in _items_of(c)
+                              if _short_type(it) == "SequentialContainer"), None)
+                if setup is not None and park_across_gap(setup, next_id):
+                    logging.getLogger(__name__).info(
+                        "Slot %d (%s): parking across a %.0f-minute gap",
+                        k + 1, slot["name"], gap_s / 60.0)
         if k > 0 and state_script and script_proto is not None:
             setup = next((it for it in _items_of(c)
                           if _short_type(it) == "SequentialContainer"), None)

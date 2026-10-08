@@ -55,6 +55,9 @@ GENERATOR_TYPES = {
     "NINA.Core.Model.Equipment.FlatWizardFilterSettings, NINA.Core",
     "NINA.Sequencer.Conditions.TimeCondition, NINA.Sequencer",
     "NINA.Sequencer.Utility.DateTimeProvider.TimeProvider, NINA.Sequencer",
+    # Park / unpark across a long gap between slots (park_across_gap).
+    "NINA.Sequencer.SequenceItem.Telescope.ParkScope, NINA.Sequencer",
+    "NINA.Sequencer.SequenceItem.Telescope.UnparkScope, NINA.Sequencer",
 }
 
 
