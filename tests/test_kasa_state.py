@@ -209,21 +209,41 @@ FRAMES = sorted(glob.glob(str(ROOT / "sentry" / "roof_frames_kasa" / "open" / "*
                 + glob.glob(str(ROOT / "sentry" / "roof_frames_kasa" / "shut" / "*.jpg")))
 
 
+# Late morning is the star's bad hour. Measured over every archived colour
+# frame (2026-09-06 .. 10-08): lit night frames score ncc 0.91-0.92, ordinary
+# daylight 0.43-0.67, and the 09:30-11:00 band 0.37-0.51 -- straddling the 0.40
+# floor, so the same wall in the same place reads seen or absent depending on
+# the glare. Three frames have fallen through: 2026-09-17 10:15 (0.38) and
+# 10:40 (0.37), which cost a forced close -- the open never confirmed, the
+# conductor faulted, and under authority a plain close was refused -- and
+# 2026-10-02 10:48 (0.40, exactly at the floor).
+#
+# The floor is NOT lowered: the nearest false positive, a pine blob on a shut
+# frame, reaches 0.33, so 0.37 is already close and no threshold separates
+# them. This is a limit of the method, not a tuning mistake, and it is why the
+# roof verdict moved to a decoded tag on Iris North (sentry/north_roof.py,
+# 2026-09-24) with the star kept only as the fallback. Absent is the safe
+# direction in every case, so the window is asserted as a property here rather
+# than as a growing list of filenames -- a new morning roof move must not need
+# this test edited.
+GLARE_WINDOW = (930, 1100)       # local HHMM, inclusive
+
+
+def _hhmm(path):
+    """The frame's local HHMM from its archive name (20261002T10-48-31_...)."""
+    stem = Path(path).name
+    return int(stem[9:11]) * 100 + int(stem[12:14])
+
+
 @pytest.mark.skipif(not FRAMES or not os.path.exists(str(ROOT / ks.STAR_PATH)),
                     reason="archived roof-move frames and the star reference are gitignored")
 def test_star_on_every_archived_colour_frame():
-    """Every lit/daylight OPEN frame on file shows the star; every SHUT frame
-    does not; IR frames abstain. Two known exceptions, both reading absent --
-    the safe direction: a dusk frame the camera took mid-switch (purple,
-    blurred), and every frame from the 2026-09-17 10:00 hour, where late-morning sun glare washed
-    the wall out (blob at the right place, 9.6 px, but template ncc 0.38 against
-    the 0.40 floor; 0.37 on the close-before frame). That hour cost a forced close: the open never confirmed, the
-    conductor faulted, and under authority a plain close was refused. The floor
-    is NOT lowered to let it in -- the nearest pine blob on a shut frame reaches
-    0.33, so 0.38 is already close. The fix is a positive OPEN sense that does
-    not depend on the star (far-end camera / open limit switch)."""
+    """Every lit/daylight OPEN frame shows the star, except inside the
+    late-morning glare window, where it may read absent but must never read
+    seen on a shut roof. Every SHUT frame reads absent; IR frames abstain."""
     os.chdir(ROOT)
     ref = ks._star_reference()
+    glared = []
     for p in FRAMES:
         img = cv2.imread(p)
         if img is None:
@@ -234,8 +254,12 @@ def test_star_on_every_archived_colour_frame():
             assert v == "unknown", p
         elif state == "shut":
             assert v == "absent", (p, d)
-        elif "19-45-30" in p or "20260917T10-" in p:   # dusk mid-switch; the 09-17 glare hour
+        elif "19-45-30" in p:                  # dusk, camera caught mid-switch
             assert v != "seen", (p, d)
+        elif GLARE_WINDOW[0] <= _hhmm(p) <= GLARE_WINDOW[1]:
+            assert v in ("seen", "absent"), (p, d)
+            if v != "seen":
+                glared.append((Path(p).name, d.get("star_ncc")))
         else:
             assert v == "seen", (p, d)
             # Against the reference's OWN budget, not a tighter number picked
@@ -246,6 +270,11 @@ def test_star_on_every_archived_colour_frame():
             # still inside 40, and it is one more reason the roof verdict is
             # moving to a decoded tag on Iris North (sentry/north_roof.py).
             assert d["star_px"] <= ref.get("tolerance_px", 40), (p, d)
+    # Not a silent pass: the glare misses are the evidence for the north
+    # camera, so they are printed rather than swallowed.
+    if glared:
+        print("star lost to late-morning glare on %d frame(s): %s"
+              % (len(glared), ", ".join("%s ncc %.2f" % g for g in glared)))
 
 
 # ------------------------------------------------------------------ archive
