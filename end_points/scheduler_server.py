@@ -349,12 +349,56 @@ def _imaging_plan_message(dso_name: str, best_good_hours: float, best_start: dat
     )
 
 
-def _push_imaging_plan(dso_name: str, good_hours: float, best_start, output_path):
+def _timeline_message(dso_name: str, best_start, output_path, slots, plans) -> "str | None":
+    """Tonight as a time/event table (control/night_timeline), or None.
+
+    *plans* is what the generator returned: one counts dict per slot for a
+    two-slot night, a single dict otherwise. Exposure lengths are read back
+    from the written sequence, so the table shows what N.I.N.A will run.
+    """
+    from zoneinfo import ZoneInfo
+    from control import night_timeline
+    tz = ZoneInfo(CFG["location"]["timezone"])
+    sunset = weather.get_sunrise_sunset()[1]
+    exposure = {}
+    for filt, _n, exp in nina_sequence_gen.describe_sequence(output_path):
+        exposure.setdefault(filt, exp)
+    if isinstance(plans, dict):
+        plans = [plans]
+    plans = [p if isinstance(p, dict) else {} for p in (plans or [])]
+    if slots and len(plans) == len(slots):
+        rows = [night_timeline.SlotPlan(s.name, s.start, s.end, p, exposure)
+                for s, p in zip(slots, plans)]
+    else:
+        start = best_start if best_start is None or getattr(best_start, "tzinfo", None) \
+            else best_start.replace(tzinfo=tz)
+        end = slots[0].end if slots and slots[0].name == dso_name else None
+        rows = [night_timeline.SlotPlan(dso_name, start, end, plans[0] if plans else {}, exposure)]
+    return night_timeline.render(night_timeline.build(sunset, rows, tz),
+                                 title="Tonight: " + " + ".join(r.name for r in rows))
+
+
+def _push_imaging_plan(dso_name: str, good_hours: float, best_start, output_path,
+                       slots=None, plans=None):
     """Push what will be imaged tonight, when, and in which filters.
 
-    Read back from the sequence that was just written, so the notification
-    describes what N.I.N.A will actually run rather than what was intended.
+    Since 2026-10-08 a timeline (time | event: roof open/close, each target's
+    start and filters, flats and analysis done). The older paragraph below is
+    the fallback if the timeline cannot be built.
     """
+    try:
+        msg = _timeline_message(dso_name, best_start, output_path, slots, plans)
+    except Exception:
+        LOGGER.exception("Could not build the timeline; falling back to the summary")
+        msg = None
+    if msg:
+        try:
+            pushover.push_message(msg)
+        except Exception:
+            LOGGER.exception("Could not push the imaging plan")
+        social_server.post_social_message(msg)
+        return
+
     try:
         rows = nina_sequence_gen.describe_sequence(output_path)
     except Exception:
@@ -555,10 +599,9 @@ def noon_check_task() -> tuple[str, int, datetime, str]:
     if best_good_hours >= _MIN_GOOD_HOURS:
         slots = list(astro_dso_visibility.last_slots)
         social_server.tonight_cmd(["me", "tonight", best_name], 2, "", "")
-        social_server.post_social_message(
-            f"Planning to image tonight\n{_imaging_plan_message(best_name, best_good_hours, best_start)}"
-            + _second_slot_message(slots)
-        )
+        # The times, targets and filters follow as one timeline once the
+        # sequence is written (generate_sequence_task -> _push_imaging_plan).
+        social_server.post_social_message("Planning to image tonight — timeline follows")
         obs_calendar.set_today_stat('image', best_name)
         set_state(State.NOON_CHECK, best_name, True, slots=slots)
     else:
@@ -655,7 +698,8 @@ def generate_sequence_task(dso_name: str, good_hours: float = 0.0, notify: bool 
     _PLAN_ON_DISK["sig"] = slot_plan.signature(slots)
     if got and notify:
         _plan, output_path = got
-        _push_imaging_plan(dso_name, good_hours, _LAST_BEST_START.get("t"), output_path)
+        _push_imaging_plan(dso_name, good_hours, _LAST_BEST_START.get("t"), output_path,
+                           slots=slots, plans=_plan)
 
 
 @task(name="run-imaging", timeout_seconds=9 * 60 * 60)
