@@ -54,3 +54,11 @@ def test_trigger_never_raises(monkeypatch, tmp_path):
     lt._last["t"] = 0.0
     assert lt.trigger("state IN_MAIN", debounce_s=0) is False
     assert "trigger failed" in (tmp_path / "t.log").read_text()
+
+
+def test_overrunning_holder_does_not_remove_the_new_lock(tmp_path):
+    lock = tmp_path / "r.lock"
+    # we hold the lock, but it has been taken over (another pid wrote it)
+    with lt.render_lock(lock):
+        lock.write_text("424242")
+    assert lock.exists() and lock.read_text() == "424242"

@@ -57,8 +57,11 @@ def render_lock(path: Path = LOCK, stale_s: float = STALE_S):
         os.close(fd)
         yield
     finally:
+        # Only our own lock: a render that overran STALE_S has already had
+        # its lock taken over, and must not remove the new holder's.
         try:
-            path.unlink()
+            if path.read_text() == str(os.getpid()):
+                path.unlink()
         except OSError:
             pass
 
