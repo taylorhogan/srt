@@ -191,3 +191,64 @@ def test_three_slots_never_overlap_and_run_in_order():
     s = plan_slots(rows, HOURS, WX_ALL, min_slot_hours=2, max_slots=3)
     for x, y in zip(s, s[1:]):
         assert x.end <= y.start
+
+
+# --- max_hours: a short monitoring block (2026-10-08, the M31 Cepheid) -----
+
+def test_capped_target_fills_a_gap_trimmed_to_its_cap():
+    rows = [row("a", "++++----"), row("b", "------++"), row("v1", "++++++++", priority=50)]
+    s = plan_slots(rows, HOURS, WX_ALL, min_slot_hours=2, max_slots=3, max_hours={"v1": 1})
+    assert [x.name for x in s] == ["a", "v1", "b"]
+    v1 = s[1]
+    assert v1.good_hours == 1 and v1.end - v1.start == timedelta(hours=1)
+    assert HOURS[4] <= v1.start and v1.end <= HOURS[6]
+
+
+def test_pinned_capped_target_with_no_gap_is_reserved_at_an_edge():
+    rows = [row("v1", "++++++++", priority=50), row("a", "++++----"), row("b", "----++++")]
+    s = plan_slots(rows, HOURS, WX_ALL, min_slot_hours=2, max_slots=3, max_hours={"v1": 1})
+    # a and b would fill the night; v1 takes the dusk hour and they shift
+    assert [x.name for x in s] == ["v1", "a", "b"]
+    assert s[0].start == HOURS[0] and s[0].good_hours == 1
+    assert s[1].start == HOURS[1] and s[1].good_hours == 3 and s[2].good_hours == 4
+    for x, y in zip(s, s[1:]):
+        assert x.end <= y.start
+
+
+def test_edge_reservation_prefers_the_side_where_the_run_is_longer():
+    # v1 rises late: not good at dusk, good through dawn -> the dawn hour
+    rows = [row("v1", "---+++++", priority=50), row("a", "++++----"), row("b", "----++++")]
+    s = plan_slots(rows, HOURS, WX_ALL, min_slot_hours=2, max_slots=3, max_hours={"v1": 1})
+    assert [x.name for x in s] == ["a", "b", "v1"] and s[2].start == HOURS[7]
+
+
+def test_unpinned_capped_target_with_no_gap_is_skipped():
+    rows = [row("a", "++++----"), row("b", "----++++"), row("v1", "++++++++")]
+    s = plan_slots(rows, HOURS, WX_ALL, min_slot_hours=2, max_slots=3, max_hours={"v1": 1})
+    assert [x.name for x in s] == ["a", "b"]
+
+
+def test_cap_stands_in_for_min_slot_hours():
+    rows = [row("a", "+++++++-"), row("v1", "++++++++", priority=50)]
+    s = plan_slots(rows, HOURS, WX_ALL, min_slot_hours=2, max_slots=3, max_hours={"v1": 1})
+    assert [x.name for x in s] == ["a", "v1"] and s[1].start == HOURS[7]
+
+
+def test_capped_block_is_centred_in_the_gap():
+    rows = [row("a", "++------"), row("v1", "++++++++", priority=50)]
+    s = plan_slots(rows, HOURS, WX_ALL, min_slot_hours=2, max_slots=3, max_hours={"v1": 2})
+    v1 = s[1]
+    assert v1.good_hours == 2 and v1.start == HOURS[4]   # hours 2..7 free, middle two
+
+
+def test_capped_pinned_target_takes_the_gap_before_an_unpinned_filler():
+    rows = [row("a", "++++----"), row("b", "------++"), row("c", "----++++"), row("v1", "++++++++", priority=50)]
+    s = plan_slots(rows, HOURS, WX_ALL, min_slot_hours=2, max_slots=3, max_hours={"v1": 1})
+    # c is a main-slot candidate and takes the tail (a 21-01, c 01-05); no gap is
+    # left, so v1 is reserved at dusk and the mains shift: v1, a, c
+    assert [x.name for x in s] == ["v1", "a", "c"]
+
+
+def test_no_caps_is_unchanged():
+    rows = [row("a", "++++----"), row("b", "----++--"), row("c", "------++")]
+    assert [x.name for x in plan_slots(rows, HOURS, WX_ALL, 2, 3)] == ["a", "b", "c"]

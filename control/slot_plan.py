@@ -99,27 +99,99 @@ def window_for(row, dark_hours, weather_by_hour) -> Optional[Slot]:
 
 
 def plan_slots(rows, dark_hours, weather_by_hour, min_slot_hours: float = 2.0,
-               max_slots: int = 2) -> list:
-    """The night's slots, in the order they run. Empty if nothing is usable."""
+               max_slots: int = 2, max_hours: Optional[dict] = None) -> list:
+    """The night's slots, in the order they run. Empty if nothing is usable.
+
+    *max_hours* is {dso_name: hours} for targets that want only a short
+    block a night (the instruction's ``max_hours``; 2026-10-08, for the M31
+    Cepheid monitor). A capped target is never a main slot: it fills a gap
+    the main slots leave, trimmed to its cap and centred in the gap's good
+    hours, and its own cap stands in for ``min_slot_hours`` when smaller.
+    If it is PINNED and the main slots leave it no gap, its block is reserved
+    at an edge of the night instead -- dusk or dawn, whichever side its good
+    run is longer (the proxy for where it is higher) -- and the main slots
+    are planned around that. An unpinned capped target is simply skipped on
+    such a night.
+    """
     if not rows or not dark_hours:
         return []
+    caps = {k: float(v) for k, v in (max_hours or {}).items() if v}
+    plan = _plan_main_and_gaps(rows, dark_hours, weather_by_hour, min_slot_hours, max_slots, caps)
+    placed = {s.name for s in plan}
+    missing = [r for r in rows if r[0] in caps and int(r[6]) > 5 and r[0] not in placed]
+    if missing and plan:
+        r = missing[0]
+        n = max(1, int(caps[r[0]]))
+        f = _good_flags(r, dark_hours, weather_by_hour)
+        head_ok = len(f) >= n and all(f[:n])
+        tail_ok = len(f) >= n and all(f[-n:])
+        head_run = next((i for i, ok in enumerate(f) if not ok), len(f))
+        tail_run = next((i for i, ok in enumerate(reversed(f)) if not ok), len(f))
+        edge = None
+        if head_ok and (not tail_ok or head_run >= tail_run):
+            edge = list(range(n))
+        elif tail_ok:
+            edge = list(range(len(f) - n, len(f)))
+        if edge:
+            reserved = Slot(r[0], dark_hours[edge[0]], dark_hours[edge[-1]] + timedelta(hours=1),
+                            n, int(r[6]))
+            # Those hours read as bad weather to everyone else, so the main
+            # plan is laid out in what is left (an edge leaves no hole).
+            wx = dict(weather_by_hour)
+            for i in edge:
+                wx[dark_hours[i].hour] = False
+            others = [x for x in rows if x[0] != r[0]]
+            rest = _plan_main_and_gaps(others, dark_hours, wx, min_slot_hours, max_slots - 1, caps)
+            plan = sorted(rest + [reserved], key=lambda s: s.start)
+    return plan
+
+
+def _plan_main_and_gaps(rows, dark_hours, weather_by_hour, min_slot_hours, max_slots, caps) -> list:
+    """Main slots by the two-slot rules, then gaps filled (capped targets only here)."""
     flags = {r[0]: _good_flags(r, dark_hours, weather_by_hour) for r in rows}
-    plan = _plan_two(rows, flags, dark_hours, weather_by_hour, min_slot_hours, max_slots)
-    while plan and len(plan) < max_slots:
-        extra = _fill_a_gap(rows, flags, plan, dark_hours, min_slot_hours)
+    main_rows = [r for r in rows if r[0] not in caps]
+    plan = _plan_two(main_rows, flags, dark_hours, weather_by_hour, min_slot_hours, max_slots) \
+        if main_rows else []
+    while len(plan) < max_slots:
+        extra = _fill_a_gap(rows, flags, plan, dark_hours, min_slot_hours, caps)
         if extra is None:
             break
         plan = sorted(plan + [extra], key=lambda s: s.start)
     return plan
 
 
-def _fill_a_gap(rows, flags, plan, dark_hours, min_slot_hours) -> Optional[Slot]:
+def _trim(flags, dark_hours, w, cap: int):
+    """Shrink window *w* to *cap* good hours, centred in its longest good run."""
+    start, end, count = w
+    if count <= cap:
+        return w
+    idx = [i for i, ok in enumerate(flags) if ok and start <= dark_hours[i] < end]
+    runs, run = [], [idx[0]]
+    for a, b in zip(idx, idx[1:]):
+        if b == a + 1:
+            run.append(b)
+        else:
+            runs.append(run); run = [b]
+    runs.append(run)
+    longest = max(runs, key=len)
+    if len(longest) >= cap:
+        off = (len(longest) - cap) // 2
+        chosen = longest[off:off + cap]
+    else:
+        chosen = idx[:cap]
+    return dark_hours[chosen[0]], dark_hours[chosen[-1]] + timedelta(hours=1), len(chosen)
+
+
+def _fill_a_gap(rows, flags, plan, dark_hours, min_slot_hours, caps=None) -> Optional[Slot]:
     """The best further slot in the hours *plan* leaves free, or None.
 
     Gaps are the dark hours before the first slot, between slots, and after
-    the last. Each unused target is tried in each gap; the most good hours
-    wins, a pinned target first, and an earlier row (better ranked) on a tie.
+    the last (the whole night when *plan* is empty). Each unused target is
+    tried in each gap; the most good hours wins, a pinned target first, and
+    an earlier row (better ranked) on a tie. A capped target (*caps*) is
+    trimmed to its cap and needs only min(min_slot_hours, cap).
     """
+    caps = caps or {}
     taken = {s.name for s in plan}
     ordered = sorted(plan, key=lambda s: s.start)
     edges = [None] + [s.end for s in ordered]
@@ -129,10 +201,14 @@ def _fill_a_gap(rows, flags, plan, dark_hours, min_slot_hours) -> Optional[Slot]
         if cand[0] in taken:
             continue
         pinned = int(cand[6]) > 5
+        cap = caps.get(cand[0])
+        need = min(min_slot_hours, cap) if cap else min_slot_hours
         for lo, hi in zip(edges, limits):
             w = _window(flags[cand[0]], dark_hours, lo=lo, hi=hi)
-            if w is None or w[2] < min_slot_hours:
+            if w is None or w[2] < need:
                 continue
+            if cap:
+                w = _trim(flags[cand[0]], dark_hours, w, max(1, int(cap)))
             key = (pinned, w[2])
             if best is None or key > best[0]:
                 best = (key, Slot(cand[0], w[0], w[1], w[2], int(cand[6])))
