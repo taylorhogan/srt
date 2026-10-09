@@ -536,7 +536,8 @@ def _imaging_blocked_reason() -> str | None:
 # plug is gone.
 KASA_REQUIRED = ("Telescope mount", "Roof motor", "Iris inside light")
 KASA_ADVISORY = ("Driveway lights", "Iris door light", "Grill Lights",
-                 "Main landscape lights", "Iris landscape lights")
+                 "Main landscape lights", "Iris landscape lights",
+                 "SWAN", "Stairs")                      # added 2026-10-09, lights only
 
 
 def _kasa_preflight_reason(dev_map: dict | None = None) -> str | None:

@@ -36,7 +36,10 @@ if __name__ == "__main__":
             "Driveway lights": "off",
             "Grill Lights":"off",
             "Iris landscape lights": "off",
-            "Main landscape lights": "off"
+            "Main landscape lights": "off",
+            # Owner, 2026-10-09: two more that spill onto the sky.
+            "SWAN": "off",
+            "Stairs": "off"
 
         }
     ))
