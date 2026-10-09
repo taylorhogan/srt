@@ -386,7 +386,20 @@ def star_white_balance(subbed: dict[str, np.ndarray],
     return {"R": 1.0 / med_r, "G": 1.0, "B": 1.0 / med_b}, info
 
 
-def apply_white_balance(subbed: dict[str, np.ndarray], mode) -> tuple[dict, dict]:
+def apply_white_balance(subbed: dict[str, np.ndarray], mode,
+                        factors: Optional[dict] = None) -> tuple[dict, dict]:
+    """Scale the colour channels; *factors* applies given ones instead of
+    measuring. See _prepare for why a series must share one set."""
+    if factors:
+        out = dict(subbed)
+        for c, f in factors.items():
+            if c in out and f != 1.0:
+                out[c] = out[c] * float(f)
+        return out, {"mode": "given", "factors": dict(factors)}
+    return _measure_white_balance(subbed, mode)
+
+
+def _measure_white_balance(subbed: dict[str, np.ndarray], mode) -> tuple[dict, dict]:
     """(channels, info) with R and B scaled per *mode*; "none" returns the input."""
     if not mode or str(mode).lower() in ("none", "off", "0", "false"):
         return subbed, {"mode": "none", "factors": {"R": 1.0, "G": 1.0, "B": 1.0}}
@@ -535,7 +548,8 @@ def shared_white(subbed: dict[str, np.ndarray], white_pct: float) -> float:
 def _prepare(channels: dict[str, np.ndarray], subtract_background: bool,
              mesh: int, white_pct: float,
              ha_gain: Optional[float] = HA_GAIN,
-             white_balance: str = WHITE_BALANCE) -> tuple[dict, float]:
+             white_balance: str = WHITE_BALANCE,
+             wb_factors: Optional[dict] = None) -> tuple[dict, float]:
     """Background-subtract every channel and find the shared white point.
 
     Factored out of compose() because the per-channel exports have to be the
@@ -550,7 +564,18 @@ def _prepare(channels: dict[str, np.ndarray], subtract_background: bool,
     # Balance BEFORE the Ha blend: the excess is measured against R and added
     # to R, so scaling R first changes the ratio and the subtraction together
     # and the excess itself is unchanged; balancing afterwards would rescale it.
-    subbed, _ = apply_white_balance(subbed, white_balance)
+    # The white balance is MEASURED FROM THE DATA, so it is one more thing a
+    # series has to share rather than recompute. Pass wb_factors to pin it.
+    # Found 2026-10-09: a raw/denoised pair rendered with wb=stars measured
+    # the balance separately on each, and the denoiser moved the stars' colours
+    # enough to swing the factors by a third (ngc7320 R 1.189 -> 0.822, B 1.323
+    # -> 1.769). The denoised frame came out strongly blue and it read exactly
+    # like the model wrecking the colour. It was the renderer. On ngc2146 it
+    # was worse: star_white_balance found too few usable stars on the denoised
+    # frame, returned the identity, and that frame got no balance at all while
+    # its raw counterpart got R 1.176 / B 1.403. Same class of error the black
+    # point comment above describes, one layer up.
+    subbed, _ = apply_white_balance(subbed, white_balance, wb_factors)
     # HALRGB: the blend happens here, on subtracted linear data, so the
     # shared white point and every per-channel export see the blended R.
     # ha_gain=None leaves it to the caller (the movie pins one ratio for
