@@ -98,6 +98,10 @@ Since 2026-09-25 the conductor decides both invariants (ADR 0014): every roof fi
   land on the same pixels, then stretches them on a **shared** brightness scale so
   the ratio between channels survives into the image. Both of those are easy to
   get wrong in ways that still produce a plausible-looking picture.
+  `deblur=N` runs Richardson-Lucy on the luminance first (`stacking/deblur.py`);
+  RL rings around every star unless the sky is out, the floor follows the
+  galaxy without clipping, and a dark clamp holds — the module doc has the
+  measurements, and all four were needed.
 
   Frames are **levelled to a common sky before combining** and the level is
   restored afterwards. This is not cosmetic: sky varies 3x across nights (moon,

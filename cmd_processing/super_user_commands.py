@@ -5693,6 +5693,10 @@ def process_cmd(words: list[str], account: str) -> None:
         mesh=4      background mesh boxes across the short axis; higher removes
                     gradients harder but eats large nebulosity
         scnr=0      average-neutral green removal, g = min(g, (r+b)/2), 0..1.
+        deblur=0    Richardson-Lucy iterations on the luminance (every plane
+                    for HOO/SHO), kernel measured from the field's own stars.
+                    8 is the working value: M33 L 1.76" -> 1.22", no rings.
+                    Runs at render time, so `reuse deblur=8` costs a minute.
         stars=none  `rgb` also stacks R, G and B onto the same reference and
                     gives the stars their RGB colour inside a star mask, the
                     palette's brightness kept; the nebula never sees the RGB.
@@ -5791,7 +5795,7 @@ def _process_run(words: list[str]) -> None:
              "soft": ("softening", float), "mesh": ("mesh", int),
              "scnr": ("scnr", float), "scale": ("scale", int),
              "ha": ("ha_gain", float), "wb": ("white_balance", str),
-             "stars": ("star_source", str)}
+             "stars": ("star_source", str), "deblur": ("deblur", int)}
     opts = {"use_flats": True, "reuse": False}
     rest = []
     bad = []

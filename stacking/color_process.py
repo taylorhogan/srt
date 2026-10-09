@@ -112,6 +112,13 @@ BG_MESH_FRACTION = 4      # mesh boxes across the short axis
 # (see _scnr), so it has to be asked for rather than assumed.
 SCNR_AMOUNT = 0.0
 
+# Richardson-Lucy iterations on the luminance before the stretch, 0 = off.
+# `deblur=8` on the process command. The rules that make it ring-free (sky
+# out, non-clipping floor, dark deringing clamp, signal-only blend) live in
+# stacking/deblur.py with the measurements behind them. M33 L went 1.76" ->
+# 1.22" and ngc2146 2.26" -> 1.71" at 8 iterations with no new rings.
+DEBLUR_ITERS = 0
+
 # Star white balance, "none" or "stars". The channels are stretched on a
 # shared scale so their MEASURED ratios survive into the picture -- which is
 # right, but those ratios are the instrument's (filter widths, QE), not the
@@ -530,6 +537,7 @@ def stars_image(rgb_stacks: dict[str, np.ndarray], **compose_kw) -> np.ndarray:
     skirts. Stretched with the palette's white percentile and softening.
     """
     opts = effective_options(**{k: v for k, v in compose_kw.items() if k in effective_options()})
+    # deblur is not applied here: these planes only lend the stars a hue.
     subbed, white = _prepare({c: rgb_stacks[c] for c in ("R", "G", "B")},
                              opts["subtract_background"], opts["mesh"], opts["white_pct"],
                              ha_gain=None, white_balance="stars")
@@ -748,7 +756,8 @@ def effective_options(**overrides) -> dict:
     opts = {"black_pct": BLACK_PCT, "white_pct": WHITE_PCT,
             "softening": SOFTENING, "mesh": BG_MESH_FRACTION,
             "subtract_background": SUBTRACT_BACKGROUND, "scnr": SCNR_AMOUNT,
-            "ha_gain": HA_GAIN, "white_balance": WHITE_BALANCE}
+            "ha_gain": HA_GAIN, "white_balance": WHITE_BALANCE,
+            "deblur": DEBLUR_ITERS}
     opts.update({k: v for k, v in overrides.items() if k in opts})
     return opts
 
@@ -767,6 +776,8 @@ def describe_options(opts: dict, scale: int = 1) -> str:
         parts.append(f"scnr={opts['scnr']:g}")
     if opts.get("ha_gain", HA_GAIN) != HA_GAIN:
         parts.append(f"ha={opts['ha_gain']:g}")
+    if opts.get("deblur"):
+        parts.append(f"deblur={int(opts['deblur'])}")
     if scale and scale > 1:
         parts.append(f"scale={scale:g}")
     return "  ".join(parts)
@@ -810,6 +821,22 @@ def _scnr(rgb: np.ndarray, amount: float = 1.0) -> np.ndarray:
     return out
 
 
+def _deblurred(channels: dict[str, np.ndarray], iters) -> dict[str, np.ndarray]:
+    """The channel set with its luminance deconvolved, or itself for deblur=0."""
+    if not iters or int(iters) <= 0:
+        return channels
+    from stacking import deblur as _deblur
+    out, infos = _deblur.deblur_channels(channels, int(iters))
+    for c, info in infos.items():
+        if info.get("why"):
+            _logger.warning("deblur %s: left as stacked — %s", c, info["why"])
+        else:
+            _logger.info("deblur %s: RL%d, %d stars, FWHM %.2f px, %.2f%% of pixels",
+                         c, info["iters"], info.get("stars", 0), info.get("fwhm_px", 0.0),
+                         100 * info.get("deblurred_frac", 0.0))
+    return out
+
+
 def compose(channels: dict[str, np.ndarray], black_pct: float = BLACK_PCT,
             white_pct: float = WHITE_PCT,
             subtract_background: bool = SUBTRACT_BACKGROUND,
@@ -817,13 +844,19 @@ def compose(channels: dict[str, np.ndarray], black_pct: float = BLACK_PCT,
             mesh: int = BG_MESH_FRACTION,
             scnr: float = SCNR_AMOUNT,
             ha_gain: float = HA_GAIN,
-            white_balance: str = WHITE_BALANCE) -> np.ndarray:
+            white_balance: str = WHITE_BALANCE,
+            deblur: int = DEBLUR_ITERS) -> np.ndarray:
     """Combine channel stacks into an RGB image in 0..1.
 
     channels holds any of R/G/B plus an optional L, and for HALRGB an HA plane
     that _prepare folds into R and L. Every channel must already be on the
     same pixel grid — that is what the shared reference guarantees.
+
+    deblur > 0 deconvolves the luminance (every plane when there is no L)
+    first, on the linear stack with its sky, which is what the kernel
+    measurement and the floor model need; see stacking/deblur.
     """
+    channels = _deblurred(channels, deblur)
     subbed, white = _prepare(channels, subtract_background, mesh, white_pct, ha_gain,
                              white_balance)
     _logger.info("Compose: shared white point %.2f ADU (p%.1f)", white, white_pct)
@@ -1408,7 +1441,8 @@ def save_channel_jpgs(channels: dict[str, np.ndarray], out_dir: Path, dso: str,
                       mesh: int = BG_MESH_FRACTION,
                       max_px: int = CHANNEL_JPG_MAX_PX,
                       ha_gain: float = HA_GAIN,
-                      white_balance: str = WHITE_BALANCE) -> list[Path]:
+                      white_balance: str = WHITE_BALANCE,
+                      deblur: int = DEBLUR_ITERS) -> list[Path]:
     """Write one mono JPEG per channel, on the composite's shared scale.
 
     Deliberately not per-channel autostretch: these are meant to explain the
@@ -1423,6 +1457,7 @@ def save_channel_jpgs(channels: dict[str, np.ndarray], out_dir: Path, dso: str,
     """
     from PIL import Image
     from stacking import stacker
+    channels = _deblurred(channels, deblur)
     subbed, white = _prepare(channels, subtract_background, mesh, white_pct, ha_gain,
                              white_balance)
     out_dir.mkdir(parents=True, exist_ok=True)
