@@ -143,11 +143,21 @@ def test_stop_sequence_reports_a_crash_instead_of_dying_silently(monkeypatch):
     def body():
         raise ConnectionRefusedError("PWI4 refused")
     monkeypatch.setattr(suc, "_emergency_stop_body", body)
-    posts, pushes = [], []
+    posts, pushes, noted = [], [], []
     monkeypatch.setattr(suc.social_server, "post_social_message", posts.append)
     monkeypatch.setattr(suc.pushover, "push_message",
                         lambda msg, *a, **kw: pushes.append((msg, kw.get("priority"))))
+    # The conductor MUST be stubbed. Without this the except block's
+    # _note_conductor() reaches the live conductor over HTTP and writes a real
+    # ESTOP_FAILED into the observatory's safety journal: 40 of them between
+    # 2026-09-25 and 2026-10-08, every one carrying this test's fake
+    # "ConnectionRefusedError: PWI4 refused", and all of them indistinguishable
+    # from a genuine failed emergency stop by anyone reading the journal.
+    import iris.client as _ic
+    monkeypatch.setattr(_ic, "post_event",
+                        lambda event, *a, **k: noted.append(event) or None)
     suc._emergency_stop_sequence()          # must not raise
+    assert noted == ["ESTOP_FAILED"]        # and it is a stub, not the real journal
     assert any("EMERGENCY STOP FAILED" in p and "PWI4 refused" in p for p in posts)
     assert pushes and pushes[0][1] == 2
 
