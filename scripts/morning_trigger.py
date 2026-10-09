@@ -28,7 +28,12 @@ Deadline: at --deadline the run proceeds regardless and says so loudly. A
 morning render against yesterday's flats beats no render at all, and a
 silent hang beats nothing.
 
-Cron (replaces the 07:30 sync and the 08:00 render):
+It then runs, in order: the Targets sync, the sentry library sync, and the
+morning render. The sentry sync is here rather than on its own 06:00 entry
+because the roof closes at 06:01-06:02 and that entry missed the morning's
+roof-close signature every day.
+
+Cron (replaces the Targets sync, the sentry sync and the morning render):
 
     30 6 * * * /home/taylor/Documents/srt/scripts/morning_trigger.py
 """
@@ -161,7 +166,14 @@ def main() -> int:
         log("dry run: not syncing, not rendering")
         return 0
     if not run("sync_nina_targets_to_spark.bsh", "Targets sync"):
-        log("sync failed -- rendering anyway against whatever is on disk")
+        log("sync failed -- continuing against whatever is on disk")
+    # Moved off its own 06:00 cron entry on 2026-10-09: the roof closes at
+    # 06:01-06:02, so that run missed the morning's roof-close signature every
+    # single day and collected it 24 h late. By the time the flats are quiet
+    # the roof has been shut for an hour, so here it is always in time. It is
+    # ~10 kB and --ignore-existing, so a failure costs nothing and never
+    # blocks the render.
+    run("sync_sentry_library_to_spark.bsh", "sentry library sync")
     run("spark_morning_render.bsh", "morning render")
     log("=== done")
     return 0
