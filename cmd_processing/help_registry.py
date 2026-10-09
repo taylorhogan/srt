@@ -240,6 +240,20 @@ HELP: dict[str, dict] = {
         "notes": ["Runs automatically at the end of a night, after the SNR analysis.",
                   "Default night: each target's newest session folder."],
     },
+    "lightcurve": {
+        "category": "super",
+        "summary": "One calibrated brightness per night for a monitored star, plotted; folded on its period if known.",
+        "usage": ["lightcurve <dso>", "lightcurve <dso> <filter>", "lightcurve <dso> redo"],
+        "examples": ["lightcurve hubblev1", "lightcurve hubblev1 L", "lightcurve hubblev1 redo"],
+        "notes": ["Measures every night of LIGHT frames not yet on file; redo re-measures them all.",
+                  "Each frame is plate-solved; a 3\" aperture on the target and on up to 25 Gaia DR3 comparison "
+                  "stars (chosen once, cached in local/lightcurves/<dso>_comps.json) gives a per-frame zero point; "
+                  "the night's point is the mean of its frames with an error bar.",
+                  "Scale: Gaia G zero point, consistent night to night; NOT Johnson V.",
+                  "Runs by itself at the end of a night for every imaged target whose queue entry has "
+                  "\"lightcurve\": true; \"period_days\" and \"epoch_jd\" on the entry add the phased panel.",
+                  "Files: local/lightcurves/<dso>.json (points) and <dso>.png (plot)."],
+    },
     "transit": {
         "category": "super",
         "summary": "Search saved subs for transit-like dips on every star in the field.",
