@@ -6,12 +6,22 @@ Main landscape -- have Kasa schedules that turn them back ON at sunset. On
 2026-10-08 they came on at 18:20 and lit the yard until 22:00-23:00, through
 the first four hours of imaging.
 
-So image!! also starts this: a daemon thread that waits until sunset + 15
-minutes (owner's choice, 2026-10-09), warns by Pushover one minute before,
-then switches every light in LIGHTS off and verifies each. One pass, no
-re-check ("let's see how that works"); the start sequence's own pass stays.
-If imaging ends while it is still waiting it just stops. Imaging that starts
-after that time (a manual run later in the evening) gets the pass at once.
+So image!! also starts this: a daemon thread that switches every light in
+LIGHTS off, verified, ten minutes before the first exposure is expected,
+with a Pushover one minute before. One pass, no re-check (owner, 2026-10-09:
+"let's see how that works"); the start sequence's own pass stays. If imaging
+ends while it is still waiting it just stops; imaging that starts after the
+due time (a manual run later in the evening) gets the pass at once.
+
+When is the first exposure? Not at the roof open. Every slot's container
+begins with "Wait for object to appear": WaitForTime at nautical dusk plus
+the template's offset (5 min), then WaitUntilAboveHorizon, then centering
+and autofocus (~8 min). So first exposure ~ nautical dusk + 5 + 8, and the
+lights go off LEAD (10 min) before that: nautical dusk + 3 min. Measured
+2026-10-08: dusk 19:21, first frame 19:34:36. Never earlier than sunset + 3
+min, so the plugs' own sunset schedules have fired before the pass. The
+household keeps its lights for an hour after sunset instead of fifteen
+minutes.
 
 LIGHTS is the one list: start.py builds its switch set from it too.
 """
@@ -24,20 +34,58 @@ _logger = logging.getLogger(__name__)
 
 LIGHTS = ("Iris door light", "Iris inside light", "Driveway lights", "Grill Lights",
           "Iris landscape lights", "Main landscape lights", "SWAN", "Stairs")
-DELAY = timedelta(minutes=15)
+SETUP = timedelta(minutes=8)          # centering + autofocus after the wait ends
+LEAD = timedelta(minutes=10)          # lights off this long before the first exposure
+AFTER_SUNSET = timedelta(minutes=3)   # the plugs' sunset schedules have fired by then
+DEFAULT_WAIT_OFFSET = timedelta(minutes=5)
 WARN = timedelta(minutes=1)
 _thread = None
 
 
-def due_at(sunset: datetime, now: datetime) -> datetime:
-    """When the pass runs: sunset + DELAY, or now if that has passed. Pure."""
-    target = sunset + DELAY
+def first_exposure(nautical_dusk: datetime, wait_offset: timedelta = DEFAULT_WAIT_OFFSET) -> datetime:
+    """Expected first exposure: the slot's wait ends at dusk + offset, then setup. Pure."""
+    return nautical_dusk + wait_offset + SETUP
+
+
+def due_at(sunset: datetime, nautical_dusk: datetime, now: datetime,
+           wait_offset: timedelta = DEFAULT_WAIT_OFFSET) -> datetime:
+    """When the pass runs: LEAD before the first exposure, never before sunset +
+    AFTER_SUNSET, and now if that has already passed. Pure."""
+    target = max(first_exposure(nautical_dusk, wait_offset) - LEAD, sunset + AFTER_SUNSET)
     return target if target > now else now
 
 
-def warning_text(due: datetime, sunset: datetime, names) -> str:
-    return ("Lights: switching off %d outside lights at %s (sunset was %s, their own schedules have fired): %s"
-            % (len(names), due.strftime("%H:%M"), sunset.strftime("%H:%M"), ", ".join(names)))
+def sequence_wait_offset(path) -> timedelta:
+    """The first slot's nautical-dusk WaitForTime offset from the written sequence,
+    or the template default if the file cannot be read."""
+    import json
+    try:
+        with open(path, encoding="utf-8-sig") as fh:
+            seq = json.load(fh)
+    except Exception:
+        return DEFAULT_WAIT_OFFSET
+    found = []
+
+    def walk(n):
+        if isinstance(n, dict):
+            t = str(n.get("$type", ""))
+            prov = n.get("SelectedProvider") or {}
+            if "WaitForTime" in t and "NauticalDusk" in str(prov.get("$type", "")):
+                found.append(float(n.get("MinutesOffset") or 0))
+            for k, v in n.items():
+                if k != "Parent":
+                    walk(v)
+        elif isinstance(n, list):
+            for v in n:
+                walk(v)
+    walk(seq)
+    return timedelta(minutes=found[0]) if found else DEFAULT_WAIT_OFFSET
+
+
+def warning_text(due: datetime, sunset: datetime, nautical_dusk: datetime, first: datetime, names) -> str:
+    return ("Lights: first exposure expected about %s (nautical dusk %s, sunset was %s); switching off %d "
+            "outside lights at %s: %s" % (first.strftime("%H:%M"), nautical_dusk.strftime("%H:%M"),
+                                           sunset.strftime("%H:%M"), len(names), due.strftime("%H:%M"), ", ".join(names)))
 
 
 def result_text(results: dict) -> str:
@@ -52,13 +100,15 @@ def run(post_cb=None, still_imaging=None, sleep=time.sleep) -> dict:
     import asyncio
     from zoneinfo import ZoneInfo
     from configs import config
-    from iris_astronomy import weather
     from hardware_control import kasa_utils as ku
-    tz = ZoneInfo(config.data()["location"]["timezone"])
-    sunset = weather.get_sunrise_sunset()[1]
-    sunset = (sunset if sunset.tzinfo else sunset.replace(tzinfo=timezone.utc)).astimezone(tz)
-    due = due_at(sunset, datetime.now(tz))
-    _logger.info("lights warden: pass due %s (sunset %s)", due.strftime("%H:%M:%S"), sunset.strftime("%H:%M"))
+    cfg = config.data()
+    tz = ZoneInfo(cfg["location"]["timezone"])
+    sunset, nautical = twilights(cfg, tz)
+    offset = sequence_wait_offset(cfg["nina"]["sequence_output"])
+    first = first_exposure(nautical, offset)
+    due = due_at(sunset, nautical, datetime.now(tz), offset)
+    _logger.info("lights warden: pass due %s (sunset %s, nautical dusk %s, wait offset %s, first exposure ~%s)",
+                 due.strftime("%H:%M:%S"), sunset.strftime("%H:%M"), nautical.strftime("%H:%M"), offset, first.strftime("%H:%M"))
     while True:
         left = (due - datetime.now(tz)).total_seconds()
         if left <= WARN.total_seconds():
@@ -69,7 +119,7 @@ def run(post_cb=None, still_imaging=None, sleep=time.sleep) -> dict:
         sleep(min(30.0, left - WARN.total_seconds()))
     try:
         from utils import pushover
-        pushover.push_message(warning_text(due, sunset, LIGHTS))
+        pushover.push_message(warning_text(due, sunset, nautical, first, LIGHTS))
     except Exception:
         _logger.exception("lights warden: pushover failed")
     left = (due - datetime.now(tz)).total_seconds()
@@ -85,6 +135,24 @@ def run(post_cb=None, still_imaging=None, sleep=time.sleep) -> dict:
         except Exception:
             _logger.exception("lights warden: post failed")
     return results
+
+
+def twilights(cfg: dict, tz):
+    """(sunset, nautical dusk) for the coming evening, local, from astroplan --
+    the same definitions N.I.N.A's providers use."""
+    import astropy.units as u
+    from astropy.time import Time
+    from astropy.coordinates import EarthLocation
+    from astroplan import Observer
+    L = cfg["location"]
+    obs = Observer(location=EarthLocation.from_geodetic(L["longitude"] * u.deg, L["latitude"] * u.deg,
+                                                        L["elevation"] * u.m), timezone=str(tz))
+    now = Time(datetime.now(timezone.utc))
+    sunset = obs.sun_set_time(now, which="next").to_datetime(timezone=tz)
+    nautical = obs.twilight_evening_nautical(now, which="next").to_datetime(timezone=tz)
+    if nautical < sunset:                  # between sunset and dusk: "next" sunset is tomorrow's
+        sunset = obs.sun_set_time(now - 1 * u.day, which="next").to_datetime(timezone=tz)
+    return sunset, nautical
 
 
 def start(post_cb=None, still_imaging=None) -> bool:

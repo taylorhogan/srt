@@ -7,7 +7,11 @@ class PublicConfig():
 
         },
         "version": {
+<<<<<<< HEAD
             "date": "2026.10.9.7"
+=======
+            "date": "2026.10.9.5"
+>>>>>>> 71fb336 (Lights warden: off ten minutes before the expected first exposure, not sunset + 15)
         },
 
         "logger": {
