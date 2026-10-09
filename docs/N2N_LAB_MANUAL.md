@@ -27,8 +27,10 @@ measured.
   composites shift hue. Worst measured: NGC 6888 S-II 0.556 against Ha 0.887
   (steps 21, 30-31).
 - **Production models**: `n2n_pooledNB_300s.pt` (narrowband),
-  `n2n_ladder_pooled-filters_300s.pt` (broadband). Six attempts to beat the
-  narrowband one failed (step 31).
+  `n2n_ladder_groups_galaxies_300s.pt` (broadband, since 2026-10-09, step 38;
+  it replaced `n2n_ladder_pooled-filters_300s.pt`, which smoothed resolved
+  galaxies as noise, step 37). Six attempts to beat the narrowband one failed
+  (step 31).
 - **Never report an A/B without a seed control.** Floor: ~0.02 retention at
   1-2 sigma, ~0.012 at 4-8, ~0.03 on flux (step 28).
 
@@ -2180,12 +2182,76 @@ retrain with all four M33 channels in the pool. M33 is also still the only
 face-on spiral in the archive, so the model is proven on M33 and unproven on
 the next one.
 
+Superseded by step 38: the retrain with resolved galaxies in the colour
+passbands is the broadband default since 2026-10-09.
+
 **Qualifies standing conclusion 0.** "The training set is not the limit" was
 measured on narrowband nebulae across four training targets of the same class.
 It does not extend across scene classes: here the training set was the whole
 defect, and one group changed retention in the affected channel by a factor of
 two at 0-1 sigma. Check the checkpoint's `groups` key against the object class
 before trusting it on anything new.
+
+### 38. Resolved galaxies in every passband: the broadband default changes
+
+2026-10-09. Step 37 left the broadband model right for L and wrong for RGB
+because no resolved galaxy was in the pool in a colour passband. NGC 7320
+(Stephan's Quintet field) and NGC 2146 had since been shot in LRGB with enough
+colour subs to pair, so the `groups` arm was run again with both added:
+
+```
+scripts/n2n_lrgb_ladder.py stacks --filters L,R,G,B --dsos ngc7320,ngc2146 --test ngc5907
+scripts/n2n_lrgb_ladder.py train --arm groups --suffix _galaxies --test ngc5907 --filters L,R,G,B \
+  --groups "abell2151|L,abell2151|R,abell2151|G,abell2151|B,m33|L,ngc7320|L,ngc7320|R,ngc7320|G,ngc7320|B,ngc2146|L,ngc2146|R,ngc2146|G,ngc2146|B"
+```
+
+Thirteen groups. NGC 2146 paired at 2x9 (B), 2x10 (G), 2x37 (L) training
+stacks plus 2x3 / 2x12 validation; stacks ~7 min per filter, training 2.6 h
+at patch 512, best val 0.6166 at epoch 22 of 60 (the parent: 0.624).
+Checkpoint `n2n_ladder_groups_galaxies_300s.pt`, `groups` key lists the pool.
+
+**Held-out NGC 5907** (`n2n_extended_check.py`, fraction of extended flux
+kept by surface-brightness bin, old → new): L 0.20→0.16 at 0-1 sigma, then
+0.28→0.31, 0.42→0.43, 0.45→0.47, 0.58→0.59, 0.57→0.63, 0.96→1.02; R, G and B
+move the same way, 0.02-0.06 up in every bin above 1 sigma and 0.04 down in
+the 0-1 bin. Unchanged within the seed floor except the top bin, which went
+from a 4-8% loss to flux-neutral.
+
+**M33, the target class** (not in the colour pool: its R/G/B are still too
+thin to pair, so this is a generalisation test for the colour passbands):
+
+| SB bin | L old → new | R old → new | G old → new | B old → new |
+| --- | --- | --- | --- | --- |
+| 0-1 | 0.42 → **0.83** | 0.34 → **0.59** | 0.30 → 0.42 | 0.26 → 0.29 |
+| 1-2 | 0.63 → **0.79** | 0.51 → **0.65** | 0.53 → **0.63** | 0.53 → **0.64** |
+| 2-4 | 0.72 → 0.80 | 0.56 → 0.64 | 0.51 → 0.60 | 0.52 → 0.60 |
+| 4-8 | 0.79 → 0.83 | 0.49 → 0.60 | 0.52 → 0.59 | 0.51 → 0.58 |
+| 8-16 | 0.82 → 0.84 | 0.56 → 0.63 | 0.52 → 0.58 | 0.54 → 0.58 |
+| 16-32 | 0.80 → 0.84 | 0.64 → 0.70 | 0.66 → 0.70 | 0.67 → 0.71 |
+| >32 | 0.97 → 0.98 | 0.96 → 0.99 | 0.95 → 0.98 | 0.95 → 0.99 |
+
+L matches step 37's single-target repair (so M33's own L in the pool was not
+doing it alone). R, G and B gain 0.06-0.25 in every bin on a galaxy that was
+never in the colour pool, which is the generalisation step 37 could not
+claim. They still keep only 0.6-0.7 of the faint-to-mid extended flux where
+L keeps 0.8, so an LRGB render of a face-on spiral is still a desaturated
+disk against the raw, less so than before.
+
+**Renders.** NGC 7320 and NGC 2146 at full resolution, raw against denoised
+with `wb=stars` and the auto stretch, were judged by eye. The first pair
+came out strongly blue on the denoised side and looked like the model
+wrecking the colour; it was the renderer measuring the white balance
+separately on each frame (the colour_process `wb_factors` fix, same day).
+With the balance shared the colour shift between raw and denoised is 0-1%.
+
+**Verdict.** Promoted: the broadband default in `scripts/n2n_lrgb_render.py`
+(`DOMAIN_MODELS`) is this checkpoint from 2026-10-09. Held-out unchanged,
+the target class improves in every passband, nothing got worse by more than
+the seed floor. Two open items: the colour passbands still trail L on
+resolved galaxies, and the thing that would close it is 12+ colour subs on
+M33 so a face-on spiral is in the colour pool; and the pool now spans
+depths of 2x9 to 2x37, past the ~2x rule from step 29, with no photometric
+excess seen in the flux ratios above (>32 bin 0.98-0.99) but not swept.
 
 ## Choosing training data
 

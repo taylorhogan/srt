@@ -394,7 +394,11 @@ DOMAIN_MODELS = {
     # broadband one in every bin on both filters when applied to narrowband
     # (lab manual step 23), so picking by domain is not a convenience.
     "narrowband": "local/models/n2n_pooledNB_300s.pt",
-    "broadband": "local/models/n2n_ladder_pooled-filters_300s.pt",
+    # 2026-10-09: the `groups` retrain on Abell 2151 LRGB + M33 L + NGC 7320
+    # LRGB + NGC 2146 LRGB (lab manual step 38). The pooled-filters model it
+    # replaces trained on Abell 2151 alone and smoothed resolved galaxies as
+    # noise (step 37).
+    "broadband": "local/models/n2n_ladder_groups_galaxies_300s.pt",
 }
 
 

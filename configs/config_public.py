@@ -7,7 +7,7 @@ class PublicConfig():
 
         },
         "version": {
-            "date": "2026.10.9.10"
+            "date": "2026.10.9.12"
         },
 
         "logger": {
