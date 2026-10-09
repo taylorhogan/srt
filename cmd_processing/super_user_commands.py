@@ -3796,6 +3796,7 @@ def get_super_user_commands() -> dict[str, Callable]:
         "seen": seen_cmd,
         "snr": snr_cmd,
         "night": night_cmd,
+        "lightcurve": lightcurve_cmd,
         "rehome": rehome_cmd,
         "transit": transit_cmd,
         "transient": transient_cmd,
@@ -4230,6 +4231,13 @@ def doit_cmd(words: list[str], account: str) -> None:
                 _night_run(["", "night"] + eon_named)
             except Exception:
                 _logger.exception("End-of-night night contribution failed")
+        # Monitored stars (2026-10-09): a brightness for tonight, appended to
+        # the target's light curve. Only targets that asked for it.
+        for lc_dso in eon_lightcurve_targets(eon_named):
+            try:
+                _lightcurve_run(["", "lightcurve", lc_dso])
+            except Exception:
+                _logger.exception("End-of-night light curve failed for %s", lc_dso)
 
 
 def _newest_fits_mtime(image_dir: Path) -> float:
@@ -4460,6 +4468,48 @@ def _night_run(words: list[str]) -> None:
         except Exception:
             _logger.exception("night contribution failed for %s", dso)
             social_server.post_social_message(f"Night contribution failed for {dso} -- see iris.log")
+
+
+def lightcurve_cmd(words: list[str], account: str) -> None:
+    """One calibrated brightness per night for a monitored star (photometry/lightcurve).
+
+    Usage: lightcurve <dso> [filter] [redo]      (default: every night not yet measured)
+    Runs by itself at the end of a night for each imaged target whose queue
+    entry has "lightcurve": true. Background process.
+    """
+    jobs.spawn_process(_lightcurve_run, args=(words,))
+
+
+def _lightcurve_run(words: list[str]) -> None:
+    from photometry import lightcurve as lc
+    args = [w for w in words[2:] if w.strip()]
+    redo = "redo" in [a.lower() for a in args]
+    args = [a for a in args if a.lower() != "redo"]
+    if not args:
+        social_server.post_social_message("Usage: lightcurve <dso> [filter] [redo]")
+        return
+    dso, filt = args[0].lower(), (args[1] if len(args) > 1 else None)
+    try:
+        result = lc.run(dso, filt, redo=redo, progress_cb=social_server.post_social_message,
+                        cancel_cb=jobs.cancel_cb_for(jobs.get_current_job()))
+        social_server.post_social_message(lc.report(dso, result),
+                                          str(result["plot"]) if result.get("plot") else None)
+    except Exception as exc:
+        _logger.exception("lightcurve failed for %s", dso)
+        social_server.post_social_message(f"Light curve failed for {dso}: {exc}")
+
+
+def eon_lightcurve_targets(dsos: list) -> list:
+    """Which of tonight's targets keep a light curve (queue entry "lightcurve": true). Pure-ish."""
+    out = []
+    for d in dsos:
+        try:
+            rec = instructions.get_instruction_by_dso(d) or {}
+        except Exception:
+            rec = {}
+        if rec.get("lightcurve"):
+            out.append(d)
+    return out
 
 
 def eon_snr_words(dso) -> list:
