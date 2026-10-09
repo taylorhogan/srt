@@ -27,22 +27,11 @@ if __name__ == "__main__":
     logger.info('Setting safety to safe and not imaging')
 
     dev_map = asyncio.run(ku.make_discovery_map())
-    instructions = (dict
-        (
-        {
-            "Telescope mount": 'on',
-            "Iris door light": 'off',
-            "Iris inside light": "off",
-            "Driveway lights": "off",
-            "Grill Lights":"off",
-            "Iris landscape lights": "off",
-            "Main landscape lights": "off",
-            # Owner, 2026-10-09: two more that spill onto the sky.
-            "SWAN": "off",
-            "Stairs": "off"
-
-        }
-    ))
+    # The lights are the one list in end_points/lights_warden.py: this pass
+    # runs just before sunset; the warden repeats it after the plugs' own
+    # sunset schedules have turned four of them back on (2026-10-09).
+    from end_points.lights_warden import LIGHTS
+    instructions = {"Telescope mount": 'on', **{name: "off" for name in LIGHTS}}
 
     # Phase 2b (2026-09-25): mount power asks the conductor (Invariant B).
     # The prelude runs this right after the roof was confirmed open, so the

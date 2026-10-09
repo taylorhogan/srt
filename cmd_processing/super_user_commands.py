@@ -3932,6 +3932,14 @@ def image_cmd(words: list[str], account: str) -> bool:
             Path(cfg["nina"]["image_dir"]),
             cfg["nina"]["arc_sec_per_pixel"],
         )
+        # Outside lights off again at sunset + 15 min, after the plugs' own
+        # sunset schedules have turned four of them back on (2026-10-09).
+        try:
+            from end_points import lights_warden
+            lights_warden.start(post_cb=social_server.post_social_message,
+                                still_imaging=lambda: get_imaging_state() != ImagingState.NONE)
+        except Exception:
+            _logger.exception("lights warden did not start")
         def _run():
             try:
                 doit_cmd(words, account)
