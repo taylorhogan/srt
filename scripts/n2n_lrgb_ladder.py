@@ -159,7 +159,12 @@ def build_stacks(args) -> int:
 
     prog = (lambda m: log(f"      {m}")) if args.verbose else (lambda m: None)
 
+    only = {d.strip().lower() for d in (args.dsos or "").split(",") if d.strip()}
+    if only:
+        log(f"restricted to: {', '.join(sorted(only))}")
     for (dso, filt) in sorted(idx):
+        if only and dso.lower() not in only:
+            continue
         key = gkey(dso, filt)
         paths = idx[(dso, filt)]
         train_per, val_per = hr.split_depths(len(paths))
@@ -542,6 +547,11 @@ def main() -> int:
     ap.add_argument("--filters", default="L,R,G,B")
     ap.add_argument("--groups", default="",
                     help="for --arm groups: comma list of dso|filter keys to train on")
+    ap.add_argument("--dsos", default="",
+                    help="stacks stage: build only these targets (comma list). "
+                         "The stage otherwise builds every target that has frames "
+                         "in the requested filters, which on the narrowband set "
+                         "means sh2-92's 330 frames whether or not you want them.")
     ap.add_argument("--exptime", type=int, default=300)
     ap.add_argument("--epochs", type=int, default=60)
     ap.add_argument("--seed", type=int, default=0)
