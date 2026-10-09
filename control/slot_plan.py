@@ -281,19 +281,26 @@ def _plan_two(rows, flags, dark_hours, weather_by_hour, min_slot_hours, max_slot
     return [slot1]
 
 
-def signature(slots) -> tuple:
-    """What a sequence generated from *slots* depends on: names, windows and
-    hours, in order. Two plans with equal signatures produce the same
-    sequence; a different signature means the file on disk is stale.
+def signature(slots, filter_plans: Optional[dict] = None) -> tuple:
+    """What a sequence generated from *slots* depends on: names, windows,
+    hours and each target's filter plan, in order. Two plans with equal
+    signatures produce the same sequence; a different signature means the
+    file on disk is stale.
 
     Why this exists: on 2026-09-13 the noon plan had two slots (ngc7380 +
     m33). A restart at 15:46 re-planned under a worse forecast and wrote a
     one-slot sequence; the pre-sunset check then found the better forecast
     again, with m33 back, but only regenerated when the BEST TARGET'S NAME
     changed -- it had not -- so the one-slot file ran and m33 never imaged.
+
+    *filter_plans* ({name: {filter: count}}) joined 2026-10-09: a `filters`
+    change made after noon (the SNR numbers suggest a different split) used to
+    need the slot plan to change too before the sunset check regenerated.
     """
+    plans = filter_plans or {}
     return tuple((s.name, s.start.isoformat() if s.start else None,
-                  s.end.isoformat() if s.end else None, int(s.good_hours))
+                  s.end.isoformat() if s.end else None, int(s.good_hours),
+                  tuple(sorted((plans.get(s.name) or {}).items())))
                  for s in (slots or []))
 
 

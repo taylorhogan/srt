@@ -252,3 +252,14 @@ def test_capped_pinned_target_takes_the_gap_before_an_unpinned_filler():
 def test_no_caps_is_unchanged():
     rows = [row("a", "++++----"), row("b", "----++--"), row("c", "------++")]
     assert [x.name for x in plan_slots(rows, HOURS, WX_ALL, 2, 3)] == ["a", "b", "c"]
+
+
+def test_signature_changes_when_a_filter_plan_changes():
+    from control.slot_plan import signature
+    t0 = datetime(2026, 10, 9, 20, 0)
+    a = [Slot("ngc7320", t0, t0 + timedelta(hours=4), 4, 130)]
+    before = signature(a, {"ngc7320": {"L": 2, "R": 1, "G": 1, "B": 1}})
+    after = signature(a, {"ngc7320": {"L": 1, "R": 2, "G": 2, "B": 1}})
+    assert before != after
+    assert signature(a, {"ngc7320": {"B": 1, "L": 2, "G": 1, "R": 1}}) == before   # order-free
+    assert signature(a) == signature(a, {}) == signature(a, {"other": {"L": 1}})

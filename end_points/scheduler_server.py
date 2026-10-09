@@ -434,6 +434,17 @@ def _push_imaging_plan(dso_name: str, good_hours: float, best_start, output_path
     social_server.post_social_message("\n".join(lines))
 
 
+def _filter_plans_for(slots) -> dict:
+    """{slot name: its stored filter plan} for the plan signature. Never raises."""
+    out = {}
+    for s in slots or []:
+        try:
+            out[s.name] = instructions.get_filter_plan(s.name) or {}
+        except Exception:
+            out[s.name] = {}
+    return out
+
+
 def _second_slot_message(slots) -> str:
     """'\nThen <dso> HH:MM-HH:MM (Nh)' per later slot when the plan has more than one."""
     if len(slots or []) < 2:
@@ -695,7 +706,7 @@ def generate_sequence_task(dso_name: str, good_hours: float = 0.0, notify: bool 
         social_server.post_social_message("⛔ " + msg)
         pushover.push_message(msg)
         raise
-    _PLAN_ON_DISK["sig"] = slot_plan.signature(slots)
+    _PLAN_ON_DISK["sig"] = slot_plan.signature(slots, _filter_plans_for(slots))
     if got and notify:
         _plan, output_path = got
         _push_imaging_plan(dso_name, good_hours, _LAST_BEST_START.get("t"), output_path,
@@ -764,7 +775,10 @@ def nightly_cycle():
     # 2026-09-13 only the best target's NAME was compared, and a one-slot
     # file written by an afternoon restart ran a night whose sunset plan had
     # two slots. Silent on the happy path: one notification a night.
-    sunset_sig = slot_plan.signature(list(astro_dso_visibility.last_slots))
+    # The filter plans are part of it (2026-10-09): `filters` changed after
+    # noon must reach the sequence even when the slots are unchanged.
+    sunset_slots = list(astro_dso_visibility.last_slots)
+    sunset_sig = slot_plan.signature(sunset_slots, _filter_plans_for(sunset_slots))
     if best_name != noon_name or sunset_sig != _PLAN_ON_DISK.get("sig"):
         LOGGER.info("Plan changed since the sequence was written (%s -> %s; slots %s -> %s) — regenerating",
                     noon_name, best_name, _PLAN_ON_DISK.get("sig"), sunset_sig)
