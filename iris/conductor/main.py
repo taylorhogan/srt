@@ -56,7 +56,12 @@ def main() -> int:
         probe.close()
 
     journal = Journal(REPO_ROOT / "local" / "journal")
-    conductor = ShadowConductor(REPO_ROOT, journal)
+    planner = None
+    if cfg.get("shadow_planner", True):
+        # Phase 3 step 1: each scheduler decision re-planned in shadow.
+        from iris.conductor.planner import ShadowPlanner
+        planner = ShadowPlanner(REPO_ROOT, journal)
+    conductor = ShadowConductor(REPO_ROOT, journal, planner=planner)
     journal.append("note", "CONDUCTOR_STARTED", "conductor",
                    data={"mode": "shadow", "state": conductor.state})
 

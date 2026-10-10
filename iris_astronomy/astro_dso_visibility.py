@@ -1289,23 +1289,14 @@ def best_object_tonight(instructions_path: Path | str) -> tuple[str, Optional[da
     # leaves. Kept beside the pick rather than in the return so the chat
     # callers of this function are untouched.
     try:
-        from control import slot_plan as _sp
-        _n = config.data().get("nina", {})
-        # Per-target caps (instruction "max_hours": a short monitoring block,
-        # e.g. the M31 Cepheid) -- read here rather than carried in the rows
-        # so rank_targets_tonight's row shape stays what every caller expects.
-        caps = {}
-        try:
-            with open(instructions_path, "r") as _f:
-                for _o in json.load(_f):
-                    if _o.get("status") == "waiting" and _o.get("max_hours"):
-                        caps[_o["dso"]] = float(_o["max_hours"])
-        except Exception:
-            LOGGER.exception("could not read max_hours from the queue; no caps")
-        last_slots = _sp.plan_slots(rows, dark_hours, weather_by_hour,
-                                    min_slot_hours=float(_n.get("min_slot_hours", 2.0)),
-                                    max_slots=int(_n.get("max_slots", 2)),
-                                    max_hours=caps)
+        # The same decision code the conductor's shadow planner runs
+        # (control/night_plan, Phase 3): the queue's max_hours caps (a short
+        # monitoring block, e.g. the M31 Cepheid) and the slot plan,
+        # unchanged in behaviour.
+        from control import night_plan as _np
+        last_slots = _np.slots_for(rows, dark_hours, weather_by_hour,
+                                   _np.read_queue_caps(instructions_path),
+                                   config.data().get("nina", {}))
     except Exception:
         LOGGER.exception("slot plan failed; single slot")
         last_slots = []

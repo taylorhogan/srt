@@ -7,7 +7,7 @@ class PublicConfig():
 
         },
         "version": {
-            "date": "2026.10.10.6"
+            "date": "2026.10.10.7"
         },
 
         "logger": {
@@ -564,6 +564,11 @@ class PublicConfig():
             # still obeyed. Set False to go back to advisory if a verdict is
             # ever wrong at the wrong moment. stop! -> ESTOP is live regardless.
             "mount_authority": True,
+            # Phase 3 step 1 (2026-10-10): each time the scheduler leaves its
+            # noon or pre-sunset check, the conductor plans the same night
+            # with the same code (control/night_plan, in its own process) and
+            # journals PLAN_MATCH / PLAN_DIFF. Watch-only; False stops it.
+            "shadow_planner": True,
         },
 
         "transit": {

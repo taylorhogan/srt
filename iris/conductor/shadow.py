@@ -240,9 +240,12 @@ class ShadowConductor:
     _flats_grace_polls = 60
 
     def __init__(self, repo_root: Path, journal: Journal, sun_probe=None,
-                 roof_authority=None, mount_authority=None):
+                 roof_authority=None, mount_authority=None, planner=None):
         self.root = Path(repo_root)
         self.journal = journal
+        # Phase 3 step 1: plans each night the scheduler decides, in shadow
+        # (iris/conductor/planner.ShadowPlanner). None = not planning.
+        self.planner = planner
         self.state = INITIAL_STATE
         self.slots = 0
         # offer() is entered from the watcher thread AND the API thread; the
@@ -429,6 +432,13 @@ class ShadowConductor:
             return len(d.get("slots") or [])
         except Exception:
             return 0
+
+    def _read_sched_record(self) -> dict:
+        try:
+            d = json.loads((self.root / "scheduler_state.json").read_text())
+            return d if isinstance(d, dict) else {}
+        except Exception:
+            return {}
 
     def _read_sched(self):
         import json
@@ -958,6 +968,15 @@ class ShadowConductor:
                 self._offer_clock("PRE_SUNSET_TICK", sched)
             elif sched == "WAITING_FOR_NOON" and prev in ("IMAGING", "WAITING_FOR_BOOT"):
                 self._offer_clock("DAY_TICK", sched)
+            # --- Phase 3 step 1: the scheduler just left a check with its
+            # decision on disk; the conductor plans the same night in its own
+            # process and journals PLAN_MATCH / PLAN_DIFF. Fenced: nothing
+            # the planner does can reach the machine.
+            if prev in ("NOON_CHECK", "PRE_SUNSET_CHECK") and self.planner is not None:
+                try:
+                    self.planner.on_decision(prev, self._read_sched_record())
+                except Exception:
+                    _logger.exception("shadow planner trigger failed (continuing)")
             self._sched, self._will_image = sched, will
 
         # --- imaging.txt transitions -> capture events
