@@ -356,6 +356,35 @@ def test_stop_tells_the_conductor_before_anything_and_asks_before_the_park(stop_
     assert conductor[-1] == "conductor:ESTOP_DONE"
 
 
+def test_stop_parks_under_mount_authority_when_the_conductor_is_unreachable(stop_env, monkeypatch):
+    """Mount authority binding (2026-10-09): the physical stop never waits on
+    the brain. The fixture's conductor is unreachable; the park still happens."""
+    import iris.client as _ic
+    monkeypatch.setattr(_ic, "mount_authority", lambda: True)
+    calls, posts, pushes, script = stop_env
+    script([BLIND, (True, False, True, None)], ["not_parked", "parked"])
+    suc._emergency_stop_body()
+    assert calls.index("conductor:MOUNT_MOVE_REQUESTED") < calls.index("park") < calls.index("close")
+    assert any("stop! does not wait on the conductor" in p for p in posts)
+
+
+def test_stop_obeys_a_conductor_that_answers_no_under_mount_authority(stop_env, monkeypatch):
+    import iris.client as _ic
+    monkeypatch.setattr(_ic, "mount_authority", lambda: True)
+    calls, posts, pushes, script = stop_env
+
+    def answer(event, *a, **k):
+        calls.append("conductor:" + event)
+        if event == "MOUNT_MOVE_REQUESTED":
+            return {"accepted": False, "guard": "roof_open: roof not confirmed open"}
+        return None
+    monkeypatch.setattr(_ic, "post_event", answer)
+    script([BLIND, BLIND], ["not_parked", "not_parked"])
+    suc._emergency_stop_body()
+    assert "park" not in calls and "close" not in calls
+    assert any("conductor refused" in p for p in posts)
+
+
 def test_stop_blind_refusal_stops_tracking_and_pushes_once(stop_env, monkeypatch):
     calls, posts, pushes, script = stop_env
     monkeypatch.setattr(suc.ku, "legacy_relay", lambda host: {"m": 1, "r": 1}[host])   # roof plug ON

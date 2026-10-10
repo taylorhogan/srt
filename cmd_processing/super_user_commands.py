@@ -659,19 +659,26 @@ def _asserted_evidence(direction: str) -> dict:
 # answers Invariant B from iris/core. With conductor.mount_authority OFF the
 # verdict is advisory and posted; ON, a refusal stops the action.
 def _ask_mount(event: str, what: str, evidence: dict | None = None,
-               data: dict | None = None, source: str = "operator") -> bool:
+               data: dict | None = None, source: str = "operator",
+               emergency: bool = False) -> bool:
     """True when the mount may do *what*. Refusals and advisories go to the
-    chat, so the verdict is visible where the command was typed."""
+    chat, so the verdict is visible where the command was typed.
+
+    *emergency* is stop!'s park: with mount authority on it still asks and is
+    still refused by a conductor that answers no, but an UNREACHABLE conductor
+    does not stop it (iris.client.decide)."""
     from iris import client as conductor
-    allowed, reason, _reply = conductor.request_mount(event, source, evidence, data)
+    allowed, reason, reply = conductor.request_mount(event, source, evidence, data,
+                                                     unreachable_proceeds=emergency)
     if not allowed:
         msg = f"Mount will not {what}: conductor refused — {reason}"
         _logger.warning(msg)
         social_server.post_social_message(msg)
         return False
     if reason:
-        social_server.post_social_message(
-            f"ℹ️ {reason} (mount {what} proceeding: conductor not yet authoritative for the mount)")
+        tail = ("stop! does not wait on the conductor" if reply is None and conductor.mount_authority()
+                else "conductor not yet authoritative for the mount")
+        social_server.post_social_message(f"ℹ️ {reason} (mount {what} proceeding: {tail})")
     return True
 
 
@@ -1547,7 +1554,8 @@ def _blind_park(dev_map, inside_view, parked, closed, is_open, mount_state):
                       _roof_evidence(parked, closed, is_open),
                       {"direction": "park", "blind_park": True,
                        "why": "stop!: roof hidden by the scope",
-                       "open_confirmed": ev["open_confirmed"].isoformat()}):
+                       "open_confirmed": ev["open_confirmed"].isoformat()},
+                      emergency=True):
             _park_connected_mount()
     except Exception:
         _logger.exception("emergency: blind park failed")
@@ -1645,7 +1653,7 @@ def _emergency_stop_body() -> None:
             try:
                 if _ask_mount("MOUNT_MOVE_REQUESTED", "park",
                               _roof_evidence(parked, closed, is_open),
-                              {"direction": "park", "why": "stop!"}):
+                              {"direction": "park", "why": "stop!"}, emergency=True):
                     pwi4_utils.park_scope()
             except Exception:
                 _logger.exception("emergency: park_scope failed")

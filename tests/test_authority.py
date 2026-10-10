@@ -35,6 +35,15 @@ def test_decide_unreachable_refuses_only_under_authority():
     assert allowed is True and "unreachable" in reason
 
 
+def test_decide_emergency_proceeds_only_when_unreachable():
+    """stop!'s park (2026-10-09): an unreachable conductor does not stop it,
+    a conductor that answers and refuses still does."""
+    assert client.decide(None, authority=True, unreachable_proceeds=True)[0] is True
+    reply = {"accepted": False, "guard": "roof_open: roof not confirmed open"}
+    assert client.decide(reply, True, unreachable_proceeds=True) == (False, reply["guard"])
+    assert client.decide({"accepted": True}, True, unreachable_proceeds=True) == (True, None)
+
+
 def test_decide_accepted_is_allowed_and_would_refuse_is_advisory():
     assert client.decide({"accepted": True}, True) == (True, None)
     allowed, reason = client.decide({"accepted": True, "would_refuse": "mount_parked: x"}, False)

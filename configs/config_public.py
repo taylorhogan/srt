@@ -7,7 +7,7 @@ class PublicConfig():
 
         },
         "version": {
-            "date": "2026.10.10.1"
+            "date": "2026.10.9.14"
         },
 
         "logger": {
@@ -553,9 +553,17 @@ class PublicConfig():
             # MOUNT_MOVE_REQUESTED / MOUNT_POWER_REQUESTED with its evidence
             # and Invariant B is decided in iris/core. False = advisory: the
             # verdict is journaled and posted, the action proceeds. True = a
-            # refusal stops it. Flip after a night of clean advisories, as
-            # roof_authority was. stop! -> ESTOP is live regardless.
-            "mount_authority": False,
+            # refusal stops it. Flipped True 2026-10-09 (operator: "that was a
+            # gate for the new architecture"): since 09-25 the advisories were
+            # 14 moves + 13 power-ons ALLOWED with no would-refuse, and the
+            # real stop! of 10-09 22:12 went ESTOP -> park allowed in hold ->
+            # park confirmed -> close allowed in hold -> close confirmed ->
+            # resolve!. stop!'s park is the one exception to "unreachable
+            # refuses" (iris.client.decide, like end.py's close): the physical
+            # stop never waits on the brain; a conductor that answers no is
+            # still obeyed. Set False to go back to advisory if a verdict is
+            # ever wrong at the wrong moment. stop! -> ESTOP is live regardless.
+            "mount_authority": True,
         },
 
         "transit": {

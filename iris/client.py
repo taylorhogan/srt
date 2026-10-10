@@ -126,7 +126,7 @@ def report(event: str, source: str, data: Optional[dict] = None,
 
 # ------------------------------------------------------------------ decision
 
-def decide(reply: Optional[dict], authority: bool) -> tuple:
+def decide(reply: Optional[dict], authority: bool, unreachable_proceeds: bool = False) -> tuple:
     """(allowed, reason) from the conductor's reply. Pure; CI-tested.
 
     reply None means unreachable. With authority the move is refused (the
@@ -134,10 +134,16 @@ def decide(reply: Optional[dict], authority: bool) -> tuple:
     reason is advisory. A reply that was not accepted refuses with the
     conductor's reason under authority, and is advisory otherwise: the
     conductor journaled the would-be refusal, the legacy gates still stand.
+
+    *unreachable_proceeds* is the emergency exception (2026-10-09, when mount
+    authority went binding): stop!'s park, like end.py's last-resort close,
+    must happen even if the brain died -- "the physical stop never waits on
+    the brain". It changes only the unreachable case; a conductor that
+    answers and refuses is still obeyed.
     """
     if reply is None:
         reason = "conductor unreachable — no verdict on this roof move"
-        return (not authority), reason
+        return (not authority) or unreachable_proceeds, reason
     if reply.get("accepted"):
         if reply.get("would_refuse"):
             # Stepped permissively (authority off at the conductor): the move
@@ -166,14 +172,15 @@ def request_roof_move(event: str, source: str, evidence: dict,
 
 
 def request_mount(event: str, source: str, evidence: Optional[dict] = None,
-                  data: Optional[dict] = None) -> tuple:
+                  data: Optional[dict] = None, unreachable_proceeds: bool = False) -> tuple:
     """Ask before the mount moves (MOUNT_MOVE_REQUESTED: slew, home, park,
     unpark) or is powered on (MOUNT_POWER_REQUESTED). Same contract as
     request_roof_move, bound by conductor.mount_authority. Evidence is
     optional: a caller with no fresh vision read posts none and the
-    conductor decides on what it last saw (15-minute decay)."""
+    conductor decides on what it last saw (15-minute decay).
+    *unreachable_proceeds*: stop!'s park only (see `decide`)."""
     reply = post_event(event, source, data, evidence)
-    allowed, reason = decide(reply, mount_authority())
+    allowed, reason = decide(reply, mount_authority(), unreachable_proceeds)
     if reason and reply is None:
         reason = "conductor unreachable — no verdict on this mount action"
     _logger.info("conductor %s for %s: allowed=%s%s", "reply" if reply else "unreachable",
