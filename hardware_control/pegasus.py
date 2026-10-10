@@ -184,7 +184,11 @@ def read_power_ports():
     return {port: level for port, (_name, level) in details.items()}
 
 
-def power_off_imaging_train():
+VERIFY_WAIT_S = 15.0
+VERIFY_POLL_S = 1.5
+
+
+def power_off_imaging_train(sleep=None, wait_s: float = VERIFY_WAIT_S):
     """Power off the imaging-train ports (camera/gemini/fan) and VERIFY.
 
     Every port is attempted regardless of individual failures, then the box
@@ -192,13 +196,26 @@ def power_off_imaging_train():
     shows every train port at level 0; levels is the read-back
     {port: level} (None if the box could not be read, in which case ok is
     False -- an acknowledged command is not evidence the port is off).
+
+    The read-back is polled for up to *wait_s*: Unity's aggregate report is
+    refreshed on its own cycle, and on 2026-10-09 22:17:24 a read in the same
+    second as the commands still showed {1: 100, 2: 100, 3: 100} -- "NOT
+    verified" -- while the box read all ports 0 when asked again later.
     """
+    import time as _time
+    sleep = sleep or _time.sleep
     for port in IMAGING_TRAIN_PORTS:
         set_power_port(port, 0)
-    levels = read_power_ports()
+    waited = 0.0
+    while True:
+        levels = read_power_ports()
+        ok = levels is not None and all(levels.get(p, 1) == 0 for p in IMAGING_TRAIN_PORTS)
+        if ok or waited >= wait_s:
+            break
+        sleep(VERIFY_POLL_S)
+        waited += VERIFY_POLL_S
     if levels is None:
         return False, None
-    ok = all(levels.get(p, 1) == 0 for p in IMAGING_TRAIN_PORTS)
     return ok, {p: levels.get(p) for p in IMAGING_TRAIN_PORTS}
 
 

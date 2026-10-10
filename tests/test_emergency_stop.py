@@ -67,7 +67,7 @@ def test_pegasus_power_off_is_verified_by_read_back(monkeypatch):
 def test_pegasus_power_off_not_verified_when_a_port_stays_on(monkeypatch):
     monkeypatch.setattr(pegasus, "_send_raw_command", lambda cmd: cmd)
     monkeypatch.setattr(pegasus, "read_power_ports", lambda: {1: 0, 2: 100, 3: 0})
-    ok, levels = pegasus.power_off_imaging_train()
+    ok, levels = pegasus.power_off_imaging_train(sleep=lambda s: None)
     assert ok is False and levels[2] == 100
 
 
@@ -75,7 +75,18 @@ def test_pegasus_power_off_not_verified_when_box_unreadable(monkeypatch):
     # An echoed command is not evidence the port is off.
     monkeypatch.setattr(pegasus, "_send_raw_command", lambda cmd: cmd)
     monkeypatch.setattr(pegasus, "read_power_ports", lambda: None)
-    assert pegasus.power_off_imaging_train() == (False, None)
+    assert pegasus.power_off_imaging_train(sleep=lambda s: None) == (False, None)
+
+
+def test_pegasus_power_off_waits_for_a_stale_report(monkeypatch):
+    """2026-10-09 22:17: the read in the same second still showed the old
+    levels; the box read all zeros when asked again."""
+    reads = iter([{1: 100, 2: 100, 3: 100}, {1: 100, 2: 100, 3: 100}, {1: 0, 2: 0, 3: 0}])
+    slept = []
+    monkeypatch.setattr(pegasus, "_send_raw_command", lambda cmd: cmd)
+    monkeypatch.setattr(pegasus, "read_power_ports", lambda: next(reads))
+    ok, levels = pegasus.power_off_imaging_train(sleep=slept.append)
+    assert ok is True and levels == {1: 0, 2: 0, 3: 0} and len(slept) == 2
 
 
 # ------------------------------------------------------------- status block
