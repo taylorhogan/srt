@@ -85,9 +85,7 @@ def roof_by_cameras(s: SensorSnapshot) -> Tri:
     tag DECIDES; Iris cam may veto but never overrule -- a disagreement is
     UNKNOWN -- and is the fallback when the north camera cannot answer.
     tests/test_guards.py proves it equal to north_roof.decide on every input.
-    Not yet consulted by a table guard: the conductor journals it beside the
-    merged `roof` it decides on, until nights of zero differences say the
-    guards can read it instead.
+    The roof guards read it through roof_reading (since 2026-10-10).
     """
     north, cam = s.roof_north, s.roof_cam
     if north is not Tri.UNKNOWN:
@@ -100,33 +98,50 @@ def roof_by_cameras(s: SensorSnapshot) -> Tri:
 def blind_park_corroborated(s: SensorSnapshot):
     """The blind park's evidence, checked by the conductor rather than taken
     on the actuator's word: the roof was confirmed open recently and nothing
-    could have moved it since (sentry/roof_evidence). Observed, not enforced:
-    journaled on every blind-park request."""
+    could have moved it since (sentry/roof_evidence). Enforced under mount
+    authority since 2026-10-10; stop! applies the same rule to the same file
+    before it asks, so the two disagree only if the file changed between."""
     if s.roof_unmoved is not Tri.CONFIRMED:
         return ("no evidence the roof is still open (%s): no confirmed OPEN within "
                 "16 h with no roof motion since" % s.roof_unmoved.value.lower())
     return None
 
 
+def roof_reading(s: SensorSnapshot) -> Tri:
+    """The roof position every roof guard decides on (Phase 2b, closed 2026-10-10).
+
+    The two roof cameras merged HERE (roof_by_cameras) whenever either of
+    them has reported; the merged `roof` otherwise -- a request posted with
+    no camera answers, or an operator's `force`, whose asserted position the
+    conductor stores in `roof` with the camera fields cleared. Equal to the
+    old reading whenever both come from the same vision read (the merge rule
+    is proved equal to sentry/north_roof.decide on every input).
+    """
+    if s.roof_north is not Tri.UNKNOWN or s.roof_cam is not Tri.UNKNOWN:
+        return roof_by_cameras(s)
+    return s.roof
+
+
 def roof_state_known(s: SensorSnapshot):
     """The relay is a toggle: firing it with the roof position unknown turns
     an unknown into a coin flip. Any confirmed position passes."""
-    if s.roof is Tri.UNKNOWN:
+    if roof_reading(s) is Tri.UNKNOWN:
         return "roof position unknown — resolve before any roof motion"
     return None
 
 
 def roof_open(s: SensorSnapshot):
     """Invariant B: mount motion only under a confirmed-open roof."""
-    if s.roof is not Tri.CONFIRMED:
-        return ("roof not confirmed open (%s) — mount stays put"
-                % s.roof.value.lower())
+    r = roof_reading(s)
+    if r is not Tri.CONFIRMED:
+        return ("roof not confirmed open (%s) — mount stays put" % r.value.lower())
     return None
 
 
 def roof_closed(s: SensorSnapshot):
-    if s.roof is not Tri.DENIED:
-        return ("roof not confirmed closed (%s)" % s.roof.value.lower())
+    r = roof_reading(s)
+    if r is not Tri.DENIED:
+        return ("roof not confirmed closed (%s)" % r.value.lower())
     return None
 
 

@@ -308,11 +308,21 @@ def test_a_park_in_estop_follows_the_roof_evidence_or_the_blind_park_rule(tmp_pa
     blind = {**OPEN, "roof": "UNKNOWN"}
     v = c.offer("MOUNT_MOVE_REQUESTED", "stop!", {"direction": "park"}, evidence=blind)
     assert not v.accepted and "roof" in v.guard
+    # The blind park's assertion is checked against the evidence file (Phase 2b
+    # closed 2026-10-10): with no confirmed open on record it is refused...
+    v = c.offer("MOUNT_MOVE_REQUESTED", "stop!", {"direction": "park", "blind_park": True},
+                evidence=blind)
+    assert not v.accepted and "blind_park_corroborated" in v.guard
+    # ...and with a recent open and no motion since, it is allowed.
+    from datetime import datetime, timedelta
+    opened = datetime.now().astimezone() - timedelta(hours=2)
+    (c.root / "local" / "roof_evidence.json").write_text(json.dumps(
+        {"open_confirmed": opened.isoformat(), "motion_possible": (opened - timedelta(minutes=2)).isoformat()}))
     v = c.offer("MOUNT_MOVE_REQUESTED", "stop!", {"direction": "park", "blind_park": True},
                 evidence=blind)
     assert v.accepted and v.kind == "allowed_in_hold"
     notes = [e for e in _entries(c, "note") if e.event == "MOUNT_PARK_ALLOWED_IN_HOLD"]
-    assert notes and notes[-1].data.get("asserted")
+    assert notes and "corroborated" in notes[-1].data.get("asserted")
     assert c.state == "ESTOP"                    # the hold is never left by a park
 
 

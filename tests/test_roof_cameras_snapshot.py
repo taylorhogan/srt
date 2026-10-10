@@ -93,18 +93,40 @@ def test_posted_camera_answers_are_journaled_beside_the_decision(tmp_path):
     assert v.kind == "transition"
     e = [x for x in c.journal.replay() if x.event == "ROOF_OPEN_REQUESTED"][-1]
     assert e.data["roof_cameras"] == {"north": "DENIED", "cam": "DENIED", "by_guards": "DENIED",
-                                      "decided": "DENIED", "unmoved_since_open": "UNKNOWN"}
+                                      "vision_merge": "DENIED", "decided": "DENIED",
+                                      "unmoved_since_open": "UNKNOWN"}
     assert _notes(c, "ROOF_MERGE_DIFF") == []
 
 
-def test_a_merge_difference_is_its_own_note_and_changes_nothing(tmp_path):
+def test_a_camera_disagreement_refuses_and_is_noted(tmp_path):
+    """Phase 2b closed: the guards decide on the cameras. North and Iris cam
+    contradicting each other is UNKNOWN, whatever the vision merge said."""
     c = _conductor(tmp_path)
-    # decided says shut, the cameras disagree with each other -> the guards' merge is UNKNOWN
     v = c.offer("ROOF_OPEN_REQUESTED", "operator", {},
                 evidence={**GOOD, "roof_north": "DENIED", "roof_cam": "CONFIRMED"})
-    assert v.kind == "transition"                      # verdict still from `roof`
+    assert v.kind == "rejected" and v.guard.startswith("roof_state_known:")
     diff = _notes(c, "ROOF_MERGE_DIFF")
-    assert len(diff) == 1 and diff[0].data["by_guards"] == "UNKNOWN" and diff[0].data["decided"] == "DENIED"
+    assert len(diff) == 1 and diff[0].data["by_guards"] == "UNKNOWN" and diff[0].data["vision_merge"] == "DENIED"
+
+
+def test_a_force_assertion_is_not_overruled_by_the_cameras(tmp_path):
+    """2026-09-17: only a forced close could shut a roof whose open never confirmed."""
+    c = _conductor(tmp_path)
+    (tmp_path / "iris.log").write_text(
+        "north roof: tag says unknown, Iris cam says open -> open (by cam-fallback)\n")
+    c.poll()
+    asserted = {"parked_vision": "CONFIRMED", "parked_kasa": "UNKNOWN", "roof": "CONFIRMED", "asserted": True}
+    v = c.offer("ROOF_CLOSE_REQUESTED", "operator", {"force": True}, evidence=asserted)
+    assert v.kind == "transition"
+
+
+def test_a_request_without_camera_answers_decides_on_its_posted_roof(tmp_path):
+    c = _conductor(tmp_path)
+    (tmp_path / "iris.log").write_text(
+        "north roof: tag says open, Iris cam says open -> open (by north)\n")
+    c.poll()                                             # stale-ish cameras from the log say OPEN
+    v = c.offer("ROOF_OPEN_REQUESTED", "operator", {}, evidence=GOOD)   # posted: shut, no cameras
+    assert v.kind == "transition" and c.state == "MANUAL_OPENING"
 
 
 def test_the_north_row_in_the_log_feeds_the_snapshot(tmp_path):
@@ -116,19 +138,21 @@ def test_the_north_row_in_the_log_feeds_the_snapshot(tmp_path):
     assert ev.roof_north is Tri.DENIED and ev.roof_cam is Tri.DENIED
 
 
-def test_blind_park_corroboration_is_journaled_not_enforced(tmp_path):
+def test_blind_park_is_enforced_on_the_evidence_file(tmp_path):
     c = _conductor(tmp_path)
     c.offer("ESTOP_REQUESTED", "operator")
     blind = {**OPEN, "roof": "UNKNOWN"}
     v = c.offer("MOUNT_MOVE_REQUESTED", "stop!", {"direction": "park", "blind_park": True}, evidence=blind)
-    assert v.accepted                                   # no record on file: still allowed, as before
-    note = _notes(c, "MOUNT_PARK_ALLOWED_IN_HOLD")[-1]
-    assert note.data["blind_park_corroborated"] is False and "no evidence" in note.data["blind_park_corroboration"]
+    assert not v.accepted and "no evidence" in v.guard            # nothing on record
     opened = datetime.now().astimezone() - timedelta(hours=2)
     (tmp_path / "local" / "roof_evidence.json").write_text(json.dumps(
+        {"open_confirmed": opened.isoformat(), "motion_possible": (opened + timedelta(minutes=5)).isoformat()}))
+    v = c.offer("MOUNT_MOVE_REQUESTED", "stop!", {"direction": "park", "blind_park": True}, evidence=blind)
+    assert not v.accepted                                         # the roof could have moved since
+    (tmp_path / "local" / "roof_evidence.json").write_text(json.dumps(
         {"open_confirmed": opened.isoformat(), "motion_possible": (opened - timedelta(minutes=2)).isoformat()}))
-    c.offer("MOUNT_MOVE_REQUESTED", "stop!", {"direction": "park", "blind_park": True}, evidence=blind)
-    assert _notes(c, "MOUNT_PARK_ALLOWED_IN_HOLD")[-1].data["blind_park_corroborated"] is True
+    v = c.offer("MOUNT_MOVE_REQUESTED", "stop!", {"direction": "park", "blind_park": True}, evidence=blind)
+    assert v.accepted and _notes(c, "MOUNT_PARK_ALLOWED_IN_HOLD")[-1].data["blind_park_corroborated"] is True
 
 
 def test_client_posts_both_roof_cameras_from_a_fresh_vision_read(monkeypatch):

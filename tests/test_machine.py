@@ -125,7 +125,7 @@ def test_invariant_b_dynamic_no_snapshot_moves_the_mount_under_an_unopen_roof():
         for snap in enumerate_snapshots():
             out = step(state, "MOUNT_MOVE_REQUESTED", snap)
             if out.kind == "allowed":
-                assert snap.roof is Tri.CONFIRMED, (state, snap)
+                assert G.roof_reading(snap) is Tri.CONFIRMED, (state, snap)
                 assert state not in HOLD_STATES
 
 
@@ -137,9 +137,9 @@ def test_mount_power_never_under_an_unknown_roof_and_never_in_a_hold():
         for snap in enumerate_snapshots():
             out = step(state, "MOUNT_POWER_REQUESTED", snap)
             if out.kind == "allowed":
-                assert snap.roof is not Tri.UNKNOWN, (state, snap)
+                assert G.roof_reading(snap) is not Tri.UNKNOWN, (state, snap)
                 assert state not in HOLD_STATES
-                if snap.roof is Tri.DENIED:
+                if G.roof_reading(snap) is Tri.DENIED:
                     assert G.mount_parked(snap) is None, (state, snap)
 
 

@@ -17,7 +17,7 @@ from iris.core.snapshot import SensorSnapshot, Tri, enumerate_snapshots
 
 def test_space_is_the_size_the_docstring_claims():
     n = sum(1 for _ in enumerate_snapshots())
-    assert n == 3 * 3 * 3 * 3 * 2 * 2 * 2 * 3 * 2, n
+    assert n == 3 ** 7 * 2 ** 4 * 3, n
 
 
 def test_invariant_a_mount_parked_requires_the_park_camera_and_no_veto():
@@ -66,13 +66,13 @@ def test_unpowered_mount_does_not_block_a_confirmed_park():
 def test_invariant_b_roof_open_requires_positive_confirmation():
     for s in enumerate_snapshots():
         passed = G.roof_open(s) is None
-        assert passed == (s.roof is Tri.CONFIRMED), s
+        assert passed == (G.roof_reading(s) is Tri.CONFIRMED), s
 
 
 def test_roof_state_known_refuses_only_unknown():
     for s in enumerate_snapshots():
         passed = G.roof_state_known(s) is None
-        assert passed == (s.roof is not Tri.UNKNOWN), s
+        assert passed == (G.roof_reading(s) is not Tri.UNKNOWN), s
 
 
 def test_guards_are_pure_and_stateless():
@@ -115,3 +115,20 @@ def test_slots_guards_partition_the_space():
         a = G.slots_remaining(s) is None
         b = G.plan_exhausted(s) is None
         assert a != b, s
+
+
+def test_roof_reading_is_the_cameras_when_heard_else_the_merged_roof():
+    """Phase 2b closed (2026-10-10): every roof guard decides on roof_reading."""
+    for s in enumerate_snapshots():
+        heard = s.roof_north is not Tri.UNKNOWN or s.roof_cam is not Tri.UNKNOWN
+        expected = G.roof_by_cameras(s) if heard else s.roof
+        assert G.roof_reading(s) is expected, s
+
+
+def test_no_camera_disagreement_ever_moves_anything():
+    """North and Iris cam contradicting each other is UNKNOWN: no roof motion,
+    no mount motion, whatever the merged reading claims."""
+    for s in enumerate_snapshots():
+        if Tri.UNKNOWN in (s.roof_north, s.roof_cam) or s.roof_north is s.roof_cam:
+            continue
+        assert G.roof_state_known(s) is not None and G.roof_open(s) is not None, s

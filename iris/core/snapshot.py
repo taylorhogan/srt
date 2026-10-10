@@ -60,10 +60,8 @@ class SensorSnapshot:
         CONFIRMED = a gating read saw the roof OPEN within 16 h and nothing
         has powered or fired the roof since; DENIED = something could have
         moved it since, or that open is older than 16 h; UNKNOWN = no record.
-        Observed, not yet consulted by any table guard: until they are, they
-        stay out of enumerate_snapshots (multiplying the space by 27 for
-        fields no guard reads would only slow the sweeps); they join it on the
-        day a guard reads them.
+        Read by the roof guards through guards.roof_reading since 2026-10-10
+        (Phase 2b closed), and so part of the enumerated space.
     """
     parked_vision: Tri = Tri.UNKNOWN
     parked_kasa: Tri = Tri.UNKNOWN
@@ -118,20 +116,16 @@ SLOT_VALUES = (0, 1, 3)          # zero / last / several — the behavioural cla
 
 
 def enumerate_snapshots():
-    """Yield every behaviourally distinct SensorSnapshot (3,888)."""
-    for pv in TRI_VALUES:
-        for pk in TRI_VALUES:
-            for pp in TRI_VALUES:
-                for roof in TRI_VALUES:
-                    for safe in BOOL_VALUES:
-                        for auto in BOOL_VALUES:
-                            for wx in BOOL_VALUES:
-                                for slots in SLOT_VALUES:
-                                    for nina in BOOL_VALUES:
-                                        yield SensorSnapshot(
-                                            parked_vision=pv, parked_kasa=pk,
-                                            parked_pwi4=pp,
-                                            roof=roof, safety_armed=safe,
-                                            mode_auto=auto, weather_ok=wx,
-                                            slots_remaining=slots,
-                                            nina_alive=nina)
+    """Yield every behaviourally distinct SensorSnapshot (104,976).
+
+    The roof enters as its four sensors (vision merge, north, Iris cam,
+    unmoved-since-open); the guards decide which wins (guards.roof_reading)."""
+    import itertools
+    for (pv, pk, pp, roof, north, cam, unmoved, safe, auto, wx, slots, nina) in itertools.product(
+            TRI_VALUES, TRI_VALUES, TRI_VALUES, TRI_VALUES, TRI_VALUES, TRI_VALUES, TRI_VALUES,
+            BOOL_VALUES, BOOL_VALUES, BOOL_VALUES, SLOT_VALUES, BOOL_VALUES):
+        yield SensorSnapshot(
+            parked_vision=pv, parked_kasa=pk, parked_pwi4=pp,
+            roof=roof, roof_north=north, roof_cam=cam, roof_unmoved=unmoved,
+            safety_armed=safe, mode_auto=auto, weather_ok=wx,
+            slots_remaining=slots, nina_alive=nina)

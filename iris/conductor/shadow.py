@@ -557,16 +557,18 @@ class ShadowConductor:
         self.offer(event, "shadow", {"sched": sched})
 
     def _observe_roof_cameras(self, event, source, payload):
-        """Journal the two roof cameras and the guards' merge of them beside
-        the merged `roof` the decision is made on (2026-10-10, Phase 2b).
-        Observation only: the verdict still comes from `roof`. A difference is
-        a separate note, so a morning query finds it without reading payloads;
-        nights of none are what lets the guards read roof_by_cameras instead.
+        """Journal the two roof cameras, the guards' merge of them and the
+        vision code's merged `roof` on every live roof/mount decision
+        (2026-10-10, Phase 2b). The guards decide on roof_reading -- the
+        cameras when either has reported -- so a difference from the vision
+        code's own merge is the one thing worth a separate note: it means the
+        two merges saw different inputs, which nothing should produce.
         """
         ev = self._current_evidence()
         merged = G.roof_by_cameras(ev)
         payload["roof_cameras"] = {"north": ev.roof_north.value, "cam": ev.roof_cam.value,
-                                   "by_guards": merged.value, "decided": ev.roof.value,
+                                   "by_guards": merged.value, "vision_merge": ev.roof.value,
+                                   "decided": G.roof_reading(ev).value,
                                    "unmoved_since_open": ev.roof_unmoved.value}
         heard = ev.roof_north is not Tri.UNKNOWN or ev.roof_cam is not Tri.UNKNOWN
         if heard and merged is not ev.roof:
@@ -727,16 +729,19 @@ class ShadowConductor:
         """
         ev = self._current_evidence()
         refusal = G.evaluate((G.roof_open,), ev)
-        if payload.get("blind_park"):
-            # Checked by the conductor on its own evidence, journaled, not yet
-            # enforced (2026-10-10): stop! applies the same rule before asking.
+        if refusal and payload.get("blind_park"):
+            # The blind park's assertion is checked against the conductor's own
+            # evidence (sentry/roof_evidence via roof_unmoved): confirmed open
+            # within 16 h, nothing moved since. stop! applies the same rule to
+            # the same file before asking (2026-10-10, Phase 2b closed).
             why = G.blind_park_corroborated(ev)
             payload["blind_park_corroborated"] = why is None
             if why:
                 payload["blind_park_corroboration"] = why
-        if refusal and payload.get("blind_park"):
-            refusal = None
-            payload["asserted"] = "blind park rule (stop!)"
+                refusal = "blind_park_corroborated: " + why
+            else:
+                refusal = None
+                payload["asserted"] = "blind park rule (stop!), corroborated"
         payload["in_hold"] = self.state
         if self.mount_authority:
             payload["guards"] = "enforced"
@@ -765,9 +770,20 @@ class ShadowConductor:
         if "parked_kasa" in evidence:
             e = e.replace(parked_kasa=_tri(evidence["parked_kasa"]))
             self._kasa_ts = time.time()
-        if "roof_north" in evidence or "roof_cam" in evidence:
+        if evidence.get("asserted"):
+            # An operator's `force` asserts the roof position; the cameras must
+            # not overrule it (2026-09-17: the open never confirmed in sun
+            # glare and only a forced close could shut the roof).
+            e = e.replace(roof_north=Tri.UNKNOWN, roof_cam=Tri.UNKNOWN)
+            self._roofcams_ts = time.time()
+        elif "roof_north" in evidence or "roof_cam" in evidence:
             e = e.replace(roof_north=_tri(evidence.get("roof_north", "UNKNOWN")),
                           roof_cam=_tri(evidence.get("roof_cam", "UNKNOWN")))
+            self._roofcams_ts = time.time()
+        elif "roof" in evidence:
+            # A request that posted a roof but no camera answers is decided on
+            # that roof; older camera fields from the log must not stand in.
+            e = e.replace(roof_north=Tri.UNKNOWN, roof_cam=Tri.UNKNOWN)
             self._roofcams_ts = time.time()
         self.evidence = e
         payload["evidence_posted"] = {k: v for k, v in evidence.items() if k != "ts"}
