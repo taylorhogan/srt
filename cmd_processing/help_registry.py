@@ -375,9 +375,10 @@ HELP: dict[str, dict] = {
                     "black= white= soft= mesh= scnr= ha= wb= deblur= dering= nobg scale=. wb=stars makes "
                     "the median field star neutral (LRGB/HALRGB only). deblur=8 "
                     "deconvolves the luminance (Richardson-Lucy, kernel from the "
-                    "field's own stars, ring-free by construction): M33 L went "
-                    "1.76\" to 1.22\"; deblur=25 dering=sky pushes harder (ngc2146 "
-                    "2.26\" to 1.43\") by letting star halos drain to the sky. scnr=0..1 is "
+                    "field's own stars, core and wing, ring-free by construction): "
+                    "deblur=15 took ngc2146 L from 2.26\" to 1.43\" with no star halos; "
+                    "25 posterises a bright core. dering=sky (default) lets halos "
+                    "drain to the sky, dering=input holds every pixel at its input. scnr=0..1 is "
                     "average-neutral green removal, min(g,(r+b)/2) — good on "
                     "LRGB, leave off for HOO. Add 'reuse' to "
                     "re-render the cached channels in seconds instead of "
@@ -398,7 +399,7 @@ HELP: dict[str, dict] = {
                      "process abell2151 lrgb noflat",
                      "process abell2151 lrgb reuse black=50",
                      "process m33 halrgb reuse wb=stars deblur=8",
-                     "process ngc2146 lrgb reuse wb=stars deblur=25 dering=sky",
+                     "process ngc2146 lrgb reuse wb=stars deblur=15",
                      "process sh2-92 hoo reuse soft=0.01 nobg",
                      "process abell2151 lrgb reuse black=45,55,65,75",
                      "process ngc5907 lrgb reuse scnr=0,0.5,1",

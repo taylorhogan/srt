@@ -5785,14 +5785,15 @@ def process_cmd(words: list[str], account: str) -> None:
                     gradients harder but eats large nebulosity
         scnr=0      average-neutral green removal, g = min(g, (r+b)/2), 0..1.
         deblur=0    Richardson-Lucy iterations on the luminance (every plane
-                    for HOO/SHO), kernel measured from the field's own stars.
-                    8 is the safe value: M33 L 1.76" -> 1.22", no rings.
-                    Runs at render time, so `reuse deblur=8` costs a minute.
-        dering=input  what stops the rings. `input` holds every pixel at or
-                    above its input (halos stay, flux grows a little); `sky`
-                    lets halos drain to the local sky and is what 25
-                    iterations needs: ngc2146 L 2.26" -> 1.43" with
-                    `deblur=25 dering=sky`. 40 posterises the core.
+                    for HOO/SHO), kernel measured from the field's own stars,
+                    core and wing. 15 is the working value: ngc2146 L 2.26"
+                    -> 1.43", stars tight with no halo or ring, lanes intact;
+                    25 posterises a bright galaxy core into blobs. Runs at
+                    render time, so `reuse deblur=15` costs a minute.
+        dering=sky  what stops the rings. `sky` (default) lets a star's halo
+                    drain to the local sky and no further; `input` holds
+                    every pixel at or above its input, which leaves halos
+                    standing under a brighter core.
         stars=none  `rgb` also stacks R, G and B onto the same reference and
                     gives the stars their RGB colour inside a star mask, the
                     palette's brightness kept; the nebula never sees the RGB.

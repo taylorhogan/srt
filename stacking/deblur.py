@@ -20,11 +20,20 @@ stretch. Everything below is a rule that was paid for on the M33 L stack on
   not conserved, which is cosmetic.
 * Faint sky texture curdles into worms under RL, so the result is blended in
   only where the signal above the local model is well clear of the noise.
-* The median-stacked star profile comes out ~10% broader than the stars it
-  was built from (centroid error and the shift interpolation), and a kernel
-  broader than the stars is the other way to ring. It is shrunk 15%: a kernel
-  that is too narrow under-sharpens, which is the safe side.
-* Saturated stars are clipped profiles, not PSF-shaped; they keep their input.
+* The kernel needs the WING. A kernel measured with a local annulus at 28-32
+  px has no profile beyond it, and RL cannot remove a wing it does not know
+  about: on ngc2146 the bright-star profile matched the kernel to 10 px, was
+  1.4x the kernel at 20 px, 2.3x at 25, and carried on to 70 px where the
+  kernel was zero. 18% of a star's flux sits beyond 12 px. Deconvolving with
+  that kernel tightened the core, drained the inner wing to the sky and left
+  the outer wing standing as a ring of glow around every bright star (the
+  operator saw them at once). The wing is now measured from the brightest
+  clean stars out to 72 px and grafted onto the median core at 8-14 px.
+* Only clipped pixels are protected. The earlier rule (anything above 30% of
+  the saturation level) kept whole bright stars with their halos; a star is
+  PSF-shaped right up to the pixels that are actually flat.
+* Shrinking the kernel 15% was a hedge against ringing that the sky-free
+  floor made unnecessary, and it under-sharpened; it is off by default.
 
 Returns the input untouched, with a reason, when the field has too few
 isolated stars to measure a kernel from or the stars are already at the
@@ -38,13 +47,19 @@ import numpy as np
 _logger = logging.getLogger(__name__)
 
 DEFAULT_ITERS = 8
-PSF_SCALE = 0.85          # shrink of the stacked star profile (see module doc)
-PSF_RADIUS = 32           # half-size of the kernel in px
-PSF_TAPER = 8             # cosine taper width at the kernel edge
+PSF_SCALE = 1.0           # kernel shrink; 1.0 = as measured (see module doc)
+PSF_RADIUS = 32           # half-size of the median-stacked core in px
+PSF_TAPER = 8             # cosine taper width at the core's edge (no-wing case)
+WING_RADIUS = 72          # the wing profile is measured out to here
+WING_BLEND = (8.0, 14.0)  # core to wing crossfade, px
+WING_MIN_STARS = 8        # fewer clean bright stars and the core alone is used
+WING_MIN_PEAK = 3000.0    # ADU above sky: bright enough to show the wing
 MIN_STARS = 15            # fewer isolated stars than this and nothing happens
 MAX_STARS = 400           # brightest isolated stars used for the kernel
-SAT_FRAC = 0.30           # of the saturation level: protected as saturated
+SAT_FRAC = 0.98           # of the saturation level: protected as clipped
 SAT_MIN_PIXELS = 4        # pixels at the ceiling before it counts as saturation
+SAT_DILATE = 6            # px of protection around the clipped pixels
+SAT_FEATHER = 3.0         # and the feather on its edge
 FLOOR_MIN_SIZE = 25       # minimum-filter window for the local floor model
 FLOOR_SMOOTH = 8.0        # and its smoothing
 CLAMP_SIGMA = 1.0         # dark deringing: never below input - this many sigma
@@ -150,16 +165,69 @@ def measure_psf(chan: np.ndarray, radius: int = PSF_RADIUS,
     if len(cuts) < MIN_STARS:
         return None, {"stars": len(cuts), "fwhm_px": fwhm_px,
                       "why": f"only {len(cuts)} isolated stars (need {MIN_STARS})"}
-    psf = np.clip(np.median(np.stack(cuts), axis=0), 0, None)
-    wgt = np.ones_like(psf)
-    t = (rr > radius - taper) & (rr <= radius)
-    wgt[t] = 0.5 * (1 + np.cos(np.pi * (rr[t] - (radius - taper)) / taper))
-    wgt[rr > radius] = 0.0
-    psf *= wgt
+    core = np.clip(np.median(np.stack(cuts), axis=0), 0, None)
+    info = {"stars": len(cuts), "fwhm_px": fwhm_px}
+    wing, nwing = _wing_profile(a, stars, sat, sig)
+    info["wing_stars"] = nwing
+    if wing is None:
+        wgt = np.ones_like(core)
+        t = (rr > radius - taper) & (rr <= radius)
+        wgt[t] = 0.5 * (1 + np.cos(np.pi * (rr[t] - (radius - taper)) / taper))
+        wgt[rr > radius] = 0.0
+        psf = core * wgt
+    else:
+        R = WING_RADIUS
+        wy, wx = np.mgrid[-R:R + 1, -R:R + 1]; wr = np.hypot(wy, wx)
+        psf = np.interp(wr, np.arange(len(wing)), wing, right=0.0) * core.max()
+        c = np.zeros_like(psf); c[R - radius:R + radius + 1, R - radius:R + radius + 1] = core
+        f = np.clip((wr - WING_BLEND[0]) / (WING_BLEND[1] - WING_BLEND[0]), 0, 1)
+        f = f * f * (3 - 2 * f)
+        psf = c * (1 - f) + psf * f
+        t = np.clip((wr - (R - 10)) / 10.0, 0, 1)
+        psf *= 0.5 * (1 + np.cos(np.pi * t)); psf[wr > R] = 0.0
+        info["wing_flux_beyond_24px"] = float(psf[wr > 24].sum() / max(psf.sum(), 1e-12))
     s = float(psf.sum())
     if not np.isfinite(s) or s <= 0:
         return None, {"stars": len(cuts), "why": "kernel summed to nothing"}
-    return psf / s, {"stars": len(cuts), "fwhm_px": fwhm_px}
+    return psf / s, info
+
+
+def _wing_profile(a: np.ndarray, stars: np.ndarray, sat: Optional[float],
+                  sig: float) -> tuple[Optional[np.ndarray], int]:
+    """Azimuthal profile of the brightest clean stars out to WING_RADIUS,
+    peak-normalised, median across stars. The core stack cannot show the wing:
+    its stars are fainter and its sky annulus sits inside the wing."""
+    R = WING_RADIUS
+    h, w = a.shape
+    yy, xx = np.mgrid[-R:R + 1, -R:R + 1]; rr = np.hypot(yy, xx)
+    sky_ann = (rr > R - 8) & (rr <= R)
+    rbin = np.round(rr).astype(int)
+    peak = stars[:, 3] - np.median(a)
+    cand = np.nonzero(peak > WING_MIN_PEAK)[0]
+    if sat is not None:
+        cand = cand[stars[cand, 3] < SAT_FRAC * sat]
+    profs = []
+    for i in cand[np.argsort(peak[cand])[::-1]]:
+        xc, yc = int(round(stars[i, 0])), int(round(stars[i, 1]))
+        if not (R < yc < h - R and R < xc < w - R):
+            continue
+        c = a[yc - R:yc + R + 1, xc - R:xc + R + 1]
+        if not np.isfinite(c).all():
+            continue
+        c = c - np.median(c[sky_ann])
+        pk = float(c[R, R])
+        if pk <= 0 or (c[rr > 20] > 0.05 * pk).any():      # a neighbour in the wing
+            continue
+        prof = np.bincount(rbin.ravel(), weights=c.ravel(), minlength=R + 1)[:R] \
+            / np.bincount(rbin.ravel(), minlength=R + 1)[:R]
+        profs.append(prof / pk)
+        if len(profs) >= 60:
+            break
+    if len(profs) < WING_MIN_STARS:
+        return None, len(profs)
+    med = np.clip(np.median(np.stack(profs), axis=0), 0, None)
+    med[0] = 1.0
+    return med, len(profs)
 
 
 def _shrink(psf: np.ndarray, factor: float) -> np.ndarray:
@@ -227,7 +295,7 @@ def deblur(chan: np.ndarray, iters: int = DEFAULT_ITERS,
     level = saturation_level(x)
     sat = x > SAT_FRAC * level if level is not None else np.zeros(x.shape, bool)
     if sat.any():
-        m = gaussian_filter(binary_dilation(sat, iterations=14).astype(np.float32), 6.0)
+        m = gaussian_filter(binary_dilation(sat, iterations=SAT_DILATE).astype(np.float32), SAT_FEATHER)
         blend = blend * (1.0 - np.clip(m / max(float(m.max()), 1e-6), 0.0, 1.0))
     out = (x + blend * (rl - x)).astype(np.float32)
     info["deblurred_frac"] = float(np.mean(blend > 0.5))

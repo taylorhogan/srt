@@ -118,11 +118,12 @@ SCNR_AMOUNT = 0.0
 # stacking/deblur.py with the measurements behind them. M33 L went 1.76" ->
 # 1.22" and ngc2146 2.26" -> 1.71" at 8 iterations with no new rings.
 DEBLUR_ITERS = 0
-# `dering=input` (default) holds every pixel at or above its input: star
-# halos stay under a brighter core. `dering=sky` lets a halo drain down to
-# the local sky mean, which conserves flux and is what 25 iterations needs
-# to look sharp rather than haloed (ngc2146 L 2.26" -> 1.43", no rings).
-DEBLUR_DERING = "input"
+# `dering=sky` (default) lets a star's halo drain down to the local sky mean
+# and no further, which conserves flux and is what a kernel with a measured
+# wing needs: the wing cannot drain under `dering=input`, which holds every
+# pixel at or above its input and leaves the halo standing under a brighter
+# core. ngc2146 L 2.26" -> 1.44" at deblur=15 with no halos or rings.
+DEBLUR_DERING = "sky"
 
 # Star white balance, "none" or "stars". The channels are stretched on a
 # shared scale so their MEASURED ratios survive into the picture -- which is

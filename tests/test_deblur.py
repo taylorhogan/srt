@@ -40,11 +40,41 @@ def test_kernel_is_measured_from_the_stars():
     assert psf is not None, info
     assert info["stars"] >= db.MIN_STARS
     assert abs(info["fwhm_px"] - 2.3548 * 2.0) < 0.3
+    # Gaussian stars have no wing, so none is grafted and the core kernel is used.
     assert psf.shape == (2 * db.PSF_RADIUS + 1, 2 * db.PSF_RADIUS + 1)
     assert abs(psf.sum() - 1.0) < 1e-6
     r = db.PSF_RADIUS
     assert psf[r, r] == psf.max()                      # centred
     assert psf[0].max() == 0.0 and psf[:, 0].max() == 0.0   # tapered to zero
+
+
+def test_wing_is_measured_from_bright_stars():
+    """Stars with a real wing (Moffat beta=2.5) on a field wide enough to hold
+    isolated bright ones: the kernel extends past the core radius and carries
+    the wing flux the core stack alone cannot see."""
+    rng = np.random.default_rng(7)
+    h = w = 1400
+    yy, xx = np.mgrid[:h, :w]
+    img = np.full((h, w), 300.0)
+    pos = []
+    while len(pos) < 40:
+        y, x = rng.uniform(100, h - 100), rng.uniform(100, w - 100)
+        if all(np.hypot(y - py, x - px) > 2 * db.WING_RADIUS + 10 for py, px in pos):
+            pos.append((y, x))
+    alpha, beta = 3.5, 2.5
+    for (y, x), a in zip(pos, rng.uniform(4000, 15000, 40)):
+        r2 = (yy - y) ** 2 + (xx - x) ** 2
+        img += a * (1 + r2 / alpha ** 2) ** (-beta)
+    img += rng.normal(0, 3.0, img.shape)
+    psf, info = db.measure_psf(img.astype(np.float32))
+    assert psf is not None, info
+    assert info["wing_stars"] >= db.WING_MIN_STARS, info
+    assert psf.shape == (2 * db.WING_RADIUS + 1, 2 * db.WING_RADIUS + 1)
+    R = db.WING_RADIUS
+    r = np.hypot(*np.mgrid[-R:R + 1, -R:R + 1])
+    truth = (1 + r ** 2 / alpha ** 2) ** (-beta); truth /= truth[r <= 60].sum()
+    # wing flux between 24 and 60 px, kernel against the Moffat it was built from
+    assert abs(psf[(r > 24) & (r <= 60)].sum() / truth[(r > 24) & (r <= 60)].sum() - 1) < 0.25
 
 
 def test_sky_sigma_ignores_gradient_and_stars():
@@ -135,7 +165,7 @@ def test_option_reaches_compose_and_the_options_line():
     assert cp.effective_options()["deblur"] == 0
     assert "deblur" not in cp.describe_options(cp.effective_options())
     assert "deblur=8" in cp.describe_options(cp.effective_options(deblur=8))
-    line = cp.describe_options(cp.effective_options(deblur=25, dering="sky"))
-    assert "deblur=25" in line and "dering=sky" in line
-    assert "dering" not in cp.describe_options(cp.effective_options(deblur=8))
-    assert "dering" not in cp.describe_options(cp.effective_options(dering="sky"))   # meaningless without deblur
+    line = cp.describe_options(cp.effective_options(deblur=15, dering="input"))
+    assert "deblur=15" in line and "dering=input" in line
+    assert "dering" not in cp.describe_options(cp.effective_options(deblur=8))       # sky is the default
+    assert "dering" not in cp.describe_options(cp.effective_options(dering="input"))   # meaningless without deblur
