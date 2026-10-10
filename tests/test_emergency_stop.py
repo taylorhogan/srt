@@ -110,10 +110,12 @@ def test_power_down_after_close_does_both_and_pegasus_last(monkeypatch):
     monkeypatch.setattr(suc.utl_shelly, "set_dehumidifier", lambda on: order.append(("dehum", on)))
     monkeypatch.setattr(suc.pegasus, "power_off_imaging_train",
                         lambda: order.append("pegasus") or (True, {1: 0, 2: 0, 3: 0}))
+    monkeypatch.setattr(suc.pwi4_utils, "close_pwi4", lambda: order.append("pwi4") or "closed")
     posts = []
     monkeypatch.setattr(suc.social_server, "post_social_message", posts.append)
     suc._power_down_after_close()
-    assert order == [("dehum", True), "pegasus"]
+    assert order == [("dehum", True), "pwi4", "pegasus"]
+    assert "PWI4 closed" in posts
     assert any("Dehumidifier on" in p for p in posts)
     assert any("verified" in p for p in posts)
 
@@ -134,9 +136,58 @@ def test_dehumidifier_failure_does_not_stop_the_pegasus_step(monkeypatch):
     monkeypatch.setattr(suc.utl_shelly, "set_dehumidifier", boom)
     monkeypatch.setattr(suc.pegasus, "power_off_imaging_train",
                         lambda: called.append(1) or (True, {1: 0, 2: 0, 3: 0}))
+    monkeypatch.setattr(suc.pwi4_utils, "close_pwi4", lambda: "closed")
     monkeypatch.setattr(suc.social_server, "post_social_message", lambda m: None)
     suc._power_down_after_close()
     assert called == [1]
+
+
+def test_a_pwi4_that_will_not_close_does_not_stop_the_pegasus_step(monkeypatch):
+    def boom():
+        raise RuntimeError("tasklist missing")
+    called, posts = [], []
+    monkeypatch.setattr(suc.utl_shelly, "set_dehumidifier", lambda on: None)
+    monkeypatch.setattr(suc.pwi4_utils, "close_pwi4", boom)
+    monkeypatch.setattr(suc.pegasus, "power_off_imaging_train",
+                        lambda: called.append(1) or (True, {1: 0, 2: 0, 3: 0}))
+    monkeypatch.setattr(suc.social_server, "post_social_message", posts.append)
+    suc._power_down_after_close()
+    assert called == [1] and any("could NOT be closed" in p for p in posts)
+
+
+class _Tasks:
+    """A fake tasklist/taskkill: PWI4 runs until it has been asked *polite_ok*
+    (plain taskkill works) or forced."""
+    def __init__(self, polite_ok):
+        self.running, self.polite_ok, self.cmds = True, polite_ok, []
+
+    def __call__(self, cmd, **kw):
+        import types
+        self.cmds.append(cmd[:2])
+        if cmd[0] == "taskkill":
+            if "/F" in cmd or self.polite_ok:
+                self.running = False
+            return types.SimpleNamespace(stdout="", returncode=0)
+        return types.SimpleNamespace(stdout="PWI4.exe   1234 Console" if self.running else "INFO: No tasks", returncode=0)
+
+
+def test_close_pwi4_polite_then_forced(monkeypatch):
+    from hardware_control import pwi4_utils as pu
+    monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
+    monkeypatch.setattr(pu, "PWI4", lambda: type("P", (), {"mount_disconnect": lambda self: None})())
+    polite = _Tasks(polite_ok=True)
+    assert pu.close_pwi4(run=polite, sleep=lambda s: None) == "closed"
+    assert ["taskkill", "/F"] not in polite.cmds
+    stubborn = _Tasks(polite_ok=False)
+    assert pu.close_pwi4(run=stubborn, sleep=lambda s: None, grace_s=3) == "closed"
+    assert ["taskkill", "/F"] in stubborn.cmds
+    gone = _Tasks(polite_ok=True); gone.running = False
+    assert pu.close_pwi4(run=gone, sleep=lambda s: None) == "not_running"
+
+
+def test_close_pwi4_refuses_under_pytest():
+    from hardware_control import pwi4_utils as pu
+    assert pu.close_pwi4(run=_Tasks(polite_ok=True), sleep=lambda s: None) == "failed"
 
 
 def test_stop_sequence_reports_a_crash_instead_of_dying_silently(monkeypatch):

@@ -40,6 +40,56 @@ def park_scope ():
 
 
 
+def _pwi4_running(run=None) -> bool:
+    import subprocess
+    run = run or subprocess.run
+    out = run(["tasklist", "/FI", "IMAGENAME eq PWI4.exe", "/NH"], capture_output=True, text=True).stdout
+    return "PWI4.exe" in (out or "")
+
+
+def close_pwi4(run=None, sleep=time.sleep, grace_s: float = 10.0) -> str:
+    """Shut PWI4 down: 'closed' | 'not_running' | 'failed'. Never raises.
+
+    The normal night ends with N.I.N.A's PlaneWave Tools "Stop PWI4" as the
+    last step of the flats sequence. stop! skips the flats, so until
+    2026-10-09 it left PWI4 running against a mount whose power it had just
+    cut -- and the next day's mount_park_state() then reads that stale,
+    disconnected PWI4 instead of "not running". Callers must only do this
+    once the scope is confirmed parked: while it is not, PWI4 is how the
+    operator parks it by hand.
+
+    Polite first (disconnect the mount over the HTTP API, then a plain
+    taskkill, which asks the window to close), forced only if PWI4 is still
+    there after *grace_s* (a confirmation dialog would otherwise hold it open).
+    Refuses to act inside pytest: the tests run on the observatory PC.
+    """
+    import subprocess
+    if os.environ.get("PYTEST_CURRENT_TEST"):
+        logger.warning("close_pwi4: called under pytest; not touching the real PWI4")
+        return "failed"
+    run = run or subprocess.run
+    try:
+        if not _pwi4_running(run):
+            return "not_running"
+        try:
+            PWI4().mount_disconnect()
+        except Exception as e:                      # noqa: BLE001 -- the close still goes ahead
+            logger.info("close_pwi4: mount disconnect skipped (%s)", e)
+        run(["taskkill", "/IM", "PWI4.exe"], capture_output=True, text=True)
+        waited = 0.0
+        while waited < grace_s and _pwi4_running(run):
+            sleep(1.0)
+            waited += 1.0
+        if _pwi4_running(run):
+            logger.warning("close_pwi4: still running after %.0f s; forcing", grace_s)
+            run(["taskkill", "/F", "/IM", "PWI4.exe"], capture_output=True, text=True)
+            sleep(2.0)
+        return "failed" if _pwi4_running(run) else "closed"
+    except Exception:                               # noqa: BLE001
+        logger.exception("close_pwi4 failed")
+        return "failed"
+
+
 def mount_park_state():
     """'parked' | 'not_parked' | 'unknown' -- get_is_parked() with its blind spot named.
 

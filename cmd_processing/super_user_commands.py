@@ -1336,14 +1336,36 @@ def _dehumidifier_on() -> bool:
 
 
 def _power_down_after_close() -> None:
-    """What every stop! ends with once the roof is CONFIRMED closed:
-    dehumidifier back on, then the three Pegasus ports off (last).
+    """What every stop! ends with once the roof is CONFIRMED closed (and so the
+    scope confirmed parked): dehumidifier back on, PWI4 closed, then the three
+    Pegasus ports off (last).
 
-    Both are idempotent, so it does not matter that end.do_main() may already
+    All idempotent, so it does not matter that end.do_main() may already
     have switched the dehumidifier: the user's requirement is that a stop!
-    ends in this state, and the 2026-09-10 stop! died before reaching it."""
+    ends in this state, and the 2026-09-10 stop! died before reaching it.
+    PWI4 joined 2026-10-09 (operator): a normal night closes it as the flats
+    sequence's last step, which a stop! skips."""
     _dehumidifier_on()
+    _close_pwi4()
     _power_off_pegasus_train()
+
+
+def _close_pwi4() -> str:
+    """Close PWI4 and say so. Never raises; a failure is posted, not fatal."""
+    try:
+        result = pwi4_utils.close_pwi4()
+    except Exception:  # noqa: BLE001
+        _logger.exception("emergency: close_pwi4 raised")
+        result = "failed"
+    msg = {"closed": "PWI4 closed",
+           "not_running": "PWI4 was not running",
+           }.get(result, "PWI4 could NOT be closed -- close it by hand before the next night")
+    if result == "failed":
+        _logger.warning("emergency: %s", msg)
+    else:
+        _logger.info("emergency: %s", msg)
+    social_server.post_social_message(msg)
+    return result
 
 
 def _scope_confirmed_parked(mount_state: str, vision_parked: bool) -> bool:
