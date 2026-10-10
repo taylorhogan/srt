@@ -172,8 +172,14 @@ def _shrink(psf: np.ndarray, factor: float) -> np.ndarray:
 
 def deblur(chan: np.ndarray, iters: int = DEFAULT_ITERS,
            psf: Optional[np.ndarray] = None,
-           psf_scale: float = PSF_SCALE) -> tuple[np.ndarray, dict]:
+           psf_scale: float = PSF_SCALE,
+           clamp_to: str = "input") -> tuple[np.ndarray, dict]:
     """Return (deblurred channel, info). The input is linear ADU with its sky.
+
+    clamp_to="input": no pixel ends below its input minus one sigma (star
+    halos stay under a brighter core). "sky": a pixel may fall as far as the
+    local sky mean minus one sigma, so halos are allowed to drain into the
+    core, but nothing goes below the sky, which is the ring.
 
     info carries what was measured; info["why"] is set when the channel was
     returned as given.
@@ -184,7 +190,9 @@ def deblur(chan: np.ndarray, iters: int = DEFAULT_ITERS,
     iters = int(iters)
     if iters <= 0:
         return chan, {"iters": 0, "why": "deblur=0"}
-    info: dict = {"iters": iters}
+    if clamp_to not in ("input", "sky"):
+        raise ValueError(f"clamp_to must be 'input' or 'sky', not {clamp_to!r}")
+    info: dict = {"iters": iters, "psf_scale": psf_scale, "clamp_to": clamp_to}
     if psf is None:
         psf, pinfo = measure_psf(chan)
         info.update(pinfo)
@@ -206,12 +214,13 @@ def deblur(chan: np.ndarray, iters: int = DEFAULT_ITERS,
     floor = np.minimum(model, x) - 2.0 * sig
     rl = richardson_lucy(np.clip(x - floor, 1e-3, None).astype(np.float32),
                          kernel.astype(np.float32), num_iter=iters, clip=False) + floor
-    rl = np.maximum(rl, x - CLAMP_SIGMA * sig)                 # dark deringing
-    # Only where there is signal to sharpen. The minimum-filter model sits
-    # ~3 sigma under the sky mean (the minimum of 625 noisy pixels), so the
-    # signal is measured from the model plus that offset, or the blend would
-    # start at the sky itself and RL texture would leak into half of it.
+    # The minimum-filter model sits ~3 sigma under the sky mean (the minimum
+    # of 625 noisy pixels); ref is the model lifted to the local sky mean.
     ref = model + float(np.median(x - model))
+    bound = x if clamp_to == "input" else np.minimum(x, ref)
+    rl = np.maximum(rl, bound - CLAMP_SIGMA * sig)             # dark deringing
+    # Only where there is signal to sharpen, measured from ref, or the blend
+    # would start at the sky itself and RL texture would leak into half of it.
     lo, hi = BLEND_LO_SIGMA * sig, BLEND_HI_SIGMA * sig
     t = np.clip((gaussian_filter(x, 1.5) - ref - lo) / max(hi - lo, 1e-6), 0.0, 1.0)
     blend = t * t * (3 - 2 * t)
@@ -229,7 +238,7 @@ def deblur(chan: np.ndarray, iters: int = DEFAULT_ITERS,
     return out, info
 
 
-def deblur_channels(channels: dict, iters: int) -> tuple[dict, dict]:
+def deblur_channels(channels: dict, iters: int, clamp_to: str = "input") -> tuple[dict, dict]:
     """Deblur the luminance of a channel set, or every plane if there is no L.
 
     LRGB/HALRGB take their brightness from L, so L is the plane whose
@@ -242,7 +251,7 @@ def deblur_channels(channels: dict, iters: int) -> tuple[dict, dict]:
     out = dict(channels)
     infos = {}
     if "L" in channels:
-        out["L"], infos["L"] = deblur(channels["L"], iters)
+        out["L"], infos["L"] = deblur(channels["L"], iters, clamp_to=clamp_to)
         return out, infos
     done: dict[int, tuple] = {}
     for name in ("R", "G", "B"):
@@ -250,6 +259,6 @@ def deblur_channels(channels: dict, iters: int) -> tuple[dict, dict]:
             continue
         key = id(channels[name])
         if key not in done:
-            done[key] = deblur(channels[name], iters)
+            done[key] = deblur(channels[name], iters, clamp_to=clamp_to)
         out[name], infos[name] = done[key]
     return out, infos

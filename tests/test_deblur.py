@@ -84,6 +84,28 @@ def test_sky_is_left_alone_and_flux_roughly_kept():
     assert abs(out.sum() / img.sum() - 1.0) < 0.01
 
 
+def test_sky_clamp_drains_halos_but_not_below_the_sky():
+    img, pos, _ = _field()
+    held, _ = db.deblur(img, iters=8, clamp_to="input")
+    drained, info = db.deblur(img, iters=8, clamp_to="sky")
+    sig = info["sky_sigma"]
+    # Halos may fall under the sky clamp, so flux is conserved more tightly...
+    assert abs(drained.sum() / img.sum() - 1.0) < abs(held.sum() / img.sum() - 1.0)
+    # ...and the bound is pixelwise: never below min(input, local sky) minus
+    # one sigma, anywhere. The true sky is known here (the field is built
+    # from it); the module's minimum-filter estimate of it runs up to a sigma
+    # low on the curved galaxy bump, so the margin is the clamp plus that.
+    yy, xx = np.mgrid[:img.shape[0], :img.shape[1]]
+    truth = 300.0 + 0.05 * xx + 40.0 * np.exp(-((yy - 320) ** 2 + (xx - 320) ** 2) / (2 * 60.0 ** 2))
+    assert np.all(drained >= np.minimum(img, truth) - 3 * sig)
+    # and halos do drain: the ring 4-8 px out sits lower than under the input clamp
+    for y, x in pos:
+        r = np.hypot(yy - y, xx - x); ring = (r > 4) & (r <= 8)
+        assert drained[ring].mean() <= held[ring].mean() + 1e-3
+    with pytest.raises(ValueError):
+        db.deblur(img, iters=8, clamp_to="halo")
+
+
 def test_too_few_stars_returns_the_input():
     img, _, _ = _field(n=5)
     out, info = db.deblur(img, iters=8)
@@ -113,3 +135,7 @@ def test_option_reaches_compose_and_the_options_line():
     assert cp.effective_options()["deblur"] == 0
     assert "deblur" not in cp.describe_options(cp.effective_options())
     assert "deblur=8" in cp.describe_options(cp.effective_options(deblur=8))
+    line = cp.describe_options(cp.effective_options(deblur=25, dering="sky"))
+    assert "deblur=25" in line and "dering=sky" in line
+    assert "dering" not in cp.describe_options(cp.effective_options(deblur=8))
+    assert "dering" not in cp.describe_options(cp.effective_options(dering="sky"))   # meaningless without deblur
