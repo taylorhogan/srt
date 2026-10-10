@@ -462,20 +462,16 @@ def do_main():
                         "PWI4 unreachable -- mount park state unknown; the close "
                         "rests on the scope tag (vision), mount power cut first")
                     logger.warning("end: PWI4 unreachable; park check falls to vision")
-                instructions = (dict
-                    (
-                    {
-                        "Telescope mount": 'off',
-                        "Roof motor": 'on',
-                        "Iris inside light": 'on'
-                    }
-                ))
                 logger.info("step 1")
                 # This is the step that powers the roof motor so the roof CAN
                 # close. If it fails silently the whole shutdown proceeds and the
                 # roof stays open, which is the one outcome this sequence exists
-                # to prevent -- so it is checked and named.
-                results = asyncio.run(ku.kasa_do(dev_map, instructions))
+                # to prevent -- so it is checked and named. The motor plug is
+                # reached only through iris/hardware/roof (Phase 2b, 2026-10-10);
+                # mount off and room light on stay in the same call.
+                from iris.hardware import roof as roof_hw
+                results = roof_hw.switch_motor(
+                    dev_map, True, also={"Telescope mount": 'off', "Iris inside light": 'on'})
                 failed = [n for n, ok in results.items() if not ok]
                 if failed:
                     logger.error("step 2: %d switch(es) FAILED: %s", len(failed),

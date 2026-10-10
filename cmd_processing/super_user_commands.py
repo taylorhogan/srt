@@ -280,8 +280,10 @@ def toggle_roof(dev_map: dict, capture_direction: Optional[str] = None) -> None:
     # A stop! that cannot see the roof trusts an earlier OPEN only if nothing
     # like this came after it (sentry/roof_evidence.py).
     roof_evidence.record_motion_possible("toggle_roof direction=%s" % capture_direction)
-    inst = {"Roof motor": 'on'}
-    asyncio.run(ku.kasa_do(dev_map, inst))
+    # The motor plug and the relay are reached only through iris/hardware/roof
+    # (Phase 2b, 2026-10-10; CI: tests/test_roof_single_path.py).
+    from iris.hardware import roof as roof_hw
+    roof_hw.switch_motor(dev_map, True)
     # The relay Shelly is powered THROUGH that plug: it boots when the plug
     # goes on and needs Wi-Fi before it can take the fire. A blind ten-second
     # sleep was enough for 26 moves and not for the 27th (2026-09-16 11:11:
@@ -326,7 +328,7 @@ def toggle_roof(dev_map: dict, capture_direction: Optional[str] = None) -> None:
     # what the Phase 2 guards WOULD have said at this moment. Change the
     # wording only together with _ROOF_FIRE_RE in iris/conductor/shadow.py.
     _logger.info("roof relay fire: direction=%s", capture_direction or "unknown")
-    if utl_shelly.fire_roof_relay() is None:
+    if roof_hw.fire_relay() is None:
         _logger.error("Failed to trigger relay in toggle_roof")
         if capture is not None:
             rcs.finish_background_capture(capture, save=False)
@@ -334,13 +336,12 @@ def toggle_roof(dev_map: dict, capture_direction: Optional[str] = None) -> None:
         # travel wait. 2026-09-16 11:11: the relay Shelly did not answer,
         # this raised, and the plug stayed on until it was found by hand.
         try:
-            asyncio.run(ku.kasa_do(dev_map, {"Roof motor": 'off'}))
+            roof_hw.switch_motor(dev_map, False)
         except Exception:  # noqa: BLE001
             _logger.exception("toggle_roof: could not switch the roof motor off after the relay failure")
         raise RoofFireError("toggle_roof: roof relay trigger failed")
     _wait_for_roof_travel(dev_map, capture_direction, capture, audio_capture)
-    inst = {"Roof motor": 'off'}
-    asyncio.run(ku.kasa_do(dev_map, inst))
+    roof_hw.switch_motor(dev_map, False)
     _last_move[capture_direction or ""] = {"t_end": time.time(), "feats": None, "cur": None}
 
     if capture is not None:
