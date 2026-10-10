@@ -39,6 +39,8 @@ stretch. Everything below is a rule that was paid for on the M33 L stack on
   median, binned), not the minimum filter, which read tens of ADU low on the
   disc's edge: RL drained every star's wing down to it and left a dark moat
   around each star on the galaxy (the operator saw it at once, 2026-10-10).
+  And it is measured with the fitted star wings taken off, or a bright
+  star's own wing lifts it and the clamp holds that much halo.
 * split=True (off by default) takes the stars off and treats them apart, the
   operator's suggestion for the moat. Three forms were tried that day and
   none beat the clamp fix: whole discs off a fill (the galaxy light under a
@@ -70,7 +72,7 @@ WING_BLEND = (8.0, 14.0)  # core to wing crossfade, px
 WING_MIN_STARS = 8        # fewer clean bright stars and the core alone is used
 WING_MIN_PEAK = 3000.0    # ADU above sky: bright enough to show the wing
 SPLIT_STARS = False       # take the stars off and treat them apart: see the module doc
-CLAMP_BIN, CLAMP_MEDIAN = 4, 25   # the clamp's local-sky reference: median over 100 px, binned
+CLAMP_BIN, CLAMP_MEDIAN = 4, 15   # the clamp's local-sky reference: median over 60 px, binned
 STAR_SPLIT_MIN_SIGMA = 20.0  # candidates this far above the sky mean (or 1e-3 of saturation)
 STAR_COMPACT = 0.6        # of a point source's peak/matched ratio: broader is not a star
 STAR_CORE_PX = 14         # a star's core disc, lifted off a fill into its own layer
@@ -221,7 +223,7 @@ def measure_psf(chan: np.ndarray, radius: int = PSF_RADIUS,
                       "why": f"only {len(cuts)} isolated stars (need {MIN_STARS})"}
     core = np.clip(np.median(np.stack(cuts), axis=0), 0, None)
     info = {"stars": len(cuts), "fwhm_px": fwhm_px}
-    wing, nwing = _wing_profile(a, stars, sat, sig)
+    wing, nwing, wing2d = _wing_profile(a, stars, sat, sig)
     info["wing_stars"] = nwing
     if wing is None:
         # No bright clean star to read a wing from: the core's own azimuthal
@@ -240,7 +242,19 @@ def measure_psf(chan: np.ndarray, radius: int = PSF_RADIUS,
         R = WING_RADIUS
     if True:
         wy, wx = np.mgrid[-R:R + 1, -R:R + 1]; wr = np.hypot(wy, wx)
-        psf = np.interp(wr, np.arange(len(wing)), wing, right=0.0) * core.max()
+        psf = np.interp(wr, np.arange(len(wing)), wing, right=0.0)
+        if wing2d is not None and wing2d.shape == psf.shape:
+            # The profile is the floor; only the 2-D median's EXCESS over it
+            # (the spikes) is added, and only where it clears the median's
+            # own noise, read from the outer annulus. Adding the whole 2-D
+            # median put the positive half of its noise into the far wing
+            # (38% too much flux at 24-60 px on a Moffat test field).
+            excess = wing2d - psf
+            noise = 1.4826 * float(np.median(np.abs(excess[wr > 45] - np.median(excess[wr > 45]))))
+            keep = np.where(excess > 4.0 * max(noise, 1e-12), excess, 0.0)
+            w2 = np.clip((wr - 40.0) / 15.0, 0, 1); w2 = 1 - w2 * w2 * (3 - 2 * w2)   # spikes to 40 px, fading by 55
+            psf = np.clip(psf + keep * w2, 0, None)
+        psf = psf * core.max()
         c = np.zeros_like(psf); c[R - radius:R + radius + 1, R - radius:R + radius + 1] = core
         f = np.clip((wr - WING_BLEND[0]) / (WING_BLEND[1] - WING_BLEND[0]), 0, 1)
         f = f * f * (3 - 2 * f)
@@ -256,10 +270,17 @@ def measure_psf(chan: np.ndarray, radius: int = PSF_RADIUS,
 
 
 def _wing_profile(a: np.ndarray, stars: np.ndarray, sat: Optional[float],
-                  sig: float) -> tuple[Optional[np.ndarray], int]:
-    """Azimuthal profile of the brightest clean stars out to WING_RADIUS,
-    peak-normalised, median across stars. The core stack cannot show the wing:
-    its stars are fainter and its sky annulus sits inside the wing."""
+                  sig: float) -> tuple[Optional[np.ndarray], int, Optional[np.ndarray]]:
+    """(azimuthal profile, count, 2-D wing) of the brightest clean stars out
+    to WING_RADIUS, peak-normalised, median across stars. The core stack
+    cannot show the wing: its stars are fainter and its sky annulus sits
+    inside the wing. The 2-D median keeps the diffraction spikes, whose
+    orientation the spider fixes: with an azimuthal wing the spikes were
+    the one part of a star RL could not drain, and they stood as detached
+    bright dashes 20-40 px from every bright star once the halo was gone.
+    Beyond 30 px the 2-D median fades into the profile, where per-star noise
+    is all it would add."""
+    from scipy.ndimage import shift as ndshift
     R = WING_RADIUS
     h, w = a.shape
     yy, xx = np.mgrid[-R:R + 1, -R:R + 1]; rr = np.hypot(yy, xx)
@@ -269,28 +290,33 @@ def _wing_profile(a: np.ndarray, stars: np.ndarray, sat: Optional[float],
     cand = np.nonzero(peak > WING_MIN_PEAK)[0]
     if sat is not None:
         cand = cand[stars[cand, 3] < SAT_FRAC * sat]
-    profs = []
+    profs, cuts = [], []
     for i in cand[np.argsort(peak[cand])[::-1]]:
-        xc, yc = int(round(stars[i, 0])), int(round(stars[i, 1]))
-        if not (R < yc < h - R and R < xc < w - R):
+        xc, yc = float(stars[i, 0]), float(stars[i, 1])
+        xi, yi = int(round(xc)), int(round(yc))
+        if not (R < yi < h - R and R < xi < w - R):
             continue
-        c = a[yc - R:yc + R + 1, xc - R:xc + R + 1]
+        c = a[yi - R:yi + R + 1, xi - R:xi + R + 1].astype(np.float64)
         if not np.isfinite(c).all():
             continue
         c = c - np.median(c[sky_ann])
         pk = float(c[R, R])
         if pk <= 0 or (c[rr > 20] > 0.05 * pk).any():      # a neighbour in the wing
             continue
+        c = ndshift(c, (yi - yc, xi - xc), order=1, mode="nearest") / pk
         prof = np.bincount(rbin.ravel(), weights=c.ravel(), minlength=R + 1)[:R] \
             / np.bincount(rbin.ravel(), minlength=R + 1)[:R]
-        profs.append(prof / pk)
+        profs.append(prof)
+        cuts.append(c)
         if len(profs) >= 60:
             break
     if len(profs) < WING_MIN_STARS:
-        return None, len(profs)
+        return None, len(profs), None
     med = np.clip(np.median(np.stack(profs), axis=0), 0, None)
     med[0] = 1.0
-    return med, len(profs)
+    wing2d = np.median(np.stack(cuts), axis=0)                 # signed: its noise is measured later
+    wing2d[R, R] = 1.0
+    return med, len(profs), wing2d
 
 
 def _shrink(psf: np.ndarray, factor: float) -> np.ndarray:
@@ -325,7 +351,7 @@ def _fill_holes(x: np.ndarray, hole: np.ndarray) -> np.ndarray:
 def star_layer(x: np.ndarray, model: np.ndarray, sig: float,
                kernel: np.ndarray, level: Optional[float] = None,
                ) -> tuple[np.ndarray, np.ndarray, np.ndarray, int, np.ndarray]:
-    """(starless, inner, mask, count, fits): the stars taken off the image.
+    """(starless, inner, mask, count, fits, wing): the stars taken off the image.
 
     Candidates are local maxima STAR_SPLIT_MIN_SIGMA (or 1e-3 of the
     saturation level) above the sky mean that are as COMPACT as the kernel:
@@ -366,7 +392,8 @@ def star_layer(x: np.ndarray, model: np.ndarray, sig: float,
     peaks &= ratio >= STAR_COMPACT * point
     peaks[:R + 1] = peaks[-R - 1:] = peaks[:, :R + 1] = peaks[:, -R - 1:] = False
     ys, xs = np.nonzero(peaks)
-    empty = (x.astype(np.float32), np.zeros_like(x), np.zeros(x.shape, bool), 0, np.zeros((0, 5)))
+    empty = (x.astype(np.float32), np.zeros_like(x), np.zeros(x.shape, bool), 0, np.zeros((0, 5)),
+             np.zeros(x.shape, np.float32))
     if len(ys) == 0:
         return empty
     order = np.argsort(above[ys, xs])[::-1]
@@ -422,7 +449,7 @@ def star_layer(x: np.ndarray, model: np.ndarray, sig: float,
     inner = np.where(inner_mask, np.clip(base - fill, 0.0, None), 0.0).astype(np.float32)
     mask = inner_mask | (wing_part > max(0.5 * sig, 0.05))
     starless = np.where(mask, starless, x.astype(np.float32))
-    return starless, inner, mask, n, np.array(fits, dtype=np.float64).reshape(-1, 5)
+    return starless, inner, mask, n, np.array(fits, dtype=np.float64).reshape(-1, 5), wing_part
 
 
 def deblur(chan: np.ndarray, iters: int = DEFAULT_ITERS,
@@ -472,8 +499,11 @@ def deblur(chan: np.ndarray, iters: int = DEFAULT_ITERS,
     sat = x > SAT_FRAC * level if level is not None else np.zeros(x.shape, bool)
     full = x
     stars = None
+    # The star fit runs either way: its wing model is what the clamp's sky
+    # reference is measured without (below).
+    starless, inner, smask, nstars, fits, wing_part = star_layer(x, model0, sig, kernel, level)
+    info["fitted_stars"] = nstars
     if split:
-        starless, inner, smask, nstars, fits = star_layer(x, model0, sig, kernel, level)
         info["split_stars"] = nstars
         info["star_mask_frac"] = float(smask.mean())
         if smask.mean() > STAR_MASK_MAX_FRAC or nstars == 0:
@@ -499,8 +529,12 @@ def deblur(chan: np.ndarray, iters: int = DEFAULT_ITERS,
         srl[~binary_dilation(smask, iterations=2)] = 0.0
         stars_out = srl.astype(np.float32)
         del srl
-    # A floor that follows the galaxy and never clips a real pixel.
-    model = gaussian_filter(minimum_filter(x, FLOOR_MIN_SIZE), FLOOR_SMOOTH) if split else model0
+    # A floor that follows the galaxy and never clips a real pixel. Measured
+    # with the fitted wings off: inside a bright star's wing the minimum
+    # over 25 px is still wing, and a floor there is a floor RL cannot drain
+    # the wing below (69 ADU left at 12-16 px with the model on the raw image,
+    # whatever the clamp's reference was).
+    model = gaussian_filter(minimum_filter(x if split else full - wing_part, FLOOR_MIN_SIZE), FLOOR_SMOOTH)
     floor = np.minimum(model, x) - 2.0 * sig
     rl = richardson_lucy(np.clip(x - floor, 1e-3, None).astype(np.float32),
                          kernel.astype(np.float32), num_iter=iters, clip=False) + floor
@@ -510,12 +544,14 @@ def deblur(chan: np.ndarray, iters: int = DEFAULT_ITERS,
     # The clamp needs the local sky where the galaxy SLOPES too: the minimum
     # filter reads 12 px downhill of every pixel, so on the disc's edge it
     # was tens of ADU low and RL drained each star's wing down to it, a dark
-    # moat around every star on the galaxy. A median over 100 px follows the
-    # slope and ignores the stars; bright-star wings lift it a little (17 ADU
-    # under the brightest star here against 91 for a 60 px window, while the
-    # slope error grows from 3 to 7 ADU), which leaves a trace of halo
-    # rather than a moat.
-    sky_ref = local_sky(x, CLAMP_BIN, CLAMP_MEDIAN)
+    # moat around every star on the galaxy. A median over 60 px follows the
+    # slope to ~3 ADU and ignores the stars' cores, but a bright star's WING
+    # lifted it by up to 91 ADU and the clamp then held that much halo (the
+    # operator: "still significant halos"). So it is measured on the image
+    # with the fitted wings taken off: the symmetric fit is good to a few
+    # ADU in the wing, which is all a 60 px median can feel, even though it
+    # cannot take the wings off the picture itself (see star_layer).
+    sky_ref = local_sky(full - wing_part, CLAMP_BIN, CLAMP_MEDIAN)
     bound = x if clamp_to == "input" else np.minimum(x, sky_ref)
     rl = np.maximum(rl, bound - CLAMP_SIGMA * sig)             # dark deringing
     # Only where there is signal to sharpen, measured from ref, or the blend

@@ -171,7 +171,7 @@ def test_split_stars_sharpen_on_a_zero_background_without_rings():
     from scipy.ndimage import gaussian_filter, minimum_filter
     model = gaussian_filter(minimum_filter(img, db.FLOOR_MIN_SIZE), db.FLOOR_SMOOTH)
     psf, _ = db.measure_psf(img)
-    starless, inner, mask, n, fits = db.star_layer(img, model, sig, psf, None)
+    starless, inner, mask, n, fits, wing = db.star_layer(img, model, sig, psf, None)
     assert fits.shape == (n, 5)
     assert np.array_equal(starless[~mask], img[~mask])          # untouched outside the footprint
     assert np.abs(starless - truth)[mask].mean() < 2 * sig       # the galaxy survives under the stars
