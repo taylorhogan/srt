@@ -7,7 +7,11 @@ class PublicConfig():
 
         },
         "version": {
+<<<<<<< HEAD
             "date": "2026.10.9.12"
+=======
+            "date": "2026.10.9.11"
+>>>>>>> 0d586de (Park across post-midnight gaps: horizon_rise no longer depends on the dark window)
         },
 
         "logger": {

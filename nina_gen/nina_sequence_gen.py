@@ -638,16 +638,23 @@ def _simple_item(type_name: str, parent_id: str, next_id: list) -> dict:
 def horizon_rise(name: str, ra_hours: float, dec_degrees: float, after):
     """When *name* next clears the observatory horizon at/after *after*, or None.
 
-    Uses the planner's own horizon (configs/my.hrz via
-    astro_dso_visibility.find_alt_az_horizon_times), so "above the trees" means
-    here exactly what it means when the night is ranked. None on any failure --
-    an unanswerable sky must not decide whether to park.
+    Uses the planner's own horizon (configs/my.hrz, the same altitude-vs-
+    azimuth test astro_dso_visibility ranks the night with), so "above the
+    trees" means here exactly what it means when the night is ranked. None on
+    any failure -- an unanswerable sky must not decide whether to park.
+
+    Until 2026-10-09 this went through find_alt_az_horizon_times, which also
+    requires the sample to fall in "tonight's" dark window -- and for any
+    *after* past about 23:00 that function takes the NEXT evening's window,
+    so every post-midnight gap came back as "never rises" and no slot after
+    midnight was ever parked across (ngc2146 would have tracked ngc7320 into
+    the western trees for three hours). Darkness is not this function's
+    question: a later slot already follows a WaitForTime for dusk.
     """
     try:
         import astropy.units as u
-        from astropy.coordinates import EarthLocation, SkyCoord
+        from astropy.coordinates import AltAz, EarthLocation, SkyCoord
         from astropy.time import Time
-        from astroplan import FixedTarget, Observer
         import numpy as np
         from configs import config
         from iris_astronomy import astro_dso_visibility as av
@@ -655,15 +662,16 @@ def horizon_rise(name: str, ra_hours: float, dec_degrees: float, after):
         loc = config.data()["location"]
         site = EarthLocation.from_geodetic(loc["longitude"] * u.deg, loc["latitude"] * u.deg,
                                            loc["elevation"] * u.m)
-        obs = Observer(location=site, name=loc.get("observatory_name", "obs"),
-                       timezone=loc.get("timezone", "US/Eastern"))
-        target = FixedTarget(SkyCoord(ra=ra_hours * 15.0 * u.deg, dec=dec_degrees * u.deg),
-                             name=name)
+        target = SkyCoord(ra=ra_hours * 15.0 * u.deg, dec=dec_degrees * u.deg)
         # Sample from `after` forward: the first sample above the horizon is
         # the rise we care about, and if it is already up that is sample one.
         grid = Time(after) + np.linspace(0, 10, 121) * u.hour
-        _alt, _az, _hz, start, _fin, _el, _max = av.find_alt_az_horizon_times(target, obs, grid)
-        return start
+        aa = target.transform_to(AltAz(obstime=grid, location=site))
+        az_h, al_h = av.map_az_to_horizon()
+        for t, alt, az in zip(grid, aa.alt.deg, aa.az.deg):
+            if alt >= av.get_horizon_from_azimuth(float(az) % 360.0, az_h, al_h):
+                return t.to_datetime(timezone=after.tzinfo) if getattr(after, "tzinfo", None) else t.to_datetime()
+        return None
     except Exception:  # noqa: BLE001 -- never let the sky break generation
         logging.getLogger(__name__).warning("horizon rise for %s unavailable", name, exc_info=True)
         return None

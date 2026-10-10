@@ -8,6 +8,7 @@ every $id unique, every $ref resolvable, each clone patched for its own
 target and window, and the hand-over scripts on the second slot only.
 """
 import json
+import pytest
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -449,3 +450,21 @@ def test_the_gap_park_keeps_ids_unique_and_refs_resolvable(tmp_path, monkeypatch
     walk(seq)
     assert len(ids) == len(set(ids)), "duplicate $id"
     assert not set(refs) - set(ids), "dangling $ref"
+
+
+def test_horizon_rise_works_after_midnight():
+    """2026-10-09: the rise used to be None for any time past ~23:00 (wrong dark
+    window), so no post-midnight slot was ever parked across its gap."""
+    pytest.importorskip("astropy")
+    from datetime import datetime, timedelta, timezone
+    from zoneinfo import ZoneInfo
+    pytest.importorskip("configs.config")
+    tz = ZoneInfo("America/New_York")
+    # NGC 2146 (RA 6.31 h, Dec +78.4): behind the north-east limb at midnight,
+    # clears it in the small hours.
+    after = datetime(2026, 10, 10, 0, 0, tzinfo=tz)
+    rise = g.horizon_rise("ngc2146", 6.3105, 78.357, after)
+    assert rise is not None and timedelta(hours=1) < (rise - after) < timedelta(hours=5), rise
+    # already up: the first sample
+    up = g.horizon_rise("ngc7320", 22.601, 33.948, datetime(2026, 10, 9, 22, 0, tzinfo=tz))
+    assert up is not None and (up - datetime(2026, 10, 9, 22, 0, tzinfo=tz)) < timedelta(minutes=6)
