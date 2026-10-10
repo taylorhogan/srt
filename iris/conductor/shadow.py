@@ -53,7 +53,7 @@ from iris.core import guards as G
 from iris.core.journal import Journal
 from iris.core.machine import (HOLD_STATES, INITIAL_STATE, ROOF_MOVING_STATES,
                                TRANSITIONS, step)
-from iris.core.snapshot import SensorSnapshot, Tri
+from iris.core.snapshot import SensorSnapshot, Tri, roof_word, unmoved_since_open
 from iris.core.machine import MOUNT_DECISION_EVENTS
 
 _logger = logging.getLogger(__name__)
@@ -144,6 +144,10 @@ _KASA_RE = re.compile(r"kasa_status: scope=(\w+) roof=(\w+)")
 # relay -- every roof move from every path passes it. Wording is coupled to
 # that line; change them together.
 _ROOF_FIRE_RE = re.compile(r"roof relay fire: direction=(\w+)")
+# Both roof cameras' own answers and the merge (sentry/vision_safety._north_row,
+# written on every gating read). Wording coupled to that logger call.
+_NORTH_ROW_RE = re.compile(
+    r"north roof: tag says (\w+), Iris cam says (\w+) -> (\w+) \(by ([\w+-]+)\)")
 
 # Evidence older than this decays to UNKNOWN. The legacy system runs a vision
 # check seconds before any roof move, so at decision moments evidence is
@@ -186,6 +190,15 @@ def _read_roof_limits():
         return r.state, r.detail
     except Exception as exc:
         return "unreachable", f"{type(exc).__name__}: {exc}"
+
+
+def _read_roof_memory(root: Path) -> dict:
+    """sentry/roof_evidence's two timestamps from <root>/local. Never raises."""
+    try:
+        from sentry import roof_evidence
+        return roof_evidence.read(Path(root) / "local" / "roof_evidence.json")
+    except Exception:
+        return {"open_confirmed": None, "motion_possible": None}
 
 
 def _read_sun_altitude():
@@ -245,6 +258,7 @@ class ShadowConductor:
         # Injectable so tests drive them without a mount or a Shelly.
         self.pwi4_probe = _read_pwi4_park
         self.limits_probe = _read_roof_limits
+        self.roof_memory_probe = lambda: _read_roof_memory(self.root)
         # Injectable at construction because _recover() consults it, before
         # a caller can reassign the attribute.
         self.sun_probe = sun_probe or _read_sun_altitude
@@ -257,6 +271,7 @@ class ShadowConductor:
                                       # its own clock rather than ride the
                                       # webcam's freshness
         self._cams_split = False      # last known camera (dis)agreement
+        self._roofcams_ts = 0.0       # when the two roof cameras last reported
         self._flats_none_streak = 0   # polls sat in FLATS reading NONE
         # last-seen values of the legacy sources, None = not yet read
         self._sched = None            # scheduler_state.json "state"
@@ -491,6 +506,12 @@ class ShadowConductor:
                                                       roof=roof)
                 self._evidence_ts = time.time()
 
+            m = _NORTH_ROW_RE.search(ln)
+            if m:
+                self.evidence = self.evidence.replace(roof_north=roof_word(m.group(1)),
+                                                      roof_cam=roof_word(m.group(2)))
+                self._roofcams_ts = time.time()
+
             m = _KASA_RE.search(ln)
             if m:
                 self.evidence = self.evidence.replace(
@@ -534,6 +555,24 @@ class ShadowConductor:
                              "clock does not describe it"})
             return
         self.offer(event, "shadow", {"sched": sched})
+
+    def _observe_roof_cameras(self, event, source, payload):
+        """Journal the two roof cameras and the guards' merge of them beside
+        the merged `roof` the decision is made on (2026-10-10, Phase 2b).
+        Observation only: the verdict still comes from `roof`. A difference is
+        a separate note, so a morning query finds it without reading payloads;
+        nights of none are what lets the guards read roof_by_cameras instead.
+        """
+        ev = self._current_evidence()
+        merged = G.roof_by_cameras(ev)
+        payload["roof_cameras"] = {"north": ev.roof_north.value, "cam": ev.roof_cam.value,
+                                   "by_guards": merged.value, "decided": ev.roof.value,
+                                   "unmoved_since_open": ev.roof_unmoved.value}
+        heard = ev.roof_north is not Tri.UNKNOWN or ev.roof_cam is not Tri.UNKNOWN
+        if heard and merged is not ev.roof:
+            self.journal.append("note", "ROOF_MERGE_DIFF", "shadow",
+                                data={"for": event, "source": source,
+                                      **payload["roof_cameras"]})
 
     def _note_camera_split(self):
         """Journal the moment the two park cameras CONTRADICT each other, and
@@ -605,6 +644,15 @@ class ShadowConductor:
         # second confirmation would defeat the point of having two.
         if now - self._kasa_ts > EVIDENCE_MAX_AGE_S:
             e = e.replace(parked_kasa=Tri.UNKNOWN)
+        if now - self._roofcams_ts > EVIDENCE_MAX_AGE_S:
+            e = e.replace(roof_north=Tri.UNKNOWN, roof_cam=Tri.UNKNOWN)
+        try:
+            mem = self.roof_memory_probe() or {}
+            from datetime import datetime
+            e = e.replace(roof_unmoved=unmoved_since_open(
+                mem.get("open_confirmed"), mem.get("motion_possible"), datetime.now().astimezone()))
+        except Exception:
+            e = e.replace(roof_unmoved=Tri.UNKNOWN)
         return e.replace(
             roof=self._roof_from_limits_and_vision(e.roof),
             safety_armed=bool(self._safety),
@@ -679,6 +727,13 @@ class ShadowConductor:
         """
         ev = self._current_evidence()
         refusal = G.evaluate((G.roof_open,), ev)
+        if payload.get("blind_park"):
+            # Checked by the conductor on its own evidence, journaled, not yet
+            # enforced (2026-10-10): stop! applies the same rule before asking.
+            why = G.blind_park_corroborated(ev)
+            payload["blind_park_corroborated"] = why is None
+            if why:
+                payload["blind_park_corroboration"] = why
         if refusal and payload.get("blind_park"):
             refusal = None
             payload["asserted"] = "blind park rule (stop!)"
@@ -710,6 +765,10 @@ class ShadowConductor:
         if "parked_kasa" in evidence:
             e = e.replace(parked_kasa=_tri(evidence["parked_kasa"]))
             self._kasa_ts = time.time()
+        if "roof_north" in evidence or "roof_cam" in evidence:
+            e = e.replace(roof_north=_tri(evidence.get("roof_north", "UNKNOWN")),
+                          roof_cam=_tri(evidence.get("roof_cam", "UNKNOWN")))
+            self._roofcams_ts = time.time()
         self.evidence = e
         payload["evidence_posted"] = {k: v for k, v in evidence.items() if k != "ts"}
 
@@ -729,6 +788,8 @@ class ShadowConductor:
             if evidence:
                 self._absorb_evidence(evidence, payload)
             live = source != "shadow"
+            if live and (event in ROOF_DECISION_EVENTS or event in MOUNT_DECISION_EVENTS):
+                self._observe_roof_cameras(event, source, payload)
             if live and event == "ROOF_CLOSE_REQUESTED" and self.state in HOLD_STATES:
                 return self._close_in_hold(source, payload)
             if (live and event == "MOUNT_MOVE_REQUESTED" and self.state in HOLD_STATES

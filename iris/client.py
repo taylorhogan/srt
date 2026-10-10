@@ -77,12 +77,26 @@ def evidence_from_vision(parked: bool, closed: bool, is_open: bool) -> dict:
         kasa = {"safe": "CONFIRMED", "UNSAFE": "DENIED"}.get(det.get("scope"), "UNKNOWN")
     except Exception:
         pass
-    return {
+    out = {
         "parked_vision": "CONFIRMED" if parked else "UNKNOWN",
         "parked_kasa": kasa,
         "roof": "CONFIRMED" if is_open else ("DENIED" if closed else "UNKNOWN"),
         "ts": time.time(),
     }
+    # The two roof cameras' own answers (2026-10-10), from the vision read
+    # that produced the merged one -- only if that read happened in this
+    # process (never import the vision stack from here) and is fresh.
+    try:
+        import sys
+        vs = sys.modules.get("sentry.vision_safety")
+        lm = getattr(vs, "last_match", None) or {}
+        if lm and time.time() - float(lm.get("at") or 0) < 120:
+            words = {"open": "CONFIRMED", "shut": "DENIED"}
+            out["roof_north"] = words.get((lm.get("north") or {}).get("state"), "UNKNOWN")
+            out["roof_cam"] = words.get(lm.get("cam_roof"), "UNKNOWN")
+    except Exception:
+        pass
+    return out
 
 
 def asserted_evidence(direction: str) -> dict:

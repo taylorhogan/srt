@@ -77,6 +77,37 @@ def mount_parked(s: SensorSnapshot):
     return None
 
 
+def roof_by_cameras(s: SensorSnapshot) -> Tri:
+    """The roof the two roof cameras support, as one Tri (2026-10-10).
+
+    The merge policy that today lives in sentry/north_roof.decide, moved to
+    where the guards can see it (operator decision 2026-09-24): the north
+    tag DECIDES; Iris cam may veto but never overrule -- a disagreement is
+    UNKNOWN -- and is the fallback when the north camera cannot answer.
+    tests/test_guards.py proves it equal to north_roof.decide on every input.
+    Not yet consulted by a table guard: the conductor journals it beside the
+    merged `roof` it decides on, until nights of zero differences say the
+    guards can read it instead.
+    """
+    north, cam = s.roof_north, s.roof_cam
+    if north is not Tri.UNKNOWN:
+        if cam is not Tri.UNKNOWN and cam is not north:
+            return Tri.UNKNOWN
+        return north
+    return cam
+
+
+def blind_park_corroborated(s: SensorSnapshot):
+    """The blind park's evidence, checked by the conductor rather than taken
+    on the actuator's word: the roof was confirmed open recently and nothing
+    could have moved it since (sentry/roof_evidence). Observed, not enforced:
+    journaled on every blind-park request."""
+    if s.roof_unmoved is not Tri.CONFIRMED:
+        return ("no evidence the roof is still open (%s): no confirmed OPEN within "
+                "16 h with no roof motion since" % s.roof_unmoved.value.lower())
+    return None
+
+
 def roof_state_known(s: SensorSnapshot):
     """The relay is a toggle: firing it with the roof position unknown turns
     an unknown into a coin flip. Any confirmed position passes."""

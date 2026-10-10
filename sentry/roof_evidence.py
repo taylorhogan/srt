@@ -36,10 +36,11 @@ def _now():
     return datetime.now().astimezone()
 
 
-def read() -> dict:
-    """{"open_confirmed": datetime|None, "motion_possible": datetime|None}."""
+def read(path=None) -> dict:
+    """{"open_confirmed": datetime|None, "motion_possible": datetime|None}.
+    *path* lets the conductor read <its repo root>/local (hermetic tests)."""
     try:
-        with open(PATH) as fh:
+        with open(path or PATH) as fh:
             raw = json.load(fh)
     except (OSError, ValueError):
         raw = {}

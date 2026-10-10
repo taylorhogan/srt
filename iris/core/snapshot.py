@@ -49,6 +49,21 @@ class SensorSnapshot:
     weather_ok: the planner's current weather verdict.
     slots_remaining: number of night-plan slots not yet run (0 = plan done).
     nina_alive: the capture process exists (liveness probe, never authority).
+
+    roof_north / roof_cam / roof_unmoved (2026-10-10, Phase 2b): the roof's
+        sensors kept apart, as the park sensors are, so the merge policy can
+        live in guards.py (roof_by_cameras) instead of inside the vision code.
+        roof_north is the north camera's tag (id 2) against its OPEN / SHUT
+        references; roof_cam is Iris cam (tag 1 at shut, the gold star for
+        open); same meaning as `roof` (CONFIRMED open, DENIED closed).
+        roof_unmoved is the blind-park evidence (sentry/roof_evidence):
+        CONFIRMED = a gating read saw the roof OPEN within 16 h and nothing
+        has powered or fired the roof since; DENIED = something could have
+        moved it since, or that open is older than 16 h; UNKNOWN = no record.
+        Observed, not yet consulted by any table guard: until they are, they
+        stay out of enumerate_snapshots (multiplying the space by 27 for
+        fields no guard reads would only slow the sweeps); they join it on the
+        day a guard reads them.
     """
     parked_vision: Tri = Tri.UNKNOWN
     parked_kasa: Tri = Tri.UNKNOWN
@@ -59,10 +74,40 @@ class SensorSnapshot:
     weather_ok: bool = False
     slots_remaining: int = 0
     nina_alive: bool = False
+    roof_north: Tri = Tri.UNKNOWN
+    roof_cam: Tri = Tri.UNKNOWN
+    roof_unmoved: Tri = Tri.UNKNOWN
 
     def replace(self, **kw) -> "SensorSnapshot":
         from dataclasses import replace as _replace
         return _replace(self, **kw)
+
+
+BLIND_PARK_OPEN_MAX_AGE_H = 16.0     # the same bound stop!'s blind_park_refusal uses
+
+
+def roof_word(word) -> Tri:
+    """'open' / 'shut' / anything else -> the roof Tri. Pure."""
+    return {"open": Tri.CONFIRMED, "shut": Tri.DENIED, "closed": Tri.DENIED}.get(
+        str(word or "").lower(), Tri.UNKNOWN)
+
+
+def unmoved_since_open(open_confirmed, motion_possible, now,
+                       max_age_h: float = BLIND_PARK_OPEN_MAX_AGE_H) -> Tri:
+    """roof_unmoved from sentry/roof_evidence's two timestamps. Pure.
+
+    CONFIRMED: an OPEN was confirmed no more than *max_age_h* ago and nothing
+    that could move the roof came after it (the open's own fire comes before
+    its confirmation, so it does not count). DENIED: motion after the open,
+    or the open too old. UNKNOWN: no open on record.
+    """
+    if open_confirmed is None:
+        return Tri.UNKNOWN
+    if (now - open_confirmed).total_seconds() > max_age_h * 3600.0:
+        return Tri.DENIED
+    if motion_possible is not None and motion_possible > open_confirmed:
+        return Tri.DENIED
+    return Tri.CONFIRMED
 
 
 # The full enumerable space, for property tests. Kept beside the dataclass so

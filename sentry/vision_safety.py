@@ -812,6 +812,7 @@ def visual_status(retries: int = 1, delay: float = 3.0, frames: int | None = Non
                       "error": det.get("why") or "no frame from the camera",
                       "trusted": False, "is_parked": False, "is_closed": bool(closed),
                       "is_open": bool(is_open), "roof_source": source,
+                      "cam_roof": "unknown",       # Iris cam gave no frame
                       "north": {"state": north_state, "verdicts": nd.get("verdicts"),
                                 "off_shut_px": next((f.get("off_shut_px") for f in reversed(
                                     nd.get("per_frame") or []) if f.get("verdict")), None),
@@ -831,6 +832,9 @@ def visual_status(retries: int = 1, delay: float = 3.0, frames: int | None = Non
         source = "cam"
     last_match = _match_from_detail(det, parked, closed, is_open)
     last_match["roof_source"] = source
+    # Iris cam's own roof answer, before the merge: the conductor keeps the
+    # two roof cameras apart and merges them in iris/core/guards (2026-10-10).
+    last_match["cam_roof"] = "open" if cam_open else ("shut" if cam_closed else "unknown")
     # When this read was taken: the per-move roof summary only quotes a north
     # verdict read AFTER the move (super_user_commands._post_move_summary).
     last_match["at"] = time.time()
