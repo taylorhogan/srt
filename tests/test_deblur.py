@@ -17,20 +17,23 @@ from stacking import color_process as cp  # noqa: E402
 from stacking import deblur as db  # noqa: E402
 
 
-def _field(sigma_px=2.0, seed=3, n=30, h=640, w=640, sky=300.0, noise=3.0):
+def _field(sigma_px=2.0, seed=3, n=30, h=640, w=640, sky=300.0, noise=3.0, parts=False):
     rng = np.random.default_rng(seed)
     yy, xx = np.mgrid[:h, :w]
-    img = np.full((h, w), sky, np.float64) + 0.05 * xx          # sky + gradient
-    img += 40.0 * np.exp(-((yy - 320) ** 2 + (xx - 320) ** 2) / (2 * 60.0 ** 2))   # galaxy
+    bg = np.full((h, w), sky, np.float64) + 0.05 * xx          # sky + gradient
+    bg += 40.0 * np.exp(-((yy - 320) ** 2 + (xx - 320) ** 2) / (2 * 60.0 ** 2))   # galaxy
     pos = []
     while len(pos) < n:
         y, x = rng.uniform(40, h - 40), rng.uniform(40, w - 40)
         if all(np.hypot(y - py, x - px) > 2.5 * db.PSF_RADIUS + 10 for py, px in pos):
             pos.append((y, x))
     amps = rng.uniform(300, 3000, n)
+    st = np.zeros((h, w))
     for (y, x), a in zip(pos, amps):
-        img += a * np.exp(-((yy - y) ** 2 + (xx - x) ** 2) / (2 * sigma_px ** 2))
-    img += rng.normal(0, noise, img.shape)
+        st += a * np.exp(-((yy - y) ** 2 + (xx - x) ** 2) / (2 * sigma_px ** 2))
+    img = bg + st + rng.normal(0, noise, (h, w))
+    if parts:
+        return img.astype(np.float32), np.array(pos), amps, bg, st
     return img.astype(np.float32), np.array(pos), amps
 
 
@@ -83,8 +86,9 @@ def test_sky_sigma_ignores_gradient_and_stars():
 
 
 def test_stars_sharpen_and_nothing_goes_below_the_input():
+    """The unsplit path with the input clamp: the pixelwise invariant."""
     img, pos, _ = _field()
-    out, info = db.deblur(img, iters=8)
+    out, info = db.deblur(img, iters=8, split=False)
     assert "why" not in info, info
     sig = info["sky_sigma"]
     # Dark deringing: the clamp is the invariant every earlier attempt lacked.
@@ -102,13 +106,22 @@ def test_stars_sharpen_and_nothing_goes_below_the_input():
         assert b.min() >= a.min() - db.CLAMP_SIGMA * sig - 1e-3
 
 
+def test_local_sky_follows_slopes_and_ignores_stars():
+    img, pos, _, truth, st = _field(parts=True)
+    ref = db.local_sky(img)
+    assert np.abs(ref - truth).mean() < 1.0            # follows gradient and bump
+    yi, xi = np.round(pos).astype(int).T
+    assert np.abs(ref[yi, xi] - truth[yi, xi]).max() < 6.0   # stars barely lift it
+
+
 def test_sky_is_left_alone_and_flux_roughly_kept():
     img, pos, _ = _field()
     out, info = db.deblur(img, iters=8)
     far = np.ones(img.shape, bool)
     yy, xx = np.mgrid[:img.shape[0], :img.shape[1]]
     for y, x in pos:
-        far &= np.hypot(yy - y, xx - x) > 14
+        far &= np.hypot(yy - y, xx - x) > 40       # the floor model's window around a patched star
+    far &= np.hypot(yy - 320, xx - 320) > 24       # the galaxy bump's peak counts as a source
     far[:20] = far[-20:] = far[:, :20] = far[:, -20:] = False
     assert np.array_equal(out[far], img[far])          # blend is exactly 0 on sky
     assert abs(out.sum() / img.sum() - 1.0) < 0.01
@@ -116,8 +129,8 @@ def test_sky_is_left_alone_and_flux_roughly_kept():
 
 def test_sky_clamp_drains_halos_but_not_below_the_sky():
     img, pos, _ = _field()
-    held, _ = db.deblur(img, iters=8, clamp_to="input")
-    drained, info = db.deblur(img, iters=8, clamp_to="sky")
+    held, _ = db.deblur(img, iters=8, clamp_to="input", split=False)
+    drained, info = db.deblur(img, iters=8, clamp_to="sky", split=False)
     sig = info["sky_sigma"]
     # Halos may fall under the sky clamp, so flux is conserved more tightly...
     assert abs(drained.sum() / img.sum() - 1.0) < abs(held.sum() / img.sum() - 1.0)
@@ -134,6 +147,43 @@ def test_sky_clamp_drains_halos_but_not_below_the_sky():
         assert drained[ring].mean() <= held[ring].mean() + 1e-3
     with pytest.raises(ValueError):
         db.deblur(img, iters=8, clamp_to="halo")
+
+
+def test_split_stars_sharpen_on_a_zero_background_without_rings():
+    """The default path: stars lifted off a fill, deconvolved apart, added
+    back. No ring (nothing under the true sky), flux kept, cores higher,
+    wings lower, and the starless image is what the galaxy path sees."""
+    img, pos, _, truth, st = _field(parts=True)
+    out, info = db.deblur(img, iters=8, split=True)
+    assert info["split"] and info["split_stars"] >= len(pos) - 2, info
+    sig = info["sky_sigma"]
+    yy, xx = np.mgrid[:img.shape[0], :img.shape[1]]
+    # No ring: nothing ends below what the pixel is without its star (the
+    # subtraction exposes the noise that was under the star) minus 3 sigma.
+    assert np.all(out >= np.minimum(img - st, truth) - 3 * sig)
+    assert abs(out.sum() / img.sum() - 1.0) < 0.01
+    yi, xi = np.round(pos).astype(int).T
+    assert np.median(out[yi, xi] / img[yi, xi]) > 1.3
+    for y, x in pos:
+        r = np.hypot(yy - y, xx - x); ring = (r > 4) & (r <= 8)
+        assert out[ring].mean() < img[ring].mean()           # the wing drained
+    # the star layer itself: amplitude x kernel per star, nothing else
+    from scipy.ndimage import gaussian_filter, minimum_filter
+    model = gaussian_filter(minimum_filter(img, db.FLOOR_MIN_SIZE), db.FLOOR_SMOOTH)
+    psf, _ = db.measure_psf(img)
+    starless, inner, mask, n, fits = db.star_layer(img, model, sig, psf, None)
+    assert fits.shape == (n, 5)
+    assert np.array_equal(starless[~mask], img[~mask])          # untouched outside the footprint
+    assert np.abs(starless - truth)[mask].mean() < 2 * sig       # the galaxy survives under the stars
+    stars = inner
+    assert n >= len(pos) - 2
+    assert stars.min() >= 0 and 0.001 < mask.mean() < 0.2
+    # the galaxy bump's peak is broad and must NOT be in the layer
+    assert stars[300:341, 300:341].max() < 3 * sig
+    # the layer reproduces each star's peak to 15%
+    yi, xi = np.round(pos).astype(int).T
+    truth_peak = img[yi, xi] - truth[yi, xi]
+    assert np.median(np.abs(stars[yi, xi] / truth_peak - 1)) < 0.15
 
 
 def test_too_few_stars_returns_the_input():
