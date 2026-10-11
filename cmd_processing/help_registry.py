@@ -342,9 +342,11 @@ HELP: dict[str, dict] = {
         "summary": ("Delete superseded flat frames, keeping the newest set per "
                     "filter. Dry run unless you add 'go'. Frees ~4 GB per "
                     "redundant night; irreversible, so older lights lose the "
-                    "option of epoch-matched flats."),
-        "usage": ["purge", "purge go"],
-        "examples": ["purge", "purge go"],
+                    "option of epoch-matched flats. 'purge bad' does the same for "
+                    "frames `bad` rejected, once they were marked more than 30 days "
+                    "ago (dab restores one until then)."),
+        "usage": ["purge", "purge go", "purge bad", "purge bad go"],
+        "examples": ["purge", "purge go", "purge bad", "purge bad go"],
     },
     "process": {
         "category": "super",

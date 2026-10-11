@@ -242,6 +242,63 @@ def _master_cache_path(paths: list[Path], tag: str) -> Path:
     return scratch / f"master_{tag}_{digest}.npy"
 
 
+# Cached masters unused this long are deleted whenever a new one is built
+# (2026-10-11). The cache had grown to 193 masters, 47 GB, because every new
+# set of calibration frames is a new key and nothing ever removed the old ones;
+# 21 GB of it had not been written in 30 days. A pruned master costs a rebuild
+# (~1 s a frame) the next time it is wanted, nothing more.
+MASTER_KEEP_DAYS = 30.0
+
+
+def _master_keep_days() -> float:
+    try:
+        from configs import config
+        return float(config.data().get("scratch", {}).get("master_keep_days", MASTER_KEEP_DAYS))
+    except Exception:
+        return MASTER_KEEP_DAYS
+
+
+def _cache_hit(out: Path) -> Path:
+    """A cached master was reused: stamp it, so its mtime means "last used"
+    and prune_master_cache never takes a master that is still in service."""
+    try:
+        os.utime(out)
+    except OSError:
+        pass
+    return out
+
+
+def prune_master_cache(scratch: Path, keep_days: Optional[float] = None,
+                       now: Optional[float] = None) -> tuple:
+    """Delete cached masters (master_*.npy) unused for *keep_days*. Returns
+    (count, bytes). Never raises: a master mapped by a worker (Windows refuses
+    the delete) or already gone is skipped."""
+    keep_days = _master_keep_days() if keep_days is None else float(keep_days)
+    cutoff = (time.time() if now is None else now) - keep_days * 86400.0
+    n = freed = 0
+    for p in Path(scratch).glob("master_*.npy"):
+        try:
+            st = p.stat()
+            if st.st_mtime < cutoff:
+                p.unlink()
+                n += 1
+                freed += st.st_size
+        except OSError:
+            continue
+    if n:
+        _logger.info("Master cache: deleted %d master(s) unused for %.0f days, %.1f GB",
+                     n, keep_days, freed / 1e9)
+    return n, freed
+
+
+def _after_build(out: Path) -> None:
+    """The cache just grew: drop what has gone unused. Never breaks a stack."""
+    try:
+        prune_master_cache(out.parent)
+    except Exception:
+        _logger.exception("master cache prune failed (ignored)")
+
+
 def _cached_master(paths: list[Path], tag: str, subtract: Optional[np.ndarray] = None) -> Path:
     """Build (or reuse) a master for *paths* and return its .npy path.
 
@@ -250,7 +307,7 @@ def _cached_master(paths: list[Path], tag: str, subtract: Optional[np.ndarray] =
     """
     out = _master_cache_path(paths, tag)
     if out.exists():
-        return out
+        return _cache_hit(out)
     _logger.info("Building master %s from %d frames…", tag, len(paths))
     master = _build_master(paths)
     if master is None:
@@ -260,6 +317,7 @@ def _cached_master(paths: list[Path], tag: str, subtract: Optional[np.ndarray] =
     tmp = out.with_suffix(".tmp.npy")
     np.save(tmp, master.astype(np.float32))
     tmp.replace(out)
+    _after_build(out)
     return out
 
 
@@ -296,7 +354,7 @@ def _hot_pixel_map(dark_npy: Path) -> Optional[Path]:
     """
     out = dark_npy.with_name(dark_npy.stem + "_hotmap.npy")
     if out.exists():
-        return out
+        return _cache_hit(out)
     dark = np.load(dark_npy).astype(np.float32)
     resid = dark - _despike(dark)          # 3x3 median: what only this pixel has
     sigma = 1.4826 * float(np.median(np.abs(resid - np.median(resid))))
@@ -432,7 +490,7 @@ def build_master_flat_npy(flat_paths: list[Path], cal: CalibrationSet,
         return None
     out = _master_cache_path(flat_paths, f"flat_{tag}")
     if out.exists():
-        return out
+        return _cache_hit(out)
     _logger.info("Building master flat %s from %d frames…", tag, len(flat_paths))
     master = _build_master(flat_paths)
     if master is None:
@@ -453,6 +511,7 @@ def build_master_flat_npy(flat_paths: list[Path], cal: CalibrationSet,
     tmp = out.with_suffix(".tmp.npy")
     np.save(tmp, master)
     tmp.replace(out)
+    _after_build(out)
     return out
 
 

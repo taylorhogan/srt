@@ -171,7 +171,7 @@ def make_title(command_text: str) -> str:
         "process": "Colour process",
         "movie": "Stacking movie",
         "publish": "Publish image",
-        "purge": "Purge flats",
+        "purge": "Purge",
         "skysolve": "Sky camera plate solve",
         "optics": "Optical metrics",
         "drift": "Drift analysis",

@@ -23,6 +23,10 @@ these must hold:
   Kasa reachable     every plug the system commands resolves by name AND
                      answers a relay read (the inside camera is covered by
                      the vision read, which cannot happen without it)
+  disk space         free space on the image drive: a warning below
+                     cfg["disk"]["warn_free_gb"] (100 GB), a problem below
+                     refuse_free_gb (25 GB), where image!! refuses to start
+                     (utils/disk_space, 2026-10-11)
 
 Anything that cannot be READ counts as a failure, the same way it does at the
 roof gates: "could not confirm off" is not "off". Nothing here moves hardware
@@ -151,7 +155,7 @@ def speed_warning(speed, history):
 
 
 def evaluate(vision, kasa, pegasus, speed=NOT_MEASURED, speed_history=(),
-             cameras=None, pegasus_recovery=None):
+             cameras=None, pegasus_recovery=None, disk=NOT_MEASURED):
     """(problems, warnings) from the readings. Pure, so it can be tested.
 
     vision  : {"closed", "parked", "camera", "why", "scope_tag_frames", "frames",
@@ -159,6 +163,7 @@ def evaluate(vision, kasa, pegasus, speed=NOT_MEASURED, speed_history=(),
     kasa    : {"resolved": {name: relay 0/1/None}, "error": str|None}
                a name absent from resolved did not answer discovery
     pegasus : {port: level} or None when the box could not be read
+    disk    : {"usage": utils.disk_space.usage(...) or None, "warn_gb", "refuse_gb"}
     cameras : {alias: "on" | "switched_on" | "off" | "unknown"} for the cameras
               the safety reads depend on. The plugs above are LAN relay reads;
               a camera switched off in the Kasa app is a cloud fact, and until
@@ -232,7 +237,26 @@ def evaluate(vision, kasa, pegasus, speed=NOT_MEASURED, speed_history=(),
     warn = speed_warning(speed, speed_history)
     if warn:
         warnings.append(warn)
+
+    if disk is not NOT_MEASURED:
+        from utils import disk_space
+        prob, warn = disk_space.morning_status(disk.get("usage"), disk["warn_gb"],
+                                               disk["refuse_gb"])
+        if prob:
+            problems.append(prob)
+        if warn:
+            warnings.append(warn)
     return problems, warnings
+
+
+def read_disk():
+    """The image drive's free space and the configured floors."""
+    from configs import config
+    from utils import disk_space
+    cfg = config.data()
+    warn_gb, refuse_gb = disk_space.thresholds(cfg)
+    return {"usage": disk_space.usage(disk_space.data_path(cfg)),
+            "warn_gb": warn_gb, "refuse_gb": refuse_gb}
 
 
 def north_rehome_step(dry_run=False):
@@ -645,8 +669,9 @@ def main():
     cameras = read_cameras()
     history = _speed_history()
     speed, speed_tries = read_speed(history)
+    disk = read_disk()
     problems, warnings = evaluate(vision, kasa, pegasus, speed, history, cameras,
-                                  pegasus_recovery=recovery)
+                                  pegasus_recovery=recovery, disk=disk)
     warnings += read_roof_moves()
     n_warn, n_prob = north_rehome_step(dry_run=args.dry_run)
     warnings += n_warn
@@ -656,7 +681,7 @@ def main():
              "ok": not problems, "problems": problems, "warnings": warnings,
              "vision": vision, "kasa": kasa, "pegasus": pegasus,
              "pegasus_recovery": recovery, "speed": speed,
-             "speed_attempts": speed_tries, "cameras": cameras}
+             "speed_attempts": speed_tries, "cameras": cameras, "disk": disk}
     _append_log(entry)
     print(json.dumps(entry, indent=2, default=str))
 

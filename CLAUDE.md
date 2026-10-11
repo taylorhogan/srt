@@ -119,6 +119,12 @@ Since 2026-09-25 the conductor decides both invariants (ADR 0014): every roof fi
   dry-run unless given `go`, and is the only command that deletes data outright
   (`bad` renames). Irreversible: older lights lose the option of epoch-matched
   flats, which matters only if the optics were disturbed between runs.
+  `purge bad [go]` does the same for frames `bad` rejected, once marked more
+  than `cfg["disk"]["bad_keep_days"]` (30) ago; `bad` stamps the mark time on
+  the renamed file. Cached masters unused for 30 days are deleted whenever a
+  new one is built (`stacker.prune_master_cache`; a cache hit refreshes the
+  mtime). Raw lights are never pruned: `utils/disk_space` makes the morning
+  check warn below 100 GB free and `image!!` refuse below 25 GB.
 
   Every picture product (stack/process/channel/sweep JPEGs) is written with
   **sky parity** through `stacker.sky_parity()`: the array as stored, row 0 at

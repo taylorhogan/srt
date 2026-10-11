@@ -7,7 +7,7 @@ class PublicConfig():
 
         },
         "version": {
-            "date": "2026.10.11.1"
+            "date": "2026.10.11.2"
         },
 
         "logger": {
@@ -29,7 +29,10 @@ class PublicConfig():
 
         "scratch": {
             "directory": "iris_astronomy/scratch",
-            "latest_jpg": "latest_annotated.jpg"
+            "latest_jpg": "latest_annotated.jpg",
+            # Cached calibration masters unused this long are deleted whenever
+            # a new one is built (stacking/stacker.prune_master_cache).
+            "master_keep_days": 30,
         },
 
         # Kasa KC420WS all-sky camera, read locally over the 19443 stream --
@@ -569,6 +572,17 @@ class PublicConfig():
             # with the same code (control/night_plan, in its own process) and
             # journals PLAN_MATCH / PLAN_DIFF. Watch-only; False stops it.
             "shadow_planner": True,
+        },
+
+        # Free space on the image drive (utils/disk_space, 2026-10-11). Raw
+        # frames are never pruned (~60-90 GB a month); the 09:00 morning check
+        # warns below warn_free_gb and image!! refuses to start below
+        # refuse_free_gb, about one long winter night of frames plus flats.
+        "disk": {
+            "warn_free_gb": 100,
+            "refuse_free_gb": 25,
+            # `purge bad` deletes rejected frames marked longer ago than this.
+            "bad_keep_days": 30,
         },
 
         "transit": {

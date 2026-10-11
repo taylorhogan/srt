@@ -3595,6 +3595,12 @@ def _bad_run(words: list[str]) -> None:
         try:
             f.rename(target)
             renamed_paths.append(str(f))
+            # Stamp the time it was marked: `purge bad` deletes rejected frames
+            # by how long ago they were marked, not when they were shot.
+            try:
+                os.utime(target)
+            except OSError:
+                pass
         except Exception as exc:
             failed.append((f, str(exc)))
 
@@ -3934,13 +3940,27 @@ def image_cmd(words: list[str], account: str) -> bool:
     previous night, and the only trace was a Pushover message -- the log and
     the feed said nothing, and the scheduler read the untouched imaging state
     as "run complete".
+
+    Also refused below the free-space floor (utils/disk_space, 2026-10-11):
+    a disk that fills mid-night fails N.I.N.A partway through a sequence.
     """
-    if is_imaging() or is_nina_running():
+    busy = is_imaging() or is_nina_running()
+    disk_why = None
+    if not busy:
+        try:
+            from utils import disk_space
+            disk_why = disk_space.check_image_run(config.data())
+        except Exception:
+            _logger.exception("free-space check failed (not refusing on it)")
+    if busy or disk_why:
         # is_nina_running() catches the case where a process restart cleared
         # imaging.txt but NINA is still capturing — starting again would run two
         # imaging sequences against the same mount/camera.
-        why = ("an imaging run is already in progress" if is_imaging()
-               else "N.I.N.A is still open (close it and run image!! again)")
+        if not busy:
+            why = disk_why
+        else:
+            why = ("an imaging run is already in progress" if is_imaging()
+                   else "N.I.N.A is still open (close it and run image!! again)")
         msg = "Imaging run REFUSED: " + why
         _logger.warning(msg)
         try:
@@ -6490,6 +6510,8 @@ def purge_cmd(words: list[str], account: str) -> None:
     Usage:
         purge            — dry run: list what would be deleted
         purge go         — actually delete
+        purge bad        — dry run: rejected frames (`bad`) marked > 30 days ago
+        purge bad go     — actually delete them
 
     Flats accumulate fast: 20 frames per filter per night at 122 MB each is
     2.45 GB a night for two filters, and this observatory has ~1000 of them.
@@ -6499,8 +6521,63 @@ def purge_cmd(words: list[str], account: str) -> None:
 
     Dry run by default. This is the only command that deletes data outright
     (`bad` renames), so it will not act without `go`.
+
+    `purge bad` (2026-10-11) is the same for frames `bad` rejected: 164 of
+    them held 20 GB that day. Only frames marked more than
+    cfg["disk"]["bad_keep_days"] (30) ago, so there is time to look and
+    `dab` them back first.
     """
+    if len(words) > 2 and words[2].lower() == "bad":
+        jobs.spawn(_purge_bad_run, args=(words,))
+        return
     jobs.spawn(_purge_run, args=(words,))
+
+
+def _purge_bad_run(words: list[str]) -> None:
+    _job_id = jobs.get_current_job()
+    from utils import disk_space
+
+    cfg = config.data()
+    image_dir = Path(cfg["nina"]["image_dir"])
+    keep = disk_space.bad_keep_days(cfg)
+    do_delete = any(w.lower() == "go" for w in words[3:])
+    stale = disk_space.stale_bad_frames(image_dir, keep)
+    if not stale:
+        social_server.post_social_message(
+            f"No rejected frames marked more than {keep:.0f} days ago under {image_dir.name}.")
+        return
+
+    per_dso: dict[str, list] = {}
+    for p, size in stale:
+        try:
+            dso = p.relative_to(image_dir).parts[0]
+        except ValueError:
+            dso = p.parent.parent.name
+        per_dso.setdefault(dso, []).append(size)
+    freed = sum(size for _p, size in stale) / 1e9
+    lines = [f"Rejected frames (renamed .bad) marked more than {keep:.0f} days ago: "
+             f"{len(stale)} frames, {freed:.1f} GB"]
+    lines += [f"  {dso}: {len(sizes)} frame(s), {sum(sizes) / 1e9:.1f} GB"
+              for dso, sizes in sorted(per_dso.items())]
+    if not do_delete:
+        lines.append("Re-run as `purge bad go` to delete them. Irreversible: "
+                     "`dab <dso> go` restores any you want to keep, until then.")
+        social_server.post_social_message("\n".join(lines))
+        return
+
+    removed, failed = 0, []
+    for p, _size in stale:
+        jobs.raise_if_cancelled(_job_id)
+        try:
+            p.unlink()
+            removed += 1
+        except Exception as exc:
+            failed.append((p, str(exc)))
+    lines.append(f"Deleted {removed}/{len(stale)}, freed about {freed:.1f} GB")
+    if failed:
+        lines.append(f"{len(failed)} could not be deleted, e.g. {failed[0][0].name}: {failed[0][1]}")
+    _logger.info("purge bad: deleted %d/%d rejected frames (%.1f GB)", removed, len(stale), freed)
+    social_server.post_social_message("\n".join(lines))
 
 
 def _purge_run(words: list[str]) -> None:
