@@ -319,6 +319,14 @@ class ShadowConductor:
         if (self.state in self._MID_NIGHT and self._imaging == "NONE"
                 and not self._nina):
             self._reseat("recovered mid-night state with no capture activity")
+        # A night the sunset check called off while this conductor was down
+        # (or before the transition was mapped): the machine still waits in
+        # ARMED / PRE_FLIGHT for a night the scheduler has already dropped.
+        if (self.state in ("ARMED", "PRE_FLIGHT") and self._sched == "WAITING_FOR_NOON"
+                and self._will_image == "false"):
+            self.offer("WEATHER_BAD", "shadow",
+                       {"sched": self._sched, "synthesized": True,
+                        "why": "recovered behind a night the scheduler called off"})
         # The other way round: the shadow was down while the run moved on, so
         # the journal's last transition is behind the capture state on disk.
         # 2026-09-10 a restart mid-run would have recovered to PRELUDE (the
@@ -966,6 +974,14 @@ class ShadowConductor:
                 self.offer("PLAN_BAD", "shadow", {"sched": sched})
             elif sched == "PRE_SUNSET_CHECK":
                 self._offer_clock("PRE_SUNSET_TICK", sched)
+            elif sched == "WAITING_FOR_NOON" and prev == "PRE_SUNSET_CHECK":
+                # The sunset check called the night off (forecast slipped
+                # below the minimum good hours) and the scheduler went
+                # straight back to waiting for noon. Unmapped until
+                # 2026-10-11, so every such night (09-19, 09-29, 10-01, 10-10)
+                # left the machine in PRE_FLIGHT until the next noon resync.
+                # A clock event: a manual image!! night is not called off by it.
+                self._offer_clock("WEATHER_BAD", sched)
             elif sched == "WAITING_FOR_NOON" and prev in ("IMAGING", "WAITING_FOR_BOOT"):
                 self._offer_clock("DAY_TICK", sched)
             # --- Phase 3 step 1: the scheduler just left a check with its

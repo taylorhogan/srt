@@ -224,3 +224,51 @@ def test_a_broken_planner_never_stops_the_poll(conductor):
                  **{"will image tonight": True})
     c.poll()                                          # does not raise
     assert c.state == "ARMED"                         # PLAN_GOOD still stepped the machine
+
+
+# ------------------------------------------------------------ the sunset skip (2026-10-11)
+
+def _to_pre_flight(c, root):
+    _write_sched(root, state="NOON_CHECK", dso="x", **{"will image tonight": "Unknown"})
+    c.poll()
+    _write_sched(root, state="WAITING_FOR_PRE_SUNSET", dso="hubblev1", slots=RECORD,
+                 **{"will image tonight": True})
+    c.poll()
+    _write_sched(root, state="PRE_SUNSET_CHECK", dso="hubblev1", slots=RECORD,
+                 **{"will image tonight": True})
+    c.poll()
+    assert c.state == "PRE_FLIGHT"
+
+
+def test_a_night_called_off_at_sunset_returns_to_idle(conductor):
+    """2026-10-10: 2 good hours at sunset, night skipped; the machine sat in
+    PRE_FLIGHT until the next noon (as on 09-19, 09-29 and 10-01)."""
+    c, _planner, root = conductor
+    _to_pre_flight(c, root)
+    _write_sched(root, state="PRE_SUNSET_CHECK", dso="hubblev1", slots=RECORD,
+                 **{"will image tonight": False})
+    c.poll()
+    _write_sched(root, state="WAITING_FOR_NOON", dso="hubblev1", slots=RECORD,
+                 **{"will image tonight": False})
+    c.poll()
+    assert c.state == "IDLE_DAY"
+
+
+def test_the_sunset_skip_does_not_end_a_manual_night(conductor):
+    c, _planner, root = conductor
+    _to_pre_flight(c, root)
+    c.state = "PRELUDE"                               # an operator's image!! owns the night
+    _write_sched(root, state="WAITING_FOR_NOON", dso="hubblev1", slots=RECORD,
+                 **{"will image tonight": False})
+    c.poll()
+    assert c.state == "PRELUDE"
+
+
+def test_a_restart_after_a_called_off_night_returns_to_idle(conductor):
+    c, _planner, root = conductor
+    _to_pre_flight(c, root)
+    _write_sched(root, state="WAITING_FOR_NOON", dso="hubblev1", slots=RECORD,
+                 **{"will image tonight": False})       # skipped while the conductor was down
+    again = ShadowConductor(root, c.journal, sun_probe=lambda: None,
+                            roof_authority=True, mount_authority=True)
+    assert again.state == "IDLE_DAY"
