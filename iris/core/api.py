@@ -39,10 +39,15 @@ def _entry_dict(e):
     return d
 
 
-def build_app(conductor, journal, registry_fn):
+def build_app(conductor, journal, registry_fn, allowed_networks=None):
     """App factory. `conductor` needs .state/.slots/.evidence and .offer();
-    `registry_fn` returns the Target registry dict."""
+    `registry_fn` returns the Target registry dict. *allowed_networks* (the
+    running conductor passes loopback) refuses every other peer
+    (utils/client_allowlist); None = no filter, for tests."""
     app = FastAPI(title="iris-conductor", version="0.1-shadow")
+    if allowed_networks:
+        from utils.client_allowlist import ClientAllowlist
+        app.add_middleware(ClientAllowlist, networks=allowed_networks, name="conductor")
 
     @app.get("/v1/state")
     def state():

@@ -71,7 +71,11 @@ def main() -> int:
 
     from iris.core.api import build_app
     import uvicorn
-    app = build_app(conductor, journal, derive_registry)
+    # Loopback only: every caller is on this PC, and POST /v1/events from
+    # anywhere else must not reach the machine (utils/client_allowlist).
+    from utils.client_allowlist import LOOPBACK
+    app = build_app(conductor, journal, derive_registry,
+                    allowed_networks=list(cfg.get("allowed_networks") or LOOPBACK))
     # log_level warning: the 5-min publishers will poll /v1/state forever and
     # an access-log line per poll is pure noise.
     uvicorn.run(app, host="0.0.0.0", port=port, log_level="warning")

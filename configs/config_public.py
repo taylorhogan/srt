@@ -7,7 +7,7 @@ class PublicConfig():
 
         },
         "version": {
-            "date": "2026.10.11.2"
+            "date": "2026.10.12.1"
         },
 
         "logger": {
@@ -448,6 +448,10 @@ class PublicConfig():
             # Where remote machines (the Spark) reach this chat's /api/post
             # over the Tailnet. Same-machine callers fall back to localhost.
             "remote_url": "http://100.95.7.19:8095",
+            # The chat has no login, so only these peers are served (2026-10-12):
+            # this PC and the tailnet. The house LAN is refused (HTTP 403 /
+            # websocket 1008) whatever the Windows firewall allows.
+            "allowed_networks": ["127.0.0.0/8", "::1/128", "100.64.0.0/10", "fd7a:115c:a1e0::/48"],
         },
 
         "sync": {
@@ -572,6 +576,8 @@ class PublicConfig():
             # with the same code (control/night_plan, in its own process) and
             # journals PLAN_MATCH / PLAN_DIFF. Watch-only; False stops it.
             "shadow_planner": True,
+            # Peers the API serves: this PC only (every caller is local).
+            "allowed_networks": ["127.0.0.0/8", "::1/128"],
         },
 
         # Free space on the image drive (utils/disk_space, 2026-10-11). Raw

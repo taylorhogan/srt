@@ -24,6 +24,25 @@ _logger = logging.getLogger(__name__)
 
 app = FastAPI()
 
+
+def _allowed_networks():
+    from utils.client_allowlist import LOOPBACK, TAILNET
+    try:
+        from configs import config
+        nets = config.data().get("web_chat", {}).get("allowed_networks")
+        if nets:
+            return list(nets)
+    except Exception:
+        _logger.exception("web_chat.allowed_networks unreadable; loopback + tailnet")
+    return list(LOOPBACK + TAILNET)
+
+
+# No login (every connection is the first Super User), so the peer address is
+# the gate: loopback and the tailnet only, whatever the firewall allows
+# (utils/client_allowlist, 2026-10-12).
+from utils.client_allowlist import ClientAllowlist  # noqa: E402
+app.add_middleware(ClientAllowlist, networks=_allowed_networks(), name="web chat")
+
 _static_dir = os.path.join(os.path.dirname(__file__), "static")
 app.mount("/static", StaticFiles(directory=_static_dir), name="static")
 
