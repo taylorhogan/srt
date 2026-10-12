@@ -8,7 +8,7 @@ import asyncio
 
 import pytest
 
-from utils.client_allowlist import LOOPBACK, TAILNET, ClientAllowlist, allowed, parse
+from utils.client_allowlist import LOOPBACK, TAILNET, ClientAllowlist, allowed, describe, parse
 
 CHAT = parse(LOOPBACK + TAILNET)
 CONDUCTOR = parse(LOOPBACK)
@@ -29,6 +29,12 @@ def test_the_house_lan_and_anything_else_is_refused(host):
 def test_the_conductor_serves_this_pc_only():
     assert allowed("127.0.0.1", CONDUCTOR)
     assert not allowed("100.95.7.19", CONDUCTOR)          # not even the tailnet
+
+
+def test_the_refusal_names_who_is_served():
+    assert describe(CONDUCTOR) == "this PC only"
+    assert describe(CHAT) == "this PC and the tailnet only"
+    assert describe(parse(["10.0.0.0/8"])) == "only 10.0.0.0/8"
 
 
 def _drive(scope):

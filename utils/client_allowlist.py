@@ -46,6 +46,16 @@ def allowed(host, nets) -> bool:
     return any(ip.version == n.version and ip in n for n in nets)
 
 
+def describe(nets) -> str:
+    """Who *nets* serves, for the refusal log line. Pure."""
+    s, loop, tail = set(nets), set(parse(LOOPBACK)), set(parse(TAILNET))
+    if s == loop:
+        return "this PC only"
+    if s == loop | tail:
+        return "this PC and the tailnet only"
+    return "only " + ", ".join(str(n) for n in nets)
+
+
 class ClientAllowlist:
     """ASGI middleware: refuse HTTP and websocket peers outside *networks*."""
 
@@ -53,6 +63,7 @@ class ClientAllowlist:
         self.app = app
         self.nets = parse(networks)
         self.name = name
+        self.serves = describe(self.nets)
         self._logged = {}
 
     async def __call__(self, scope, receive, send):
@@ -73,5 +84,5 @@ class ClientAllowlist:
         now = time.time()
         if now - self._logged.get(host, 0.0) >= _LOG_EVERY_S:
             self._logged[host] = now
-            _logger.warning("%s: refused %s %s from %s (not loopback or the tailnet)",
-                            self.name, scope.get("type"), scope.get("path"), host)
+            _logger.warning("%s: refused %s %s from %s (serves %s)",
+                            self.name, scope.get("type"), scope.get("path"), host, self.serves)
