@@ -442,8 +442,11 @@ def plot_my_dso_and_horizon(dso: FixedTarget, my_observatory: Observer, observe_
     clipped_hum = []
     clipped_smoke = []   # PM2.5 AQI scaled onto the 0-90 axis (AQI/150*90)
     clipped_seeing = []  # 850 hPa wind in real km/h — drawn on its own right axis
-    weather_ok = True
-    issues: set[str] = set()
+    # Forecast hours the window touches -> their issues, and which of them
+    # START inside it (the hours the planner counts); judged after the loop
+    # by window_weather_verdict.
+    hour_issues_by_key: dict = {}
+    whole_hours: set = set()
     window_hours_with_forecast = 0
     # Judge weather only during the imaging window (dark + above horizon).
     # If the object never rises tonight, fall back to the whole plotted span.
@@ -471,10 +474,13 @@ def plot_my_dso_and_horizon(dso: FixedTarget, my_observatory: Observer, observe_
                          or start_time <= local_datetime[i] <= window_finish)
             if in_window:
                 hour_pm25_aqi = pm25_aqi_by_hour.get(hour)
-                hour_issues = weather_issues(cloud_j, pp_j, wsp_j)
-                if hour_issues:
-                    weather_ok = False
-                    issues.update(hour_issues)
+                key = (t_local.year, t_local.month, t_local.day, hour)
+                hour_issues_by_key.setdefault(key, weather_issues(cloud_j, pp_j, wsp_j))
+                top = local_datetime[i] - datetime.timedelta(
+                    minutes=t_local.minute, seconds=t_local.second,
+                    microseconds=t_local.microsecond)
+                if start_time is None or start_time <= top <= window_finish:
+                    whole_hours.add(key)
                 if hour_pm25_aqi is not None and (peak_pm25_aqi is None
                                                   or hour_pm25_aqi > peak_pm25_aqi):
                     peak_pm25_aqi = hour_pm25_aqi
@@ -498,24 +504,29 @@ def plot_my_dso_and_horizon(dso: FixedTarget, my_observatory: Observer, observe_
         elif start_time is None or start_time <= local_datetime[i] <= window_finish:
             window_hours_with_forecast += 1
 
+    weather_ok, issue_list, bad_hours = window_weather_verdict(hour_issues_by_key, whole_hours)
+    issues: set[str] = set(issue_list)
+    when_txt = (" at " + ", ".join(_hour_label(k[3]) for k in bad_hours)) if bad_hours else ""
     if window_hours_with_forecast == 0:
         # Nothing to judge: say so rather than "good". An empty forecast used
         # to leave weather_ok True. (The scheduler's planner already counts a
         # missing hour as not good, so this never let a night through.)
         weather_ok = False
         issues.add("no forecast available")
+        when_txt = ""
 
     if start_time is not None:
         window_txt = f"between {format_local_time(start_time)} and {format_local_time(window_finish)}"
         if weather_ok:
             weather_msg = f"Weather is good for imaging {dso.name} {window_txt}"
         else:
-            weather_msg = f"Weather is not good for imaging {dso.name}: {' and '.join(sorted(issues))} {window_txt}"
+            weather_msg = (f"Weather is not good for imaging {dso.name}: "
+                           f"{' and '.join(sorted(issues))}{when_txt} ({window_txt})")
     else:
         if weather_ok:
             weather_msg = "Weather ok tonight"
         else:
-            weather_msg = f"Weather not ok tonight: {' and '.join(sorted(issues))}"
+            weather_msg = f"Weather not ok tonight: {' and '.join(sorted(issues))}{when_txt}"
 
 
     # Always report the smoke level for the imaging window, even when it's clear.
@@ -869,6 +880,30 @@ def weather_issues(cloud_cover: float, precipitation_probability: float,
     if precipitation_probability > 20:
         issues.append("a chance of rain")
     return issues
+
+
+def window_weather_verdict(per_hour: dict, whole_hours: set) -> tuple:
+    """(ok, issues, bad_hours) over the forecast hours a target's window covers. Pure.
+
+    *per_hour* maps (year, month, day, hour) -> weather_issues(...) for every
+    forecast hour the window touches; *whole_hours* is the subset that STARTS
+    inside the window. Those are the hours the planner counts
+    (rank_targets_tonight samples each dark hour at its top), so the `tonight`
+    verdict judges them and cannot call bad a night the scheduler will image.
+    2026-10-14: ngc6946's window opened at 7:53 pm, the 7 pm hour was 45%
+    cloud, and seven minutes of it flagged the whole window "not good" while
+    every hour the planner counted was under 30%. A window holding no hour
+    start (shorter than an hour, inside one) falls back to the hours it touches.
+    """
+    judged = {k: v for k, v in per_hour.items() if k in whole_hours} or per_hour
+    bad = sorted(k for k, v in judged.items() if v)
+    issues = sorted({i for k in bad for i in judged[k]})
+    return not bad, issues, bad
+
+
+def _hour_label(hour: int) -> str:
+    """13 -> '1pm', 0 -> '12am': the style format_local_time uses."""
+    return "%d%s" % (hour % 12 or 12, "am" if hour < 12 else "pm")
 
 
 def is_weather_ok(cloud_cover: float, precipitation_probability: float,
