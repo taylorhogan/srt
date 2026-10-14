@@ -349,8 +349,8 @@ def _imaging_plan_message(dso_name: str, best_good_hours: float, best_start: dat
     )
 
 
-def _timeline_message(dso_name: str, best_start, output_path, slots, plans) -> "str | None":
-    """Tonight as a time/event table (control/night_timeline), or None.
+def _timeline_rows(dso_name: str, best_start, output_path, slots, plans) -> tuple:
+    """Tonight as (rows, title) for control/night_timeline.
 
     *plans* is what the generator returned: one counts dict per slot for a
     two-slot night, a single dict otherwise. Exposure lengths are read back
@@ -374,8 +374,8 @@ def _timeline_message(dso_name: str, best_start, output_path, slots, plans) -> "
             else best_start.replace(tzinfo=tz)
         end = slots[0].end if slots and slots[0].name == dso_name else None
         rows = [night_timeline.SlotPlan(dso_name, start, end, plans[0] if plans else {}, exposure)]
-    return night_timeline.render(night_timeline.build(sunset, rows, tz),
-                                 title="Tonight: " + " + ".join(r.name for r in rows))
+    return (night_timeline.table(sunset, rows, tz),
+            "Tonight: " + " + ".join(r.name for r in rows))
 
 
 def _push_imaging_plan(dso_name: str, good_hours: float, best_start, output_path,
@@ -383,20 +383,40 @@ def _push_imaging_plan(dso_name: str, good_hours: float, best_start, output_path
     """Push what will be imaged tonight, when, and in which filters.
 
     Since 2026-10-08 a timeline (time | event: roof open/close, each target's
-    start and filters, flats and analysis done). The older paragraph below is
-    the fallback if the timeline cannot be built.
+    start and filters, flats and analysis done); since 2026-10-14 drawn as a
+    picture for Pushover (a three-line summary above it) and an HTML table
+    for the chat, because Pushover's proportional font never lined the text
+    columns up. The text timeline is the fallback for either, and the older
+    paragraph below the fallback if no timeline can be built at all.
     """
+    from control import night_timeline
     try:
-        msg = _timeline_message(dso_name, best_start, output_path, slots, plans)
+        rows, title = _timeline_rows(dso_name, best_start, output_path, slots, plans)
+        msg = night_timeline.render([(r.time, r.approx, r.line) for r in rows], title=title)
     except Exception:
         LOGGER.exception("Could not build the timeline; falling back to the summary")
         msg = None
     if msg:
+        image = None
         try:
-            pushover.push_message(msg)
+            scratch = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                                   CFG["scratch"]["directory"])
+            os.makedirs(scratch, exist_ok=True)
+            image = night_timeline.picture(rows, title, os.path.join(scratch, "night_timeline.jpg"))
+        except Exception:
+            LOGGER.exception("Could not draw the timeline picture; pushing the text")
+        try:
+            if image:
+                pushover.push_message(night_timeline.summary(rows, title), image=image)
+            else:
+                pushover.push_message(msg)
         except Exception:
             LOGGER.exception("Could not push the imaging plan")
-        social_server.post_social_message(msg)
+        try:
+            social_server.post_html_message(night_timeline.html(rows, title))
+        except Exception:
+            LOGGER.exception("Could not post the timeline table; posting the text")
+            social_server.post_social_message(msg)
         return
 
     try:

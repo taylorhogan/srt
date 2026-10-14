@@ -46,3 +46,43 @@ def test_no_end_time_says_dawn():
     slot = nt.SlotPlan("m33", datetime(2026, 10, 8, 20, 0, tzinfo=TZ), None, {"L": 10}, {"L": 300.0})
     text = nt.render(nt.build(SUNSET, [slot], TZ))
     assert "dawn" in text and "Flats done" not in text
+
+
+# ------------------------------------------------------------ picture and table (2026-10-14)
+
+import pytest  # noqa: E402
+
+TITLE = "Tonight: ngc7320 + ngc2146"
+
+
+def test_the_roof_close_is_its_own_highlighted_row():
+    rows = nt.table(SUNSET, _two_slots(), TZ)
+    roof = [r for r in rows if r.kind == "roof"]
+    assert [r.event for r in roof] == ["Roof opens", "Roof closes"]
+    assert roof[1].time == datetime(2026, 10, 9, 6, 0, tzinfo=TZ) + nt.ROOF_CLOSED_AFTER_END
+    assert nt.build(SUNSET, _two_slots(), TZ) == [(r.time, r.approx, r.line) for r in rows]
+
+
+def test_summary_names_both_roof_times_and_each_start():
+    text = nt.summary(nt.table(SUNSET, _two_slots(), TZ), TITLE)
+    assert text.splitlines() == [TITLE, "Roof opens ~18:14, closes ~06:05",
+                                 "ngc7320 20:00, ngc2146 03:00"]
+
+
+def test_summary_without_an_end_says_the_close_is_unknown():
+    slot = nt.SlotPlan("m33", datetime(2026, 10, 8, 20, 0, tzinfo=TZ), None, {"L": 10}, {"L": 300.0})
+    assert "closes ?" in nt.summary(nt.table(SUNSET, [slot], TZ), "Tonight: m33")
+
+
+def test_html_table_has_every_row_and_escapes():
+    rows = nt.table(SUNSET, _two_slots(), TZ)
+    page = nt.html(rows, "Tonight: <b>x</b>")
+    assert page.count("<tr>") == len(rows) + 1 and "Roof closes" in page
+    assert "&lt;b&gt;x&lt;/b&gt;" in page and "finishes early" in page
+
+
+def test_picture_is_a_jpeg(tmp_path):
+    pytest.importorskip("matplotlib")
+    path = nt.picture(nt.table(SUNSET, _two_slots(), TZ), TITLE, tmp_path / "t.jpg")
+    data = open(path, "rb").read()
+    assert data[:2] == b"\xff\xd8" and len(data) > 10_000
