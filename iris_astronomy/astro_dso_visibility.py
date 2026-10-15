@@ -906,6 +906,21 @@ def _hour_label(hour: int) -> str:
     return "%d%s" % (hour % 12 or 12, "am" if hour < 12 else "pm")
 
 
+def weather_ok_by_dark_hour(dark_hours, forecast: dict) -> dict:
+    """{clock hour: good?} for the hours of ONE night, each looked up on its
+    own local date in *forecast* ({(year, month, day, hour): (cloud, precip,
+    wind, humidity)}, weather.get_weather_by_datetime). An hour the forecast
+    does not cover is left out, which every reader (.get(hour, False)) counts
+    as bad. Keyed by clock hour because that is what the planner and the grid
+    read, and one night's dark hours never repeat a clock hour. Pure."""
+    out: dict = {}
+    for dt in dark_hours:
+        f = forecast.get((dt.year, dt.month, dt.day, dt.hour))
+        if f is not None:
+            out[dt.hour] = is_weather_ok(f[0], f[1], f[2])
+    return out
+
+
 def is_weather_ok(cloud_cover: float, precipitation_probability: float,
                   wind_speed: float) -> bool:
     return not weather_issues(cloud_cover, precipitation_probability, wind_speed)
@@ -1201,20 +1216,18 @@ def rank_targets_tonight(instructions_path: Path | str, verbose: bool = False):
     start_of_dark, end_of_dark = get_dark_times(my_observatory, observe_time)
     az_horizon, al_horizon = map_az_to_horizon()
 
-    cloud_times, cloud_covers, pp, wsp, hum = weather.get_weather_by_hour(latitude, longitude, 48)
+    # Keyed by local DATE and hour (2026-10-15). Keyed by clock hour alone
+    # with "first occurrence wins", a ranking run after midnight gave
+    # tonight's pre-dawn hours THIS morning's forecast: a `tonight` at 02:40
+    # judged 02-05 h at 25-29% cloud when tonight's were 49-82%. The
+    # scheduler's noon and sunset runs were never affected -- by noon the
+    # past hours are gone and the first 0-11 h in the feed are tonight's.
+    forecast = weather.get_weather_by_datetime(latitude, longitude, 48)
     aq_hours, aq_aod, aq_pm25, aq_pm25_aqi = weather.get_air_quality_by_hour(latitude, longitude, 48)
     pm25_aqi_by_hour: dict[int, float] = {}
     for k in range(len(aq_hours)):
         if aq_hours[k] not in pm25_aqi_by_hour:
             pm25_aqi_by_hour[aq_hours[k]] = aq_pm25_aqi[k]
-    # Use the first occurrence of each hour (today's data) — the API returns hours
-    # in chronological order so duplicate hours (same hour tomorrow) must not overwrite.
-    weather_by_hour: dict[int, bool] = {}
-    for j in range(len(cloud_times)):
-        hour = cloud_times[j]
-        if hour not in weather_by_hour:
-            weather_by_hour[hour] = is_weather_ok(cloud_covers[j], pp[j], wsp[j])
-
     # Build the list of full hours within the dark window
     t = start_of_dark.replace(minute=0, second=0, microsecond=0)
     if t < start_of_dark:
@@ -1228,6 +1241,8 @@ def rank_targets_tonight(instructions_path: Path | str, verbose: bool = False):
         if verbose:
             print("No dark hours found tonight.")
         return [], [], {}
+
+    weather_by_hour = weather_ok_by_dark_hour(dark_hours, forecast)
 
     # Convert to astropy Time (UTC) for altaz calculations
     hour_times = Time(
