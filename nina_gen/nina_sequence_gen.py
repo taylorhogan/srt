@@ -171,9 +171,18 @@ def describe_sequence(path) -> list:
     return rows
 
 
+# The QHY wheel as cfg["nina"]["filter_wheel"] has it; used only when the
+# config does not say, so a renamed block can never keep the template's slot.
+DEFAULT_WHEEL = {"L": 0, "R": 1, "G": 2, "B": 3, "S-II": 4, "O-III": 5, "Ha": 6}
+
+
 def _wheel() -> dict:
-    from configs import config
-    return config.data().get("nina", {}).get("filter_wheel", {}) or {}
+    try:
+        from configs import config
+        wheel = config.data().get("nina", {}).get("filter_wheel", {}) or {}
+    except Exception:
+        wheel = {}
+    return wheel or dict(DEFAULT_WHEEL)
 
 
 DEFAULT_EFFICIENCY = 0.75
@@ -303,10 +312,15 @@ def _apply_filter_plan(sequence: Any, above_horizon_seconds: float, obj_type: st
             "G": math.floor(rgb_secs / exp_g),
             "B": math.floor(rgb_secs / exp_b),
         }
-        _update_smart_exposure(se_l, iterations=plan["L"])
-        _update_smart_exposure(se_r, iterations=plan["R"])
-        _update_smart_exposure(se_g, iterations=plan["G"])
-        _update_smart_exposure(se_b, iterations=plan["B"])
+        # Every block named, with its wheel position. Until 2026-10-14 this
+        # branch set only the counts and trusted the template's names, and
+        # cdk_full_sequence_4block.json (2026-08-31) carries Ha / O-III /
+        # O-III / O-III: ngc6946 and ngc1961, the first targets in weeks
+        # without a `filters` plan, were announced as LRGB and shot as Ha and
+        # O-III. _verify_written now refuses any such mismatch.
+        wheel = _wheel()
+        for se, f in ((se_l, "L"), (se_r, "R"), (se_g, "G"), (se_b, "B")):
+            _update_smart_exposure(se, iterations=plan[f], filter_name=f, position=wheel.get(f))
         return plan
 
 
@@ -402,14 +416,70 @@ def _plan_for(container: Any, dso_name: str, seconds: Optional[float]) -> dict[s
     except Exception:
         explicit = None
     if explicit:
-        return _apply_filter_plan(container, seconds or 0.0, "explicit", explicit=explicit)
-    if seconds is not None and seconds > 0:
+        plan = _apply_filter_plan(container, seconds or 0.0, "explicit", explicit=explicit)
+    elif seconds is not None and seconds > 0:
         obj_type = _classify_object_type(dso_name)
         need = _need_plan(container, dso_name, obj_type, seconds)
         if need:
-            return _apply_filter_plan(container, seconds, obj_type, explicit=need)
-        return _apply_filter_plan(container, seconds, obj_type)
-    return {}
+            plan = _apply_filter_plan(container, seconds, obj_type, explicit=need)
+        else:
+            plan = _apply_filter_plan(container, seconds, obj_type)
+    else:
+        return {}
+    _verify_written(container, plan, dso_name)
+    return plan
+
+
+def _iterations(se: dict) -> int:
+    for cond in se.get("Conditions", {}).get("$values", []):
+        if "LoopCondition" in cond.get("$type", ""):
+            return int(cond.get("Iterations", 0) or 0)
+    return 0
+
+
+def written_plan(container: Any) -> dict:
+    """{filter: frames} as written under *container*: what N.I.N.A will shoot."""
+    out: dict = {}
+    for se in _collect_smart_exposures(container):
+        n = _iterations(se)
+        if n <= 0:
+            continue
+        node = _filter_node(se)
+        name = node["_name"] if node else "?"
+        out[name] = out.get(name, 0) + n
+    return out
+
+
+def _verify_written(container: Any, plan: dict, dso_name: str) -> None:
+    """Refuse a target whose blocks do not say what its plan says.
+
+    The plan is what gets announced (the noon report, the logs); the blocks
+    are what N.I.N.A shoots. 2026-10-14 they differed -- LRGB announced, Ha
+    and O-III shot -- and nothing compared them. Also checks each block's
+    wheel position against cfg["nina"]["filter_wheel"], since a name with
+    the wrong position points the wheel at another filter."""
+    if not plan:
+        return          # no plan applied: the template's own blocks, nothing announced to compare
+    from nina_gen import sequence_lint
+    want = {f: int(n) for f, n in plan.items() if int(n) > 0}
+    got = written_plan(container)
+    problems = []
+    if got != want:
+        problems.append("%s: the plan is %s but the exposure blocks are written as %s"
+                        % (dso_name, want, got))
+    wheel = _wheel()
+    for se in _collect_smart_exposures(container):
+        node = _filter_node(se)
+        if (_iterations(se) > 0 and node and node["_name"] in wheel
+                and node.get("_position") is not None
+                and int(node["_position"]) != int(wheel[node["_name"]])):
+            problems.append("%s: block %s is at wheel position %s, but %s is position %s"
+                            % (dso_name, node["_name"], node["_position"],
+                               node["_name"], wheel[node["_name"]]))
+    if problems:
+        logging.getLogger(__name__).error("REFUSING the plan for %s:\n  %s",
+                                          dso_name, "\n  ".join(problems))
+        raise sequence_lint.SequenceLintError(problems)
 
 
 # --------------------------------------------------------------------------- #
