@@ -415,8 +415,7 @@ def _publish_skip_to_site(reason: str) -> None:
     from control import night_timeline
     image = None
     try:
-        rows = night_timeline.skip_rows(datetime.now().astimezone(), _CHECK["name"], reason,
-                                        "noon tomorrow")
+        rows = night_timeline.skip_rows(datetime.now().astimezone(), _CHECK["name"], reason)
         image = night_timeline.picture(rows, "Tonight: no imaging", _plan_picture_path())
     except Exception:
         LOGGER.exception("could not draw the no-imaging card")

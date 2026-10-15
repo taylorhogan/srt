@@ -147,15 +147,18 @@ CLR_KIND = {"roof": "#f0c040", "target": "#e6edf3", "check": CLR_DIM, "sun": CLR
             "skip": "#ff9e9e"}
 
 
-def skip_rows(decided_at: datetime, check: str, reason: str, next_check: str) -> list:
-    """The card for a night called off: one red row saying so, the reason as
-    its detail, and when the next decision is. *check* is "noon", "sunset" or
-    "start" (the imaging run refused as it was about to begin)."""
-    at = {"noon": "Noon check", "sunset": "Pre-sunset check", "start": "At the start"}.get(check, check)
-    return [Row(decided_at, False, "No imaging tonight", reason, "skip",
-                "No imaging tonight: %s" % reason),
-            Row(None, False, at, "decided here", "check", "%s: decided here" % at),
-            Row(None, False, "Next check", next_check, "check", "Next check: %s" % next_check)]
+def skip_rows(decided_at: datetime, check: str, reason: str) -> list:
+    """The card for a night called off: one red row at the time it was
+    decided, the reason as its detail, and the next decision (noon tomorrow:
+    the scheduler waits for noon after a skip). *check* is "noon", "sunset"
+    or "start" (the imaging run refused as it was about to begin)."""
+    at = {"noon": "at the noon check", "sunset": "at the pre-sunset check",
+          "start": "as the run was about to start"}.get(check, check)
+    next_noon = (decided_at + timedelta(days=1)).replace(hour=12, minute=0, second=0, microsecond=0)
+    return [Row(decided_at, False, "No imaging tonight", "%s (%s)" % (reason, at), "skip",
+                "No imaging tonight: %s (%s)" % (reason, at)),
+            Row(next_noon, False, "Next check", "noon tomorrow: the forecast is read again", "check",
+                "Next check: noon tomorrow")]
 
 
 def html(rows, title: str, source=None) -> str:

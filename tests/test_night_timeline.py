@@ -99,8 +99,9 @@ def test_the_report_says_where_its_filters_came_from():
 def test_the_skip_card_is_red_and_says_why(tmp_path):
     pytest.importorskip("matplotlib")
     rows = nt.skip_rows(datetime(2026, 10, 15, 12, 1, tzinfo=TZ), "noon",
-                        "not enough clear hours tonight: 2h forecast, 3 needed", "noon tomorrow")
+                        "not enough clear hours tonight: 2h forecast, 3 needed")
     assert rows[0].kind == "skip" and "3 needed" in rows[0].detail
+    assert rows[1].time == datetime(2026, 10, 16, 12, 0, tzinfo=TZ)        # the scheduler waits for noon
     page = nt.html(rows, "Tonight: no imaging")
     assert "No imaging tonight" in page and nt.BG_KIND["skip"] in page
     assert "~ estimated" not in page                       # nothing approximate on this card
