@@ -468,3 +468,55 @@ def test_horizon_rise_works_after_midnight():
     # already up: the first sample
     up = g.horizon_rise("ngc7320", 22.601, 33.948, datetime(2026, 10, 9, 22, 0, tzinfo=tz))
     assert up is not None and (up - datetime(2026, 10, 9, 22, 0, tzinfo=tz)) < timedelta(minutes=6)
+
+
+# ------------------------------------------------------------ read back (2026-10-14)
+
+def _template4():
+    """The synthetic template with FOUR exposure blocks, named as the real
+    2026-08-31 template names them (Ha, O-III x3), so the default split applies."""
+    t = _template()
+    imaging = t["Items"]["$values"][0]["Items"]["$values"][0]["Items"]["$values"][1]
+    assert imaging["Name"] == "IMAGING"
+    imaging["Items"]["$values"] = [_se(31, "Ha", 20), _se(40, "O-III", 30),
+                                   _se(70, "O-III", 30), _se(80, "O-III", 30)]
+    return t
+
+
+@pytest.fixture
+def _galaxy_default(monkeypatch):
+    monkeypatch.setattr(g, "_classify_object_type", lambda name: "galaxy")
+    monkeypatch.setattr(g, "_need_plan", lambda *a, **k: None)
+
+
+def test_the_written_file_reads_back_as_the_returned_plans(tmp_path, _galaxy_default):
+    """Operator's rule after the Ha night: after generating, read the file back."""
+    slots = [{"name": "testgal1", "ra_hours": 22.6, "dec_degrees": 33.9, "seconds": 4 * 3600.0,
+              "start": None, "end": None},
+             {"name": "testgal2", "ra_hours": 6.3, "dec_degrees": 78.4, "seconds": 3 * 3600.0,
+              "start": None, "end": None}]
+    tpl = tmp_path / "tpl.json"
+    tpl.write_text(json.dumps(_template4()))
+    out = tmp_path / "out.json"
+    plans = g.generate_slots_sequence(tpl, slots, out, state_script="C:\\\\x\\\\s.bat", lint_scripts=False)
+    back = g.read_back(out)
+    assert [b[0] for b in back] == ["testgal1", "testgal2"]
+    assert plans[0] == {"L": 18, "R": 6, "G": 6, "B": 6}                   # 4 h x 0.75, 300 s
+    assert [b[1] for b in back] == [{f: n for f, n in p.items() if n > 0} for p in plans]
+    assert all(set(b[2]) == set(b[1]) for b in back)       # an exposure length per written filter
+    assert not list(tmp_path.glob("*.unverified*"))
+
+
+def test_a_file_that_disagrees_with_the_plan_is_refused_and_not_left_on_disk(tmp_path, monkeypatch,
+                                                                             _galaxy_default):
+    from nina_gen.sequence_lint import SequenceLintError
+    slots = [{"name": "testgal1", "ra_hours": 22.6, "dec_degrees": 33.9, "seconds": 4 * 3600.0,
+              "start": None, "end": None}]
+    tpl = tmp_path / "tpl.json"
+    tpl.write_text(json.dumps(_template4()))
+    out = tmp_path / "out.json"
+    real = g.read_back
+    monkeypatch.setattr(g, "read_back", lambda p: [(n, {"Ha": 99}, e) for n, _c, e in real(p)])
+    with pytest.raises(SequenceLintError, match="file will shoot"):
+        g.generate_slots_sequence(tpl, slots, out, state_script="C:\\\\x\\\\s.bat", lint_scripts=False)
+    assert not out.exists() and not list(tmp_path.glob("*.unverified*"))

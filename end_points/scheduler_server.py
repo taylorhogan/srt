@@ -352,28 +352,25 @@ def _imaging_plan_message(dso_name: str, best_good_hours: float, best_start: dat
 def _timeline_rows(dso_name: str, best_start, output_path, slots, plans) -> tuple:
     """Tonight as (rows, title) for control/night_timeline.
 
-    *plans* is what the generator returned: one counts dict per slot for a
-    two-slot night, a single dict otherwise. Exposure lengths are read back
-    from the written sequence, so the table shows what N.I.N.A will run.
+    Filters, counts and exposure lengths are READ BACK from the written
+    sequence file (nina_sequence_gen.read_back), never taken from *plans*:
+    on 2026-10-14 the report showed the plan's LRGB while the file said Ha.
+    *plans* is kept only for the single-target fallback's shape.
     """
     from zoneinfo import ZoneInfo
     from control import night_timeline
     tz = ZoneInfo(CFG["location"]["timezone"])
     sunset = weather.get_sunrise_sunset()[1]
-    exposure = {}
-    for filt, _n, exp in nina_sequence_gen.describe_sequence(output_path):
-        exposure.setdefault(filt, exp)
-    if isinstance(plans, dict):
-        plans = [plans]
-    plans = [p if isinstance(p, dict) else {} for p in (plans or [])]
-    if slots and len(plans) == len(slots):
-        rows = [night_timeline.SlotPlan(s.name, s.start, s.end, p, exposure)
-                for s, p in zip(slots, plans)]
+    back = nina_sequence_gen.read_back(output_path)        # [(name, counts, exposures)]
+    if slots and len(back) == len(slots):
+        rows = [night_timeline.SlotPlan(s.name, s.start, s.end, counts, exposures)
+                for s, (_name, counts, exposures) in zip(slots, back)]
     else:
         start = best_start if best_start is None or getattr(best_start, "tzinfo", None) \
             else best_start.replace(tzinfo=tz)
         end = slots[0].end if slots and slots[0].name == dso_name else None
-        rows = [night_timeline.SlotPlan(dso_name, start, end, plans[0] if plans else {}, exposure)]
+        counts, exposures = (back[0][1], back[0][2]) if back else ({}, {})
+        rows = [night_timeline.SlotPlan(dso_name, start, end, counts, exposures)]
     return (night_timeline.table(sunset, rows, tz),
             "Tonight: " + " + ".join(r.name for r in rows))
 
@@ -402,7 +399,8 @@ def _push_imaging_plan(dso_name: str, good_hours: float, best_start, output_path
             scratch = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                                    CFG["scratch"]["directory"])
             os.makedirs(scratch, exist_ok=True)
-            image = night_timeline.picture(rows, title, os.path.join(scratch, "night_timeline.jpg"))
+            image = night_timeline.picture(rows, title, os.path.join(scratch, "night_timeline.jpg"),
+                                           source=Path(output_path).name)
         except Exception:
             LOGGER.exception("Could not draw the timeline picture; pushing the text")
         try:
@@ -413,7 +411,8 @@ def _push_imaging_plan(dso_name: str, good_hours: float, best_start, output_path
         except Exception:
             LOGGER.exception("Could not push the imaging plan")
         try:
-            social_server.post_html_message(night_timeline.html(rows, title))
+            social_server.post_html_message(night_timeline.html(rows, title,
+                                                                source=Path(output_path).name))
         except Exception:
             LOGGER.exception("Could not post the timeline table; posting the text")
             social_server.post_social_message(msg)

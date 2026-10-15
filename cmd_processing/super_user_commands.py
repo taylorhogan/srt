@@ -2233,7 +2233,14 @@ def sequence_cmd(words: list[str], account: str) -> None:
             above_horizon_seconds=above_horizon_seconds,
             end=end,
         )
-        plan_str = "  ".join(f"{f}×{n}" for f, n in filter_plan.items()) if filter_plan else "no filter plan"
+        # Report what the FILE says, read back from disk (2026-10-14).
+        back = nina_sequence_gen.read_back(output_path)
+        written = {}
+        for _name, counts, _exp in back:
+            for f, n in counts.items():
+                written[f] = written.get(f, 0) + n
+        plan_str = ("  ".join(f"{f}×{n}" for f, n in written.items()) + " (read back from the file)"
+                    if written else "no exposure blocks in the file")
         end_str = ("ends %s" % end.strftime("%H:%M")) if end is not None \
             else "ends at dawn (not in tonight's ranking)"
         social_server.post_social_message(

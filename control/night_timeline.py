@@ -119,10 +119,12 @@ def _stamp(r: Row) -> str:
     return "?" if r.time is None else ("~" if r.approx else "") + r.time.strftime("%H:%M")
 
 
-def footnotes(rows) -> list:
+def footnotes(rows, source=None) -> list:
     notes = ["~ estimated from past nights"]
     if sum(1 for r in rows if r.kind == "target") > 1:
         notes.append("a later target starts earlier if the one before it finishes early")
+    if source:
+        notes.append("filters and counts read back from %s" % source)
     return notes
 
 
@@ -144,7 +146,7 @@ BG_KIND = {"roof": "#3d2e00", "target": "#1a2e40"}
 CLR_KIND = {"roof": "#f0c040", "target": "#e6edf3", "check": CLR_DIM, "sun": CLR_DIM, "wrap": CLR_DIM}
 
 
-def html(rows, title: str) -> str:
+def html(rows, title: str, source=None) -> str:
     """The chat's table: time | event | details, roof rows amber, targets blue."""
     def td(bg, color, extra=""):
         return ('style="padding:5px 10px;border-bottom:1px solid %s;background:%s;color:%s;'
@@ -168,11 +170,11 @@ def html(rows, title: str) -> str:
             td(bg, CLR_TEXT if r.kind == "target" else CLR_DIM), _html.escape(r.detail)))
     out.append("</tbody></table></div>")
     out.append('<div style="font-size:11px;color:%s;margin-top:6px;">%s</div>'
-               % (CLR_DIM, _html.escape("; ".join(footnotes(rows)))))
+               % (CLR_DIM, _html.escape("; ".join(footnotes(rows, source)))))
     return "".join(out)
 
 
-def picture(rows, title: str, path) -> str:
+def picture(rows, title: str, path, source=None) -> str:
     """Draw the table as a JPEG for Pushover. Returns *path*.
 
     Figure + Agg canvas directly, not pyplot: this runs in the scheduler,
@@ -186,7 +188,7 @@ def picture(rows, title: str, path) -> str:
     wrapped = [textwrap.wrap(r.detail, 46) or [""] for r in rows]
     heights = [0.16 + line_h * len(w) for w in wrapped]
     top, hdr = 0.75, 0.38
-    notes = footnotes(rows)
+    notes = footnotes(rows, source)
     H = top + hdr + sum(heights) + 0.2 + 0.24 * len(notes) + pad
 
     fig = Figure(figsize=(W, H), dpi=150, facecolor=BG_MAIN)

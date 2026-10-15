@@ -1043,6 +1043,82 @@ def ensure_center_filter(container: Any, sequence: Any, next_id: list,
     return inserted
 
 
+def _normal_name(name) -> str:
+    return "".join(str(name or "").lower().split())
+
+
+def read_back(path) -> list:
+    """What the sequence FILE says each target will shoot, read from disk.
+
+    [(target name, {filter: frames}, {filter: exposure_s}), ...] in running
+    order, one per DeepSkyObjectContainer. The operator's rule after
+    2026-10-14 ("after generating the plan, read it back to make sure it is
+    what you think it should be"): every report of tonight's filters comes
+    from this, never from the plan dicts the generator computed.
+    """
+    with open(path, encoding="utf-8-sig") as fh:
+        seq = json.load(fh)
+    area = _find_target_area(seq)
+    out = []
+    for t in (_items_of(area) if area else []):
+        if _short_type(t) != "DeepSkyObjectContainer":
+            continue
+        name = (t.get("Target") or {}).get("TargetName") or t.get("Name")
+        exposures = {}
+        for se in _collect_smart_exposures(t):
+            node = _filter_node(se)
+            if node and _iterations(se) > 0:
+                exposures.setdefault(node["_name"], float(_get_exposure_time(se) or 0.0))
+        out.append((name, written_plan(t), exposures))
+    return out
+
+
+def _write_verified(sequence: Any, output_path: Path, expected: list) -> None:
+    """Write *sequence*, read the file back, and keep it only if it says what
+    *expected* says: [(target name, {filter: frames}), ...] in order.
+
+    Written beside the final name first and moved into place only after the
+    read-back agrees, so a file that would shoot something other than the
+    announced plan never exists under the name N.I.N.A loads. A target whose
+    expected plan is empty (no hours known, nothing announced) is not
+    compared. Mismatch: SequenceLintError, nothing new on disk."""
+    from nina_gen import sequence_lint
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = output_path.with_name(output_path.stem + ".unverified" + output_path.suffix)
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(sequence, f, indent=2)
+    problems = []
+    try:
+        back = read_back(tmp)
+    except Exception as exc:
+        back = []
+        problems.append("the written sequence could not be read back: %s" % exc)
+    if not problems and len(back) != len(expected):
+        problems.append("the file holds %d target(s), the plan %d: %s vs %s"
+                        % (len(back), len(expected), [b[0] for b in back], [e[0] for e in expected]))
+    if not problems:
+        for (name, plan), (got_name, got_plan, _exp) in zip(expected, back):
+            want = {f: int(n) for f, n in (plan or {}).items() if int(n) > 0}
+            if _normal_name(name) != _normal_name(got_name):
+                problems.append("target order differs: planned %s, file has %s" % (name, got_name))
+            elif want and got_plan != want:
+                problems.append("%s: the plan is %s but the file will shoot %s" % (name, want, got_plan))
+    if problems:
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+        logging.getLogger(__name__).error(
+            "REFUSING %s: the written sequence does not say what the plan says:\n  %s",
+            output_path, "\n  ".join(problems))
+        raise sequence_lint.SequenceLintError(problems)
+    os.replace(tmp, output_path)
+    logging.getLogger(__name__).info(
+        "Sequence read back from %s: %s", output_path.name,
+        "; ".join("%s %s" % (n, p) for n, p, _e in back))
+
+
 def generate_slots_sequence(template_path: Path, slots: list, output_path: Path,
                             state_script: Optional[str] = None,
                             lint_scripts: bool = True) -> list:
@@ -1143,10 +1219,7 @@ def generate_slots_sequence(template_path: Path, slots: list, output_path: Path,
     items[idx:idx + 1] = clones
     _dedupe_singletons(sequence)
     _refuse_if_broken(sequence, template, output_path, lint_scripts)
-
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(output_path, "w", encoding="utf-8") as f:
-        json.dump(sequence, f, indent=2)
+    _write_verified(sequence, output_path, [(s["name"], p) for s, p in zip(slots, plans)])
     return plans
 
 
@@ -1214,11 +1287,7 @@ def generate_sequence(
     filter_plan = _plan_for(sequence, dso_name, above_horizon_seconds)
     seed_focus(sequence, _focus_model(), [_max_id(sequence) + 1])
     _refuse_if_broken(sequence, template, output_path, lint_scripts)
-
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(output_path, "w", encoding="utf-8") as f:
-        json.dump(sequence, f, indent=2)
-
+    _write_verified(sequence, output_path, [(dso_name, filter_plan)])
     return filter_plan
 
 

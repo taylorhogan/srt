@@ -86,3 +86,9 @@ def test_picture_is_a_jpeg(tmp_path):
     path = nt.picture(nt.table(SUNSET, _two_slots(), TZ), TITLE, tmp_path / "t.jpg")
     data = open(path, "rb").read()
     assert data[:2] == b"\xff\xd8" and len(data) > 10_000
+
+
+def test_the_report_says_where_its_filters_came_from():
+    rows = nt.table(SUNSET, _two_slots(), TZ)
+    assert "read back from full_for_tonight.json" in nt.html(rows, TITLE, source="full_for_tonight.json")
+    assert "read back" not in nt.html(rows, TITLE)
