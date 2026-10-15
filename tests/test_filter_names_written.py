@@ -89,3 +89,37 @@ def test_a_wrong_wheel_position_is_refused():
 
 def test_no_plan_is_not_checked():
     g._verify_written(_tonights_template_blocks(), {}, "x")      # the template's own blocks
+
+
+# ------------------------------------------------------------ one classifier (2026-10-15)
+
+import sys      # noqa: E402
+import types    # noqa: E402
+
+
+def _grid(answers):
+    return types.SimpleNamespace(get_dso_type=lambda name: answers.get(name, "?"))
+
+
+def test_the_generator_follows_the_grids_classifier(monkeypatch):
+    """ic405, ngc2237 and m20 are N in the `tonight` table (its override list)
+    but were 'unknown' -> LRGB here."""
+    monkeypatch.setattr(g, "_queued_object_type", lambda name: None)
+    monkeypatch.setitem(sys.modules, "iris_astronomy.astro_dso_visibility",
+                        _grid({"ic405": "N", "ngc6946": "G", "m3": "C"}))
+    assert g._classify_object_type("ic405") == "nebula"
+    assert g._classify_object_type("ngc6946") == "galaxy"
+    assert g._classify_object_type("m3") == "unknown"            # clusters stay broadband
+
+
+def test_the_queued_type_still_wins(monkeypatch):
+    monkeypatch.setattr(g, "_queued_object_type", lambda name: "nebula")
+    monkeypatch.setitem(sys.modules, "iris_astronomy.astro_dso_visibility", _grid({"x": "G"}))
+    assert g._classify_object_type("x") == "nebula"
+
+
+def test_an_unclassified_name_without_simbad_is_unknown(monkeypatch):
+    monkeypatch.setattr(g, "_queued_object_type", lambda name: None)
+    monkeypatch.setitem(sys.modules, "iris_astronomy.astro_dso_visibility", _grid({}))
+    monkeypatch.setitem(sys.modules, "astroquery.simbad", None)   # import fails
+    assert g._classify_object_type("gravwav") == "unknown"

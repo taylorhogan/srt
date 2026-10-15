@@ -53,11 +53,30 @@ def _queued_object_type(dso_name: str) -> Optional[str]:
 def _classify_object_type(dso_name: str) -> str:
     """Object type for the filter plan: 'galaxy', 'nebula', or 'unknown'.
 
-    An explicit type on the queued instruction wins over the name lookup.
+    An explicit obj_type on the queued instruction wins. Then the imaging
+    grid's own classifier (astro_dso_visibility.get_dso_type: its override
+    table, its type cache, then SIMBAD), so this and the `tonight` table can
+    never disagree. On 2026-10-15 the table called ic405, ngc2237 and m20
+    nebulae while this function, with its own smaller SIMBAD map and no
+    overrides, called them unknown and would have planned LRGB. A star
+    cluster plans broadband ("unknown"), as before. Only when that classifier
+    cannot be imported (no astropy) or answers "?" does the direct SIMBAD
+    lookup below run.
     """
     queued = _queued_object_type(dso_name)
     if queued:
         return queued
+    try:
+        import importlib
+        grid = importlib.import_module("iris_astronomy.astro_dso_visibility").get_dso_type(dso_name)
+    except Exception:
+        grid = "?"
+    if grid == "G":
+        return "galaxy"
+    if grid == "N":
+        return "nebula"
+    if grid == "C":
+        return "unknown"
     try:
         from astroquery.simbad import Simbad
         custom = Simbad()
