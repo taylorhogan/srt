@@ -564,6 +564,21 @@ def main() -> None:
     except Exception:
         pass
 
+    # Tonight's plan as the scheduler decided it (control/night_plan_status,
+    # 2026-10-15): the Pushover picture, or the "no imaging tonight" card.
+    # Only while it is tonight's; a stale sidecar publishes nothing.
+    plan_jpg = None
+    try:
+        from control import night_plan_status
+        _plan = night_plan_status.read(root / "local" / "night_plan_status.json")
+        if _plan:
+            status["plan"] = {k: _plan.get(k) for k in
+                              ("written", "verdict", "check", "title", "summary", "reason")}
+            if _plan.get("image") and Path(_plan["image"]).exists():
+                plan_jpg = Path(_plan["image"])
+    except Exception:
+        pass
+
     js = out_dir / "live_status.json"
     js.write_text(json.dumps(status, indent=1))
     print("rendered", img.name, "->", status.get("target"), status.get("state"))
@@ -579,6 +594,8 @@ def main() -> None:
     # on a link that measured 3ms once anyone looked). One transport, one
     # place to get the bounding right.
     pushes = [(img, "skymap.jpg"), (js, "status.json")]
+    if plan_jpg is not None:
+        pushes.insert(1, (plan_jpg, "plan.jpg"))
     if latest_jpg is not None and latest_jpg.exists():
         pushes.insert(1, (latest_jpg, "latest.jpg"))
     if stats_jpg is not None and stats_jpg.exists():

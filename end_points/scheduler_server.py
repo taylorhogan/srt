@@ -375,6 +375,54 @@ def _timeline_rows(dso_name: str, best_start, output_path, slots, plans) -> tupl
             "Tonight: " + " + ".join(r.name for r in rows))
 
 
+# Which check is running, for the plan published to the site (2026-10-15).
+_CHECK = {"name": "noon"}
+_PLAN_STATUS_PATH = os.path.join(_PROJECT_ROOT, "local", "night_plan_status.json")
+
+
+def _plan_picture_path() -> str:
+    scratch = os.path.join(_PROJECT_ROOT, CFG["scratch"]["directory"])
+    os.makedirs(scratch, exist_ok=True)
+    return os.path.join(scratch, "night_timeline.jpg")
+
+
+def _publish_plan_to_site(verdict: str, title: str = "", summary: str = "",
+                          image=None, reason: str = "", restamp: bool = False) -> None:
+    """Write the plan sidecar the live panel reads (control/night_plan_status)
+    and trigger a render, so the site shows the same picture Pushover got --
+    or the "no imaging tonight" card. Never raises: the site is downstream
+    of the night, not a condition of it."""
+    from control import night_plan_status
+    try:
+        if restamp:
+            night_plan_status.restamp(_PLAN_STATUS_PATH, _CHECK["name"])
+        else:
+            night_plan_status.write(_PLAN_STATUS_PATH, verdict, _CHECK["name"], image,
+                                    title=title, summary=summary, reason=reason)
+    except Exception:
+        LOGGER.exception("could not write the plan status for the site")
+        return
+    try:
+        from scripts import live_trigger
+        live_trigger.trigger("plan-%s-%s" % (verdict, _CHECK["name"]))
+    except Exception:
+        LOGGER.exception("could not trigger the live render for the plan")
+
+
+def _publish_skip_to_site(reason: str) -> None:
+    """Draw the "no imaging tonight" card and publish it (noon, sunset, or a
+    refusal at start)."""
+    from control import night_timeline
+    image = None
+    try:
+        rows = night_timeline.skip_rows(datetime.now().astimezone(), _CHECK["name"], reason,
+                                        "noon tomorrow")
+        image = night_timeline.picture(rows, "Tonight: no imaging", _plan_picture_path())
+    except Exception:
+        LOGGER.exception("could not draw the no-imaging card")
+    _publish_plan_to_site("skip", title="Tonight: no imaging", image=image, reason=reason)
+
+
 def _push_imaging_plan(dso_name: str, good_hours: float, best_start, output_path,
                        slots=None, plans=None):
     """Push what will be imaged tonight, when, and in which filters.
@@ -396,13 +444,13 @@ def _push_imaging_plan(dso_name: str, good_hours: float, best_start, output_path
     if msg:
         image = None
         try:
-            scratch = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                                   CFG["scratch"]["directory"])
-            os.makedirs(scratch, exist_ok=True)
-            image = night_timeline.picture(rows, title, os.path.join(scratch, "night_timeline.jpg"),
+            image = night_timeline.picture(rows, title, _plan_picture_path(),
                                            source=Path(output_path).name)
         except Exception:
             LOGGER.exception("Could not draw the timeline picture; pushing the text")
+        # The same picture to the site (2026-10-15).
+        _publish_plan_to_site("imaging", title=title, summary=night_timeline.summary(rows, title),
+                              image=image)
         try:
             if image:
                 pushover.push_message(night_timeline.summary(rows, title), image=image)
@@ -619,6 +667,7 @@ def _initial_state() -> State:
 def noon_check_task() -> tuple[str, int, datetime, str]:
     """Refresh visibility data, pick tonight's best target, and decide whether to image."""
     set_state(State.NOON_CHECK)
+    _CHECK["name"] = "noon"
     instructions.calc_and_store_hours_above_horizon()
     best_name, best_good_hours, best_start, grid_html = _get_best_object()
     LOGGER.info("Noon check: best=%s good_hours=%d", best_name, best_good_hours)
@@ -640,6 +689,8 @@ def noon_check_task() -> tuple[str, int, datetime, str]:
         social_server.post_social_message(
             f"Not enough good imaging hours tonight ({best_good_hours}h), skipping"
         )
+        _publish_skip_to_site("not enough clear hours tonight: %dh forecast, %d needed"
+                              % (best_good_hours, _MIN_GOOD_HOURS))
         # A skipped DSO night is not a skipped station night: a pass needs two
         # clear minutes through a gap, not hours of good sky. tonight_cmd (the
         # other branch) arms via the same call, so passes arm EVERY noon.
@@ -670,6 +721,7 @@ def wait_for_pre_sunset_task():
 def pre_sunset_check_task() -> tuple[str, int]:
     """Re-evaluate conditions close to sunset and post the updated imaging grid."""
     set_state(State.PRE_SUNSET_CHECK)
+    _CHECK["name"] = "sunset"
     best_name, best_good_hours, best_start, grid_html = _get_best_object()
     if grid_html:
         social_server.post_html_message(grid_html)
@@ -690,6 +742,8 @@ def pre_sunset_check_task() -> tuple[str, int]:
         social_server.post_social_message(
             f"Conditions not good enough at sunset ({best_good_hours}h), skipping tonight"
         )
+        _publish_skip_to_site("conditions degraded by sunset: %dh forecast clear, %d needed"
+                              % (best_good_hours, _MIN_GOOD_HOURS))
         set_state(State.PRE_SUNSET_CHECK, best_name, False)
 
     return best_name, best_good_hours
@@ -740,6 +794,9 @@ def imaging_task():
     if super_user_commands.get_mode() == "auto":
         started = super_user_commands.image_cmd(["", "image!!", "1"], "iris")
         if not started:
+            _CHECK["name"] = "start"
+            _publish_skip_to_site("the imaging run was refused as it was about to start "
+                                  "(see the chat for why)")
             # image_cmd has already said why (log, feed, push). Do not poll:
             # the state was never claimed, so it reads NONE at once and used
             # to be reported as a completed run (2026-09-13).
@@ -805,6 +862,9 @@ def nightly_cycle():
             "Plan changed since the sequence was written — regenerating:\n"
             + slot_plan.describe(list(astro_dso_visibility.last_slots)))
         generate_sequence_task(best_name, good_hours)
+    else:
+        # Same plan as noon, confirmed: the site's caption says so.
+        _publish_plan_to_site("imaging", restamp=True)
 
     imaging_task()
 

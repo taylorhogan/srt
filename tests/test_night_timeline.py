@@ -92,3 +92,17 @@ def test_the_report_says_where_its_filters_came_from():
     rows = nt.table(SUNSET, _two_slots(), TZ)
     assert "read back from full_for_tonight.json" in nt.html(rows, TITLE, source="full_for_tonight.json")
     assert "read back" not in nt.html(rows, TITLE)
+
+
+# ------------------------------------------------------------ the no-imaging card (2026-10-15)
+
+def test_the_skip_card_is_red_and_says_why(tmp_path):
+    pytest.importorskip("matplotlib")
+    rows = nt.skip_rows(datetime(2026, 10, 15, 12, 1, tzinfo=TZ), "noon",
+                        "not enough clear hours tonight: 2h forecast, 3 needed", "noon tomorrow")
+    assert rows[0].kind == "skip" and "3 needed" in rows[0].detail
+    page = nt.html(rows, "Tonight: no imaging")
+    assert "No imaging tonight" in page and nt.BG_KIND["skip"] in page
+    assert "~ estimated" not in page                       # nothing approximate on this card
+    data = open(nt.picture(rows, "Tonight: no imaging", tmp_path / "skip.jpg"), "rb").read()
+    assert data[:2] == b"\xff\xd8"

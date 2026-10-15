@@ -120,7 +120,7 @@ def _stamp(r: Row) -> str:
 
 
 def footnotes(rows, source=None) -> list:
-    notes = ["~ estimated from past nights"]
+    notes = ["~ estimated from past nights"] if any(r.approx for r in rows) else []
     if sum(1 for r in rows if r.kind == "target") > 1:
         notes.append("a later target starts earlier if the one before it finishes early")
     if source:
@@ -142,8 +142,20 @@ def summary(rows, title: str) -> str:
 # The `tonight` grid's palette (iris_astronomy.astro_dso_visibility.build_grid_html).
 BG_MAIN, BG_HDR, CLR_TEXT, CLR_DIM, CLR_ACCENT, CLR_BORDER = (
     "#0d1117", "#161b22", "#c9d1d9", "#8b949e", "#58a6ff", "#21262d")
-BG_KIND = {"roof": "#3d2e00", "target": "#1a2e40"}
-CLR_KIND = {"roof": "#f0c040", "target": "#e6edf3", "check": CLR_DIM, "sun": CLR_DIM, "wrap": CLR_DIM}
+BG_KIND = {"roof": "#3d2e00", "target": "#1a2e40", "skip": "#4d1a1a"}
+CLR_KIND = {"roof": "#f0c040", "target": "#e6edf3", "check": CLR_DIM, "sun": CLR_DIM, "wrap": CLR_DIM,
+            "skip": "#ff9e9e"}
+
+
+def skip_rows(decided_at: datetime, check: str, reason: str, next_check: str) -> list:
+    """The card for a night called off: one red row saying so, the reason as
+    its detail, and when the next decision is. *check* is "noon", "sunset" or
+    "start" (the imaging run refused as it was about to begin)."""
+    at = {"noon": "Noon check", "sunset": "Pre-sunset check", "start": "At the start"}.get(check, check)
+    return [Row(decided_at, False, "No imaging tonight", reason, "skip",
+                "No imaging tonight: %s" % reason),
+            Row(None, False, at, "decided here", "check", "%s: decided here" % at),
+            Row(None, False, "Next check", next_check, "check", "Next check: %s" % next_check)]
 
 
 def html(rows, title: str, source=None) -> str:
