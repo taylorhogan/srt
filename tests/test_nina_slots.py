@@ -520,3 +520,86 @@ def test_a_file_that_disagrees_with_the_plan_is_refused_and_not_left_on_disk(tmp
     with pytest.raises(SequenceLintError, match="file will shoot"):
         g.generate_slots_sequence(tpl, slots, out, state_script="C:\\\\x\\\\s.bat", lint_scripts=False)
     assert not out.exists() and not list(tmp_path.glob("*.unverified*"))
+
+
+# --------------------------------------------------------------------------- exposure_s
+
+@pytest.fixture
+def _queue(monkeypatch):
+    """A fake control.instructions holding {dso: (filter_plan, exposure_s)}."""
+    import types
+    import control
+    table = {}
+    fake = types.SimpleNamespace(
+        get_filter_plan=lambda d: (table.get(d) or (None, None))[0],
+        get_exposure_plan=lambda d: (table.get(d) or (None, None))[1],
+        get_rotation=lambda d: None)
+    monkeypatch.setitem(sys.modules, "control.instructions", fake)
+    monkeypatch.setattr(control, "instructions", fake, raising=False)
+    monkeypatch.setattr(g, "_need_plan", lambda *a, **k: None)
+    return table
+
+
+def _one_slot(name, hours=0.5):
+    return [{"name": name, "ra_hours": 23.99, "dec_degrees": 61.09, "seconds": hours * 3600.0,
+             "start": None, "end": None}]
+
+
+def test_exposure_override_sets_the_frames_and_sizes_the_counts(tmp_path, _queue):
+    _queue["ngc7790"] = ({"L": 2, "G": 1}, {"L": 10, "G": 20})
+    tpl = tmp_path / "tpl.json"
+    tpl.write_text(json.dumps(_template4()))
+    out = tmp_path / "out.json"
+    plans = g.generate_slots_sequence(tpl, _one_slot("ngc7790"), out, lint_scripts=False)
+    # 0.5 h x 0.75 = 1350 s: L 2/3 = 900 s / 10 s, G 1/3 = 450 s / 20 s
+    assert plans[0] == {"L": 90, "G": 22}
+    (name, plan, exposures), = g.read_back(out)
+    assert plan == {"L": 90, "G": 22} and exposures == {"L": 10.0, "G": 20.0}
+    seq = json.loads(out.read_text())
+    dithers = {g._filter_node(se)["_name"]: se["Triggers"]["$values"][0]["AfterExposures"]
+               for se in g._collect_smart_exposures(seq) if g._iterations(se) > 0}
+    assert dithers == {"L": 30, "G": 15}          # still one dither per 300 s
+
+
+def test_no_override_keeps_the_templates_exposure(tmp_path, _queue):
+    _queue["hubblev1"] = ({"L": 3, "G": 1}, None)
+    tpl = tmp_path / "tpl.json"
+    tpl.write_text(json.dumps(_template4()))
+    out = tmp_path / "out.json"
+    g.generate_slots_sequence(tpl, _one_slot("hubblev1", 1.0), out, lint_scripts=False)
+    (_n, plan, exposures), = g.read_back(out)
+    assert set(exposures.values()) == {300.0} and plan == {"L": 6, "G": 2}
+
+
+def test_override_without_an_explicit_plan_is_ignored(tmp_path, _queue, monkeypatch):
+    monkeypatch.setattr(g, "_classify_object_type", lambda name: "galaxy")
+    _queue["testgal1"] = (None, {"L": 10})
+    tpl = tmp_path / "tpl.json"
+    tpl.write_text(json.dumps(_template4()))
+    out = tmp_path / "out.json"
+    g.generate_slots_sequence(tpl, _one_slot("testgal1", 4.0), out, lint_scripts=False)
+    (_n, _plan, exposures), = g.read_back(out)
+    assert set(exposures.values()) == {300.0}
+
+
+def test_a_file_whose_exposures_disagree_is_refused(tmp_path, _queue, monkeypatch):
+    from nina_gen.sequence_lint import SequenceLintError
+    _queue["ngc7790"] = ({"L": 2, "G": 1}, {"L": 10, "G": 20})
+    tpl = tmp_path / "tpl.json"
+    tpl.write_text(json.dumps(_template4()))
+    out = tmp_path / "out.json"
+    real = g.read_back
+    monkeypatch.setattr(g, "read_back",
+                        lambda p: [(n, c, {f: 300.0 for f in e}) for n, c, e in real(p)])
+    with pytest.raises(SequenceLintError, match="should expose"):
+        g.generate_slots_sequence(tpl, _one_slot("ngc7790"), out, lint_scripts=False)
+    assert not out.exists() and not list(tmp_path.glob("*.unverified*"))
+
+
+def test_verify_written_catches_a_block_at_the_wrong_exposure():
+    from nina_gen.sequence_lint import SequenceLintError
+    se = _se(31, "R", 5)                          # the synthetic block sits at position 1 = R
+    with pytest.raises(SequenceLintError, match="exposes 300 s"):
+        g._verify_written({"x": [se]}, {"R": 5}, "ngc7790", {"R": 10})
+    g._set_exposure_time(se, 10)
+    g._verify_written({"x": [se]}, {"R": 5}, "ngc7790", {"R": 10})

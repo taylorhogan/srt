@@ -168,6 +168,33 @@ def _update_smart_exposure(se: dict, iterations: int, filter_name: Optional[str]
                         f["_position"] = int(position)
 
 
+def _set_exposure_time(se: dict, seconds: float) -> None:
+    """Write *seconds* into the block's TakeExposure, keeping the dither cadence.
+
+    The template dithers every AfterExposures frames at its own exposure; a
+    shorter frame with the same count would dither 30x as often at 10 s.
+    AfterExposures is rescaled so dithers stay the same number of seconds
+    apart (at least every frame).
+    """
+    old = _get_exposure_time(se) or 300.0
+    for item in se.get("Items", {}).get("$values", []):
+        if "TakeExposure" in item.get("$type", ""):
+            item["ExposureTime"] = float(seconds)
+    for trig in se.get("Triggers", {}).get("$values", []):
+        if "DitherAfterExposures" in str(trig.get("$type", "")):
+            every = max(1, int(trig.get("AfterExposures", 1) or 1))
+            trig["AfterExposures"] = max(1, int(round(every * old / float(seconds))))
+
+
+def _exposures_for(dso_name: str) -> Optional[dict]:
+    """The queue entry's {filter: seconds} override, or None."""
+    try:
+        from control import instructions as _instr
+        return _instr.get_exposure_plan(dso_name)
+    except Exception:
+        return None
+
+
 def describe_sequence(path) -> list:
     """[(filter, iterations, exposure_seconds), ...] as actually written.
 
@@ -232,7 +259,8 @@ def max_explicit_filters(sequence: Any) -> int:
 
 
 def _apply_explicit_plan(smart_exposures: list, plan: dict,
-                         usable_seconds: Optional[float] = None) -> dict[str, int]:
+                         usable_seconds: Optional[float] = None,
+                         exposures: Optional[dict] = None) -> dict[str, int]:
     """Honour a user-set {filter: exposures} plan.
 
     With *usable_seconds* (the window's good hours times the efficiency) the
@@ -246,6 +274,10 @@ def _apply_explicit_plan(smart_exposures: list, plan: dict,
     window the old literal reading spent all of it on Ha and never reached
     O-III or S-II (2026-09-10). Blocks that cannot be renamed, and any left
     over, are zeroed so nothing from the template runs by accident.
+
+    *exposures* ({filter: seconds}, the queue entry's exposure_s) replaces a
+    block's exposure time BEFORE its count is sized, so the hours buy the
+    right number of short frames.
     """
     wheel = _wheel()
     usable = [se for se in smart_exposures if _filter_node(se) is not None]
@@ -258,6 +290,8 @@ def _apply_explicit_plan(smart_exposures: list, plan: dict,
     applied: dict[str, int] = {}
     for se, (name, count) in zip(usable, plan.items()):
         count = max(0, int(count))
+        if exposures and name in exposures:
+            _set_exposure_time(se, exposures[name])
         if scale and count > 0:
             exp_s = _get_exposure_time(se) or 1.0
             count = max(1, int(usable_seconds * count / total // exp_s))
@@ -270,7 +304,8 @@ def _apply_explicit_plan(smart_exposures: list, plan: dict,
 
 
 def _apply_filter_plan(sequence: Any, above_horizon_seconds: float, obj_type: str,
-                       explicit: Optional[dict] = None) -> dict[str, int]:
+                       explicit: Optional[dict] = None,
+                       exposures: Optional[dict] = None) -> dict[str, int]:
     """
     Compute per-filter iteration counts, patch all SmartExposure blocks in the
     sequence in-place, and return the plan as {filter_name: iterations}.
@@ -290,7 +325,8 @@ def _apply_filter_plan(sequence: Any, above_horizon_seconds: float, obj_type: st
     if explicit:
         return _apply_explicit_plan(
             smart_exposures, explicit,
-            usable_seconds=actual_seconds if above_horizon_seconds > 0 else None)
+            usable_seconds=actual_seconds if above_horizon_seconds > 0 else None,
+            exposures=exposures)
 
     se_l, se_r, se_g, se_b = smart_exposures[:4]
     exp_l = _get_exposure_time(se_l)
@@ -434,8 +470,17 @@ def _plan_for(container: Any, dso_name: str, seconds: Optional[float]) -> dict[s
         explicit = _instr.get_filter_plan(dso_name)
     except Exception:
         explicit = None
+    exposures = _exposures_for(dso_name)
+    if exposures and not explicit:
+        # The automatic splits size counts against the template's names,
+        # which are not the plan's; an override there would land on
+        # whichever block happened to carry the name. Explicit only.
+        logging.getLogger(__name__).warning(
+            "%s: exposure_s %s ignored -- it needs an explicit filter_plan", dso_name, exposures)
+        exposures = None
     if explicit:
-        plan = _apply_filter_plan(container, seconds or 0.0, "explicit", explicit=explicit)
+        plan = _apply_filter_plan(container, seconds or 0.0, "explicit", explicit=explicit,
+                                  exposures=exposures)
     elif seconds is not None and seconds > 0:
         obj_type = _classify_object_type(dso_name)
         need = _need_plan(container, dso_name, obj_type, seconds)
@@ -445,8 +490,21 @@ def _plan_for(container: Any, dso_name: str, seconds: Optional[float]) -> dict[s
             plan = _apply_filter_plan(container, seconds, obj_type)
     else:
         return {}
-    _verify_written(container, plan, dso_name)
+    _verify_written(container, plan, dso_name, exposures)
     return plan
+
+
+def _expected_exposures(dso_name: str) -> Optional[dict]:
+    """The exposure override the read-back must find, or None (explicit plans only,
+    as _plan_for applies it)."""
+    exposures = _exposures_for(dso_name)
+    if not exposures:
+        return None
+    try:
+        from control import instructions as _instr
+        return exposures if _instr.get_filter_plan(dso_name) else None
+    except Exception:
+        return None
 
 
 def _iterations(se: dict) -> int:
@@ -469,7 +527,8 @@ def written_plan(container: Any) -> dict:
     return out
 
 
-def _verify_written(container: Any, plan: dict, dso_name: str) -> None:
+def _verify_written(container: Any, plan: dict, dso_name: str,
+                    exposures: Optional[dict] = None) -> None:
     """Refuse a target whose blocks do not say what its plan says.
 
     The plan is what gets announced (the noon report, the logs); the blocks
@@ -495,6 +554,11 @@ def _verify_written(container: Any, plan: dict, dso_name: str) -> None:
             problems.append("%s: block %s is at wheel position %s, but %s is position %s"
                             % (dso_name, node["_name"], node["_position"],
                                node["_name"], wheel[node["_name"]]))
+        if (exposures and _iterations(se) > 0 and node and node["_name"] in exposures
+                and abs(_get_exposure_time(se) - float(exposures[node["_name"]])) > 1e-6):
+            problems.append("%s: block %s exposes %g s, but the plan says %g s"
+                            % (dso_name, node["_name"], _get_exposure_time(se),
+                               float(exposures[node["_name"]])))
     if problems:
         logging.getLogger(__name__).error("REFUSING the plan for %s:\n  %s",
                                           dso_name, "\n  ".join(problems))
@@ -1094,7 +1158,8 @@ def read_back(path) -> list:
 
 def _write_verified(sequence: Any, output_path: Path, expected: list) -> None:
     """Write *sequence*, read the file back, and keep it only if it says what
-    *expected* says: [(target name, {filter: frames}), ...] in order.
+    *expected* says: [(target name, {filter: frames}[, {filter: seconds}]), ...]
+    in order; the optional third item is an exposure override to confirm.
 
     Written beside the final name first and moved into place only after the
     read-back agrees, so a file that would shoot something other than the
@@ -1117,12 +1182,19 @@ def _write_verified(sequence: Any, output_path: Path, expected: list) -> None:
         problems.append("the file holds %d target(s), the plan %d: %s vs %s"
                         % (len(back), len(expected), [b[0] for b in back], [e[0] for e in expected]))
     if not problems:
-        for (name, plan), (got_name, got_plan, _exp) in zip(expected, back):
+        for exp_row, (got_name, got_plan, got_exp) in zip(expected, back):
+            name, plan = exp_row[0], exp_row[1]
+            want_exp = exp_row[2] if len(exp_row) > 2 else None
             want = {f: int(n) for f, n in (plan or {}).items() if int(n) > 0}
             if _normal_name(name) != _normal_name(got_name):
                 problems.append("target order differs: planned %s, file has %s" % (name, got_name))
             elif want and got_plan != want:
                 problems.append("%s: the plan is %s but the file will shoot %s" % (name, want, got_plan))
+            elif want and want_exp:
+                for f in want:
+                    if f in want_exp and abs(float(got_exp.get(f, 0.0)) - float(want_exp[f])) > 1e-6:
+                        problems.append("%s: %s should expose %g s, the file says %g s"
+                                        % (name, f, float(want_exp[f]), float(got_exp.get(f, 0.0))))
     if problems:
         try:
             tmp.unlink()
@@ -1238,7 +1310,8 @@ def generate_slots_sequence(template_path: Path, slots: list, output_path: Path,
     items[idx:idx + 1] = clones
     _dedupe_singletons(sequence)
     _refuse_if_broken(sequence, template, output_path, lint_scripts)
-    _write_verified(sequence, output_path, [(s["name"], p) for s, p in zip(slots, plans)])
+    _write_verified(sequence, output_path,
+                    [(s["name"], p, _expected_exposures(s["name"])) for s, p in zip(slots, plans)])
     return plans
 
 
@@ -1306,7 +1379,8 @@ def generate_sequence(
     filter_plan = _plan_for(sequence, dso_name, above_horizon_seconds)
     seed_focus(sequence, _focus_model(), [_max_id(sequence) + 1])
     _refuse_if_broken(sequence, template, output_path, lint_scripts)
-    _write_verified(sequence, output_path, [(dso_name, filter_plan)])
+    _write_verified(sequence, output_path,
+                    [(dso_name, filter_plan, _expected_exposures(dso_name))])
     return filter_plan
 
 

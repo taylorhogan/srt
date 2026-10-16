@@ -252,7 +252,11 @@ HELP: dict[str, dict] = {
                   "Scale: Gaia G zero point, consistent night to night; NOT Johnson V.",
                   "Runs by itself at the end of a night for every imaged target whose queue entry has "
                   "\"lightcurve\": true; \"period_days\" and \"epoch_jd\" on the entry add the phased panel.",
-                  "Files: local/lightcurves/<dso>.json (points) and <dso>.png (plot)."],
+                  "Files: local/lightcurves/<dso>.json (points) and <dso>.png (plot).",
+                  "Several stars in one field: a \"stars\" list on the entry ({name, ra_deg, dec_deg[, period_days, "
+                  "epoch_jd]}); each gets its own post, plot and files, <dso>_<name> (e.g. ngc7790_cf_cas).",
+                  "Short frames (the entry's exposure_s) move the comparison range brighter by "
+                  "2.5 log10(300 s / exposure), so the comparisons stay unsaturated too."],
     },
     "transit": {
         "category": "super",

@@ -423,6 +423,29 @@ def get_filter_plan(dso_name: str):
     return dict(plan) if isinstance(plan, dict) and plan else None
 
 
+def get_exposure_plan(dso_name: str):
+    """The stored {filter: exposure seconds} override for a DSO, or None.
+
+    Only positive numbers survive; an entry with none left is None, so a
+    malformed field falls back to the template's exposure rather than
+    writing a zero-second block. Used with an explicit filter_plan (2026-10-15,
+    for V ~ 11 Cepheids that saturate at the template's 300 s).
+    """
+    record = get_instruction_by_dso(dso_name)
+    raw = record.get("exposure_s") if record else None
+    if not isinstance(raw, dict):
+        return None
+    out = {}
+    for f, v in raw.items():
+        try:
+            s = float(v)
+        except (TypeError, ValueError):
+            continue
+        if s > 0:
+            out[str(f)] = s
+    return out or None
+
+
 def get_instruction_by_dso(dso_name):
     """Return the instruction record matching dso_name (normalized), or None."""
     normalized = _normalize_dso(dso_name)

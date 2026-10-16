@@ -4559,8 +4559,9 @@ def _lightcurve_run(words: list[str]) -> None:
     try:
         result = lc.run(dso, filt, redo=redo, progress_cb=social_server.post_social_message,
                         cancel_cb=jobs.cancel_cb_for(jobs.get_current_job()))
-        social_server.post_social_message(lc.report(dso, result),
-                                          str(result["plot"]) if result.get("plot") else None)
+        for star in result["stars"]:        # one post (and plot) per star in the field
+            social_server.post_social_message(lc.report_star(dso, star),
+                                              str(star["plot"]) if star.get("plot") else None)
     except Exception as exc:
         _logger.exception("lightcurve failed for %s", dso)
         social_server.post_social_message(f"Light curve failed for {dso}: {exc}")

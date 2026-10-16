@@ -27,6 +27,19 @@ noise at magnitude 19.
 
 Records: local/lightcurves/<dso>.json, one per (night, filter), replaced when
 a night is re-run. Plot: local/lightcurves/<dso>.png.
+
+Several stars in one field (2026-10-15, NGC 7790's Cepheids): a "stars" list
+on the queue entry, each {"name", "ra_deg", "dec_deg"[, "period_days",
+"epoch_jd"]}. Each frame is solved once and every star measured on it; each
+star keeps its own files, keyed <dso>_<name> (e.g. ngc7790_cf_cas.json). No
+list = one star at the entry's own coordinates, keyed <dso>, as before. The
+program stars are never used as each other's comparisons.
+
+Short frames (the entry's exposure_s): COMP_MAG is what is unsaturated and
+well measured at 300 s, so the range moves by 2.5 log10(300 / EXPTIME) for
+each frame -- 3.7 mag brighter at 10 s. The Gaia rows are cached
+(<key>_gaia.json) and the comparison list per range (<key>_comps.json at
+300 s, the name it always had; <key>_comps_<lo>_<hi>.json otherwise).
 """
 import json
 import math
@@ -39,6 +52,8 @@ from typing import Callable, Optional
 AP_R_ARCSEC = 3.0
 ANNULUS_ARCSEC = (6.0, 10.0)
 COMP_MAG = (13.5, 17.0)          # Gaia G: unsaturated at 300 s, still well measured
+REF_EXPOSURE_S = 300.0           # the exposure COMP_MAG was chosen for
+CROWD_DEPTH_MAG = 2.5            # catalog depth past the faint comp limit, for the crowding test
 COMP_RADIUS_ARCMIN = 9.0         # search radius around the target
 COMP_MIN_SEP_ARCSEC = 8.0        # no neighbour of similar brightness inside this
 MIN_COMPS = 5
@@ -69,19 +84,40 @@ def zero_point(cat_mags, inst_mags, clip: float = 2.5):
     return float(np.median(d[keep])), float(np.std(d[keep])) if keep.sum() > 1 else 0.0, int(keep.sum())
 
 
+def comp_range(exptime_s) -> tuple:
+    """Gaia G range of usable comparisons for a frame of *exptime_s*. Pure.
+
+    COMP_MAG shifted by 2.5 log10(300 / exptime), rounded to 0.1 mag so the
+    cache key is stable; COMP_MAG itself at (or within 0.05 mag of) 300 s or
+    when the exposure is unknown.
+    """
+    try:
+        e = float(exptime_s)
+    except (TypeError, ValueError):
+        return COMP_MAG
+    if not (e > 0 and math.isfinite(e)):
+        return COMP_MAG
+    off = 2.5 * math.log10(REF_EXPOSURE_S / e)
+    if abs(off) < 0.05:
+        return COMP_MAG
+    return (round(COMP_MAG[0] - off, 1), round(COMP_MAG[1] - off, 1))
+
+
 def select_comps(stars: list, target_ra: float, target_dec: float, mag_range=COMP_MAG,
                  min_sep_arcsec: float = COMP_MIN_SEP_ARCSEC, exclude_arcsec: float = 5.0,
-                 max_comps: int = MAX_COMPS) -> list:
+                 max_comps: int = MAX_COMPS, exclude: Optional[list] = None) -> list:
     """Comparison stars from catalog rows {ra, dec, gmag, ruwe, var}. Pure.
 
     Keeps stars in the magnitude range, not flagged variable, with sound
     astrometry (ruwe < 1.4), not the target itself, and with no catalog
     neighbour within *min_sep_arcsec* brighter than gmag + 2 (crowding spoils
     the aperture). Closest to the target first, so the same ones are used
-    whatever the frame's edge did.
+    whatever the frame's edge did. *exclude* is more (ra, dec) positions to
+    keep out the same way as the target: the other program stars.
     """
     def sep(a, b):
-        return math.hypot((a["ra"] - b["ra"]) * math.cos(math.radians(a["dec"])), a["dec"] - b["dec"]) * 3600.0
+        dra = (a["ra"] - b["ra"] + 180.0) % 360.0 - 180.0     # across RA 0h (CG Cas is at 0.25 deg)
+        return math.hypot(dra * math.cos(math.radians(a["dec"])), a["dec"] - b["dec"]) * 3600.0
     tgt = {"ra": target_ra, "dec": target_dec}
     good = []
     for s in stars:
@@ -93,6 +129,8 @@ def select_comps(stars: list, target_ra: float, target_dec: float, mag_range=COM
         if s.get("ruwe") is not None and s["ruwe"] >= 1.4:
             continue
         if sep(s, tgt) < exclude_arcsec:
+            continue
+        if any(sep(s, {"ra": e[0], "dec": e[1]}) < exclude_arcsec for e in (exclude or [])):
             continue
         crowded = any(o is not s and o.get("gmag") is not None and o["gmag"] < g + 2.0
                       and sep(s, o) < min_sep_arcsec for o in stars)
@@ -139,13 +177,14 @@ def night_of(path: Path) -> str:
 
 # --------------------------------------------------------------------------- catalog
 
-def gaia_comps(ra: float, dec: float, radius_arcmin: float = COMP_RADIUS_ARCMIN) -> list:
-    """Gaia DR3 stars around the target as plain dicts (network)."""
+def gaia_comps(ra: float, dec: float, radius_arcmin: float = COMP_RADIUS_ARCMIN,
+               g_limit: float = COMP_MAG[1] + CROWD_DEPTH_MAG) -> list:
+    """Gaia DR3 stars around the target, brighter than *g_limit*, as plain dicts (network)."""
     from astroquery.vizier import Vizier
     from astropy.coordinates import SkyCoord
     import astropy.units as u
     v = Vizier(columns=["Source", "RA_ICRS", "DE_ICRS", "Gmag", "BPmag", "RPmag", "RUWE", "VarFlag"],
-               column_filters={"Gmag": "<%.1f" % (COMP_MAG[1] + 2.5)}, row_limit=5000)
+               column_filters={"Gmag": "<%.1f" % g_limit}, row_limit=5000)
     res = v.query_region(SkyCoord(ra * u.deg, dec * u.deg), radius=radius_arcmin * u.arcmin, catalog="I/355/gaiadr3")
     if not res:
         return []
@@ -162,15 +201,33 @@ def gaia_comps(ra: float, dec: float, radius_arcmin: float = COMP_RADIUS_ARCMIN)
     return out
 
 
-def comps_for(dso: str, ra: float, dec: float, progress_cb=None) -> list:
-    """Cached comparison list for *dso*, selected on first use."""
-    LC_DIR.mkdir(parents=True, exist_ok=True)
-    cache = LC_DIR / ("%s_comps.json" % dso)
+def _gaia_rows(key: str, ra: float, dec: float, g_limit: float, progress_cb=None) -> list:
+    """Gaia rows around (ra, dec) to *g_limit*, cached as <key>_gaia.json."""
+    cache = LC_DIR / ("%s_gaia.json" % key)
     if cache.exists():
-        return json.loads(cache.read_text())
+        doc = json.loads(cache.read_text())
+        if float(doc.get("g_limit", 0)) >= g_limit:
+            return doc["rows"]
     if progress_cb:
         progress_cb("choosing comparison stars from Gaia DR3…")
-    comps = select_comps(gaia_comps(ra, dec), ra, dec)
+    rows = gaia_comps(ra, dec, g_limit=g_limit)
+    cache.write_text(json.dumps({"ra": ra, "dec": dec, "g_limit": g_limit, "rows": rows}))
+    return rows
+
+
+def comps_for(dso: str, ra: float, dec: float, progress_cb=None, mag_range=COMP_MAG,
+              exclude: Optional[list] = None) -> list:
+    """Cached comparison list for *dso* (a star's key) and *mag_range*, selected on first use."""
+    LC_DIR.mkdir(parents=True, exist_ok=True)
+    mag_range = tuple(mag_range)
+    if mag_range == tuple(COMP_MAG):
+        cache = LC_DIR / ("%s_comps.json" % dso)
+    else:
+        cache = LC_DIR / ("%s_comps_%.1f_%.1f.json" % (dso, mag_range[0], mag_range[1]))
+    if cache.exists():
+        return json.loads(cache.read_text())
+    rows = _gaia_rows(dso, ra, dec, max(COMP_MAG[1], mag_range[1]) + CROWD_DEPTH_MAG, progress_cb)
+    comps = select_comps(rows, ra, dec, mag_range=mag_range, exclude=exclude)
     cache.write_text(json.dumps(comps, indent=1))
     return comps
 
@@ -210,18 +267,31 @@ def _aperture_mags(data, wcs, positions_radec: list, arcsec_per_px: float):
     return out
 
 
-def measure_frame(path: Path, target, comps: list, arcsec_per_px: float, astap_exe: str, progress_cb=None):
-    """-> {jd, mag, err, zp, zp_scatter, n_comps} for one frame, or None (unsolved / off-frame)."""
+def solve_frame(path: Path, near, astap_exe: str, progress_cb=None):
+    """-> (data, header, wcs) for one frame, or None if it does not plate-solve."""
     import numpy as np
     from astropy.io import fits
-    from astropy.time import Time
     from photometry.cmd_diagram import _plate_solve_wcs
     with fits.open(path) as h:
         data = np.asarray(h[0].data, dtype=np.float32)
         hdr = h[0].header
-    wcs = _plate_solve_wcs(data, target[0], target[1], FOV_HEIGHT_DEG, astap_exe, progress_cb)
+    wcs = _plate_solve_wcs(data, near[0], near[1], FOV_HEIGHT_DEG, astap_exe, progress_cb)
     if wcs is None:
         return None
+    return data, hdr, wcs
+
+
+def measure_frame(path: Path, target, comps: list, arcsec_per_px: float, astap_exe: str, progress_cb=None):
+    """-> {jd, mag, err, zp, zp_scatter, n_comps} for one frame, or None (unsolved / off-frame)."""
+    solved = solve_frame(path, target, astap_exe, progress_cb)
+    if solved is None:
+        return None
+    return measure_star(solved[0], solved[1], solved[2], path, target, comps, arcsec_per_px)
+
+
+def measure_star(data, hdr, wcs, path: Path, target, comps: list, arcsec_per_px: float):
+    """One star on an already-solved frame: the measure_frame record, or None."""
+    from astropy.time import Time
     exp = float(hdr.get("EXPTIME", 0) or 0)
     jd = Time(hdr["DATE-OBS"], format="isot", scale="utc").jd + exp / 2 / 86400.0
     mags = _aperture_mags(data, wcs, [target] + [(c["ra"], c["dec"]) for c in comps], arcsec_per_px)
@@ -283,11 +353,44 @@ def save(dso: str, doc: dict) -> Path:
     return p
 
 
+def _slug(name: str) -> str:
+    out = "".join(c if c.isalnum() else "_" for c in str(name).lower())
+    while "__" in out:
+        out = out.replace("__", "_")
+    return out.strip("_")
+
+
+def stars_for(dso: str, target, rec: dict) -> list:
+    """The stars to measure for a queue entry. Pure.
+
+    [{key, name, ra, dec, period_days, epoch_jd}]: the entry's "stars" list,
+    each keyed <dso>_<name>; without one, the entry itself keyed <dso> (the
+    files hubblev1 has always had). A malformed star is skipped, not guessed.
+    """
+    listed = rec.get("stars") if isinstance(rec, dict) else None
+    if not listed:
+        return [{"key": dso, "name": dso, "ra": float(target[0]), "dec": float(target[1]),
+                 "period_days": rec.get("period_days"), "epoch_jd": rec.get("epoch_jd")}]
+    out = []
+    for s in listed:
+        try:
+            name = str(s["name"])
+            out.append({"key": "%s_%s" % (dso, _slug(name)), "name": name,
+                        "ra": float(s["ra_deg"]), "dec": float(s["dec_deg"]),
+                        "period_days": s.get("period_days"), "epoch_jd": s.get("epoch_jd")})
+        except (KeyError, TypeError, ValueError):
+            continue
+    return out
+
+
 def run(dso: str, filt: Optional[str] = None, nights: Optional[list] = None, redo: bool = False,
         progress_cb: Optional[Callable[[str], None]] = None, cancel_cb: Optional[Callable[[], bool]] = None) -> dict:
     """Measure every (night, filter) of *dso* not yet in the file (or *nights*, or all with redo).
 
-    Returns {"new": [records], "doc": doc, "plot": path or None, "comps": n}.
+    Every star of the entry (stars_for) on every frame, the frame solved once.
+    Returns {"stars": [{name, key, new: [records], doc, plot: path or None,
+    comps: n}]}, one per star in the entry's order; comps is the most
+    comparison stars any of its frames' exposures had.
     """
     from configs import config
     cfg = config.data()
@@ -295,44 +398,76 @@ def run(dso: str, filt: Optional[str] = None, nights: Optional[list] = None, red
     aps = float(cfg["nina"]["arc_sec_per_pixel"])
     astap = (cfg.get("hardware") or {}).get("astap_exe") or "C:/Program Files/astap/astap.exe"
     target, rec = _target_for(dso)
-    comps = comps_for(dso, target[0], target[1], progress_cb)
-    if len(comps) < MIN_COMPS:
-        raise ValueError("only %d comparison stars found near %s" % (len(comps), dso))
-    doc = load(dso)
-    done = {(r["night"], r["filter"]) for r in doc["records"]}
-    new = []
+    stars = stars_for(dso, target, rec)
+    if not stars:
+        raise ValueError("%s lists no usable stars" % dso)
+    docs = {s["key"]: load(s["key"]) for s in stars}
+    done = {s["key"]: {(r["night"], r["filter"]) for r in docs[s["key"]]["records"]} for s in stars}
+    new = {s["key"]: [] for s in stars}
+    n_comps = {s["key"]: 0 for s in stars}
+    memo = {}
+
+    def comps_at(star, exptime):
+        rng = comp_range(exptime)
+        k = (star["key"], rng)
+        if k not in memo:
+            others = [(o["ra"], o["dec"]) for o in stars if o is not star]
+            memo[k] = comps_for(star["key"], star["ra"], star["dec"], progress_cb, rng, exclude=others)
+            n_comps[star["key"]] = max(n_comps[star["key"]], len(memo[k]))
+        return memo[k]
+
     for (night, fl), paths in sorted(_frames(image_dir, dso, filt).items()):
         if nights and night not in nights:
             continue
-        if (night, fl) in done and not redo and not nights:
+        need = [s for s in stars if redo or nights or (night, fl) not in done[s["key"]]]
+        if not need:
             continue
         if progress_cb:
-            progress_cb("%s %s %s: measuring %d frames…" % (dso, night, fl, len(paths)))
-        per = []
+            progress_cb("%s %s %s: measuring %d frames, %d star%s…" % (
+                dso, night, fl, len(paths), len(need), "" if len(need) == 1 else "s"))
+        per = {s["key"]: [] for s in need}
         for p in paths:
             if cancel_cb and cancel_cb():
                 raise RuntimeError("cancelled")
-            m = measure_frame(p, target, comps, aps, astap, None)
-            if m:
-                per.append(m)
-        pt = nightly_point([(m["jd"], m["mag"], m["err"]) for m in per])
-        if pt is None:
-            if progress_cb:
-                progress_cb("%s %s %s: no usable frames (unsolved or target off frame)" % (dso, night, fl))
-            continue
-        record = dict(pt, night=night, filter=fl, frames_total=len(paths),
-                      zp_scatter=round(float(sum(m["zp_scatter"] for m in per) / len(per)), 4),
-                      n_comps=int(min(m["n_comps"] for m in per)), measured_at=datetime.now(timezone.utc).isoformat(timespec="seconds"))
-        doc["records"] = merge_record(doc["records"], record)
-        new.append(record)
-        save(dso, doc)
-    plot_path = plot(dso, doc, rec) if doc["records"] else None
-    return {"new": new, "doc": doc, "plot": plot_path, "comps": len(comps)}
+            solved = solve_frame(p, target, astap, None)
+            if solved is None:
+                continue
+            data, hdr, wcs = solved
+            for s in need:
+                m = measure_star(data, hdr, wcs, p, (s["ra"], s["dec"]),
+                                 comps_at(s, hdr.get("EXPTIME")), aps)
+                if m:
+                    per[s["key"]].append(m)
+        for s in need:
+            got = per[s["key"]]
+            pt = nightly_point([(m["jd"], m["mag"], m["err"]) for m in got])
+            if pt is None:
+                if progress_cb:
+                    progress_cb("%s %s %s: no usable frames for %s (unsolved, off frame, or too few comparisons)"
+                                % (dso, night, fl, s["name"]))
+                continue
+            record = dict(pt, night=night, filter=fl, frames_total=len(paths),
+                          zp_scatter=round(float(sum(m["zp_scatter"] for m in got) / len(got)), 4),
+                          n_comps=int(min(m["n_comps"] for m in got)),
+                          measured_at=datetime.now(timezone.utc).isoformat(timespec="seconds"))
+            doc = docs[s["key"]]
+            doc["records"] = merge_record(doc["records"], record)
+            new[s["key"]].append(record)
+            save(s["key"], doc)
+    out = []
+    for s in stars:
+        doc = docs[s["key"]]
+        out.append({"name": s["name"], "key": s["key"], "new": new[s["key"]], "doc": doc,
+                    "plot": plot(s["key"], doc, s) if doc["records"] else None,
+                    "comps": n_comps[s["key"]]})
+    return {"stars": out}
 
 
 # --------------------------------------------------------------------------- report
 
 def plot(dso: str, doc: dict, rec: dict) -> Path:
+    """The light curve as local/lightcurves/<dso>.png; *rec* carries the
+    period/epoch (and, for one of several stars, its "name" for the title)."""
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -350,7 +485,7 @@ def plot(dso: str, doc: dict, rec: dict) -> Path:
         ax.errorbar(t, [r["mag"] for r in rr], yerr=[r["err"] for r in rr], fmt="o", ms=6, color=COL.get(fl, INK2),
                     ecolor=COL.get(fl, INK2), capsize=3, label="%s (%d night%s)" % (fl, len(rr), "" if len(rr) == 1 else "s"))
     ax.invert_yaxis(); ax.set_ylabel("magnitude (%s)" % SCALE, color=INK2); ax.xaxis.set_major_formatter(DateFormatter("%b %d"))
-    ax.set_title("%s: one point per night" % dso, color=INK, fontsize=13, loc="left")
+    ax.set_title("%s: one point per night" % (rec.get("name") or dso), color=INK, fontsize=13, loc="left")
     if period:
         px = axs[0][1]
         for fl in sorted({r["filter"] for r in recs}):
@@ -372,14 +507,20 @@ def plot(dso: str, doc: dict, rec: dict) -> Path:
     return out
 
 
-def report(dso: str, result: dict) -> str:
-    lines = ["Light curve %s (%s; %d comparison stars)" % (dso, SCALE, result["comps"])]
-    if not result["new"]:
+def report_star(dso: str, star: dict) -> str:
+    """One star's part of a run (an item of run()["stars"])."""
+    title = dso if star["name"] == dso else "%s %s" % (dso, star["name"])
+    lines = ["Light curve %s (%s; %d comparison stars)" % (title, SCALE, star["comps"])]
+    if not star["new"]:
         lines.append("no new nights to measure")
-    for r in result["new"]:
+    for r in star["new"]:
         lines.append("  %s %-5s %6.3f ± %.3f  (%d/%d frames, zp scatter %.3f)" % (
             r["night"], r["filter"], r["mag"], r["err"], r["n"], r["frames_total"], r["zp_scatter"]))
-    recs = result["doc"]["records"]
+    recs = star["doc"]["records"]
     if recs:
         lines.append("%d point%s on file, %s to %s" % (len(recs), "" if len(recs) == 1 else "s", recs[0]["night"], recs[-1]["night"]))
     return "\n".join(lines)
+
+
+def report(dso: str, result: dict) -> str:
+    return "\n\n".join(report_star(dso, s) for s in result["stars"])
