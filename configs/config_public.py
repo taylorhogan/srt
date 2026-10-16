@@ -7,7 +7,7 @@ class PublicConfig():
 
         },
         "version": {
-            "date": "2026.10.16.2"
+            "date": "2026.10.16.3"
         },
 
         "logger": {
@@ -583,8 +583,10 @@ class PublicConfig():
             # unreachable conductor = no night + a push. False = the
             # scheduler plans as before, with shadow_planner beside it.
             # BOTH processes read this at start: change it, then restart
-            # start_srt.
-            "drives_checks": False,
+            # start_srt. Flipped True 2026-10-16 (operator), after the
+            # flag-off deploy of 2c1afb2 came up clean; first conductor-
+            # planned noon is the one after this deploy.
+            "drives_checks": True,
             # With drives_checks on, the scheduler also ranks in-process,
             # acts on nothing, and journals EXECUTOR_PLAN_MATCH / _DIFF
             # (ADR 0015 rollout step 2). It also posts the grid at sunset.
