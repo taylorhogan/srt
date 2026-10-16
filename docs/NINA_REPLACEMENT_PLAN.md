@@ -4,6 +4,11 @@ Status 2026-10-16: research done, nothing built. Owner's project 2 of 3
 (auto-stretch, NINA→Linux, autonomy gaps). Next decisions for the owner:
 ask PlaneWave for a current PWI4 Linux build + L-500 support; confirm the
 Alnitak model and how the Gemini is connected; then Stage 0/1 below.
+**Owner decision 2026-10-16: no second Windows box.** A PWI4-only Windows
+PC or VM beside a Linux computer is not an acceptable fallback ("the system
+is only stable as its weakest link"). The Linux move therefore depends on
+PWI4 itself running on Linux; that test is the first gate, before Stage 4
+work. Stages 0-3 (N.I.N.A out, on Windows) stand on their own either way.
 The autofocus finding (built-in, not Hocus Focus) was spot-checked on
 2026-10-16: 718 reports in %LOCALAPPDATA%\NINA\AutoFocus, AutoFocuserName "NINA".
 
