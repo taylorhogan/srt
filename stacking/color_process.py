@@ -557,13 +557,19 @@ def _prepare(channels: dict[str, np.ndarray], subtract_background: bool,
              mesh: int, white_pct: float,
              ha_gain: Optional[float] = HA_GAIN,
              white_balance: str = WHITE_BALANCE,
-             wb_factors: Optional[dict] = None) -> tuple[dict, float]:
+             wb_factors: Optional[dict] = None,
+             ha_ratio: Optional[float] = None,
+             info: Optional[dict] = None) -> tuple[dict, float]:
     """Background-subtract every channel and find the shared white point.
 
     Factored out of compose() because the per-channel exports have to be the
     exact same pixels on the exact same scale — a channel JPEG rendered against
     its own white point would look nothing like its contribution to the
     composite, which defeats the point of being able to inspect it.
+
+    *info*, if given, receives what was measured here: "wb" (the white-balance
+    info, factors included) and "ha_ratio". A raw/denoised pair passes the raw
+    set's back in as wb_factors / ha_ratio so both share one balance and blend.
     """
     if subtract_background:
         subbed = {k: _remove_gradient(v, mesh) for k, v in channels.items()}
@@ -583,13 +589,16 @@ def _prepare(channels: dict[str, np.ndarray], subtract_background: bool,
     # frame, returned the identity, and that frame got no balance at all while
     # its raw counterpart got R 1.176 / B 1.403. Same class of error the black
     # point comment above describes, one layer up.
-    subbed, _ = apply_white_balance(subbed, white_balance, wb_factors)
+    subbed, wb_info = apply_white_balance(subbed, white_balance, wb_factors)
     # HALRGB: the blend happens here, on subtracted linear data, so the
     # shared white point and every per-channel export see the blended R.
     # ha_gain=None leaves it to the caller (the movie pins one ratio for
     # every depth); 0 adds only the excess map, for inspection.
+    ratio = None
     if ha_gain is not None:
-        subbed, _ = apply_ha_blend(subbed, ha_gain)
+        subbed, ratio = apply_ha_blend(subbed, ha_gain, ha_ratio)
+    if info is not None:
+        info.update({"wb": wb_info, "ha_ratio": ratio})
     return subbed, shared_white(subbed, white_pct)
 
 

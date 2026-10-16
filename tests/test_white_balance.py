@@ -65,3 +65,24 @@ def test_apply_scales_r_and_b_only_and_leaves_luminance():
     assert np.allclose(out["R"], before["R"] * info["factors"]["R"])
     same, _ = cp.apply_white_balance(before, "none")
     assert all(np.allclose(same[k], before[k]) for k in before)
+
+
+def test_a_denoised_set_takes_the_raw_sets_balance_not_its_own():
+    """The 2026-10-09 trap: measured separately, the denoised set's factors
+    swung by a third and its composite came out blue. _prepare reports what it
+    measured; n2n_lrgb_render.shared_from_raw pins it on the second set."""
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
+    n2n = pytest.importorskip("n2n_lrgb_render")
+    raw = _field()
+    # A "denoised" set whose stars read a different colour: re-measured, it
+    # would get different factors.
+    den = _field(r_ratio=0.60, b_ratio=1.60, noise=0.5)
+    info = {}
+    cp._prepare(raw, True, 4, 99.9, white_balance="stars", info=info)
+    assert info["wb"]["mode"] == "stars" and abs(info["wb"]["factors"]["R"] - 1.25) < 0.03
+    pinned = n2n.shared_from_raw(info)
+    assert pinned["white_balance"] == "none"
+    den_info = {}
+    cp._prepare(den, True, 4, 99.9, info=den_info, **pinned)
+    assert den_info["wb"]["mode"] == "given"
+    assert den_info["wb"]["factors"] == info["wb"]["factors"]

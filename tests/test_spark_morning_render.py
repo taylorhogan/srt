@@ -39,3 +39,29 @@ def test_spark_picks_halrgb_only_with_enough_ha():
     assert r.pick_recipes({**base, "Ha": r.MIN_COLOUR_FRAMES}) == ["LRGB"]
     # ...and without L there is no luminance to add the excess to.
     assert "HALRGB" not in r.pick_recipes({"R": 20, "G": 20, "B": 20, "Ha": 20})
+
+
+def test_a_galaxys_broadband_recipes_are_white_balanced_on_stars():
+    lrgb = r.render_command("ngc6946", "LRGB", first=False, exptime=300, galaxy=True)
+    halrgb = r.render_command("ngc6946", "HALRGB", first=True, exptime=300, galaxy=True)
+    assert lrgb[lrgb.index("--wb") + 1] == "stars"
+    assert halrgb[halrgb.index("--wb") + 1] == "stars" and "--force" in halrgb
+    assert "--force" not in lrgb
+
+
+def test_no_white_balance_off_a_galaxy_or_on_a_palette():
+    assert "--wb" not in r.render_command("ngc7789", "LRGB", first=True, exptime=300, galaxy=False)
+    # A galaxy's narrowband palette is still a palette.
+    assert "--wb" not in r.render_command("m33", "HOO", first=True, exptime=300, galaxy=True)
+    assert set(r.WB_STARS_RECIPES).isdisjoint(r.NARROWBAND)
+
+
+def test_a_failed_type_lookup_is_not_a_galaxy(monkeypatch):
+    import nina_gen.nina_sequence_gen as g
+
+    def boom(_):
+        raise RuntimeError("SIMBAD down")
+    monkeypatch.setattr(g, "_classify_object_type", boom)
+    assert r.is_galaxy("ngc6946") is False
+    monkeypatch.setattr(g, "_classify_object_type", lambda _: "galaxy")
+    assert r.is_galaxy("ngc6946") is True

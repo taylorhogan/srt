@@ -221,6 +221,30 @@ def sky_anchored_blacks(subbed: dict, black_sigma: float, black_pct: float,
     return color_process.sky_anchored_blacks(subbed, black_sigma, black_pct, log=log)
 
 
+def shared_from_raw(raw_info: dict) -> dict:
+    """_prepare kwargs that pin the denoised set to the raw set's measurements.
+
+    The white balance is passed as factors (white_balance stays "none" so
+    nothing is re-measured); the Ha continuum ratio likewise. A balance that
+    failed on the raw set comes back as the identity, and the denoised set gets
+    the identity too: the pair stays consistent either way.
+    """
+    wb = (raw_info.get("wb") or {}).get("factors") or None
+    return {"white_balance": "none", "wb_factors": wb, "ha_ratio": raw_info.get("ha_ratio")}
+
+
+def log_shared_measurements(raw_info: dict, log) -> None:
+    wb = raw_info.get("wb") or {}
+    if wb.get("mode") == "stars":
+        f = wb.get("factors") or {}
+        log("white balance from raw (%s): R x%.3f  B x%.3f — pinned on the denoised set"
+            % (wb.get("why") or "%s stars" % wb.get("stars", "?"),
+               f.get("R", 1.0), f.get("B", 1.0)))
+    if raw_info.get("ha_ratio") is not None:
+        log("Ha continuum ratio from raw: %.4f — pinned on the denoised set"
+            % raw_info["ha_ratio"])
+
+
 def compose(args) -> int:
     import torch
 
@@ -328,7 +352,7 @@ def compose(args) -> int:
     # pair appears to show about sharpness at the default stretch is the
     # stretch, not the model.
     opts = color_process.effective_options(
-        white_pct=args.white_pct, black_pct=args.black_pct,
+        white_pct=args.white_pct, black_pct=args.black_pct, white_balance=args.wb,
         **({"softening": args.soft} if args.soft is not None else {}))
     log(f"compose: {color_process.describe_options(opts)}")
 
@@ -346,10 +370,16 @@ def compose(args) -> int:
     # This is the same error class as the per-image detection threshold that
     # `source_survival` was fixed for: a relative threshold applied to two
     # images of different noise measures the noise, not the signal.
+    # The white balance and the Ha continuum ratio are measured on the raw set
+    # and pinned on the denoised one, like the stretch (see _prepare).
+    raw_info = {}
     subbed_raw, white = color_process._prepare(
-        raw_ch, opts["subtract_background"], opts["mesh"], opts["white_pct"])
+        raw_ch, opts["subtract_background"], opts["mesh"], opts["white_pct"],
+        white_balance=opts["white_balance"], info=raw_info)
+    log_shared_measurements(raw_info, log)
     subbed_den, _ = color_process._prepare(
-        den_ch, opts["subtract_background"], opts["mesh"], opts["white_pct"])
+        den_ch, opts["subtract_background"], opts["mesh"], opts["white_pct"],
+        **shared_from_raw(raw_info))
     if args.auto_stretch:
         log("auto stretch:")
         auto = color_process.auto_stretch(subbed_raw, white, lum="L", log=log)
@@ -585,9 +615,11 @@ def routine(args) -> int:
     # between raw and denoised is the model's. compose() would instead pick
     # black per channel by percentile, which lands at a different ADU on a
     # denoised channel and manufactures a colour shift.
+    raw_info = {}
     subbed_raw, white = color_process._prepare(
         to_channels(raw), opts["subtract_background"], opts["mesh"], opts["white_pct"],
-        white_balance=opts["white_balance"])
+        white_balance=opts["white_balance"], info=raw_info)
+    log_shared_measurements(raw_info, log)
     if args.auto_stretch:
         log("auto stretch:")
         auto = color_process.auto_stretch(subbed_raw, white, lum="L", log=log)
@@ -644,9 +676,12 @@ def routine(args) -> int:
 
     emit(subbed_raw, "raw")
     if den:
+        # Pinned to the raw set's balance and Ha ratio: measured again here,
+        # wb=stars swung ngc7320's factors by a third and turned the denoised
+        # composite blue (2026-10-09), which reads as the model's fault.
         subbed_den, _ = color_process._prepare(
             to_channels(den), opts["subtract_background"], opts["mesh"],
-            opts["white_pct"], white_balance=opts["white_balance"])
+            opts["white_pct"], **shared_from_raw(raw_info))
         emit(subbed_den, "denoised")
 
     log("")

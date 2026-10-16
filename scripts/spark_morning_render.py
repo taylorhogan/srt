@@ -80,6 +80,23 @@ MIN_COLOUR_FRAMES = 3
 # adding HSO to RECIPE_RULES without adding it here silently gave that recipe
 # `--lum L` (a filter it does not have) and the wrong stretch.
 NARROWBAND = {"SHO", "HSO", "HOO"}
+# Broadband recipes of a galaxy are white-balanced on the field's stars
+# (owner, 2026-10-16). Unbalanced, ngc6946 came out yellow: ~1 mag of Milky
+# Way dust reddens the galaxy and every star in the field, and wb=stars
+# measured B x1.83 to take it out. Never for narrowband: those are palettes.
+WB_STARS_RECIPES = {"LRGB", "HALRGB"}
+
+
+def is_galaxy(dso: str) -> bool:
+    """The filter planner's own classifier (queued obj_type, then the grid's
+    override table / type cache / SIMBAD), so a target is a galaxy here
+    exactly when it was planned as one. Unknown is not a galaxy."""
+    try:
+        from nina_gen.nina_sequence_gen import _classify_object_type
+        return _classify_object_type(dso) == "galaxy"
+    except Exception as exc:  # noqa: BLE001 -- a lookup failure must not stop the render
+        log(f"{dso}: object type unknown ({type(exc).__name__}: {exc}); no white balance")
+        return False
 
 
 def log(m: str = "") -> None:
@@ -176,6 +193,26 @@ def pick_recipes(counts: dict) -> list[str]:
     return out
 
 
+def render_command(dso: str, recipe: str, first: bool, exptime: int,
+                   galaxy: bool) -> list[str]:
+    """The n2n_lrgb_render.py routine invocation for one recipe of one target.
+
+    Every routine render writes both the raw and the denoised composite. A
+    galaxy's broadband recipes get --wb stars, measured on the raw set and
+    pinned on the denoised one. Only the target's first recipe rebuilds the
+    shared channel stacks (--force); the rest reuse them (module docstring).
+    """
+    lum = "Ha" if recipe in NARROWBAND else "L"
+    cmd = [sys.executable, os.path.join(_root, "scripts", "n2n_lrgb_render.py"),
+           "routine", "--dso", dso.lower().replace(" ", ""), "--recipe", recipe,
+           "--lum", lum, "--exptime", str(exptime)]
+    if galaxy and recipe in WB_STARS_RECIPES:
+        cmd += ["--wb", "stars"]
+    if first:
+        cmd.append("--force")
+    return cmd
+
+
 def main() -> int:
     import socket
 
@@ -238,15 +275,13 @@ def main() -> int:
 
     rc = 0
     for dso, recipes, _total, _s in plan:
+        galaxy = is_galaxy(dso) if WB_STARS_RECIPES & set(recipes) else False
+        if galaxy:
+            log(f"{dso}: galaxy — {' + '.join(r for r in recipes if r in WB_STARS_RECIPES)} "
+                f"white-balanced on the field's stars (wb=stars)")
         for i, recipe in enumerate(recipes):
-            lum = "Ha" if recipe in NARROWBAND else "L"
-            cmd = [sys.executable, os.path.join(_root, "scripts", "n2n_lrgb_render.py"),
-                   "routine", "--dso", dso.lower().replace(" ", ""), "--recipe", recipe,
-                   "--lum", lum, "--exptime", str(args.exptime)]
-            # Rebuild the shared channel stacks once per target, on its first
-            # recipe; the rest reuse them (see module docstring).
-            if i == 0:
-                cmd.append("--force")
+            cmd = render_command(dso, recipe, first=(i == 0), exptime=args.exptime,
+                                 galaxy=galaxy)
             # No narrowband stretch override. These used to be forced to
             # --white-pct 99 --black-pct 65, and on the 2026-08-24 trunk render that
             # put white at 4.71 ADU (clipping everything above ~3 sigma into flat
