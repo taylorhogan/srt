@@ -7,6 +7,7 @@ POST /v1/events             offer an event (Phase 1: journaled; notes rendered;
 GET  /v1/journal?since=SEQ  page of entries after SEQ
 GET  /v1/journal/stream     SSE of new entries (poll-backed; honest and simple)
 GET  /v1/targets[/dso]      the Target registry snapshot
+GET  /v1/plan?date=        the night's plan: the latest NIGHT_PLAN per check (ADR 0015)
 
 There is intentionally NO "request transition" endpoint: operator commands,
 sensor reports and cooperative capture signals are all just events, and the
@@ -103,6 +104,19 @@ def build_app(conductor, journal, registry_fn, allowed_networks=None):
                     yield "data: %s\n\n" % json.dumps(_entry_dict(e))
                 await asyncio.sleep(2.0)
         return StreamingResponse(gen(), media_type="text/event-stream")
+
+    @app.get("/v1/plan")
+    def plan(date: str = ""):
+        from datetime import date as _date
+        from iris.conductor.clock import plan_records
+        try:
+            day = _date.fromisoformat(date) if date else _date.today()
+        except ValueError:
+            raise HTTPException(400, "date must be YYYY-MM-DD")
+        recs = plan_records(journal.replay(days=2), day)
+        return {"date": day.isoformat(), "seq": journal.head(), "state": conductor.state,
+                "drives_checks": bool(getattr(conductor, "drives_checks", False)),
+                "noon": recs["noon"], "sunset": recs["sunset"]}
 
     @app.get("/v1/targets")
     def targets():

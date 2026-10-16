@@ -15,6 +15,7 @@ copies that drift:
     max_hours caps (a short monitoring block such as the M31 Cepheid).
 
     python -m control.night_plan            # tonight's plan as JSON (the conductor runs this)
+    python -m control.night_plan --refresh  # the noon form: refresh the queue's hours first
 
 The CLI is what the conductor calls, in its own process: the planner hits
 the network (forecasts, SIMBAD) and must never be able to stall or crash the
@@ -70,6 +71,24 @@ def slots_record(slots) -> list:
             for s in slots or []]
 
 
+def slots_from_record(records) -> list:
+    """control.slot_plan Slots back from slots_record's JSON. Pure.
+
+    How the scheduler, carrying out the conductor's plan (ADR 0015), gets
+    the slots it generates the sequence from without planning them itself.
+    The record carries no priority; it only ordered the planning, which is
+    done, so the default stands in.
+    """
+    from datetime import datetime
+    from control.slot_plan import Slot
+    out = []
+    for r in records or []:
+        out.append(Slot(name=str(r["dso"]), start=datetime.fromisoformat(r["start"]),
+                        end=datetime.fromisoformat(r["end"]), good_hours=int(r["hours"]),
+                        priority=int(r.get("priority", 5))))
+    return out
+
+
 def decide(rows, slots, min_good_hours: int = MIN_GOOD_HOURS) -> dict:
     """The noon / pre-sunset verdict from a ranking and its slots. Pure."""
     if not rows:
@@ -114,6 +133,16 @@ def compare(shadow: dict, scheduler: dict) -> list:
     return diffs
 
 
+def refresh_queue() -> None:
+    """The noon check's queue refresh (hours above horizon, air mass, best
+    date), run before the noon decision as the scheduler always did."""
+    from control import instructions
+    instructions.calc_and_store_hours_above_horizon()
+
+
 if __name__ == "__main__":
     logging.basicConfig(level=logging.WARNING)
-    print(json.dumps(plan_tonight(sys.argv[1] if len(sys.argv) > 1 else None)))
+    args = [a for a in sys.argv[1:] if a != "--refresh"]
+    if "--refresh" in sys.argv[1:]:
+        refresh_queue()
+    print(json.dumps(plan_tonight(args[0] if args else None)))

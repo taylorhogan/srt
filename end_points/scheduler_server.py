@@ -74,10 +74,12 @@ import json
 import logging
 import os
 import sys
+import threading
 import time
 from datetime import datetime, timedelta
 from enum import Enum, auto
 from pathlib import Path
+from typing import Optional
 
 import numpy as np
 from prefect import flow, task
@@ -749,7 +751,8 @@ def pre_sunset_check_task() -> tuple[str, int]:
 
 
 @task(name="generate-nina-sequence")
-def generate_sequence_task(dso_name: str, good_hours: float = 0.0, notify: bool = True):
+def generate_sequence_task(dso_name: str, good_hours: float = 0.0, notify: bool = True,
+                           slots=None):
     """Write the N.I.N.A sequence, and say what tonight will actually be.
 
     Two slots in the plan (astro_dso_visibility.last_slots) write a
@@ -757,8 +760,11 @@ def generate_sequence_task(dso_name: str, good_hours: float = 0.0, notify: bool 
     slot's window end as the hard stop. Either way the LAST target ends
     when the planner's good hours end (horizon, dawn or weather, whichever
     comes first), not at dawn regardless.
+
+    *slots* None = the in-process ranking's (astro_dso_visibility.last_slots);
+    the executor of the conductor's plan (ADR 0015) passes the plan's own.
     """
-    slots = list(astro_dso_visibility.last_slots)
+    slots = list(astro_dso_visibility.last_slots) if slots is None else list(slots)
     try:
         if len(slots) >= 2:
             got = _generate_nina_slots_sequence(slots)
@@ -869,6 +875,279 @@ def nightly_cycle():
 
 
 # ---------------------------------------------------------------------------
+# ADR 0015: carrying out the conductor's plan (conductor.drives_checks)
+# ---------------------------------------------------------------------------
+#
+# With the flag on, the conductor's clock makes the noon and sunset decisions
+# (iris/conductor/clock.py) and journals each as a NIGHT_PLAN note. This
+# process stops ranking: it fetches the decision from GET /v1/plan and does
+# everything that follows it exactly as before -- the posts, the calendar,
+# the sequence from the plan's own slots, the plan picture, image!! at
+# sunset. It never decides whether. An unreachable conductor is no plan, and
+# no plan is no night (owner, 2026-10-16): skipping a night is the safe way
+# to be wrong.
+
+_PLAN_POLL_S = 30
+_UNREACHABLE_PUSH_S = 15 * 60            # push once when the conductor is gone this long
+_RESUMED_AGE_S = 5 * 60                  # a record this old at start = a restart, not news
+_SUNSET_GRACE = timedelta(hours=2)       # == iris/conductor/clock.SUNSET_GRACE
+
+
+def _run(task, *args, **kwargs):
+    """A Prefect task's plain function. Outside a flow, calling the task would
+    start Prefect's temporary API server -- the one that took the web chat's
+    port on 2026-09-07 -- for nothing; the executor has no flow."""
+    return getattr(task, "fn", task)(*args, **kwargs)
+
+
+def _local_now() -> datetime:
+    from zoneinfo import ZoneInfo
+    return datetime.now(ZoneInfo(CFG["location"]["timezone"]))
+
+
+def _record_age_s(rec: dict) -> float:
+    try:
+        return (_local_now() - datetime.fromisoformat(rec["ts"])).total_seconds()
+    except Exception:
+        return 0.0
+
+
+class _PlanPoller:
+    """GET /v1/plan with the one-push-per-outage rule."""
+
+    def __init__(self, day: str):
+        self.day = day
+        self._gone_since = None
+        self._pushed = False
+
+    def poll(self):
+        from iris import client as conductor_client
+        reply = conductor_client.get_plan(self.day)
+        if reply is not None:
+            self._gone_since, self._pushed = None, False
+            return reply
+        now = _local_now()                  # the cycle's clock (fakeable), not time.time()
+        self._gone_since = self._gone_since or now
+        if not self._pushed and (now - self._gone_since).total_seconds() > _UNREACHABLE_PUSH_S:
+            msg = ("Iris: the conductor has not answered for %d min, so there is no "
+                   "plan for tonight and nothing will image. Restart start_srt, then "
+                   "scripts/service_check.py." % (_UNREACHABLE_PUSH_S // 60))
+            LOGGER.error(msg)
+            pushover.push_message(msg, priority=1)
+            self._pushed = True
+        return None
+
+
+def _await_record(poller: _PlanPoller, check: str, until: datetime, after_seq: int = 0):
+    """Poll until the *check* record (newer than *after_seq*) exists or *until*.
+
+    -> (record or None, found_on_first_poll)."""
+    first = True
+    while True:
+        reply = poller.poll()
+        rec = (reply or {}).get(check)
+        if rec and int(rec.get("seq") or 0) > after_seq:
+            return rec, first
+        first = False
+        if _local_now() >= until:
+            return None, False
+        time.sleep(_PLAN_POLL_S)
+
+
+def _plan_slots(plan: dict) -> list:
+    from control import night_plan
+    return night_plan.slots_from_record((plan or {}).get("slots") or [])
+
+
+def _plan_best_start(plan: dict):
+    try:
+        return datetime.fromisoformat(plan["best_start"]) if plan.get("best_start") else None
+    except Exception:
+        return None
+
+
+def _cross_check(check: str, conductor_plan: Optional[dict], post_grid: bool) -> None:
+    """Rollout step 2 of ADR 0015: rank in-process too, act on nothing, journal
+    whether the answer agrees. A daemon thread: if this ranking hangs (the
+    2026-10-15 noon), only this thread hangs. Off: conductor.executor_cross_check."""
+    if not bool((CFG.get("conductor") or {}).get("executor_cross_check", True)):
+        return
+
+    def run():
+        from control import night_plan
+        from iris import client as conductor_client
+        try:
+            best, hours, _start, grid_html = _get_best_object()
+            ours = {"dso": best, "will image tonight": int(hours) >= _MIN_GOOD_HOURS,
+                    "slots": _slots_record(list(astro_dso_visibility.last_slots))}
+            diffs = night_plan.compare(conductor_plan or {"will_image": False}, ours)
+            conductor_client.post_event(
+                "EXECUTOR_PLAN_DIFF" if diffs else "EXECUTOR_PLAN_MATCH", "scheduler",
+                {"check": check, "diffs": diffs, "scheduler": ours}, kind="note")
+            if post_grid and grid_html:
+                social_server.post_html_message(grid_html)
+        except Exception:
+            LOGGER.exception("executor cross-check failed (%s)", check)
+
+    threading.Thread(target=run, daemon=True, name="executor-cross-check").start()
+
+
+def _skip_noon(rec: Optional[dict], why_none: str = "") -> None:
+    outcome = (rec or {}).get("outcome", "none")
+    plan = (rec or {}).get("plan") or {}
+    best, hours = plan.get("best") or "", int(plan.get("good_hours") or 0)
+    set_state(State.NOON_CHECK, best or None, False)
+    if outcome == "bad":
+        social_server.post_social_message(
+            f"Not enough good imaging hours tonight ({hours}h), skipping")
+        _publish_skip_to_site("not enough clear hours tonight: %dh forecast, %d needed"
+                              % (hours, _MIN_GOOD_HOURS))
+        obs_calendar.set_today_stat('weather', best)
+    else:
+        why = (rec or {}).get("why") or why_none or "no plan"
+        social_server.post_social_message(
+            f"No imaging tonight: the conductor's noon plan is {outcome} ({why})")
+        _publish_skip_to_site("no plan for tonight: %s" % why)
+    social_server._post_station_passes()
+    LOGGER.info("Skipping tonight — conductor's noon plan: %s", outcome)
+
+
+def _carry_out_noon(rec: dict, resumed: bool):
+    """The noon check's actions for the conductor's good plan. -> slots."""
+    plan = rec["plan"]
+    best, hours = plan["best"], int(plan["good_hours"])
+    slots = _plan_slots(plan)
+    _LAST_BEST_START["t"] = _plan_best_start(plan)
+    _CHECK["name"] = "noon"
+    if resumed:
+        # A restart after noon: the night was already announced. Rebuild the
+        # sequence from the SAME plan, quietly; never re-plan (2026-09-13).
+        social_server.post_social_message(
+            "Scheduler restarted: carrying on with the conductor's noon plan\n"
+            + slot_plan.describe(slots))
+        set_state(State.NOON_CHECK, best, True, slots=slots)
+        _run(generate_sequence_task, best, hours, notify=False, slots=slots)
+        return slots
+    social_server.post_social_message(f"Imaging mode: {super_user_commands.get_mode()}")
+    social_server.tonight_cmd(["me", "tonight", best], 2, "", "")
+    social_server.post_social_message("Planning to image tonight — timeline follows")
+    obs_calendar.set_today_stat('image', best)
+    set_state(State.NOON_CHECK, best, True, slots=slots)
+    _run(generate_sequence_task, best, hours, slots=slots)
+    return slots
+
+
+def _carry_out_replan(rec: dict):
+    """A `replan` landed between noon and sunset. -> slots, or None if the night is off."""
+    if rec.get("outcome") != "good":
+        _skip_noon(rec)
+        return None
+    plan = rec["plan"]
+    slots = _plan_slots(plan)
+    _LAST_BEST_START["t"] = _plan_best_start(plan)
+    social_server.post_social_message("Replanned by request — new plan:\n" + slot_plan.describe(slots))
+    set_state(State.WAITING_FOR_PRE_SUNSET, plan["best"], True, slots=slots)
+    _run(generate_sequence_task, plan["best"], int(plan["good_hours"]), slots=slots)
+    return slots
+
+
+def _carry_out_sunset(rec: dict, noon_name: str) -> None:
+    plan = rec["plan"]
+    best, hours = plan["best"], int(plan["good_hours"])
+    slots = _plan_slots(plan)
+    _CHECK["name"] = "sunset"
+    social_server.post_social_message(f"Imaging mode: {super_user_commands.get_mode()}")
+    social_server.post_social_message(
+        f"Confirmed — generating sequence\n{_imaging_plan_message(best, hours, _plan_best_start(plan))}"
+        + _second_slot_message(slots))
+    social_server.post_dso_preview(best)
+    set_state(State.PRE_SUNSET_CHECK, best, True, slots=slots)
+    sig = slot_plan.signature(slots, _filter_plans_for(slots))
+    if best != noon_name or sig != _PLAN_ON_DISK.get("sig"):
+        LOGGER.info("Plan changed since the sequence was written (%s -> %s) — regenerating",
+                    noon_name, best)
+        social_server.post_social_message(
+            "Plan changed since the sequence was written — regenerating:\n"
+            + slot_plan.describe(slots))
+        _run(generate_sequence_task, best, hours, slots=slots)
+    else:
+        _publish_plan_to_site("imaging", restamp=True)
+    _run(imaging_task)
+
+
+def driven_cycle():
+    """One day carried out from the conductor's plan (ADR 0015)."""
+    now = _local_now()
+    day = now.date().isoformat()
+    _, sunset = weather.get_sunrise_sunset()
+    poller = _PlanPoller(day)
+    set_state(State.NOON_CHECK)
+
+    # --- noon
+    rec, first = _await_record(poller, "noon", until=sunset)
+    resumed = bool(rec) and first and _record_age_s(rec) > _RESUMED_AGE_S
+    if rec is None or rec.get("outcome") != "good":
+        if resumed:
+            # Restarted on a day already called off: it was said at the time.
+            LOGGER.info("Skipping tonight — restarted after a %s noon plan", rec.get("outcome"))
+            return
+        _skip_noon(rec, "the conductor gave no noon plan before the sunset check")
+        return
+    reply = poller.poll() or {}
+    if resumed and reply.get("sunset"):
+        # Restarted after tonight's sunset decision: the run was launched (or
+        # refused) by the scheduler that was running then. Never launch twice.
+        LOGGER.info("Restarted after the sunset check (%s): not launching",
+                    reply["sunset"].get("outcome"))
+        return
+    slots = _carry_out_noon(rec, resumed)
+    _cross_check("noon", rec.get("plan"), post_grid=False)
+    noon_name, noon_seq = rec["plan"]["best"], int(rec["seq"])
+
+    # --- the afternoon: wait for the sunset decision, carrying out any replan
+    set_state(State.WAITING_FOR_PRE_SUNSET)
+    social_server.post_social_message(
+        "Imaging check at %s (10 min before sunset)"
+        % (sunset - timedelta(minutes=10)).strftime("%H:%M %Z"))
+    deadline = sunset + _SUNSET_GRACE + timedelta(minutes=15)
+    srec = None
+    while _local_now() < deadline:
+        reply = poller.poll() or {}
+        newer = reply.get("noon")
+        if newer and int(newer.get("seq") or 0) > noon_seq:
+            noon_seq = int(newer["seq"])
+            slots = _carry_out_replan(newer)
+            if slots is None:
+                return
+            noon_name = newer["plan"]["best"]
+        if reply.get("sunset"):
+            srec = reply["sunset"]
+            break
+        time.sleep(_PLAN_POLL_S)
+    if srec is None:
+        msg = "Iris: no sunset decision came from the conductor; not imaging tonight."
+        LOGGER.error(msg)
+        social_server.post_social_message(msg)
+        pushover.push_message(msg, priority=1)
+        return
+
+    # --- sunset
+    set_state(State.PRE_SUNSET_CHECK)
+    _cross_check("sunset", srec.get("plan"), post_grid=True)
+    if srec.get("outcome") != "good":
+        plan = srec.get("plan") or {}
+        why = srec.get("why") or ("%dh forecast clear, %d needed"
+                                  % (int(plan.get("good_hours") or 0), _MIN_GOOD_HOURS))
+        social_server.post_social_message(
+            f"Conditions not good enough at sunset ({why}), skipping tonight")
+        _publish_skip_to_site("conditions at sunset: %s" % why)
+        set_state(State.PRE_SUNSET_CHECK, plan.get("best") or None, False)
+        LOGGER.info("Conditions degraded at sunset — skipping tonight (%s)", srec.get("outcome"))
+        return
+    _carry_out_sunset(srec, noon_name)
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 
@@ -919,6 +1198,11 @@ def main():
     except ConnectionRefusedError:
         LOGGER.warning("MQTT broker not available — continuing without it")
 
+    from iris import client as conductor_client
+    if conductor_client.drives_checks():
+        _driven_main()
+        return
+
     # If restarted after noon but before pre-sunset, skip straight to the
     # noon-check flow instead of waiting until tomorrow's noon.
     skip_first_wait = (_initial_state() == State.NOON_CHECK)
@@ -932,6 +1216,30 @@ def main():
                 _wait_until(target)
             skip_first_wait = False
             nightly_cycle()
+        except Exception:
+            LOGGER.exception("Unhandled exception in scheduler loop")
+            try:
+                social_server.post_social_message("Oops — scheduler had a problem, recovering")
+            except Exception:
+                LOGGER.exception("Also failed to post exception notice")
+            set_state(State.WAITING_FOR_BOOT)
+            time.sleep(60)
+
+
+def _driven_main():
+    """main()'s loop when the conductor plans (ADR 0015): wait for noon, carry
+    out the day's plan, repeat. A restart after noon goes straight to the
+    plan, which the conductor has (or will have) -- nothing is re-decided."""
+    LOGGER.info("Scheduler carrying out the conductor's plan (conductor.drives_checks)")
+    while True:
+        try:
+            now = _local_now()
+            if now.hour < 12:
+                set_state(State.WAITING_FOR_NOON)
+                _wait_until(_next_noon())
+            driven_cycle()
+            set_state(State.WAITING_FOR_NOON)
+            _wait_until(_next_noon())
         except Exception:
             LOGGER.exception("Unhandled exception in scheduler loop")
             try:

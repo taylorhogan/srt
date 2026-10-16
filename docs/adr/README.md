@@ -14,3 +14,6 @@ The decisions that shaped iris/, one file each, recorded when made.
 - [0010-website-ascendant.md](0010-website-ascendant.md)
 - [0011-autonomy-months-heir-operable.md](0011-autonomy-months-heir-operable.md)
 - [0012-one-event-one-meaning.md](0012-one-event-one-meaning.md)
+- [0013-conductor-decides-actuators-act.md](0013-conductor-decides-actuators-act.md)
+- [0014-estop-and-the-mount-ask-the-conductor.md](0014-estop-and-the-mount-ask-the-conductor.md)
+- [0015-conductor-plans-the-night.md](0015-conductor-plans-the-night.md)

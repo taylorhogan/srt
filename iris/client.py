@@ -209,3 +209,31 @@ def state(timeout: float = DEFAULT_TIMEOUT_S) -> Optional[dict]:
             return json.load(r)
     except (urllib.error.URLError, OSError, ValueError):
         return None
+
+
+# ------------------------------------------------------------------ the night's plan (ADR 0015)
+
+def drives_checks() -> bool:
+    """True when the conductor's clock runs the noon and sunset checks and
+    the scheduler only carries out its plan (conductor.drives_checks)."""
+    return bool(_cfg().get("drives_checks", False))
+
+
+def get_plan(day: Optional[str] = None, timeout: float = DEFAULT_TIMEOUT_S) -> Optional[dict]:
+    """GET /v1/plan for *day* (YYYY-MM-DD, default today), or None if unreachable.
+
+    {"date", "noon": record or None, "sunset": record or None, "state", ...};
+    a record is the NIGHT_PLAN note's data: outcome good|bad|failed|skipped|
+    missed, the plan, why, and its journal seq."""
+    url = conductor_url() + "/v1/plan" + (("?date=" + day) if day else "")
+    try:
+        with urllib.request.urlopen(url, timeout=timeout) as r:
+            return json.load(r)
+    except (urllib.error.URLError, OSError, ValueError):
+        return None
+
+
+def request_replan(source: str = "chat") -> Optional[dict]:
+    """Ask the conductor to make the noon decision again (REPLAN_REQUESTED).
+    The reply says whether the machine took it (accepted) and why not."""
+    return post_event("REPLAN_REQUESTED", source, {"why": "operator replan"})

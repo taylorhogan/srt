@@ -272,3 +272,10 @@ def test_a_restart_after_a_called_off_night_returns_to_idle(conductor):
     again = ShadowConductor(root, c.journal, sun_probe=lambda: None,
                             roof_authority=True, mount_authority=True)
     assert again.state == "IDLE_DAY"
+
+
+def test_slots_from_record_gives_back_the_same_windows():
+    back = NP.slots_from_record(NP.slots_record(SLOTS))
+    assert [(s.name, s.start, s.end, s.good_hours) for s in back] == \
+        [(s.name, s.start, s.end, s.good_hours) for s in SLOTS]
+    assert NP.slots_from_record(None) == []

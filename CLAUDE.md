@@ -53,7 +53,7 @@ The system has two long-running processes launched by `end_points/start_srt.py`:
 
 1. **Social Server** (`cmd_processing/social_server.py`) — Runs a FastAPI/WebSocket web chat server on port 8095. Parses commands (`image`, `best`, `tonight`, `status`, `calendar`, `latest`, etc.) and dispatches them. Only responds to users listed in `Super Users` config. Posts status/images back to the web chat (and optionally mirrors to Mastodon via `mastodon_mirror` config flag).
 
-2. **Scheduler Server** (`end_points/scheduler_server.py`) — State machine that runs daily: waits for noon → checks best DSO for tonight → waits for pre-sunset → generates NINA sequence → triggers imaging. States: `WAITING_FOR_NOON → NOON_CHECK → WAITING_FOR_PRE_SUNSET → PRE_SUNSET_CHECK → IMAGING`.
+2. **Scheduler Server** (`end_points/scheduler_server.py`) — State machine that runs daily: waits for noon → checks best DSO for tonight → waits for pre-sunset → generates NINA sequence → triggers imaging. States: `WAITING_FOR_NOON → NOON_CHECK → WAITING_FOR_PRE_SUNSET → PRE_SUNSET_CHECK → IMAGING`. With `conductor.drives_checks` on (ADR 0015, built 2026-10-16, off until the owner flips it) the conductor's clock makes the noon and sunset decisions (`iris/conductor/clock.py`, journaled as `NIGHT_PLAN`, served by `GET /v1/plan`) and the scheduler only carries them out (`driven_cycle`): it never ranks to decide, and no plan from the conductor means no night.
 
 They communicate via **MQTT** (`paho-mqtt`). Admin push notifications go via **Pushover** (`utils/pushover.py`, rate-limited to 6/min).
 

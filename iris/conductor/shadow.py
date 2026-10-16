@@ -109,6 +109,15 @@ def _read_mount_authority():
         return False
 
 
+def _read_drives_checks():
+    """ADR 0015: the conductor's own clock runs the noon and sunset checks."""
+    try:
+        from configs import config
+        return bool(config.data().get("conductor", {}).get("drives_checks", False))
+    except Exception:
+        return False
+
+
 def _tri(name) -> Tri:
     try:
         return Tri(str(name).upper())
@@ -240,9 +249,16 @@ class ShadowConductor:
     _flats_grace_polls = 60
 
     def __init__(self, repo_root: Path, journal: Journal, sun_probe=None,
-                 roof_authority=None, mount_authority=None, planner=None):
+                 roof_authority=None, mount_authority=None, planner=None,
+                 drives_checks=None):
         self.root = Path(repo_root)
         self.journal = journal
+        # ADR 0015: with the conductor driving the checks (iris/conductor/
+        # clock.NightDriver) the scheduler's state file no longer stands for
+        # the day's decisions, so its check transitions are not translated
+        # into NOON_TICK / PLAN_* / PRE_SUNSET_TICK / WEATHER_BAD here.
+        self.drives_checks = (_read_drives_checks() if drives_checks is None
+                              else bool(drives_checks))
         # Phase 3 step 1: plans each night the scheduler decides, in shadow
         # (iris/conductor/planner.ShadowPlanner). None = not planning.
         self.planner = planner
@@ -322,7 +338,8 @@ class ShadowConductor:
         # A night the sunset check called off while this conductor was down
         # (or before the transition was mapped): the machine still waits in
         # ARMED / PRE_FLIGHT for a night the scheduler has already dropped.
-        if (self.state in ("ARMED", "PRE_FLIGHT") and self._sched == "WAITING_FOR_NOON"
+        if (not self.drives_checks
+                and self.state in ("ARMED", "PRE_FLIGHT") and self._sched == "WAITING_FOR_NOON"
                 and self._will_image == "false"):
             self.offer("WEATHER_BAD", "shadow",
                        {"sched": self._sched, "synthesized": True,
@@ -949,7 +966,14 @@ class ShadowConductor:
 
         # --- scheduler transitions -> planner events
         sched, will = self._read_sched()
-        if sched is not None and sched != self._sched:
+        if sched is not None and sched != self._sched and self.drives_checks:
+            # The clock decides the day (ADR 0015); only the scheduler's
+            # end of an imaging run still means something here.
+            prev = self._sched
+            if sched == "WAITING_FOR_NOON" and prev in ("IMAGING", "WAITING_FOR_BOOT"):
+                self._offer_clock("DAY_TICK", sched)
+            self._sched, self._will_image = sched, will
+        elif sched is not None and sched != self._sched:
             prev = self._sched
             if sched == "NOON_CHECK":
                 # A new day starting while the machine still thinks a night is

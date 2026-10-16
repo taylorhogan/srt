@@ -56,18 +56,26 @@ def main() -> int:
         probe.close()
 
     journal = Journal(REPO_ROOT / "local" / "journal")
+    drives = bool(cfg.get("drives_checks", False))
     planner = None
-    if cfg.get("shadow_planner", True):
+    if cfg.get("shadow_planner", True) and not drives:
         # Phase 3 step 1: each scheduler decision re-planned in shadow.
         from iris.conductor.planner import ShadowPlanner
         planner = ShadowPlanner(REPO_ROOT, journal)
-    conductor = ShadowConductor(REPO_ROOT, journal, planner=planner)
+    conductor = ShadowConductor(REPO_ROOT, journal, planner=planner, drives_checks=drives)
     journal.append("note", "CONDUCTOR_STARTED", "conductor",
-                   data={"mode": "shadow", "state": conductor.state})
+                   data={"mode": "shadow", "state": conductor.state,
+                         "drives_checks": drives})
 
     watcher = threading.Thread(target=conductor.run_forever, daemon=True,
                                name="shadow-watcher")
     watcher.start()
+    if drives:
+        # Phase 3 step 2 (ADR 0015): the noon and sunset checks on our clock.
+        from iris.conductor.clock import NightDriver
+        driver = NightDriver(conductor, journal, REPO_ROOT)
+        threading.Thread(target=driver.run_forever, daemon=True,
+                         name="night-driver").start()
 
     from iris.core.api import build_app
     import uvicorn

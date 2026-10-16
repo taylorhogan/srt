@@ -3842,6 +3842,7 @@ def get_super_user_commands() -> dict[str, Callable]:
         "snr": snr_cmd,
         "night": night_cmd,
         "lightcurve": lightcurve_cmd,
+        "replan": replan_cmd,
         "rehome": rehome_cmd,
         "transit": transit_cmd,
         "transient": transient_cmd,
@@ -4565,6 +4566,36 @@ def _lightcurve_run(words: list[str]) -> None:
     except Exception as exc:
         _logger.exception("lightcurve failed for %s", dso)
         social_server.post_social_message(f"Light curve failed for {dso}: {exc}")
+
+
+def replan_reply_text(reply, state: str = "") -> str:
+    """The chat's answer to `replan` from the conductor's reply. Pure."""
+    if reply is None:
+        return "Replan: the conductor is not answering; nothing changed."
+    if reply.get("accepted"):
+        return ("Replanning: the conductor is ranking the queue again. When the new plan "
+                "lands (about a minute) the scheduler rewrites tonight's sequence and posts it.")
+    return ("Replan refused: the conductor is in %s (%s)."
+            % (reply.get("state") or state or "?", reply.get("guard") or "no replan from there"))
+
+
+def replan_cmd(words: list[str], account: str) -> None:
+    """Make the noon decision again (ADR 0015): after a priority, filter or
+    queue change between noon and the sunset check. The conductor re-plans in
+    its own process; the scheduler carries out whatever it decides."""
+    from iris import client as conductor_client
+    if not conductor_client.drives_checks():
+        social_server.post_social_message(
+            "Replan needs conductor.drives_checks on; until then the scheduler plans "
+            "at noon and sunset, and `sequence <dso>` rewrites the file by hand.")
+        return
+    plan = conductor_client.get_plan()
+    if plan and plan.get("sunset"):
+        social_server.post_social_message(
+            "Replan refused: the sunset check has already decided tonight (%s)."
+            % plan["sunset"].get("outcome"))
+        return
+    social_server.post_social_message(replan_reply_text(conductor_client.request_replan("chat")))
 
 
 def eon_lightcurve_targets(dsos: list) -> list:

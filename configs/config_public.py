@@ -7,7 +7,7 @@ class PublicConfig():
 
         },
         "version": {
-            "date": "2026.10.16.1"
+            "date": "2026.10.16.2"
         },
 
         "logger": {
@@ -576,6 +576,19 @@ class PublicConfig():
             # with the same code (control/night_plan, in its own process) and
             # journals PLAN_MATCH / PLAN_DIFF. Watch-only; False stops it.
             "shadow_planner": True,
+            # Phase 3 step 2 (ADR 0015, 2026-10-16): the conductor's clock
+            # runs the noon and sunset checks (iris/conductor/clock.py) and
+            # journals each decision as NIGHT_PLAN; the scheduler fetches it
+            # (GET /v1/plan) and carries it out, never planning itself. An
+            # unreachable conductor = no night + a push. False = the
+            # scheduler plans as before, with shadow_planner beside it.
+            # BOTH processes read this at start: change it, then restart
+            # start_srt.
+            "drives_checks": False,
+            # With drives_checks on, the scheduler also ranks in-process,
+            # acts on nothing, and journals EXECUTOR_PLAN_MATCH / _DIFF
+            # (ADR 0015 rollout step 2). It also posts the grid at sunset.
+            "executor_cross_check": True,
             # Peers the API serves: this PC only (every caller is local).
             "allowed_networks": ["127.0.0.0/8", "::1/128"],
         },

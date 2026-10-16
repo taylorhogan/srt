@@ -60,6 +60,22 @@ def parse_plan(stdout: str) -> dict:
     raise ValueError("no plan in the planner's output")
 
 
+def run_night_plan(root: Path, timeout_s: float = PLAN_TIMEOUT_S, refresh: bool = False) -> dict:
+    """Run `python -m control.night_plan` in its own process and return the plan.
+
+    Raises on a non-zero exit, a timeout (subprocess.TimeoutExpired) or no
+    plan in the output. *refresh* is the noon form: the queue's hours are
+    refreshed before the decision (ADR 0015)."""
+    cmd = [sys.executable, "-m", "control.night_plan"] + (["--refresh"] if refresh else [])
+    proc = subprocess.run(
+        cmd, cwd=str(root), capture_output=True, text=True, timeout=timeout_s,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    if proc.returncode != 0:
+        raise RuntimeError("night_plan exited %d: %s"
+                           % (proc.returncode, (proc.stderr or "").strip()[-300:]))
+    return parse_plan(proc.stdout)
+
+
 class ShadowPlanner:
     def __init__(self, repo_root: Path, journal, runner=None,
                  timeout_s: float = PLAN_TIMEOUT_S):
@@ -117,11 +133,4 @@ class ShadowPlanner:
             self._busy.release()
 
     def _run_cli(self) -> dict:
-        proc = subprocess.run(
-            [sys.executable, "-m", "control.night_plan"], cwd=str(self.root),
-            capture_output=True, text=True, timeout=self.timeout_s,
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-        if proc.returncode != 0:
-            raise RuntimeError("night_plan exited %d: %s"
-                               % (proc.returncode, (proc.stderr or "").strip()[-300:]))
-        return parse_plan(proc.stdout)
+        return run_night_plan(self.root, self.timeout_s)

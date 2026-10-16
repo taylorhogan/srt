@@ -81,7 +81,9 @@ STATES = (
 
 EVENTS = (
     # clock / planner
-    "NOON_TICK", "PLAN_GOOD", "PLAN_BAD", "PRE_SUNSET_TICK",
+    # PLAN_FAILED (ADR 0015): the conductor's planning process crashed or
+    # timed out twice; no plan means no night.
+    "NOON_TICK", "PLAN_GOOD", "PLAN_BAD", "PLAN_FAILED", "PRE_SUNSET_TICK",
     "CHECKS_PASSED", "CHECKS_FAILED", "REPLAN_REQUESTED",
     # roof sensing / motion outcomes. ROOF_FIRE_FAILED: the relay command
     # never reached the relay (2026-09-16 11:11, the Shelly did not answer
@@ -163,6 +165,12 @@ TRANSITIONS = (
     T("IDLE_DAY",     "NOON_TICK",           "PLANNING"),
     T("PLANNING",     "PLAN_GOOD",           "ARMED"),
     T("PLANNING",     "PLAN_BAD",            "IDLE_DAY"),
+    T("PLANNING",     "PLAN_FAILED",         "IDLE_DAY"),
+    # The operator's `replan` (ADR 0015): the noon decision again, after a
+    # priority or filter change. Daytime only; the conductor refuses one
+    # after the sunset check has decided.
+    T("IDLE_DAY",     "REPLAN_REQUESTED",    "PLANNING"),
+    T("ARMED",        "REPLAN_REQUESTED",    "PLANNING"),
     T("ARMED",        "PRE_SUNSET_TICK",     "PRE_FLIGHT"),
     T("ARMED",        "WEATHER_BAD",         "IDLE_DAY"),
 
@@ -197,6 +205,7 @@ TRANSITIONS = (
       guards=(G.safety_armed, G.mount_parked, G.roof_state_known)),
     T("PRE_FLIGHT",   "CHECKS_FAILED",       "IDLE_DAY"),
     T("PRE_FLIGHT",   "WEATHER_BAD",         "IDLE_DAY"),
+    T("PRE_FLIGHT",   "PLAN_FAILED",         "IDLE_DAY"),
     T("OPENING_ROOF", "ROOF_OPEN_CONFIRMED", "PRELUDE"),
     T("OPENING_ROOF", "ROOF_STALL",          "FAULT_ROOF_UNKNOWN"),
     T("OPENING_ROOF", "ROOF_TIMEOUT",        "FAULT_ROOF_UNKNOWN"),

@@ -168,6 +168,14 @@ HELP: dict[str, dict] = {
         "usage": ["sequence <dso>"],
         "examples": ["sequence m 31"],
     },
+    "replan": {
+        "category": "super",
+        "summary": "Make tonight's noon decision again, after a priority, filter or queue change.",
+        "usage": ["replan"],
+        "notes": ["Between noon and the sunset check, with conductor.drives_checks on (ADR 0015).",
+                  "The conductor re-ranks the queue in its own process; the scheduler then rewrites "
+                  "the sequence from the new plan and posts it. Refused after the sunset check."],
+    },
     "mode": {
         "category": "super",
         "summary": "Set the scheduler to auto or manual mode.",

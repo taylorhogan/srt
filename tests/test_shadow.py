@@ -577,3 +577,18 @@ def test_judge_table_mirrors_the_shadow_reading():
         "DONE_FLATS": "NINA_FLATS_DONE",
     }
     assert "IN_FLATS" not in sr._BAT_TO_EVENT   # machine is already in FLATS
+
+
+def test_with_the_conductor_driving_the_checks_the_scheduler_file_decides_nothing(tmp_path):
+    """ADR 0015: the clock offers NOON_TICK / PLAN_* / PRE_SUNSET_TICK itself, so
+    the scheduler's state file must not walk the machine a second time."""
+    root = _mkroot(tmp_path)
+    sh = ShadowConductor(root, Journal(root / "local" / "journal"), sun_probe=lambda: None,
+                         drives_checks=True)
+    sh.pwi4_probe = lambda: "unreachable"
+    sh.limits_probe = lambda: ("not_configured", "")
+    for state in ("NOON_CHECK", "WAITING_FOR_PRE_SUNSET", "PRE_SUNSET_CHECK", "WAITING_FOR_NOON"):
+        _sched(root, state)
+        sh.poll()
+    assert _transitions(sh) == [] and sh.state == "IDLE_DAY"
+    assert not [e for e in sh.journal.replay() if e.event in ("NOON_TICK", "PLAN_GOOD", "WEATHER_BAD")]
