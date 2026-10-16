@@ -672,9 +672,55 @@ def _block_mean(a: np.ndarray, b: int) -> np.ndarray:
     return np.nanmean(a[:h, :w].reshape(h // b, b, w // b, b), axis=(1, 3))
 
 
-def sky_noise_model(chan: np.ndarray, bin_factor: int = AUTO_BIN) -> dict:
+AUTO_SKY_TILES = 8             # tiles per side for the clean-sky search
+AUTO_SKY_QUARTILE = 0.25       # sky = median of the darkest quarter of tile medians
+AUTO_CLEAN_MIN = 0.15          # fewer tiles than this at sky = "no clean sky"
+
+
+def clean_sky(chan: np.ndarray, bin_factor: int = AUTO_BIN) -> dict:
+    """Sky level from the darkest part of the field, and how much of the field is sky.
+
+    sep's global background is the level of the whole field, which on a target
+    that fills it (IC 1396, squid, NGC 5907: auto_stretch's three failures,
+    652f8c9) is nebula, not sky, so black landed at the binned median. Here
+    the binned field is cut into AUTO_SKY_TILES^2 tiles and sky is the median
+    of the darkest quarter of tile medians. "clean_fraction" is the share of
+    tiles whose median sits within the noise of that sky; below
+    AUTO_CLEAN_MIN the answer is flagged rather than trusted, so an automatic
+    publish can refuse instead of guessing.
+    """
+    a = np.ascontiguousarray(chan.astype(np.float32))
+    binned = _block_mean(a, bin_factor)
+    h, w = binned.shape
+    t = AUTO_SKY_TILES
+    th, tw = max(1, h // t), max(1, w // t)
+    meds = np.array([np.nanmedian(binned[i * th:(i + 1) * th, j * tw:(j + 1) * tw])
+                     for i in range(t) for j in range(t)
+                     if binned[i * th:(i + 1) * th, j * tw:(j + 1) * tw].size])
+    meds = meds[np.isfinite(meds)]
+    k = max(1, int(round(AUTO_SKY_QUARTILE * meds.size)))
+    sky = float(np.median(np.sort(meds)[:k]))
+    # The tolerance for "this tile is sky" comes from the NOISE, measured on
+    # neighbouring-pixel differences, which structure does not inflate. A sigma
+    # from the histogram around the darkest tiles includes the nebula's own
+    # ripples on a field it fills, and then every tile passes as sky.
+    sub = a[::2, ::2]
+    dif = np.diff(sub, axis=1).ravel()
+    dif = dif[np.isfinite(dif)]
+    sigma_px = max(1.4826 * float(np.median(np.abs(dif - np.median(dif)))) / np.sqrt(2.0), 1e-6) \
+        if dif.size else 1e-6
+    tile_px = th * tw * bin_factor * bin_factor
+    tol = 3.0 * sigma_px / np.sqrt(max(tile_px, 1)) + 1.0 * sigma_px / bin_factor
+    clean = float(np.mean(meds <= sky + tol)) if meds.size else 0.0
+    return {"sky": sky, "sigma_px_noise": sigma_px, "clean_fraction": clean,
+            "confident": clean >= AUTO_CLEAN_MIN}
+
+
+def sky_noise_model(chan: np.ndarray, bin_factor: int = AUTO_BIN,
+                    sky: Optional[float] = None) -> dict:
     """Sky level, per-pixel and binned noise, and the faint/bright signal
-    fractions of one background-subtracted channel."""
+    fractions of one background-subtracted channel. *sky* overrides sep's
+    whole-field estimate (clean_sky passes its darkest-tiles level)."""
     import sep
     from math import erf, sqrt
 
@@ -683,8 +729,9 @@ def sky_noise_model(chan: np.ndarray, bin_factor: int = AUTO_BIN) -> dict:
 
     a = np.ascontiguousarray(chan.astype(np.float32))
     binned = np.ascontiguousarray(_block_mean(a, bin_factor).astype(np.float32))
-    box = max(8, min(64, min(binned.shape) // 8))
-    sky = float(sep.Background(binned, bw=box, bh=box).globalback)
+    if sky is None:
+        box = max(8, min(64, min(binned.shape) // 8))
+        sky = float(sep.Background(binned, bw=box, bh=box).globalback)
 
     # Per-pixel sigma, negative side, on a strided subsample of the full field.
     px = a[::4, ::4].ravel()
@@ -762,7 +809,8 @@ def auto_stretch(subbed: dict[str, np.ndarray], white: float,
 
 
 def measure_stretch(subbed: dict[str, np.ndarray], blacks: dict[str, float],
-                    white: float, softening: float, lum: Optional[str] = None) -> dict:
+                    white: float, softening: float, lum: Optional[str] = None,
+                    fm: Optional[dict] = None) -> dict:
     """What a stretch DOES to this field, in units that carry across targets.
 
     black_pct=60 on a galaxy and on a field-filling nebula are unrelated
@@ -779,32 +827,16 @@ def measure_stretch(subbed: dict[str, np.ndarray], blacks: dict[str, float],
       star_clip      fraction of star-mask pixels at or above white
     *subbed* is what _prepare returns (background-subtracted, balanced,
     Ha-blended); *blacks*/*white*/*softening* are the stretch being measured.
+    *fm* is a field_model() of the same *subbed*, to skip recomputing it.
     """
-    diag = {c: sky_noise_model(a) for c, a in subbed.items() if c not in DERIVED_PLANES}
-    if lum and lum in diag:
-        dom = lum
-    else:
-        dom = max(diag, key=lambda c: diag[c]["faint_fraction"] + diag[c]["bright_fraction"])
+    fm = fm if fm is not None else field_model(subbed, lum)
+    diag, dom, colour, is_star, ext = fm["diag"], fm["dominant"], fm["colour"], fm["is_star"], fm["ext"]
     d = diag[dom]
     span = max(white - blacks[dom], 1e-6)
 
     def out(adu):
         return float(_asinh_out(float(np.clip((adu - blacks[dom]) / span, 0.0, 1.0)), softening))
 
-    colour = np.maximum.reduce([subbed[c] for c in ("R", "G", "B") if c in subbed])
-    stars, sinfo = star_mask(subbed[dom])
-    is_star = stars > 0.5
-    # Extended signal: off the stars, in blocks of the DOMINANT channel that
-    # stand 3 binned sigma above sky. Binned, not per pixel: on a faint nebula
-    # a per-pixel cut keeps only the brightest ~1% of the object, which is the
-    # part that clips (bubble read 97% "clipped"). Same channel the output
-    # levels are read from, or the mask and the levels disagree.
-    b = AUTO_BIN
-    sig = _block_mean(subbed[dom], b) > d["sky"] + 3.0 * d["sigma_binned"]
-    blocks = np.zeros(colour.shape, bool)
-    bh, bw = sig.shape
-    blocks[:bh * b, :bw * b] = np.repeat(np.repeat(sig, b, axis=0), b, axis=1)
-    ext = (~is_star) & blocks
     clipped = colour >= white
     n_ext, n_star = int(ext.sum()), int(is_star.sum())
     # How bright the object itself is drawn: the faint and typical pixel of the
@@ -826,8 +858,113 @@ def measure_stretch(subbed: dict[str, np.ndarray], blacks: dict[str, float],
         "star_clip": float((clipped & is_star).sum() / n_star) if n_star else None,
         "softening": float(softening),
         "faint_fraction": d["faint_fraction"], "bright_fraction": d["bright_fraction"],
-        "stars": sinfo.get("stars", 0),
+        "stars": fm["stars"], "clean_fraction": d["clean_fraction"],
     }
+
+
+def field_model(subbed: dict[str, np.ndarray], lum: Optional[str] = None) -> dict:
+    """The field as the stretch sees it: per-channel sky and noise, the
+    dominant channel, the brightest-primary plane, the star mask and the
+    extended-signal mask. Shared by measure_stretch and auto_stretch_v2 so a
+    stretch is chosen and scored against the same masks."""
+    diag = {}
+    for c, a in subbed.items():
+        if c in DERIVED_PLANES:
+            continue
+        cs = clean_sky(a)
+        diag[c] = {**sky_noise_model(a, sky=cs["sky"]), "clean_fraction": cs["clean_fraction"],
+                   "confident": cs["confident"]}
+    if lum and lum in diag:
+        dom = lum
+    else:
+        dom = max(diag, key=lambda c: diag[c]["faint_fraction"] + diag[c]["bright_fraction"])
+    d = diag[dom]
+    colour = np.maximum.reduce([subbed[c] for c in ("R", "G", "B") if c in subbed])
+    stars, sinfo = star_mask(subbed[dom])
+    is_star = stars > 0.5
+    # Extended signal: off the stars, in blocks of the DOMINANT channel that
+    # stand 3 binned sigma above sky. Binned, not per pixel: on a faint nebula
+    # a per-pixel cut keeps only the brightest ~1% of the object, which is the
+    # part that clips (bubble read 97% "clipped"). Same channel the output
+    # levels are read from, or the mask and the levels disagree.
+    b = AUTO_BIN
+    sig = _block_mean(subbed[dom], b) > d["sky"] + 3.0 * d["sigma_binned"]
+    blocks = np.zeros(colour.shape, bool)
+    bh, bw = sig.shape
+    blocks[:bh * b, :bw * b] = np.repeat(np.repeat(sig, b, axis=0), b, axis=1)
+    return {"diag": diag, "dominant": dom, "colour": colour, "is_star": is_star,
+            "ext": (~is_star) & blocks, "stars": sinfo.get("stars", 0)}
+
+
+# --- auto stretch v2 (docs/AUTO_STRETCH_PLAN.md, phase 1) -------------------
+#
+# The stretch is set by three TARGETS in output units, the same units the
+# labels are measured in (measure_stretch), so a pick on one target can be
+# applied to another: where black sits against sky (margin, per-pixel sigma;
+# negative = above sky), what share of the object may clip (ext_clip, stars
+# excluded -- they may clip), and how bright the object's bright p90 is drawn
+# (bright_out). Defaults per class are the medians of the owner's picks as of
+# 2026-10-16 (local/stretch_labels.json); scripts/stretch_benchmark.py scores
+# them leave-one-out and prints the values to put here.
+STRETCH_TARGETS = {
+    # m33, ngc7320 (owner): margins -0.3..-0.8, object clip 0.4-0.7%, bright 0.58-0.76
+    "broadband": {"margin": -0.45, "ext_clip": 0.005, "bright_out": 0.65},
+    # ngc7380, sh2-92, bubble, ic1396 (owner): margins +0.5..-0.5, bright 0.58-1.0
+    "narrowband": {"margin": -0.2, "ext_clip": 0.006, "bright_out": 0.85},
+}
+NARROWBAND_RECIPES = frozenset({"HOO", "SHO", "HSO"})
+
+
+def stretch_class(recipe: str) -> str:
+    return "narrowband" if str(recipe).upper().replace("_NOFLAT", "") in NARROWBAND_RECIPES \
+        else "broadband"
+
+
+def auto_stretch_v2(subbed: dict[str, np.ndarray], cls: str = "broadband",
+                    targets: Optional[dict] = None, lum: Optional[str] = None,
+                    fm: Optional[dict] = None) -> dict:
+    """Blacks, white and softening that hit the class's targets on this field.
+
+    -> {"blacks", "white", "softening", "confident", "why", "targets", "fm"}.
+    "confident" is False when the dominant channel has no clean sky or the
+    field has no extended signal to set the white from; the stretch is still
+    returned (sky-anchored, white at a percentile) but should not be published
+    unattended.
+    """
+    t = dict(STRETCH_TARGETS[cls], **(targets or {}))
+    fm = fm if fm is not None else field_model(subbed, lum)
+    diag, dom, colour, ext = fm["diag"], fm["dominant"], fm["colour"], fm["ext"]
+    why = []
+    blacks = {c: d["sky"] - t["margin"] * d["sigma"] for c, d in diag.items()}
+    if not diag[dom]["confident"]:
+        why.append("no clean sky in %s (%.0f%% of tiles at sky)"
+                   % (dom, 100 * diag[dom]["clean_fraction"]))
+
+    # White: the object may clip by ext_clip, stars by whatever it takes.
+    vals = colour[ext]
+    if vals.size >= 1000:
+        white = float(np.percentile(vals, 100.0 * (1.0 - t["ext_clip"])))
+    else:
+        why.append("no extended signal to set white from")
+        white = shared_white(subbed, 99.9)
+    white = max(white, max(blacks[c] for c in ("R", "G", "B") if c in blacks)
+                + 10.0 * diag[dom]["sigma"])
+
+    # Softening: draw the dominant channel's bright p90 at bright_out.
+    d = diag[dom]
+    lo, hi = AUTO_SOFT_RANGE
+    if d["bright_p90"] is not None and d["bright_fraction"] > 1e-4:
+        y = float(np.clip((d["bright_p90"] - blacks[dom]) / max(white - blacks[dom], 1e-6), 0, 1))
+        soft = _solve_soft(y, t["bright_out"], lo, hi)
+        if soft in (lo, hi):
+            why.append("softening at its %s limit: bright p90 cannot reach %.2f"
+                       % ("hard" if soft == lo else "soft", t["bright_out"]))
+    else:
+        soft = SOFTENING
+        why.append("no bright signal; default softening")
+    return {"blacks": blacks, "white": white, "softening": float(soft),
+            "confident": not why or all(w.startswith("softening") for w in why),
+            "why": why, "targets": t, "dominant": dom, "fm": fm}
 
 
 def effective_options(**overrides) -> dict:

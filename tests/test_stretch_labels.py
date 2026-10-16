@@ -90,3 +90,53 @@ def test_clipping_is_split_between_stars_and_the_object():
     assert low["ext_clip"] > 0.05
     assert high["ext_clip"] == 0.0
     assert high["star_clip"] > 0.0          # stars may clip; that is not the object
+
+
+# --- auto_stretch_v2 (phase 1) ----------------------------------------------
+
+def _nebula_everywhere(seed=5):
+    """Emission filling the whole frame: no tile is sky."""
+    rng = np.random.default_rng(seed)
+    h = w = 256
+    yy, xx = np.mgrid[:h, :w]
+    neb = 8.0 + 4.0 * np.sin(xx / 23.0) * np.cos(yy / 31.0) + 4.0
+    return {c: (neb + rng.normal(0, 1.0, (h, w))).astype(np.float32) for c in ("R", "G", "B")}
+
+
+def test_v2_hits_its_targets_on_a_clean_galaxy_field():
+    sub = _galaxy()
+    t = {"margin": -0.4, "ext_clip": 0.01, "bright_out": 0.85}
+    v2 = cp.auto_stretch_v2(sub, "broadband", t)
+    assert v2["confident"], v2["why"]
+    m = cp.measure_stretch(sub, v2["blacks"], v2["white"], v2["softening"], fm=v2["fm"])
+    for c in ("R", "G", "B"):
+        assert abs(m["margin_sigma"][c] - t["margin"]) < 0.15
+    assert m["ext_clip"] <= 0.03
+    assert abs(m["bright_out"] - t["bright_out"]) < 0.05
+
+
+def test_v2_says_so_when_the_field_has_no_clean_sky():
+    v2 = cp.auto_stretch_v2(_nebula_everywhere(), "narrowband")
+    assert not v2["confident"]
+    assert any("no clean sky" in w for w in v2["why"])
+
+
+def test_clean_sky_finds_the_dark_corner_not_the_field_median():
+    rng = np.random.default_rng(9)
+    a = rng.normal(0, 1.0, (256, 256)).astype(np.float32)
+    a[:, 64:] += 6.0                       # three quarters of the frame is emission
+    cs = cp.clean_sky(a)
+    assert abs(cs["sky"]) < 0.2 and cs["confident"]
+    assert cs["clean_fraction"] < 0.4
+
+
+def test_v2_white_ignores_the_stars():
+    sub = _galaxy()
+    v2 = cp.auto_stretch_v2(sub, "broadband", {"ext_clip": 0.0})
+    # The disk peaks near 30 ADU; the stars near 400. White follows the disk.
+    assert 20.0 < v2["white"] < 60.0
+
+
+def test_recipes_map_to_their_class():
+    assert cp.stretch_class("HOO") == "narrowband" and cp.stretch_class("hso_noflat") == "narrowband"
+    assert cp.stretch_class("HALRGB") == "broadband" and cp.stretch_class("LRGB") == "broadband"
