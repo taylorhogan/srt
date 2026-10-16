@@ -27,3 +27,16 @@ def _no_live_conductor(monkeypatch):
         return
     monkeypatch.setattr(_ic, "post_event", lambda event, *a, **k: None, raising=False)
     monkeypatch.setattr(_ic, "state", lambda *a, **k: None, raising=False)
+
+
+@pytest.fixture(autouse=True)
+def _drives_checks_from_the_test_not_the_machine(monkeypatch):
+    """A ShadowConductor built without drives_checks= reads the live config,
+    so the observatory's own flag (True since 2026-10-16) decided whether the
+    shadow-planning tests passed there while CI, with the config stubbed, saw
+    False. Default to off; tests of the driven path pass drives_checks=True."""
+    try:
+        import iris.conductor.shadow as _shadow
+    except Exception:          # noqa: BLE001
+        return
+    monkeypatch.setattr(_shadow, "_read_drives_checks", lambda: False, raising=False)

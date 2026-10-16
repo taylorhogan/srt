@@ -457,6 +457,16 @@ HELP: dict[str, dict] = {
         "examples": ["publish ic1396 19", "publish ic1396 19 .75",
                      "publish sh2-92 7 75", "publish bubble 19 .75"],
     },
+    "keep": {
+        "category": "super",
+        "summary": ("Mark the latest `process` render or `publish` of a target as "
+                    "the stretch you kept. It stamps that entry in the target's "
+                    "process_log.json; kept renders are the labels the automatic "
+                    "stretch is scored against (docs/AUTO_STRETCH_PLAN.md). Give "
+                    "a recipe to pick the latest of that recipe."),
+        "usage": ["keep <dso>", "keep <dso> <recipe>"],
+        "examples": ["keep ngc6946", "keep ngc6946 halrgb"],
+    },
     "stack": {
         "category": "super",
         "summary": "Stack all LIGHT frames of a DSO (per filter) and post each as JPEG.",

@@ -746,6 +746,75 @@ def auto_stretch(subbed: dict[str, np.ndarray], white: float,
             "dominant": dom, "anchors": anchors}
 
 
+def measure_stretch(subbed: dict[str, np.ndarray], blacks: dict[str, float],
+                    white: float, softening: float, lum: Optional[str] = None) -> dict:
+    """What a stretch DOES to this field, in units that carry across targets.
+
+    black_pct=60 on a galaxy and on a field-filling nebula are unrelated
+    stretches, so a pick cannot be stored as its percentiles
+    (docs/AUTO_STRETCH_PLAN.md, phase 0). Measured instead:
+      margin_sigma   per channel, how far black sits below sky in per-pixel sigma
+                     (negative = above sky, clipping noise and faint signal)
+      faint_out      output level (0..1) of sky + 2 binned sigma, dominant channel
+      bright_out     output level of the bright signal's p90, dominant channel
+      sky_out        output level of the sky itself, dominant channel
+      ext_p10_out / ext_p50_out
+                     output level of the faint / typical extended-signal pixel
+      ext_clip      fraction of extended (non-star) signal at or above white
+      star_clip      fraction of star-mask pixels at or above white
+    *subbed* is what _prepare returns (background-subtracted, balanced,
+    Ha-blended); *blacks*/*white*/*softening* are the stretch being measured.
+    """
+    diag = {c: sky_noise_model(a) for c, a in subbed.items() if c not in DERIVED_PLANES}
+    if lum and lum in diag:
+        dom = lum
+    else:
+        dom = max(diag, key=lambda c: diag[c]["faint_fraction"] + diag[c]["bright_fraction"])
+    d = diag[dom]
+    span = max(white - blacks[dom], 1e-6)
+
+    def out(adu):
+        return float(_asinh_out(float(np.clip((adu - blacks[dom]) / span, 0.0, 1.0)), softening))
+
+    colour = np.maximum.reduce([subbed[c] for c in ("R", "G", "B") if c in subbed])
+    stars, sinfo = star_mask(subbed[dom])
+    is_star = stars > 0.5
+    # Extended signal: off the stars, in blocks of the DOMINANT channel that
+    # stand 3 binned sigma above sky. Binned, not per pixel: on a faint nebula
+    # a per-pixel cut keeps only the brightest ~1% of the object, which is the
+    # part that clips (bubble read 97% "clipped"). Same channel the output
+    # levels are read from, or the mask and the levels disagree.
+    b = AUTO_BIN
+    sig = _block_mean(subbed[dom], b) > d["sky"] + 3.0 * d["sigma_binned"]
+    blocks = np.zeros(colour.shape, bool)
+    bh, bw = sig.shape
+    blocks[:bh * b, :bw * b] = np.repeat(np.repeat(sig, b, axis=0), b, axis=1)
+    ext = (~is_star) & blocks
+    clipped = colour >= white
+    n_ext, n_star = int(ext.sum()), int(is_star.sum())
+    # How bright the object itself is drawn: the faint and typical pixel of the
+    # extended signal in the dominant channel. Picks put black ABOVE sky
+    # (ngc6946: +0.5 sigma), where sky + 2 binned sigma reads 0 for every
+    # candidate and stops discriminating.
+    ext_vals = subbed[dom][ext] if n_ext else np.empty(0, np.float32)
+    ext_q = {q: float(np.percentile(ext_vals, q)) for q in (10, 50)} if ext_vals.size else {}
+    return {
+        "dominant": dom,
+        "margin_sigma": {c: float((x["sky"] - blacks[c]) / x["sigma"]) for c, x in diag.items()},
+        "sky_out": out(d["sky"]),
+        "faint_out": out(d["sky"] + 2.0 * d["sigma_binned"]),
+        "bright_out": out(d["bright_p90"]) if d["bright_p90"] is not None else None,
+        "ext_p10_out": out(ext_q[10]) if ext_q else None,
+        "ext_p50_out": out(ext_q[50]) if ext_q else None,
+        "ext_fraction": n_ext / float(colour.size),
+        "ext_clip": float((clipped & ext).sum() / n_ext) if n_ext else None,
+        "star_clip": float((clipped & is_star).sum() / n_star) if n_star else None,
+        "softening": float(softening),
+        "faint_fraction": d["faint_fraction"], "bright_fraction": d["bright_fraction"],
+        "stars": sinfo.get("stars", 0),
+    }
+
+
 def effective_options(**overrides) -> dict:
     """Every compose() display knob with its default filled in.
 
@@ -1622,6 +1691,63 @@ def record_render(out_dir: Path, entry: dict,
     except Exception:
         _logger.warning("could not write %s", path, exc_info=True)
         return None
+
+
+def sweep_link(out_dir: Path, tag: str, opts: dict) -> Optional[dict]:
+    """Which panel of the latest sweep these display options are, if any.
+
+    -> {"from_sweep": {"time", "file"}, "panel": n} or None. A render picked
+    off a sweep sheet is the owner's choice between alternatives, which is
+    exactly the label an automatic stretch is scored against
+    (docs/AUTO_STRETCH_PLAN.md). Before this, the link existed only as
+    timestamp order in the log.
+    """
+    entry = latest_sweep(out_dir)
+    if entry is None or (entry.get("tag") or entry.get("recipe")) != tag:
+        return None
+
+    def same(a, b):
+        if isinstance(a, (int, float)) and isinstance(b, (int, float)):
+            return abs(float(a) - float(b)) <= 1e-9 * max(1.0, abs(float(a)))
+        return str(a).lower() == str(b).lower()
+
+    for i, combo in enumerate(entry.get("variants") or [], 1):
+        if combo and all(k in opts and same(v, opts[k]) for k, v in combo.items()):
+            return {"from_sweep": {"time": entry.get("time"), "file": entry.get("file")},
+                    "panel": i}
+    return None
+
+
+def mark_kept(out_dir: Path, recipe: Optional[str] = None) -> Optional[dict]:
+    """Stamp the latest render or publish (of *recipe*, if given) as the keeper.
+
+    -> the marked entry, or None if there is none. `keep` is the owner saying
+    "this one": the cleanest stretch label there is. Same read-modify-atomic-
+    replace as record_render.
+    """
+    import json
+    import os
+    path = out_dir / RENDER_LOG_NAME
+    try:
+        entries = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(entries, list):
+        return None
+    want = recipe.upper() if recipe else None
+    for e in reversed(entries):
+        if not isinstance(e, dict) or e.get("kind") not in ("render", "publish"):
+            continue
+        if want and want not in (str(e.get("recipe") or "").upper(),
+                                 str(e.get("tag") or "").upper()):
+            continue
+        from datetime import datetime
+        e["kept"] = datetime.now().astimezone().isoformat(timespec="seconds")
+        tmp = path.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(entries, indent=1, default=str), encoding="utf-8")
+        os.replace(tmp, path)
+        return e
+    return None
 
 
 def save_sheet(sheet: np.ndarray, path: Path) -> Path:

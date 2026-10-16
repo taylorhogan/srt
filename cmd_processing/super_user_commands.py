@@ -3858,6 +3858,7 @@ def get_super_user_commands() -> dict[str, Callable]:
         "process": process_cmd,
         "movie": movie_cmd,
         "publish": publish_cmd,
+        "keep": keep_cmd,
         "purge": purge_cmd,
         "bad": bad_cmd,
         "dab": dab_cmd,
@@ -6064,6 +6065,7 @@ def _process_run(words: list[str]) -> None:
         "channels": info.get("channels") or {},
         "reference": info.get("reference"),
         "seconds": round(time.perf_counter() - _t0, 1),
+        **((reuse and color_process.sweep_link(out_dir, tag, opts)) or {}),
     })
 
     chans = "  ".join(f"{c}={info['channels'][c]}" for c in ("R", "G", "B", "L")
@@ -6385,6 +6387,50 @@ def _skysolve_run(words: list[str]) -> None:
         pass
 
 
+def keep_cmd(words: list[str], account: str) -> None:
+    """Mark a target's latest render (or publish) as the stretch the owner kept.
+
+    Usage:
+        keep <dso>              the latest render or publish of any recipe
+        keep <dso> <recipe>     the latest of that recipe
+
+    Stamps "kept" on that entry in Iris/<dso>/process_log.json. Those entries
+    are the labels the automatic stretch is scored against
+    (docs/AUTO_STRETCH_PLAN.md); without them, "the one I liked" can only be
+    guessed from timestamps.
+    """
+    from stacking import color_process, stacker
+
+    tokens = list(words[2:])
+    recipe = None
+    if tokens and tokens[-1].upper() in color_process.RECIPES:
+        recipe = tokens.pop().upper()
+    dso_arg = " ".join(tokens).strip()
+    if not dso_arg:
+        social_server.post_social_message("Usage: keep <dso> [recipe]   e.g. `keep ngc6946 halrgb`")
+        return
+    image_dir = Path(config.data()["nina"]["image_dir"])
+    target = dso_arg.lower().replace(" ", "").replace("_", "")
+    candidates = [d for d in image_dir.iterdir() if d.is_dir()
+                  and target in d.name.lower().replace(" ", "").replace("_", "")]
+    if not candidates:
+        social_server.post_social_message(f"No image directory found for '{dso_arg}'")
+        return
+    dso_dir = max(candidates, key=lambda d: d.stat().st_mtime)
+    e = color_process.mark_kept(stacker.results_dir(dso_dir.name), recipe)
+    if e is None:
+        social_server.post_social_message(
+            f"{dso_dir.name}: no render{' of ' + recipe if recipe else ''} on record to keep")
+        return
+    opts = e.get("options") or e.get("settings") or {}
+    shown = color_process.describe_options(color_process.effective_options(**opts)) \
+        if e.get("kind") == "render" and opts else \
+        "  ".join(f"{k}={v}" for k, v in sorted(opts.items()))
+    social_server.post_social_message(
+        f"{dso_dir.name}: kept the {e.get('kind')} of {e.get('time')} "
+        f"({e.get('tag') or e.get('recipe')}, {shown})")
+
+
 def publish_cmd(words: list[str], account: str) -> None:
     """Render one sweep variant at full resolution and publish it.
 
@@ -6530,6 +6576,7 @@ def publish_cmd(words: list[str], account: str) -> None:
         "time": datetime.now().astimezone().isoformat(timespec="seconds"),
         "command": " ".join(words), "kind": "publish", "recipe": entry.get("recipe"),
         "tag": tag, "panel": panel_id, "crop": crop, "settings": combo,
+        "from_sweep": {"time": entry.get("time"), "file": entry.get("file")},
         "file": jpg_path.name, "png": png_path.name,
     })
 
