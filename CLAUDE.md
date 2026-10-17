@@ -101,7 +101,13 @@ Since 2026-09-25 the conductor decides both invariants (ADR 0014): every roof fi
   `deblur=N` runs Richardson-Lucy on the luminance first (`stacking/deblur.py`);
   RL rings around every star unless the sky is out, the floor follows the
   galaxy without clipping, and a dark clamp holds — the module doc has the
-  measurements, and all four were needed.
+  measurements, and all four were needed. `deblur=40` is the working count
+  (stars converge by 15, galaxies need 40; split-half test says the added
+  detail is real). On a denoised stack the order is stack → denoise → deblur:
+  the denoiser erodes faint stars' wings and spikes, so the denoised stack has
+  no single PSF; the spikes are fitted off star by star and RL runs with the
+  azimuthal kernel. Deblurring the raw stack and denoising after was measured
+  worse (2026-10-17).
 
   Frames are **levelled to a common sky before combining** and the level is
   restored afterwards. This is not cosmetic: sky varies 3x across nights (moon,

@@ -113,10 +113,14 @@ BG_MESH_FRACTION = 4      # mesh boxes across the short axis
 SCNR_AMOUNT = 0.0
 
 # Richardson-Lucy iterations on the luminance before the stretch, 0 = off.
-# `deblur=8` on the process command. The rules that make it ring-free (sky
-# out, non-clipping floor, dark deringing clamp, signal-only blend) live in
-# stacking/deblur.py with the measurements behind them. M33 L went 1.76" ->
-# 1.22" and ngc2146 2.26" -> 1.71" at 8 iterations with no new rings.
+# `deblur=40` on the process command is the working setting (2026-10-17):
+# the stars converge in 8-15 but the galaxies need 40 (ngc7320's nuclei
+# 12.4 -> 6.7 px FWHM, stars 2.00" -> 1.04"). The rules that make it
+# ring-free (sky out, non-clipping floor, dark clamp at the local sky,
+# signal-only blend, spikes fitted off star by star, azimuthal kernel)
+# live in stacking/deblur.py with the measurements behind them. On a
+# denoised stack the order is stack, denoise, deblur; the other way round
+# was measured worse (see the module doc).
 DEBLUR_ITERS = 0
 # `dering=sky` (default) lets a star's halo drain down to the local sky mean
 # and no further, which conserves flux and is what a kernel with a measured

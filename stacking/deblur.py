@@ -52,6 +52,53 @@ stretch. Everything below is a rule that was paid for on the M33 L stack on
   off a fill, which still showed the lobes because the asymmetry lives at
   10-20 px too. Kept for the record and for a field with cleaner stars.
 
+2026-10-17, ngc7320 (Stephan's Quintet), the denoised L at sky sigma 0.055
+ADU, where a 0.1 ADU error around a star is a two-sigma mark:
+
+* A DENOISED stack does not have one PSF. On the raw stack the wing and
+  spike flux per unit peak is the same at every brightness (4.2e-4 of the
+  peak along the arms, a linear PSF); on the denoised stack it falls to
+  1e-4 for faint stars, because the denoiser erodes what sits near its
+  noise. A kernel measured from the bright stars therefore oversubtracts
+  the faint ones: dark lines along the arms, and a moat. Two things follow.
+  The spikes are no longer in the RL kernel at all: each star's spikes are
+  fitted on their own pixels (star_layer, a template out to ARM_RADIUS)
+  and taken off the picture, and RL runs with the azimuthal kernel. And the
+  dark clamp sits AT the local sky reference (CLAMP_SIGMA 0): with it one
+  sigma below, RL drained every wing to exactly that bound and the flat
+  ring at -1 sigma was the moat (measured at -0.055 at every radius inside
+  the blend, +0.001 with the clamp at 0). The blend starts at 1.5 sigma so
+  the faint stars' outer wings drain too (0.10 -> 0.04 ADU left at 20-30 px).
+* Deblurring the raw stack instead (one true kernel) and denoising after,
+  or carrying its delta onto the denoised stack, was tried and is worse:
+  the blend set in raw-noise units stops at 6 ADU, so every mid star keeps
+  a bullseye of halo outside a tight core, and the bright stars moat by
+  1 ADU, 20 sigma of the denoised sky. The order is stack, denoise, deblur.
+* 40 iterations is the working count (DEFAULT_ITERS), not 8 or 15. RL
+  converges fast on points and slowly on extended light, and the galaxies
+  had barely moved at 15: the three nuclei went 12.4/12.0/15.8 px FWHM to
+  8.3/8.6/10.4 at 15 and 6.7/7.5/8.6 at 40 (stars 2.00" -> 1.04"). The
+  split-half test (each half stack deblurred on its own kernel, stars
+  masked) says what RL adds on the galaxies is shared by both halves:
+  correlation 0.96 (disc), 0.97 (nuclei), 0.91 (arms) at 40 iterations,
+  0.95/0.93/0.88 at 80, so 80 is mostly real too but visibly grainier.
+  Total-variation RL (tv > 0) was tried for the posterising and rejected:
+  it brakes the stars as hard as the texture (1.35" at tv 0.05 against
+  1.03" plain) and gains nothing the split-half test could see.
+* The kernel stays at 72 px. With WING_RADIUS 100 the kernel-shaped wing
+  fit overshot the brightest star by 10% at every radius (1368 against
+  1236 ADU at 10-20 px), the clamp's sky reference, measured with that fit
+  off, went 1-5 ADU below the sky, and RL dug a black blob 100 px across
+  down to it. Replacing the fit with each star's own ring-median profile
+  for the reference (bounded by the fit or not) held every halo instead:
+  bright rings at 10-20 px on stars of every brightness (+2.1 ADU on the
+  brightest, +0.13 on mid stars, against -0.02 and -0.08 with the fit).
+  The 72 px kernel leaves ~0.3 ADU of the brightest stars' wings standing
+  past 72 px; that is the trade.
+* RL is now the module's own FFT loop (_rl), torch on the GPU when there
+  is one (3 s per 5 full-frame iterations on the Spark), numpy otherwise,
+  starting from the data rather than skimage's flat 0.5.
+
 Returns the input untouched, with a reason, when the field has too few
 isolated stars to measure a kernel from or the stars are already at the
 pixel scale.
@@ -63,11 +110,13 @@ import numpy as np
 
 _logger = logging.getLogger(__name__)
 
-DEFAULT_ITERS = 8
+DEFAULT_ITERS = 40
 PSF_SCALE = 1.0           # kernel shrink; 1.0 = as measured (see module doc)
 PSF_RADIUS = 32           # half-size of the median-stacked core in px
 PSF_TAPER = 8             # cosine taper width at the core's edge (no-wing case)
-WING_RADIUS = 72          # the wing profile is measured out to here
+WING_RADIUS = 72          # the wing profile is measured out to here (not 100: see the module doc)
+ARM_RADIUS = 100          # and the diffraction arms, for the per-star spike template
+ARM_SIGMA = 4.0           # the arms' Gaussian cross-section (px) when it cannot be measured
 WING_BLEND = (8.0, 14.0)  # core to wing crossfade, px
 WING_MIN_STARS = 8        # fewer clean bright stars and the core alone is used
 WING_MIN_PEAK = 3000.0    # ADU above sky: bright enough to show the wing
@@ -85,9 +134,10 @@ SAT_DILATE = 6            # px of protection around the clipped pixels
 SAT_FEATHER = 3.0         # and the feather on its edge
 FLOOR_MIN_SIZE = 25       # minimum-filter window for the local floor model
 FLOOR_SMOOTH = 8.0        # and its smoothing
-CLAMP_SIGMA = 1.0         # dark deringing: never below input - this many sigma
-BLEND_LO_SIGMA = 3.0      # signal above the local model where deblur starts
-BLEND_HI_SIGMA = 10.0     # and where it is fully in
+CLAMP_SIGMA = 0.0         # dark deringing: never below the bound minus this many sigma (see the module doc)
+TV_LAMBDA = 0.0           # total-variation weight of the RL update, 0 = plain RL (see _rl)
+BLEND_LO_SIGMA = 1.5      # signal above the local model where deblur starts
+BLEND_HI_SIGMA = 5.0      # and where it is fully in
 
 
 def sky_sigma(chan: np.ndarray, model: Optional[np.ndarray] = None) -> float:
@@ -240,6 +290,7 @@ def measure_psf(chan: np.ndarray, radius: int = PSF_RADIUS,
         R = radius
     else:
         R = WING_RADIUS
+    spikes = None
     if True:
         wy, wx = np.mgrid[-R:R + 1, -R:R + 1]; wr = np.hypot(wy, wx)
         psf = np.interp(wr, np.arange(len(wing)), wing, right=0.0)
@@ -253,8 +304,21 @@ def measure_psf(chan: np.ndarray, radius: int = PSF_RADIUS,
             noise = 1.4826 * float(np.median(np.abs(excess[wr > 45] - np.median(excess[wr > 45]))))
             keep = np.where(excess > 4.0 * max(noise, 1e-12), excess, 0.0)
             w2 = np.clip((wr - 40.0) / 15.0, 0, 1); w2 = 1 - w2 * w2 * (3 - 2 * w2)   # spikes to 40 px, fading by 55
-            psf = np.clip(psf + keep * w2, 0, None)
+            spikes = keep * w2
+            psf = np.clip(psf + spikes, 0, None)
+            # The spike TEMPLATE goes on past the kernel: the 2-D median
+            # fades out over 40-55 px and a measured arm profile with a
+            # Gaussian cross-section fades in, out to ARM_RADIUS. Only the
+            # per-star fit uses it (star_layer), never RL, so it can be
+            # parametric and smooth where the median would be noise. On
+            # ngc7320 a 32000 ADU star's arms were still 0.85 ADU at 50 px
+            # and 0.25 at 60, 15 and 5 sigma of the denoised sky, and stood
+            # as streaks where the template had ended.
+            arm = _arm_template(a, stars, sat, keep, wr, w2)
+            if arm is not None:
+                spikes, info["spike_axes"], info["arm_sigma"] = arm
         psf = psf * core.max()
+        spikes = spikes * core.max() if spikes is not None else None
         c = np.zeros_like(psf); c[R - radius:R + radius + 1, R - radius:R + radius + 1] = core
         f = np.clip((wr - WING_BLEND[0]) / (WING_BLEND[1] - WING_BLEND[0]), 0, 1)
         f = f * f * (3 - 2 * f)
@@ -266,7 +330,112 @@ def measure_psf(chan: np.ndarray, radius: int = PSF_RADIUS,
     s = float(psf.sum())
     if not np.isfinite(s) or s <= 0:
         return None, {"stars": len(cuts), "why": "kernel summed to nothing"}
+    # The spike component on the kernel's own scale, so that psf - spikes is
+    # the azimuthal kernel: see deblur() for why RL never sees the spikes.
+    info["spikes"] = (spikes / s if spikes is not None else np.zeros_like(psf)).astype(np.float64)
     return psf / s, info
+
+
+def _centre(t: np.ndarray, size: int) -> np.ndarray:
+    """The central size x size crop of an odd square array (or the array)."""
+    if t.shape[0] <= size:
+        return t
+    c = t.shape[0] // 2; r = size // 2
+    return t[c - r:c + r + 1, c - r:c + r + 1]
+
+
+def _spike_axes(keep: np.ndarray, wr: np.ndarray) -> list[float]:
+    """The two diffraction-arm axes (radians, mod pi) from the kernel's
+    spike excess at 15-35 px: the angular profile's two best-separated
+    peaks."""
+    R = keep.shape[0] // 2
+    yy, xx = np.mgrid[-R:R + 1, -R:R + 1]
+    ang = np.mod(np.arctan2(yy, xx), np.pi)
+    band = (wr >= 15) & (wr <= 35)
+    bins = np.linspace(0, np.pi, 91)
+    idx = np.clip(np.digitize(ang[band], bins) - 1, 0, 89)
+    prof = np.bincount(idx, weights=keep[band], minlength=90)
+    if prof.max() <= 0:
+        return []
+    centres = 0.5 * (bins[:-1] + bins[1:])
+    order = np.argsort(prof)[::-1]
+    axes = [float(centres[order[0]])]
+    for i in order[1:]:
+        d = abs(((centres[i] - axes[0]) + np.pi / 2) % np.pi - np.pi / 2)
+        if d > np.radians(30) and prof[i] > 0.2 * prof[order[0]]:
+            axes.append(float(centres[i])); break
+    return axes
+
+
+def _arm_template(a: np.ndarray, stars: np.ndarray, sat: Optional[float],
+                  keep: np.ndarray, wr: np.ndarray, w2: np.ndarray) -> Optional[tuple]:
+    """(template, axes, arm sigma), or None when the arms cannot be measured.
+    The spike template out to ARM_RADIUS, peak-normalised like the kernel:
+    the 2-D median's excess inside (faded by w2) and, outside, the median
+    along-arm profile of the brightest clean stars times a Gaussian cross
+    section, scaled to meet the inner part at 38-42 px."""
+    from scipy.ndimage import map_coordinates
+    axes = _spike_axes(keep, wr)
+    if not axes:
+        return None
+    h, w = a.shape
+    RA = ARM_RADIUS
+    peak = stars[:, 3] - np.median(a)
+    cand = np.nonzero(peak > WING_MIN_PEAK)[0]
+    if sat is not None:
+        cand = cand[stars[cand, 3] < SAT_FRAC * sat]
+    cand = cand[np.argsort(peak[cand])[::-1]][:20]
+    rs = np.arange(24.0, RA + 1.0, 1.0)
+    profs, widths = [], []
+    per = np.arange(-8, 8.5, 0.5)
+    for i in cand:
+        xc, yc, pk = float(stars[i, 0]), float(stars[i, 1]), float(peak[i])
+        for t in axes:
+            for sgn in (1, -1):
+                yy = yc + sgn * rs * np.sin(t); xx = xc + sgn * rs * np.cos(t)
+                if yy.min() < 12 or xx.min() < 12 or yy.max() > h - 12 or xx.max() > w - 12:
+                    continue
+                on = map_coordinates(a, [yy, xx], order=1)
+                off = np.median([map_coordinates(a, [yy + d * np.cos(t), xx - d * np.sin(t)], order=1)
+                                 for d in (-10, -7, 7, 10)], axis=0)
+                profs.append((on - off) / pk)
+                if sgn == 1:
+                    cs = np.median([map_coordinates(a, [yc + r * np.sin(t) + per * np.cos(t),
+                                                        xc + r * np.cos(t) - per * np.sin(t)], order=1)
+                                    for r in np.arange(40, 60, 2.0)], axis=0)
+                    cs = np.clip(cs - np.median(cs[[0, 1, -2, -1]]), 0, None)
+                    if cs.sum() > 0:
+                        widths.append(float(np.sqrt((cs * per ** 2).sum() / cs.sum())))
+    if len(profs) < 8 or not widths:
+        return None
+    P = np.clip(np.median(np.stack(profs), axis=0), 0, None)
+    sig_arm = float(np.clip(np.median(widths), 2.0, 8.0))
+    info_axes = [float(t) for t in axes]
+    # continuity: the inner template along the arms at 36-40 px against P there
+    R = keep.shape[0] // 2
+    yy, xx = np.mgrid[-R:R + 1, -R:R + 1]
+    inner_vals = []
+    for t in axes:
+        for sgn in (1, -1):
+            r = np.arange(36.0, 40.5, 1.0)
+            inner_vals.append(map_coordinates(keep, [R + sgn * r * np.sin(t), R + sgn * r * np.cos(t)], order=1))
+    inner = float(np.median(np.concatenate(inner_vals)))
+    pj = float(np.median(np.interp(np.arange(36.0, 40.5, 1.0), rs, P)))
+    scale = float(np.clip(inner / pj, 0.5, 2.0)) if pj > 0 else 1.0
+    T = np.zeros((2 * RA + 1, 2 * RA + 1))
+    T[RA - R:RA + R + 1, RA - R:RA + R + 1] = keep * w2
+    ty, tx = np.mgrid[-RA:RA + 1, -RA:RA + 1]
+    tr = np.hypot(ty, tx)
+    fade = np.clip((tr - 40.0) / 15.0, 0, 1); fade = fade * fade * (3 - 2 * fade)     # 1 - w2, out to RA
+    outer = np.zeros_like(T)
+    for t in axes:
+        u = np.abs(tx * np.cos(t) + ty * np.sin(t))          # along the axis, either direction
+        v = np.abs(-tx * np.sin(t) + ty * np.cos(t))         # across it
+        outer += np.interp(u, rs, P, left=0.0, right=0.0) * np.exp(-0.5 * (v / sig_arm) ** 2)
+    taper = np.clip((tr - (RA - 10)) / 10.0, 0, 1)
+    T += scale * outer * fade * 0.5 * (1 + np.cos(np.pi * taper))
+    T[tr > RA] = 0.0
+    return np.clip(T, 0, None), info_axes, sig_arm
 
 
 def _wing_profile(a: np.ndarray, stars: np.ndarray, sat: Optional[float],
@@ -319,6 +488,66 @@ def _wing_profile(a: np.ndarray, stars: np.ndarray, sat: Optional[float],
     return med, len(profs), wing2d
 
 
+def _rl(y: np.ndarray, k: np.ndarray, n: int, tv: float = 0.0) -> np.ndarray:
+    """Richardson-Lucy by FFT, starting from the data, reflect-padded by the
+    kernel radius so the frame edge does not wrap. tv > 0 is Dey et al.
+    (2006) total-variation RL: the multiplicative update is divided by
+    1 - tv * div(grad x / |grad x|), which holds flat regions flat and lets
+    the iteration count climb without the result curdling.
+
+    torch when it is installed (the Spark: 3 s per 5 full-frame iterations),
+    numpy otherwise (the observatory PC has no torch).
+    """
+    pad = k.shape[0] // 2
+    y = np.pad(np.asarray(y, dtype=np.float32), pad, mode="reflect")
+    H, W = y.shape
+    kh, kw = k.shape
+    try:
+        import torch
+        dev = "cuda" if torch.cuda.is_available() else "cpu"
+        yt = torch.as_tensor(y, device=dev)
+        kp = torch.zeros((H, W), dtype=torch.float32, device=dev)
+        kp[:kh, :kw] = torch.as_tensor(np.asarray(k, dtype=np.float32), device=dev)
+        otf = torch.fft.rfft2(torch.roll(kp, shifts=(-(kh // 2), -(kw // 2)), dims=(0, 1)))
+        otf_c = torch.conj(otf)
+        conv = lambda a, o: torch.fft.irfft2(torch.fft.rfft2(a) * o, s=(H, W))
+        x = yt.clone()
+        eps = float(yt.std()) * 1e-3 + 1e-6
+        for _ in range(int(n)):
+            corr = conv(yt / torch.clamp(conv(x, otf), min=1e-6), otf_c)
+            if tv > 0:
+                gx = torch.zeros_like(x); gy = torch.zeros_like(x)
+                gx[:, :-1] = x[:, 1:] - x[:, :-1]; gy[:-1, :] = x[1:, :] - x[:-1, :]
+                nrm = torch.sqrt(gx * gx + gy * gy + eps * eps); px, py = gx / nrm, gy / nrm
+                div = torch.zeros_like(x)
+                div[:, 1:] += px[:, 1:] - px[:, :-1]; div[:, 0] += px[:, 0]
+                div[1:, :] += py[1:, :] - py[:-1, :]; div[0, :] += py[0, :]
+                corr = corr / torch.clamp(1.0 - tv * div, min=0.2)
+            x = torch.clamp(x * corr, min=0.0)
+        out = x.cpu().numpy()
+    except ImportError:
+        from scipy import fft as sfft
+        kp = np.zeros((H, W), np.float32); kp[:kh, :kw] = k
+        otf = sfft.rfft2(np.roll(kp, (-(kh // 2), -(kw // 2)), axis=(0, 1)))
+        otf_c = np.conj(otf)
+        conv = lambda a, o: sfft.irfft2(sfft.rfft2(a) * o, s=(H, W)).astype(np.float32)
+        x = y.copy()
+        eps = float(y.std()) * 1e-3 + 1e-6
+        for _ in range(int(n)):
+            corr = conv(y / np.maximum(conv(x, otf), 1e-6), otf_c)
+            if tv > 0:
+                gx = np.zeros_like(x); gy = np.zeros_like(x)
+                gx[:, :-1] = x[:, 1:] - x[:, :-1]; gy[:-1, :] = x[1:, :] - x[:-1, :]
+                nrm = np.sqrt(gx * gx + gy * gy + eps * eps); px, py = gx / nrm, gy / nrm
+                div = np.zeros_like(x)
+                div[:, 1:] += px[:, 1:] - px[:, :-1]; div[:, 0] += px[:, 0]
+                div[1:, :] += py[1:, :] - py[:-1, :]; div[0, :] += py[0, :]
+                corr = corr / np.maximum(1.0 - tv * div, 0.2)
+            x = np.maximum(x * corr, 0.0)
+        out = x
+    return out[pad:-pad, pad:-pad]
+
+
 def _shrink(psf: np.ndarray, factor: float) -> np.ndarray:
     from scipy.ndimage import zoom
     p = np.clip(zoom(psf, factor, order=3), 0, None)
@@ -350,8 +579,10 @@ def _fill_holes(x: np.ndarray, hole: np.ndarray) -> np.ndarray:
 
 def star_layer(x: np.ndarray, model: np.ndarray, sig: float,
                kernel: np.ndarray, level: Optional[float] = None,
-               ) -> tuple[np.ndarray, np.ndarray, np.ndarray, int, np.ndarray]:
-    """(starless, inner, mask, count, fits, wing): the stars taken off the image.
+               spikes: Optional[np.ndarray] = None,
+               axes: Optional[list] = None, arm_sigma: float = ARM_SIGMA,
+               ) -> tuple[np.ndarray, np.ndarray, np.ndarray, int, np.ndarray, np.ndarray, np.ndarray]:
+    """(starless, inner, mask, count, fits, wing, spikes): the stars taken off the image.
 
     Candidates are local maxima STAR_SPLIT_MIN_SIGMA (or 1e-3 of the
     saturation level) above the sky mean that are as COMPACT as the kernel:
@@ -372,6 +603,22 @@ def star_layer(x: np.ndarray, model: np.ndarray, sig: float,
     under a core is the fill, lost to the deconvolution but not to the
     picture, since the core goes back on top of it. Outside the footprint
     the starless image is the input bit for bit.
+
+    *spikes* is the kernel's diffraction-spike component (measure_psf's
+    info["spikes"]); the kernel less it is the azimuthal kernel the wing is
+    fitted with. Each star's spike amplitude is then its own least-squares
+    fit on the spike pixels, and the last array returned is the sum of those
+    fits: the spikes as they actually are, star by star, which deblur()
+    takes off the picture before RL sees it (see there for why). For the
+    stars bright enough to show arms past the template (WING_MIN_PEAK), what
+    the template left along each arm (*axes*, both directions, 30 px to
+    ARM_RADIUS) is then measured on the star itself, on-axis minus the
+    ribbon's own edges, and taken off as a Gaussian ribbon of *arm_sigma*:
+    the arms of the brightest stars decline more slowly than the median
+    template, which the denoiser eroded on the fainter stars it was built
+    from (a 61000 ADU star kept 19 ADU of arm at 50 px against 7 in the
+    template; RL then SHARPENED what was left into a streak brighter than
+    the input, 28 ADU at 55 px).
     """
     from scipy.ndimage import maximum_filter, shift as ndshift
     from scipy.optimize import curve_fit
@@ -393,18 +640,22 @@ def star_layer(x: np.ndarray, model: np.ndarray, sig: float,
     peaks[:R + 1] = peaks[-R - 1:] = peaks[:, :R + 1] = peaks[:, -R - 1:] = False
     ys, xs = np.nonzero(peaks)
     empty = (x.astype(np.float32), np.zeros_like(x), np.zeros(x.shape, bool), 0, np.zeros((0, 5)),
-             np.zeros(x.shape, np.float32))
+             np.zeros(x.shape, np.float32), np.zeros(x.shape, np.float32))
     if len(ys) == 0:
         return empty
     order = np.argsort(above[ys, xs])[::-1]
     work = above.copy()
     wing_part = np.zeros(x.shape, np.float32)
+    spike_part = np.zeros(x.shape, np.float32)
+
     inner_mask = np.zeros(x.shape, bool)
     clipped = (x >= 0.98 * level) if level is not None else np.zeros(x.shape, bool)
     ky, kx = np.mgrid[-R:R + 1, -R:R + 1]; kr = np.hypot(ky, kx)
     core_fit = (kr <= 6)
     wing_fit = (kr > 10) & (kr <= 36)
-    k64 = kernel.astype(np.float64)
+    sp64 = spikes.astype(np.float64) if spikes is not None and spikes.shape[0] >= kernel.shape[0] else np.zeros(kernel.shape)
+    k64 = kernel.astype(np.float64) - _centre(sp64, kernel.shape[0])          # the azimuthal kernel
+    RS = sp64.shape[0] // 2
     fw = np.clip((kr - WING_BLEND[0]) / (WING_BLEND[1] - WING_BLEND[0]), 0, 1); fw = fw * fw * (3 - 2 * fw)
     disc = kr <= STAR_CORE_PX
     n = 0
@@ -438,6 +689,23 @@ def star_layer(x: np.ndarray, model: np.ndarray, sig: float,
         sub = ((amp * (1 - fw) + amp_w * fw) * k).astype(np.float32)
         work[sl] -= sub                       # the whole fit, so the next star is measured clean
         wing_part[sl] += sub * fw             # but only the wing comes off the picture
+        if sp64.any():
+            # The spikes, fitted on their own pixels with the azimuthal fit
+            # taken off, bounded by the core's amplitude: a star that has
+            # none (the denoiser erodes them on the fainter stars) fits ~0.
+            spk = ndshift(sp64, (dy, dx), order=1, mode="constant", cval=0.0)
+            # the template's footprint, cropped at the frame edge
+            y0, y1 = max(y - RS, 0), min(y + RS + 1, h); x0, x1 = max(xx_ - RS, 0), min(xx_ + RS + 1, w)
+            sls = (slice(y0, y1), slice(x0, x1))
+            spk = spk[y0 - (y - RS):y1 - (y - RS), x0 - (xx_ - RS):x1 - (xx_ - RS)]
+            ds = work[sls]
+            ok = (spk > 0) & ~clipped[sls]; kk = spk[ok]
+            amp_s = float(np.clip((ds[ok] * kk).sum() / max((kk * kk).sum(), 1e-12), 0.0, 1.2 * amp))
+            ssub = (amp_s * spk).astype(np.float32)
+            work[sls] -= ssub
+            spike_part[sls] += ssub
+            if axes and above[y, xx_] > WING_MIN_PEAK:
+                _take_arms(work, spike_part, y, xx_, axes, arm_sigma, sig)
         inner_mask[sl] |= disc
         fits.append((y, xx_, dy, dx, float(sub.sum())))
         n += 1
@@ -449,15 +717,61 @@ def star_layer(x: np.ndarray, model: np.ndarray, sig: float,
     inner = np.where(inner_mask, np.clip(base - fill, 0.0, None), 0.0).astype(np.float32)
     mask = inner_mask | (wing_part > max(0.5 * sig, 0.05))
     starless = np.where(mask, starless, x.astype(np.float32))
-    return starless, inner, mask, n, np.array(fits, dtype=np.float64).reshape(-1, 5), wing_part
+    return starless, inner, mask, n, np.array(fits, dtype=np.float64).reshape(-1, 5), wing_part, spike_part
+
+
+def _take_arms(work: np.ndarray, spike_part: np.ndarray, y: int, x: int,
+               axes: list, sig_arm: float, sig: float) -> None:
+    """Measure what is left of one star's diffraction arms on *work* and
+    take it off (into *spike_part*): see star_layer."""
+    from scipy.ndimage import map_coordinates, median_filter
+    h, w = work.shape
+    RA = ARM_RADIUS
+    rs = np.arange(30.0, RA + 1.0, 1.0)
+    half = int(np.ceil(3.0 * sig_arm))
+    for t in axes:
+        ct, st = float(np.cos(t)), float(np.sin(t))
+        for sgn in (1, -1):
+            yy = y + sgn * rs * st; xx = x + sgn * rs * ct
+            if yy.min() < half + 1 or xx.min() < half + 1 or yy.max() > h - half - 2 or xx.max() > w - half - 2:
+                continue
+            on = map_coordinates(work, [yy, xx], order=1)
+            off = np.median([map_coordinates(work, [yy + d * ct, xx - d * st], order=1)
+                             for d in (-3.0 * sig_arm, -2.5 * sig_arm, 2.5 * sig_arm, 3.0 * sig_arm)], axis=0)
+            prof = median_filter(np.clip(on - off, 0.0, None), size=5, mode="nearest")
+            prof[prof < 2.0 * sig] = 0.0
+            if prof.max() <= 0:
+                continue
+            # the ribbon's bounding box
+            ys = [y + sgn * r * st for r in (rs[0], rs[-1])]; xs = [x + sgn * r * ct for r in (rs[0], rs[-1])]
+            y0, y1 = max(int(min(ys)) - half - 1, 0), min(int(max(ys)) + half + 2, h)
+            x0, x1 = max(int(min(xs)) - half - 1, 0), min(int(max(xs)) + half + 2, w)
+            gy, gx = np.mgrid[y0:y1, x0:x1]
+            u = sgn * ((gx - x) * ct + (gy - y) * st)
+            v = -(gx - x) * st + (gy - y) * ct
+            rib = (u >= rs[0]) & (u <= RA) & (np.abs(v) <= 3.0 * sig_arm)
+            if not rib.any():
+                continue
+            fade = np.clip((u - rs[0]) / 10.0, 0, 1)
+            val = np.where(rib, np.interp(u, rs, prof, left=0.0, right=0.0)
+                           * np.exp(-0.5 * (v / sig_arm) ** 2) * fade, 0.0).astype(np.float32)
+            work[y0:y1, x0:x1] -= val
+            spike_part[y0:y1, x0:x1] += val
 
 
 def deblur(chan: np.ndarray, iters: int = DEFAULT_ITERS,
            psf: Optional[np.ndarray] = None,
            psf_scale: float = PSF_SCALE,
            clamp_to: str = "input",
-           split: bool = SPLIT_STARS) -> tuple[np.ndarray, dict]:
+           split: bool = SPLIT_STARS,
+           spikes: Optional[np.ndarray] = None,
+           tv: float = TV_LAMBDA,
+           axes: Optional[list] = None, arm_sigma: float = ARM_SIGMA) -> tuple[np.ndarray, dict]:
     """Return (deblurred channel, info). The input is linear ADU with its sky.
+
+    A caller passing its own *psf* passes measure_psf's info["spikes"] as
+    *spikes*, or the kernel is used whole. tv is the total-variation weight
+    of the RL update (see _rl), 0 for plain RL.
 
     clamp_to="input": no pixel ends below its input minus one sigma (star
     halos stay under a brighter core). "sky": a pixel may fall as far as the
@@ -468,18 +782,19 @@ def deblur(chan: np.ndarray, iters: int = DEFAULT_ITERS,
     returned as given.
     """
     from scipy.ndimage import binary_dilation, gaussian_filter, minimum_filter
-    from skimage.restoration import richardson_lucy
 
     iters = int(iters)
     if iters <= 0:
         return chan, {"iters": 0, "why": "deblur=0"}
     if clamp_to not in ("input", "sky"):
         raise ValueError(f"clamp_to must be 'input' or 'sky', not {clamp_to!r}")
-    info: dict = {"iters": iters, "psf_scale": psf_scale, "clamp_to": clamp_to, "split": bool(split)}
+    info: dict = {"iters": iters, "psf_scale": psf_scale, "clamp_to": clamp_to, "split": bool(split), "tv": tv}
     wing = None
     if psf is None:
         psf, pinfo = measure_psf(chan)
         wing = pinfo.pop("wing_profile", None)
+        spikes = pinfo.pop("spikes", None)
+        axes, arm_sigma = pinfo.get("spike_axes"), pinfo.get("arm_sigma", ARM_SIGMA)
         info.update(pinfo)
         if psf is None:
             _logger.warning("deblur skipped: %s", pinfo.get("why"))
@@ -490,6 +805,21 @@ def deblur(chan: np.ndarray, iters: int = DEFAULT_ITERS,
             return chan, info
     kernel = _shrink(psf, psf_scale) if psf_scale != 1.0 else psf
     info["kernel_px"] = int(kernel.shape[0])
+    if spikes is not None and (psf_scale != 1.0 or spikes.shape[0] < kernel.shape[0]):
+        spikes = None
+    # RL runs with the AZIMUTHAL kernel on an image whose spikes have been
+    # fitted off star by star. A kernel that carries the spikes assumes every
+    # star has them in the same proportion, which a linear stack does (the
+    # excess along the arms is 4.2e-4 of the peak at every brightness on the
+    # ngc7320 raw L) but a DENOISED one does not: the denoiser erodes what is
+    # near its noise, so there the faint stars keep 1e-4 of the peak and the
+    # bright ones 4.2e-4. RL with the spiked kernel then subtracted spikes
+    # the fainter stars did not have and left a dark line along each arm
+    # (2026-10-17). With the azimuthal kernel alone the bright stars' spikes
+    # stood as detached dashes (2026-10-10), so they come off by fit instead.
+    kernel_az = kernel
+    if spikes is not None and spikes.any():
+        kernel_az = np.clip(kernel - _centre(spikes, kernel.shape[0]), 0, None); kernel_az = kernel_az / kernel_az.sum()
 
     x = np.nan_to_num(np.asarray(chan, dtype=np.float32), nan=0.0)
     model0 = gaussian_filter(minimum_filter(x, FLOOR_MIN_SIZE), FLOOR_SMOOTH)
@@ -501,8 +831,11 @@ def deblur(chan: np.ndarray, iters: int = DEFAULT_ITERS,
     stars = None
     # The star fit runs either way: its wing model is what the clamp's sky
     # reference is measured without (below).
-    starless, inner, smask, nstars, fits, wing_part = star_layer(x, model0, sig, kernel, level)
+    starless, inner, smask, nstars, fits, wing_part, spike_part = star_layer(
+        x, model0, sig, kernel, level, spikes, axes if spikes is not None else None, arm_sigma)
     info["fitted_stars"] = nstars
+    info["spike_flux_frac"] = float(spike_part.sum() / max(float(np.abs(x - model0).sum()), 1e-12))
+    x = full = (x - spike_part).astype(np.float32)          # the picture without its spikes
     if split:
         info["split_stars"] = nstars
         info["star_mask_frac"] = float(smask.mean())
@@ -511,7 +844,7 @@ def deblur(chan: np.ndarray, iters: int = DEFAULT_ITERS,
             _logger.warning("deblur: star split skipped — %s", info["split_skipped"])
             split = False
     if split:
-        x = starless                                          # from here on
+        x = (starless - spike_part).astype(np.float32)       # from here on
         # The core layer on its zero background: positivity is the whole
         # constraint, so no floor, no clamp, no blend. float64 on a real
         # pedestal: in float32 the FFT round-off of a 145 px kernel leaves
@@ -519,8 +852,7 @@ def deblur(chan: np.ndarray, iters: int = DEFAULT_ITERS,
         # explodes (measured: flux x70e9). A flat pedestal is invariant under
         # RL and comes straight back off. Clipped cores keep their input.
         ped = max(1.0, 3.0 * sig)
-        srl = richardson_lucy(inner.astype(np.float64) + ped, kernel.astype(np.float64),
-                              num_iter=iters, clip=False)
+        srl = _rl(inner.astype(np.float32) + ped, kernel_az.astype(np.float32), iters, tv)
         srl = np.clip(srl - ped, 0.0, None)
         if sat.any():
             m = gaussian_filter(binary_dilation(sat, iterations=SAT_DILATE).astype(np.float32), SAT_FEATHER)
@@ -536,8 +868,7 @@ def deblur(chan: np.ndarray, iters: int = DEFAULT_ITERS,
     # whatever the clamp's reference was).
     model = gaussian_filter(minimum_filter(x if split else full - wing_part, FLOOR_MIN_SIZE), FLOOR_SMOOTH)
     floor = np.minimum(model, x) - 2.0 * sig
-    rl = richardson_lucy(np.clip(x - floor, 1e-3, None).astype(np.float32),
-                         kernel.astype(np.float32), num_iter=iters, clip=False) + floor
+    rl = _rl(np.clip(x - floor, 1e-3, None).astype(np.float32), kernel_az.astype(np.float32), iters, tv) + floor
     # The minimum-filter model sits ~3 sigma under the sky mean (the minimum
     # of 625 noisy pixels); ref is the model lifted to the local sky mean.
     ref = model + float(np.median(x - model))

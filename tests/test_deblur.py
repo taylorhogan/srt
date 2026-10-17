@@ -56,7 +56,7 @@ def test_wing_is_measured_from_bright_stars():
     isolated bright ones: the kernel extends past the core radius and carries
     the wing flux the core stack alone cannot see."""
     rng = np.random.default_rng(7)
-    h = w = 1400
+    h = w = 2000                       # room for 40 stars isolated to 2 x WING_RADIUS
     yy, xx = np.mgrid[:h, :w]
     img = np.full((h, w), 300.0)
     pos = []
@@ -121,7 +121,7 @@ def test_sky_is_left_alone_and_flux_roughly_kept():
     yy, xx = np.mgrid[:img.shape[0], :img.shape[1]]
     for y, x in pos:
         far &= np.hypot(yy - y, xx - x) > 40       # the floor model's window around a patched star
-    far &= np.hypot(yy - 320, xx - 320) > 24       # the galaxy bump's peak counts as a source
+    far &= np.hypot(yy - 320, xx - 320) > 70       # the galaxy bump is a source out to where it drops under the blend's 1.5 sigma
     far[:20] = far[-20:] = far[:, :20] = far[:, -20:] = False
     assert np.array_equal(out[far], img[far])          # blend is exactly 0 on sky
     assert abs(out.sum() / img.sum() - 1.0) < 0.01
@@ -171,7 +171,7 @@ def test_split_stars_sharpen_on_a_zero_background_without_rings():
     from scipy.ndimage import gaussian_filter, minimum_filter
     model = gaussian_filter(minimum_filter(img, db.FLOOR_MIN_SIZE), db.FLOOR_SMOOTH)
     psf, _ = db.measure_psf(img)
-    starless, inner, mask, n, fits, wing = db.star_layer(img, model, sig, psf, None)
+    starless, inner, mask, n, fits, wing, spikes = db.star_layer(img, model, sig, psf, None)
     assert fits.shape == (n, 5)
     assert np.array_equal(starless[~mask], img[~mask])          # untouched outside the footprint
     assert np.abs(starless - truth)[mask].mean() < 2 * sig       # the galaxy survives under the stars

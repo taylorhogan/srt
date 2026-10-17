@@ -5786,10 +5786,11 @@ def process_cmd(words: list[str], account: str) -> None:
         scnr=0      average-neutral green removal, g = min(g, (r+b)/2), 0..1.
         deblur=0    Richardson-Lucy iterations on the luminance (every plane
                     for HOO/SHO), kernel measured from the field's own stars,
-                    core and wing. 15 is the working value: ngc2146 L 2.26"
-                    -> 1.43", stars tight with no halo or ring, lanes intact;
-                    25 posterises a bright galaxy core into blobs. Runs at
-                    render time, so `reuse deblur=15` costs a minute.
+                    core and wing, each star's spikes fitted off first. 40 is
+                    the working value: stars converge by 15 but galaxies need
+                    40 (ngc7320 L 2.00" -> 1.04", nuclei 12 -> 7 px, the
+                    added detail shared by both half stacks). Runs at render
+                    time; on the GPU 40 iterations is half a minute.
         dering=sky  what stops the rings. `sky` (default) lets a star's halo
                     drain to the local sky and no further; `input` holds
                     every pixel at or above its input, which leaves halos
