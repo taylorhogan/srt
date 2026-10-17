@@ -1,0 +1,245 @@
+        <article id="quintet-deblur" class="note">
+            <h2 class="note-title">Undoing the blur: deconvolving Stephan's Quintet</h2>
+            <div class="note-meta"><span class="note-date">2026-10-17</span> &middot; DECONVOLUTION &middot; STEPHAN'S QUINTET, 100 &times; 5 MIN LUMINANCE + 136 &times; 5 MIN RGB &middot; NOISE2NOISE, THEN RICHARDSON-LUCY, 40 ITERATIONS &middot; STATUS: DISPLAY ONLY</div>
+
+            <h3>Abstract</h3>
+
+            <p class="science-text note-abstract">
+                Every star in our images is a point of light smeared into a blob two arcseconds
+                wide by the atmosphere and the optics, and every galaxy is smeared by the same
+                blob. The smear has a shape, the kernel, and the field's own stars show what it
+                is. Deconvolution is the arithmetic of taking that shape back out. This note
+                explains what the kernel is, how the Richardson-Lucy iteration undoes it, and the
+                four rules that stop it from drawing dark rings around every star. The stack of
+                Stephan's Quintet, the five galaxies of the
+                <a href="#quintet-redshift">redshift experiment</a>, goes through the
+                <a href="#n2n-first-result">Noise2Noise denoiser</a> first and the deconvolution
+                second, and the order matters more than we expected: a denoised image no longer has
+                one kernel, because the denoiser erodes the faint stars' wings and leaves the bright
+                stars' alone. With that accounted for, forty iterations take the stars from
+                2.00&Prime; to 1.04&Prime; and the galaxy nuclei from 12 pixels across to 7, and a
+                split-half test says the detail that appears in the galaxies is real. The result is
+                for looking at. Nothing is measured from it.
+            </p>
+
+            <div class="figure-pair">
+                <figure>
+                    <a href="images/quintet_deblur_raw.jpg" target="_blank" rel="noopener noreferrer">
+                        <img src="images/quintet_deblur_raw.jpg" alt="Stephan's Quintet from the plain stack: five galaxies with soft, slightly grainy edges, the two nuclei of the colliding pair blurred into one glow, stars as soft discs with faint diffraction spikes.">
+                    </a>
+                    <figcaption><strong>Before.</strong> The plain stack, 100 five-minute luminance
+                        frames with red, green and blue, at 1:1. Stars 2.00&Prime; wide.</figcaption>
+                </figure>
+                <figure>
+                    <a href="images/quintet_deblur_deblurred.jpg" target="_blank" rel="noopener noreferrer">
+                        <img src="images/quintet_deblur_deblurred.jpg" alt="The same field denoised and deconvolved: the grain is gone, the stars are tight points, the two nuclei of NGC 7318 are separate, the bar and arms of NGC 7319 are crisp, and knots of star formation are resolved across the disc of NGC 7320. Colors are stronger.">
+                    </a>
+                    <figcaption><strong>After.</strong> The same pixels denoised, then deconvolved
+                        with forty Richardson-Lucy iterations. Stars 1.04&Prime;. The color
+                        saturation is raised 2.6&times; for display; the brightness scale is the
+                        same.</figcaption>
+                </figure>
+            </div>
+
+            <h3>What blur is, and what a kernel is</h3>
+
+            <p class="science-text">
+                A star is a point. By the time its light has crossed the atmosphere and the
+                telescope it lands on the sensor as a blob about two arcseconds across, eight
+                pixels at our scale. That blob is the point spread function, the subject of
+                <a href="#psf">What shape is a star?</a>, and the important thing about it is
+                that it is the same blob for everything in the field. A galaxy is not blurred by
+                some other process; it is the sum of a great many points, every one of which has
+                been smeared into the same shape. Two nuclei twenty pixels apart become one glow
+                because each has been spread eight pixels wide. A knot of star formation in a
+                spiral arm becomes a soft bump. The image we record is the true sky with every
+                point replaced by a copy of the blob, scaled to that point's brightness and added
+                up. Mathematically that operation is a convolution, and the blob is its
+                <strong>kernel</strong>.
+            </p>
+
+            <figure>
+                <a href="images/quintet_deblur_kernel.jpg" target="_blank" rel="noopener noreferrer">
+                    <img src="images/quintet_deblur_kernel.jpg" alt="Two panels at a logarithmic stretch. Left: one real star from the frame, a bright core inside a broad faint halo with four faint diffraction spikes. Right: the kernel built from the field's stars, the same core and halo shape, smooth and symmetric.">
+                </a>
+                <figcaption>Left, one star from the frame at a logarithmic stretch, so that the
+                    faint halo around the core shows. Right, the kernel: the median of 400
+                    isolated stars for the core, with the halo out to 72 pixels measured from the
+                    60 brightest, 145 pixels on a side. Only 4% of a star's light sits beyond
+                    24 pixels, but a deconvolution that does not know about it leaves that 4% as a
+                    ring of glow around every bright star.</figcaption>
+            </figure>
+
+            <p class="science-text">
+                We do not have to guess the kernel. The field contains thousands of stars, each
+                a point source wearing the blob, so the blob can be read off them. The core is the
+                median of 400 isolated, unsaturated stars, each centered to a fraction of a pixel.
+                The halo is the part that matters more than it looks: out past 24 pixels a star
+                still carries 4% of its light, far too faint to see in a single star of ordinary
+                brightness but plain in the 60 brightest, and that is where it is measured. Stars
+                also have diffraction spikes from the secondary mirror's supports. Those are
+                measured too, but they are handled separately, for a reason that comes later.
+            </p>
+
+            <h3>Deconvolution</h3>
+
+            <p class="science-text">
+                If the recorded image is the sky convolved with the kernel, then deconvolution is
+                the search for a sky which, convolved with the kernel, gives the image we have. It
+                cannot be done by simply dividing, because the blur has destroyed information:
+                many different skies blur to nearly the same picture, and the noise in the picture
+                is large enough to hide the difference. So it is done by iteration. Richardson-Lucy,
+                the method used here and on the Hubble Space Telescope's early images, works like
+                this. Start with a guess for the sky; the image itself will do. Blur the guess
+                with the kernel and compare it with the real image, pixel by pixel, as a ratio:
+                where the blurred guess is too faint the ratio is above one, where it is too
+                bright it is below. Spread that ratio back out with the kernel and multiply the
+                guess by it. Repeat. Every pass sharpens the guess a little, because every pass
+                moves light from where the blur put it back toward where it came from. The method
+                never produces a negative pixel, which is the one physical constraint it has, and
+                on a point source it converges quickly: a few iterations and the star is as tight
+                as the data allow.
+            </p>
+
+            <p class="science-text">
+                The trouble is what it does on the way. Richardson-Lucy sharpens the noise as
+                enthusiastically as the signal, and it is not told where the sky is. Given a frame
+                with its sky level still in it, the iteration sees the sky as a flat source and
+                has hundreds of counts of room to dig below it; on a test star with the exactly
+                correct kernel, fifteen iterations dug a ring thirty-six times the noise below the
+                sky, all the way round. Rings around stars are the signature of a deconvolution
+                that has gone too far, and every image of this kind you have seen with dark
+                halos is showing you that. Four rules keep ours from doing it, each measured on
+                this and earlier fields before it went in. The sky is taken out before the
+                iteration sees the image, with a floor that follows the galaxy without ever
+                clipping a real pixel. No pixel may end below the local sky. The result is blended
+                in only where there is signal to sharpen, so that the texture of the empty sky is
+                left as it was. And the kernel carries the halo, so that the halo can be drained
+                into the core instead of standing around it.
+            </p>
+
+            <h3>First the denoiser, and why the order matters</h3>
+
+            <p class="science-text">
+                The stack goes through the observatory's
+                <a href="#n2n-first-result">Noise2Noise denoiser</a> before it is deconvolved, the
+                network trained on this telescope's own subframes. We tried it the other way, and
+                it is worse. The deconvolution has to decide where there is signal to sharpen, and
+                it decides that in units of the image's noise. On the plain stack the noise is two
+                counts, so the sharpening stops three counts above the sky. A middling star's halo
+                at ten to twenty pixels out is three to five counts: the core is sharpened, the
+                outer halo is left standing, and after denoising the star wears a bullseye.
+                Denoised first, the sky noise is a twentieth of a count, the sharpening reaches
+                every halo, and they drain.
+            </p>
+
+            <p class="science-text">
+                Denoising first has a cost we did not anticipate, and finding it took most of a
+                day. A denoised image no longer has one kernel. On the plain stack the halo and the
+                spikes carry the same fraction of a star's light whatever its brightness, which is
+                what a kernel means. On the denoised stack that fraction is four times smaller for
+                the faint stars than for the bright ones, because the denoiser removes what sits
+                near its noise, and a faint star's halo is near its noise. A kernel measured from
+                the bright stars therefore subtracts a halo the faint stars no longer have, and
+                the iteration digs a shallow moat around each one, a tenth of a count deep, which
+                against a denoised sky is a mark two sigma deep and plainly visible. Two changes
+                fix it. The spikes come out of the kernel altogether: each star's spikes are fitted
+                on their own pixels and taken off the picture, and the deconvolution runs with the
+                round kernel. And the floor under every pixel is the local sky itself rather than
+                a sigma below it, measured with the fitted halos removed so that a bright star's
+                own halo cannot lift it. With both, the halo residual around stars of every
+                brightness is within a tenth of a count of the sky, and no star has a moat.
+            </p>
+
+            <h3>How many iterations</h3>
+
+            <p class="science-text">
+                Points converge fast and extended light converges slowly. At fifteen iterations
+                the stars had already tightened from 2.00&Prime; to 1.23&Prime; while the galaxies
+                had barely moved: the three bright nuclei of NGC 7318A, NGC 7318B and NGC 7319
+                went from 12.4, 12.0 and 15.8 pixels across to 8.3, 8.6 and 10.4. At forty they
+                are 6.7, 7.5 and 8.6, the stars are 1.04&Prime;, and the knots of star formation in
+                the disc of NGC 7320 separate from one another. Forty full-frame iterations on
+                the 9576 by 6388 pixel stack take thirty seconds on the observatory's GPU.
+            </p>
+
+            <p class="science-text">
+                More iterations always look sharper, so the question is whether what appears is
+                real. The test is to split the subframes into two halves, stack and deconvolve
+                each half on its own kernel, and compare what the deconvolution added to each. A
+                real feature is in both halves; a feature the iteration invented from the noise is
+                in one. With the stars masked out, the detail added to the galaxies at forty
+                iterations correlates at 0.96 in the disc of NGC 7320, 0.97 around the nuclei and
+                0.91 in the arms of NGC 7319 between the two independent halves. At eighty it is
+                still mostly shared, 0.95, 0.93 and 0.88, but visibly grainier, so forty is where
+                the pipeline runs.
+            </p>
+
+            <div class="figure-pair">
+                <figure>
+                    <a href="images/quintet_deblur_nuclei_before.jpg" target="_blank" rel="noopener noreferrer">
+                        <img src="images/quintet_deblur_nuclei_before.jpg" alt="The colliding pair NGC 7318A and B after denoising only, at twice scale: two soft yellow glows joined by haze, with faint spiral structure around them.">
+                    </a>
+                    <figcaption><strong>Denoised.</strong> NGC 7318A and B, the colliding pair,
+                        at 2&times;. Two soft glows.</figcaption>
+                </figure>
+                <figure>
+                    <a href="images/quintet_deblur_nuclei_after.jpg" target="_blank" rel="noopener noreferrer">
+                        <img src="images/quintet_deblur_nuclei_after.jpg" alt="The same pair after forty iterations: two compact nuclei, the arm sweeping between them, and star-forming knots along the arms resolved into separate points.">
+                    </a>
+                    <figcaption><strong>Deconvolved.</strong> Two compact nuclei and the arm that
+                        sweeps between them. The knots along the arms are individual
+                        star-forming regions, 300 million light years away.</figcaption>
+                </figure>
+            </div>
+
+            <div class="figure-pair">
+                <figure>
+                    <a href="images/quintet_deblur_stars_before.jpg" target="_blank" rel="noopener noreferrer">
+                        <img src="images/quintet_deblur_stars_before.jpg" alt="A field of stars from the denoised stack at 1:1: soft discs of various brightness, the bright ones with faint spikes.">
+                    </a>
+                    <figcaption><strong>Denoised.</strong> A patch of foreground stars, 1:1.</figcaption>
+                </figure>
+                <figure>
+                    <a href="images/quintet_deblur_stars_after.jpg" target="_blank" rel="noopener noreferrer">
+                        <img src="images/quintet_deblur_stars_after.jpg" alt="The same patch deconvolved: every star a tight point on a flat dark sky, with no dark ring or bright halo around any of them.">
+                    </a>
+                    <figcaption><strong>Deconvolved.</strong> The same patch. The thing to look
+                        for is what is <em>not</em> there: no dark ring, no halo, around stars of
+                        any brightness.</figcaption>
+                </figure>
+            </div>
+
+            <h3>The object</h3>
+
+            <p class="science-text">
+                Stephan's Quintet is five galaxies in Pegasus that are not all neighbors. Four of
+                them, NGC 7317, NGC 7318A, NGC 7318B and NGC 7319, are a true group about 300
+                million light years away, colliding with one another; the fifth, NGC 7320, the
+                large spiral on the right, is a foreground galaxy at about 40 million light years
+                that only happens to lie along the same line of sight. An earlier note,
+                <a href="#quintet-redshift">Five galaxies that only look like neighbors</a>,
+                measured that with a filter: the distant four recede fast enough that their
+                hydrogen light is shifted out of our hydrogen filter and into our sulfur one,
+                while NGC 7320's is not. The deconvolution makes the difference visible in another
+                way. NGC 7320 resolves into knots of star formation across its disc because it is
+                close; the four distant galaxies sharpen into nuclei, bars and arms but their knots
+                stay small, because at seven times the distance the same structures are seven
+                times smaller on the sky.
+            </p>
+
+            <p class="science-text caveat">
+                Caveats. This image is for looking at, and that is a stronger statement here than
+                it was for the denoiser alone. Deconvolution moves light: a star's halo is drained
+                into its core, and although the total is conserved to a tenth of a percent, the
+                shape of every star has been changed on purpose, so no photometry, no star widths
+                and no surface brightness may be read from it. The brightest two or three stars
+                in the field keep a faint wing beyond 72 pixels, where the kernel ends. Diffraction
+                spikes are fitted and removed as far as the fit reaches and remain beyond it. The
+                galaxies' added detail passes the split-half test, which says it is in the data,
+                not that it is correctly placed to the pixel. The before picture above is the
+                plain stack at the same brightness scale as the after picture, with the color
+                saturation of the after picture raised for display.
+            </p>
+        </article>
+
