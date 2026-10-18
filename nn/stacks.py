@@ -94,6 +94,15 @@ def index_frames(
     return out
 
 
+# How many frames the shared-reference picker will try, and how many control
+# points make a frame good enough to stop looking. astroalign caps extraction
+# at stacker._REG_MAX_CONTROL_POINTS (200); a clear 300 s L frame of a galaxy
+# field hits that cap, a thin-cloud frame does not, and a clouded one gives
+# none. Each candidate costs one calibrated load and extraction (~3 s at 61 MP).
+REF_CANDIDATES = 9
+REF_MIN_POINTS = 50
+
+
 def shared_reference_for(
     paths: list[Path],
     filter_name: str,
@@ -111,9 +120,11 @@ def shared_reference_for(
     position-dependent shift.
 
     Reference is the sharpest frame when a `frame_stats.json` cache is available
-    (the same picker `color_process` uses), else the middle frame. Which one is
-    chosen only affects how many frames align; that it is the *same* one for
-    every split is what this function exists for.
+    (the same picker `color_process` uses), else the middle frame — and if that
+    frame yields too few control points (clouds, a slew caught mid-exposure),
+    up to REF_CANDIDATES frames fanned out from the middle are tried before
+    giving up. Which one is chosen only affects how many frames align; that it
+    is the *same* one for every split is what this function exists for.
 
     **On the Spark the cache never hits, so this is always the middle frame.**
     `frame_stats.json` is written by the observatory PC and its `path` keys are
@@ -141,7 +152,9 @@ def shared_reference_for(
 
     if not paths:
         return None
-    ref_path = paths[len(paths) // 2]
+    n = len(paths)
+    mid = n // 2
+    first = mid
     try:
         from fits_processing.frame_cache import load_precomputed_fwhm_stars
         arcsec = stacker._get_arcsec_per_pixel()
@@ -151,22 +164,51 @@ def shared_reference_for(
             fwhm = {p: v[0] for p, v in pre.items()}
             idx = stacker._reference_index_by_fwhm([fwhm.get(p, 0.0) for p in paths])
             if idx is not None:
-                ref_path = paths[idx]
+                first = idx
     except Exception:
         progress_cb("    no FWHM cache — using the middle frame as reference")
 
-    try:
-        cal = stacker.calibration_from_config(filter_name)
-        reference = stacker._load_calibrated(ref_path, cal)
-        pts = stacker._reference_control_points(stacker._despike(reference))
+    # The first choice is tried blind, then neighbours fanned out from the
+    # middle of the run. 2026-10-18: ngc6946's 41 L frames had a clouded
+    # hour in the middle (frames 17-28 of the 10-15 session, 0-232 stars,
+    # sky 2855 ADU against 647) and the middle frame was one of them: no
+    # control points, and the whole target's render was refused on a night
+    # that had 12 good frames either side. The quality gate would have
+    # dropped those frames at stack time; the reference pick was the one
+    # place a single bad frame could still stop everything.
+    step = max(1, n // (REF_CANDIDATES - 1)) if n > 1 else 1
+    order = [first]
+    for k in range(1, REF_CANDIDATES):
+        for i in (mid - k * step, mid + k * step):
+            if 0 <= i < n and i not in order:
+                order.append(i)
+    order = order[:REF_CANDIDATES]
+
+    cal = stacker.calibration_from_config(filter_name)
+    best = None
+    for i in order:
+        ref_path = paths[i]
+        try:
+            reference = stacker._load_calibrated(ref_path, cal)
+            pts = stacker._reference_control_points(stacker._despike(reference))
+        except Exception:
+            progress_cb(f"    {ref_path.name}: could not load as a reference — skipped")
+            continue
         if pts is None:
-            progress_cb("    reference yielded no control points — per-split refs")
-            return None
-        progress_cb(f"    shared reference: {ref_path.name}")
-        return (pts, reference.shape)
-    except Exception:
-        progress_cb("    could not build a shared reference — per-split refs")
-        return None
+            progress_cb(f"    {ref_path.name}: no control points — trying another")
+            continue
+        if len(pts) >= REF_MIN_POINTS:
+            progress_cb(f"    shared reference: {ref_path.name} ({len(pts)} control points)")
+            return (pts, reference.shape)
+        progress_cb(f"    {ref_path.name}: only {len(pts)} control points — trying another")
+        if best is None or len(pts) > len(best[0]):
+            best = (pts, reference.shape, ref_path.name)
+    if best is not None:
+        progress_cb(f"    shared reference: {best[2]} ({len(best[0])} control points, "
+                    f"best of {len(order)} candidates)")
+        return (best[0], best[1])
+    progress_cb(f"    reference yielded no control points in {len(order)} candidates — per-split refs")
+    return None
 
 
 def stack_paths(
