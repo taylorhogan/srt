@@ -280,7 +280,7 @@ def north_rehome_step(dry_run=False):
                     % (before["offset_px"], before["end"])], []
         ctx = _pegasus_context()
         why = north_rehome.rehome_refusal(ctx["night"], ctx["nina_running"],
-                                          ctx["imaging_state"], ctx["scheduler_state"])
+                                          ctx["imaging_state"], ctx["conductor_state"])
         if why:
             return [], ["Iris North %.0f px off its %s reference; not re-homed because %s"
                         % (before["offset_px"], before["end"], why)]
@@ -370,12 +370,14 @@ PEGASUS_POLL_S = 5
 
 
 def pegasus_cycle_refusal(unity, mount_relay, nina_running, imaging_state,
-                          scheduler_state, night):
+                          conductor_state, night):
     """Why the box's supply must NOT be cycled now, or None if it may be. Pure.
 
     Every input that could not be read arrives as None and refuses: a power cut
-    is only made when the observatory is KNOWN to be at rest.
+    is only made when the observatory is KNOWN to be at rest. *conductor_state*
+    is the night machine's state; only machine.QUIET_STATES allow a cycle.
     """
+    from iris.core.machine import QUIET_STATES
     if unity != "no_device":
         return "Unity is %s, not running-without-the-box" % (unity or "unknown")
     if night is not False:
@@ -384,8 +386,8 @@ def pegasus_cycle_refusal(unity, mount_relay, nina_running, imaging_state,
         return "N.I.N.A may be running"
     if imaging_state != "NONE":
         return "imaging state is %s" % (imaging_state or "unknown")
-    if scheduler_state is None or scheduler_state == "IMAGING":
-        return "the scheduler is %s" % (scheduler_state or "unknown")
+    if conductor_state not in QUIET_STATES:
+        return "the conductor is %s" % (conductor_state or "unreachable")
     if mount_relay != 0:
         return "the mount is not confirmed off"
     return None
@@ -419,17 +421,18 @@ def _pegasus_context():
     imaging = parts[1] if len(parts) == 2 and parts[0] == "IMAGING_STATE" else None
     if line is None:
         imaging = "NONE"          # same default as super_user_commands.get_imaging_state
+    conductor_state = None
     try:
-        with open("scheduler_state.json") as fh:
-            sched = json.load(fh).get("state")
-    except (OSError, ValueError):
-        sched = None
+        from iris import client as conductor
+        conductor_state = (conductor.state(5.0) or {}).get("state")
+    except Exception:  # noqa: BLE001 -- unreachable refuses, like unknown
+        conductor_state = None
     try:
         night = bool(sun.is_night()[0])
     except Exception:  # noqa: BLE001
         night = None
     return {"unity": pegasus.unity_status(), "nina_running": _nina_running(),
-            "imaging_state": imaging, "scheduler_state": sched, "night": night}
+            "imaging_state": imaging, "conductor_state": conductor_state, "night": night}
 
 
 def recover_pegasus(kasa):
@@ -450,7 +453,7 @@ def recover_pegasus(kasa):
         enabled = True
     why = None if enabled else "auto_power_cycle is off in config"
     why = why or pegasus_cycle_refusal(ctx["unity"], mount, ctx["nina_running"],
-                                       ctx["imaging_state"], ctx["scheduler_state"],
+                                       ctx["imaging_state"], ctx["conductor_state"],
                                        ctx["night"])
     if why:
         rec["refused"] = why

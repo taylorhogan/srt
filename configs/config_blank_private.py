@@ -35,4 +35,4 @@ class PrivateConfig(object):
 
 if __name__ == "__main__":
     mt = PrivateConfig()
-    print(mt.data["mqtt"])
+    print(sorted(mt.data))

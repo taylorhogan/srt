@@ -29,10 +29,11 @@ def test_a_roof_part_way_is_unclear_not_drift():
 
 
 def test_cycle_only_at_rest_and_unknown_refuses():
-    ok = dict(night=False, nina_running=False, imaging_state="NONE", scheduler_state="WAITING_FOR_NOON")
+    ok = dict(night=False, nina_running=False, imaging_state="NONE", conductor_state="IDLE_DAY")
     assert rehome_refusal(**ok) is None
     for change in ({"night": None}, {"nina_running": True}, {"imaging_state": "IN_MAIN"},
-                   {"scheduler_state": "IMAGING"}, {"scheduler_state": None}):
+                   {"conductor_state": "SLOT_IMAGING"}, {"conductor_state": "SAFE_HOLD"},
+                   {"conductor_state": None}):
         assert rehome_refusal(**dict(ok, **change))
     assert rehome_refusal(**ok, roof_moving=True) == "the roof is moving"
 

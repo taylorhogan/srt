@@ -2,12 +2,11 @@ class PublicConfig():
     _config = dict({
 
         "globals": {
-            "mastodon instance": None,
-            "mqtt_client": None
+            "mastodon instance": None
 
         },
         "version": {
-            "date": "2026.10.18.2"
+            "date": "2026.10.18.3"
         },
 
         "logger": {
@@ -772,4 +771,4 @@ class PublicConfig():
 
 if __name__ == "__main__":
     mt = PublicConfig()
-    print(mt.data["mqtt"])
+    print(sorted(mt.data))

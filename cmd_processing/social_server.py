@@ -33,7 +33,6 @@ from cmd_processing import super_user_commands as su
 from cmd_processing import message_bus
 from cmd_processing import jobs
 from nina_gen import nina_sequence_gen
-from utils.utils import topic_to_sched
 from utils import utils
 
 _PREVIEW_MP_CONTEXT = multiprocessing.get_context("spawn")
@@ -44,7 +43,6 @@ RESTART_EXIT_CODE = 42
 
 
 
-_json_payload = None
 
 
 def get_dso_object_name(words: list[str], index: int) -> Optional[str]:
@@ -256,15 +254,6 @@ def version_cmd(words: list[str], index: int, m: Mastodon, account: str) -> None
     reply += "Observatory Status: " + cfg["Globals"]["Observatory State"]
     post_social_message(reply)
 
-def wait_for_mqtt_message(client: Any, userdata: Any, msg: Any) -> None:
-    global _json_payload
-    print ("setting payload to ")
-    _json_payload = json.loads(msg.payload.decode("utf-8"))
-    _json_payload = json.dumps(_json_payload)
-    logger = logging.getLogger(__name__)
-    logger.info("Received message: " + _json_payload)
-    print("to ", _json_payload)
-
 
 
 
@@ -281,7 +270,7 @@ def status_cmd(words: list[str], index: int, m: Mastodon, account: str) -> None:
 
     post_social_message(
         f"━━ Observatory Status ━━\n"
-        f"Scheduler : {sched['state']}\n"
+        f"Conductor : {sched['state']}\n"
         f"Target    : {sched['dso']}\n"
         f"Imaging   : {sched['will image tonight']}\n"
         f"━━ Control ━━\n"
@@ -959,17 +948,6 @@ def main() -> None:
         _stacker.cleanup_stale_spill_dirs()
     except Exception:
         logger.exception("stale stack scratch cleanup failed")
-
-    try:
-        mqtt_client = utils.connect_mqtt()
-        cfg["globals"]["mqtt_client"] = mqtt_client
-        mqtt_client.subscribe(utils.topic_from_sched)
-        mqtt_client.on_message = wait_for_mqtt_message
-        mqtt_client.loop_start()
-    except ConnectionRefusedError:
-        logger.warning("MQTT broker not available — continuing without it; "
-                       "scheduler updates will not be received")
-        cfg["globals"]["mqtt_client"] = None
 
     # Safety net: if this launch is recovering from a crash that interrupted an
     # imaging run, detect a roof-open/unparked orphan and alert (see function).

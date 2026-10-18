@@ -47,9 +47,8 @@ WAITING_FOR_BOOT
 
 Inter-process communication
 ---------------------------
-- **MQTT** (``paho-mqtt``): the social server can query the current
-  observatory state by publishing to ``utils.topic_to_sched``; this
-  module replies with a JSON payload on ``iris/from_sched``.
+- **scheduler_state.json**: this module's state, written by ``set_state``.
+  (MQTT carried it once and retired 2026-10-18: nothing ever asked.)
 - **imaging.txt** (file on disk, written by ``super_user_commands``):
   shared state between this process, ``doit_cmd`` / ``end.py``, and the
   N.I.N.A Windows batch scripts.  The scheduler polls this file while
@@ -67,7 +66,7 @@ Dependencies (non-stdlib)
 - ``cmd_processing.social_server`` — web chat server and message posting.
 - ``cmd_processing.super_user_commands`` — imaging state enum + image_cmd.
 - ``nina_gen.nina_sequence_gen`` — N.I.N.A sequence generator.
-- ``utils`` — MQTT helpers, logging.
+- ``utils`` — logging.
 """
 
 import json
@@ -125,11 +124,9 @@ _PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 # above the horizon (at acceptable air mass) is skipped.
 _MIN_GOOD_HOURS = 3
 
-# MQTT client reference; assigned in main() after connection.
-client = None
-
-# Mutable dict broadcast over MQTT when the social server polls us.
-# Keys are kept stable so callers can parse the JSON reliably.
+# The scheduler's own state, mirrored to scheduler_state.json by set_state.
+# (MQTT, which once carried it to the chat on request, retired 2026-10-18:
+# nothing ever asked.) Keys are kept stable so readers can parse the JSON.
 observatory_state = {
     "state": "Unknown",
     "dso": "Unknown",
@@ -161,36 +158,6 @@ class State(Enum):
 
 
 # ---------------------------------------------------------------------------
-# MQTT message handler
-# ---------------------------------------------------------------------------
-
-def message_handling(client, userdata, msg):
-    """Respond to MQTT status queries from the social server.
-
-    The social server publishes a message to ``utils.topic_to_sched``
-    whenever it needs the current observatory state (e.g. to reply to a
-    ``status`` command).  This handler serialises
-    ``observatory_state`` to JSON and publishes it back on
-    ``iris/from_sched``.
-
-    Args:
-        client: The paho-mqtt client instance.
-        userdata: Unused; required by the paho callback signature.
-        msg: The incoming paho ``MQTTMessage``.
-    """
-    if msg.topic == utils.topic_to_sched:
-        print("incoming message", msg)
-        json_payload = json.dumps(observatory_state)
-        topic = "iris/from_sched"
-        LOGGER.info(f"Send `{json_payload}` to topic `{topic}`")
-        result = client.publish(topic, json_payload)
-        if result[0] == 0:
-            print(f"Send `{json_payload}` to topic `{topic}`")
-        else:
-            print(f"Failed to send message to topic {topic}")
-
-
-# ---------------------------------------------------------------------------
 # State helpers
 # ---------------------------------------------------------------------------
 
@@ -217,8 +184,8 @@ def _slots_record(slots) -> list:
 def set_state(state: State, dso=None, will_image_tonight=None, slots=None):
     """Update the in-memory ``observatory_state`` dict and log the transition.
 
-    The dict is serialised to JSON and broadcast over MQTT on the next
-    query from the social server (see ``message_handling``).
+    The dict is written to scheduler_state.json for the readers that still
+    use it (docs/ARCHITECTURE_PLAN.md Phase 3: they move to the conductor).
 
     Args:
         state: The new ``State`` enum value.
@@ -239,7 +206,7 @@ def set_state(state: State, dso=None, will_image_tonight=None, slots=None):
         observatory_state["slots"] = _slots_record(slots)
     LOGGER.info("State: %s", state.name)
     print(f"State: {state.name}")
-    # Persist so social_server can read it without MQTT.
+    # Persist for the readers that still use the file (Phase 3: they move to the conductor).
     try:
         utils.set_install_dir()
         with open("scheduler_state.json", "w") as f:
@@ -1199,8 +1166,7 @@ def main():
         1. PRESERVE ``safety.txt`` and ``mode.txt`` exactly as found.
         2. Reset imaging state to ``NONE`` (clears any stale ``imaging.txt``),
            unless NINA is mid-capture.
-        3. Connect to the MQTT broker (continues without it if unavailable).
-        4. Enter the ``while True`` loop: wait for noon, run ``nightly_cycle()``.
+        3. Enter the ``while True`` loop: wait for noon, run ``nightly_cycle()``.
 
     Startup deliberately writes NEITHER safety.txt NOR mode.txt. It used to
     write both -- ``USER SAFE`` and ``manual`` -- which meant every restart
@@ -1231,13 +1197,6 @@ def main():
     else:
         super_user_commands.set_imaging_state(super_user_commands.ImagingState.NONE)
     LOGGER.info('Start Scheduler')
-    try:
-        client = utils.connect_mqtt()
-        client.subscribe(utils.topic_to_sched)
-        client.on_message = message_handling
-        client.loop_start()
-    except ConnectionRefusedError:
-        LOGGER.warning("MQTT broker not available — continuing without it")
 
     from iris import client as conductor_client
     if conductor_client.drives_checks():

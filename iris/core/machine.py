@@ -135,6 +135,12 @@ class T:
 # of SAFE_HOLD would reintroduce the bug SAFE_HOLD exists to kill.
 HOLD_STATES = frozenset({"SAFE_HOLD", "FAULT_ROOF_UNKNOWN", "ESTOP"})
 
+# Daytime states with nothing in motion and nothing about to start: the only
+# ones in which maintenance may power-cycle equipment (Iris North's plug, the
+# Pegasus box). Replaced the scheduler file's "not IMAGING" test on 2026-10-18;
+# anything else -- a night under way, a hold, unknown -- refuses.
+QUIET_STATES = frozenset({"IDLE_DAY", "PLANNING", "ARMED", "NIGHT_DONE"})
+
 # Roof moved by an operator outside a night. Roof motion is guarded and timed
 # out here exactly as in the night's own OPENING_ROOF / CLOSING_ROOF.
 MANUAL_STATES = frozenset({"MANUAL_OPENING", "MANUAL_OPEN", "MANUAL_CLOSING"})

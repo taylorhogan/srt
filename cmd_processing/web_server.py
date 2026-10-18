@@ -467,7 +467,8 @@ async def api_ticker():
 
         mode = su.get_mode()
         safe = "Safe" if su.is_safe() else "Unsafe"
-        sched = su.get_scheduler_state()
+        # Two conductor calls since 2026-10-18 (was a file read): off the loop.
+        sched = await asyncio.to_thread(su.get_scheduler_state)
 
         # The conductor's Night machine state replaces the old "Scheduler"
         # and "State" items (2026-09-16): one word for where the night stands,

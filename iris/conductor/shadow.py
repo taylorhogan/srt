@@ -465,8 +465,60 @@ class ShadowConductor:
         except Exception:
             return {}
 
+    # --- Phase 3: with the conductor driving the checks, scheduler_state.json
+    # is not read at all. Its three load-bearing uses come from the conductor's
+    # own record instead (2026-10-18): the weather verdict from the clock's
+    # NIGHT_PLAN notes, the unplanned run's slot count from the sequence on
+    # disk, and the end of the day from sunrise (plus a late-morning fallback).
+
+    def _plan_weather(self) -> bool:
+        """Tonight's weather verdict from the clock's own NIGHT_PLAN record.
+
+        The sunset record when there is one, else the noon record: the same
+        moments the scheduler's "will image tonight" changed. Keyed to the
+        NIGHT's date (before local noon it is still last evening's night), so a
+        check after midnight reads the plan that started the night. No plan
+        is no weather -- the guard refuses, which is the safe way to be wrong.
+        Cached on (journal head, night) so a poll does not re-read the journal.
+        """
+        try:
+            from datetime import timedelta
+            from iris.conductor.clock import GOOD, local_now, plan_records
+            now = local_now()
+            night = (now - timedelta(days=1)).date() if now.hour < 12 else now.date()
+            key = (self.journal.head(), night)
+            cached = getattr(self, "_plan_weather_cache", None)
+            if cached and cached[0] == key:
+                return cached[1]
+            recs = plan_records(self.journal.replay(days=2), night)
+            rec = recs.get("sunset") or recs.get("noon")
+            ok = bool(rec and rec.get("outcome") == GOOD)
+            self._plan_weather_cache = (key, ok)
+            return ok
+        except Exception:
+            return False
+
+    @staticmethod
+    def _late_morning() -> bool:
+        try:
+            from iris.conductor.clock import local_now
+            return 11 <= local_now().hour < 12
+        except Exception:
+            return False
+
+    def _sequence_slot_count(self) -> int:
+        """Targets in the sequence on disk: what an unplanned image!! will run."""
+        try:
+            from configs import config
+            from nina_gen.nina_sequence_gen import read_back
+            return len(read_back(Path(config.data()["nina"]["sequence_output"])))
+        except Exception:
+            return 0
+
     def _read_sched(self):
         import json
+        if self.drives_checks:
+            return None, None
         try:
             d = json.loads((self.root / "scheduler_state.json").read_text())
             return d.get("state"), str(d.get("will image tonight", "")).lower()
@@ -701,7 +753,8 @@ class ShadowConductor:
             # snapshot default (False) made the weather guard refuse every open
             # in the counterfactuals -- the one blemish on the first CLEAN
             # night. Day-scoped, so no freshness decay.
-            weather_ok=(self._will_image in ("true", "yes")),
+            weather_ok=(self._plan_weather() if self.drives_checks
+                        else self._will_image in ("true", "yes")),
             slots_remaining=self.slots,
             nina_alive=bool(self._nina))
 
@@ -857,7 +910,8 @@ class ShadowConductor:
             # IDLE_DAY; size its slot count from the sequence on disk so the
             # prelude does not walk straight to FLATS on "plan exhausted".
             if event == "CHECKS_PASSED" and self.state == "IDLE_DAY":
-                self.slots = max(1, self._read_slot_count())
+                self.slots = max(1, self._sequence_slot_count() if self.drives_checks
+                                 else self._read_slot_count())
                 payload["unplanned"] = True
                 self._unplanned = True
             # A failed fire returns to "the day the open was attempted from";
@@ -963,6 +1017,12 @@ class ShadowConductor:
             if alt is not None and alt > 0.0:
                 self.offer("DAY_TICK", "shadow", {"clock": "sunrise",
                                                   "sun_alt": round(alt, 1)})
+            elif self.drives_checks and alt is None and self._late_morning():
+                # The scheduler's file used to be the second day clock. With it
+                # retired, a dead sun probe must not hold NIGHT_DONE into the
+                # noon check: by 11:00 local the night is over whatever the sky.
+                self.offer("DAY_TICK", "shadow", {"clock": "late-morning fallback",
+                                                  "why": "sun altitude unavailable"})
 
         # --- scheduler transitions -> planner events
         sched, will = self._read_sched()

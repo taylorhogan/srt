@@ -62,7 +62,6 @@ ROOT = Path(__file__).resolve().parents[1]
 SKY_LOG = ROOT / "local" / "sky_log.jsonl"
 DUSK_LOG = ROOT / "local" / "dusk_check.jsonl"
 MARKER = ROOT / "local" / "dusk_check_last.txt"
-STATE_FILE = ROOT / "scheduler_state.json"
 POST_URL = "http://127.0.0.1:8095/api/post"
 
 DEFAULTS = {
@@ -176,21 +175,23 @@ def verdict(reading, s):
     return "UNSURE"
 
 
-def tonight_plan(evening: date):
-    """What the scheduler decided for this evening, or None if it did not say.
+def tonight_plan(evening: date, get_plan=None):
+    """What the conductor decided for this evening, or None if it did not say.
 
-    scheduler_state.json is rewritten at the noon and pre-sunset checks; one
-    written before today's noon is yesterday's decision and must not be read
-    as tonight's.
+    The latest of the evening's NIGHT_PLAN records (sunset, else noon) from
+    GET /v1/plan, dated by the evening itself, so yesterday's decision can
+    never be read as tonight's. Until 2026-10-18 this read
+    scheduler_state.json and dated it by the file's mtime. *get_plan* is
+    injectable for tests (iris.client.get_plan by default).
     """
     try:
-        st = json.loads(STATE_FILE.read_text())
-        written = datetime.fromtimestamp(STATE_FILE.stat().st_mtime, _tz())
-    except (OSError, ValueError):
+        if get_plan is None:
+            from iris.client import get_plan
+        p = get_plan(evening.isoformat(), timeout=5.0) or {}
+    except Exception:
         return None
-    if written.date() != evening or written.hour < 12:
-        return None
-    if "will image tonight" not in st:
+    rec = p.get("sunset") or p.get("noon")
+    if not rec or rec.get("outcome") not in ("good", "bad"):
         return None
     mode = "manual"
     try:
@@ -198,7 +199,8 @@ def tonight_plan(evening: date):
             mode = "auto"
     except (OSError, IndexError):
         pass
-    return {"image": bool(st["will image tonight"]), "dso": st.get("dso"), "mode": mode}
+    return {"image": rec["outcome"] == "good", "dso": (rec.get("plan") or {}).get("best"),
+            "mode": mode}
 
 
 def compose(reading, v, plan):

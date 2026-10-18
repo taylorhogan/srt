@@ -61,3 +61,22 @@ def test_agreement_and_unsure_do_not_push(dc):
     assert dc.compose(_reading(0.4), "UNSURE", go)[1] is False
     assert dc.compose(_reading(0.4), "UNSURE", skip)[1] is False
     assert dc.compose(_reading(0.9), "CLEAR", None)[1] is False
+
+
+def test_tonight_plan_reads_the_conductors_record_for_that_evening():
+    from datetime import date
+    from sentry.dusk_check import tonight_plan
+    asked = []
+
+    def plan(day, timeout=5.0):
+        asked.append(day)
+        return {"noon": {"outcome": "good", "plan": {"best": "ngc6946"}},
+                "sunset": {"outcome": "bad", "plan": {"best": "ngc6946"}}}
+
+    got = tonight_plan(date(2026, 10, 18), get_plan=plan)
+    assert asked == ["2026-10-18"]
+    assert got["image"] is False and got["dso"] == "ngc6946"      # the sunset check wins
+    assert tonight_plan(date(2026, 10, 18), get_plan=lambda d, timeout=5.0: {"noon": None}) is None
+    assert tonight_plan(date(2026, 10, 18), get_plan=lambda d, timeout=5.0: None) is None
+    failed = {"noon": {"outcome": "failed", "plan": None}}
+    assert tonight_plan(date(2026, 10, 18), get_plan=lambda d, timeout=5.0: failed) is None

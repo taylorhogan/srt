@@ -76,16 +76,20 @@ def drift_verdict(per_frame, ref):
     return {"state": state, "end": end, "offset_px": round(off, 1)}
 
 
-def rehome_refusal(night, nina_running, imaging_state, scheduler_state, roof_moving=False):
-    """Why Iris North must NOT be power-cycled now, or None. Pure; unknown refuses."""
+def rehome_refusal(night, nina_running, imaging_state, conductor_state, roof_moving=False):
+    """Why Iris North must NOT be power-cycled now, or None. Pure; unknown refuses.
+
+    *conductor_state* is the night machine's state (iris.client.state), None
+    when the conductor did not answer; only machine.QUIET_STATES allow it."""
+    from iris.core.machine import QUIET_STATES
     if night is not False:
         return "it is not confirmed daytime"
     if nina_running is not False:
         return "N.I.N.A may be running"
     if imaging_state != "NONE":
         return "imaging state is %s" % (imaging_state or "unknown")
-    if scheduler_state is None or scheduler_state == "IMAGING":
-        return "the scheduler is %s" % (scheduler_state or "unknown")
+    if conductor_state not in QUIET_STATES:
+        return "the conductor is %s" % (conductor_state or "unreachable")
     if roof_moving:
         return "the roof is moving"
     return None

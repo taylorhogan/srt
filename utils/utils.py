@@ -1,5 +1,4 @@
 import os
-import random
 from hardware_control import kasa_utils as ku
 import asyncio
 
@@ -10,8 +9,6 @@ from datetime import datetime
 
 
 
-topic_to_sched = "iris/to_sched"
-topic_from_sched = "iris/from_sched"
 __logger = None
 
 
@@ -65,28 +62,6 @@ def get_device_map ():
         logger.exception("Exception")
     return dev_map
 
-def connect_mqtt():
-    import paho.mqtt.client as paho
-    def on_connect(client, userdata, flags, rc, properties):
-        if rc == 0:
-            print("Connected to MQTT Broker!")
-        else:
-            print("Failed to connect, return code %d\n", rc)
-
-    # Set Connecting Client ID
-    client_id = f'publish-{random.randint(0, 1000)}'
-
-    # For paho-mqtt 2.0.0, you need to set callback_api_version.
-    client = paho.Client(client_id=client_id, callback_api_version=paho.CallbackAPIVersion.VERSION2)
-
-    # client.username_pw_set(username, password)
-    client.on_connect = on_connect
-    try:
-        client.connect('localhost', 1883)
-    except ConnectionRefusedError:
-        print("ERROR: MQTT broker is not running. Start it with: sudo systemctl start mosquitto")
-        raise
-    return client
 
 if __name__ == '__main__':
     set_install_dir()

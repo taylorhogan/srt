@@ -592,3 +592,86 @@ def test_with_the_conductor_driving_the_checks_the_scheduler_file_decides_nothin
         sh.poll()
     assert _transitions(sh) == [] and sh.state == "IDLE_DAY"
     assert not [e for e in sh.journal.replay() if e.event in ("NOON_TICK", "PLAN_GOOD", "WEATHER_BAD")]
+
+
+# --- Phase 3, scheduler_state.json retired from the driven conductor (2026-10-18)
+
+def _driven(root):
+    sh = ShadowConductor(root, Journal(root / "local" / "journal"), sun_probe=lambda: None,
+                         drives_checks=True)
+    sh.pwi4_probe = lambda: "unreachable"
+    sh.limits_probe = lambda: ("not_configured", "")
+    return sh
+
+
+def _night_plan(sh, check, outcome, day):
+    sh.journal.append("note", "NIGHT_PLAN", "clock",
+                      data={"date": day, "check": check, "outcome": outcome, "plan": {}})
+
+
+def _at(monkeypatch, iso):
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    import iris.conductor.clock as clock
+    monkeypatch.setattr(clock, "local_now",
+                        lambda: datetime.fromisoformat(iso).replace(tzinfo=ZoneInfo("America/New_York")))
+
+
+def test_driven_weather_comes_from_the_clocks_plan_not_the_scheduler_file(tmp_path, monkeypatch):
+    """The load-bearing dependency: weather_ok gates the scheduler's roof open.
+    With the file saying "yes" and no plan on record, the answer is no."""
+    root = _mkroot(tmp_path)
+    sh = _driven(root)
+    _at(monkeypatch, "2026-10-18T15:00")
+    _sched(root, "WAITING_FOR_PRE_SUNSET", will="yes"); sh.poll()
+    assert sh._current_evidence().weather_ok is False          # file ignored, no plan yet
+    _night_plan(sh, "noon", "good", "2026-10-18")
+    assert sh._current_evidence().weather_ok is True           # the noon plan, before sunset
+    _night_plan(sh, "sunset", "bad", "2026-10-18")
+    assert sh._current_evidence().weather_ok is False          # the sunset check wins
+
+
+def test_driven_weather_after_midnight_reads_the_evening_that_started_the_night(tmp_path, monkeypatch):
+    root = _mkroot(tmp_path)
+    sh = _driven(root)
+    _night_plan(sh, "noon", "good", "2026-10-18")
+    _night_plan(sh, "sunset", "good", "2026-10-18")
+    _at(monkeypatch, "2026-10-19T02:30")
+    assert sh._current_evidence().weather_ok is True
+    _at(monkeypatch, "2026-10-19T13:00")                       # the next day: no plan yet
+    assert sh._current_evidence().weather_ok is False
+
+
+def test_driven_unplanned_run_sizes_slots_from_the_sequence_on_disk(tmp_path, monkeypatch):
+    root = _mkroot(tmp_path)
+    sh = _driven(root)
+    monkeypatch.setattr(ShadowConductor, "_sequence_slot_count", lambda self: 2)
+    (root / "scheduler_state.json").write_text(json.dumps(
+        {"state": "WAITING_FOR_NOON", "slots": [{"dso": "a"}, {"dso": "b"}, {"dso": "c"}]}))
+    sh.offer("CHECKS_PASSED", "operator", {})
+    assert sh.slots == 2                                         # not the file's 3
+
+
+def test_driven_night_done_falls_back_to_late_morning_without_a_sun(tmp_path, monkeypatch):
+    root = _mkroot(tmp_path)
+    sh = _driven(root)
+    sh.state = "NIGHT_DONE"
+    _at(monkeypatch, "2026-10-19T09:30")
+    sh.poll()
+    assert sh.state == "NIGHT_DONE"                              # sun unknown, still early
+    _at(monkeypatch, "2026-10-19T11:05")
+    sh.poll()
+    assert sh.state == "IDLE_DAY"
+    tick = [e for e in sh.journal.replay() if e.event == "DAY_TICK"][-1]
+    assert tick.data.get("clock") == "late-morning fallback"
+
+
+def test_driven_conductor_runs_with_no_scheduler_file_at_all(tmp_path, monkeypatch):
+    root = _mkroot(tmp_path)
+    (root / "scheduler_state.json").unlink()
+    sh = _driven(root)
+    _at(monkeypatch, "2026-10-18T19:00")
+    _night_plan(sh, "noon", "good", "2026-10-18")
+    _night_plan(sh, "sunset", "good", "2026-10-18")
+    sh.poll()
+    assert sh._current_evidence().weather_ok is True

@@ -152,7 +152,7 @@ def test_implausible_records_are_kept_out_of_the_baseline(tmp_path, monkeypatch)
 from scripts.morning_check import pegasus_cycle_refusal
 
 AT_REST = dict(unity="no_device", mount_relay=0, nina_running=False,
-               imaging_state="NONE", scheduler_state="WAITING_FOR_NOON", night=False)
+               imaging_state="NONE", conductor_state="IDLE_DAY", night=False)
 
 
 def test_cycle_allowed_only_at_rest_with_unity_up_and_no_box():
@@ -164,7 +164,7 @@ def test_cycle_allowed_only_at_rest_with_unity_up_and_no_box():
     {"night": True}, {"night": None},
     {"nina_running": True}, {"nina_running": None},
     {"imaging_state": "IN_MAIN"}, {"imaging_state": None},
-    {"scheduler_state": "IMAGING"}, {"scheduler_state": None},
+    {"conductor_state": "SLOT_IMAGING"}, {"conductor_state": "PRELUDE"}, {"conductor_state": None},
     {"mount_relay": 1}, {"mount_relay": None},
 ])
 def test_anything_unknown_or_busy_refuses_the_cycle(change):

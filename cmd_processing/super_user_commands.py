@@ -3905,18 +3905,33 @@ def is_safe() -> bool:
     return first_line.strip() == "USER SAFE"
 
 def get_scheduler_state() -> dict:
-    """Read the scheduler's current state from scheduler_state.json.
+    """The night as the conductor sees it, in the shape the scheduler file had.
 
-    Returns a dict with keys ``state``, ``dso``, and ``will image tonight``.
-    Falls back to default unknown values if the file is missing or unreadable.
+    {"state": the night machine's state, "dso": the plan's best target,
+    "will image tonight": True/False from the latest check}. Phase 3
+    (2026-10-18): this read scheduler_state.json until the conductor took the
+    decisions over; the keys are kept so the chat and the ticker are unchanged.
+    The night's date is yesterday before local noon, so after midnight this
+    still describes the plan that started the night. Unknown values when the
+    conductor does not answer.
     """
-    utils.set_install_dir()
+    out = {"state": "unknown", "dso": "unknown", "will image tonight": "unknown"}
     try:
-        import json as _json
-        with open("scheduler_state.json", "r") as f:
-            return _json.load(f)
+        from datetime import timedelta
+        from iris import client as conductor
+        st = conductor.state(2.0) or {}
+        if st.get("state"):
+            out["state"] = st["state"]
+        now = datetime.now()
+        night = (now - timedelta(days=1)).date() if now.hour < 12 else now.date()
+        p = conductor.get_plan(night.isoformat(), timeout=2.0) or {}
+        rec = p.get("sunset") or p.get("noon")
+        if rec:
+            out["dso"] = (rec.get("plan") or {}).get("best") or "unknown"
+            out["will image tonight"] = rec.get("outcome") == "good"
     except Exception:
-        return {"state": "unknown", "dso": "unknown", "will image tonight": "unknown"}
+        _logger.exception("could not read the night from the conductor")
+    return out
 
 
 def get_imaging_state() -> ImagingState:
@@ -4491,12 +4506,12 @@ def rehome_cmd(words: list[str], account: str) -> None:
         except Exception:  # noqa: BLE001
             night = None
         try:
-            with open("scheduler_state.json") as fh:
-                sched = _json.load(fh).get("state")
-        except (OSError, ValueError):
-            sched = None
+            from iris import client as _conductor
+            machine = (_conductor.state(5.0) or {}).get("state")
+        except Exception:  # noqa: BLE001 -- unreachable refuses
+            machine = None
         why = north_rehome.rehome_refusal(
-            night, bool(is_nina_running()), get_imaging_state().name, sched,
+            night, bool(is_nina_running()), get_imaging_state().name, machine,
             roof_moving=_roof_lock.locked())
         if why:
             social_server.post_social_message(f"Not re-homing Iris North: {why}")
