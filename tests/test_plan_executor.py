@@ -44,6 +44,7 @@ class World:
         monkeypatch.setattr(S.time, "sleep", self.sleep)
         monkeypatch.setattr(S, "set_state", lambda st, *a, **k: self.log.append(("state", st.name)))
         monkeypatch.setattr(S, "_cross_check", lambda *a, **k: self.log.append(("cross", a[0])))
+        monkeypatch.setattr(S, "_filter_advice_shadow", lambda slots: self.log.append(("advice",)))
         monkeypatch.setattr(S, "_publish_skip_to_site", lambda r: self.log.append(("skip_site", r)))
         monkeypatch.setattr(S, "_publish_plan_to_site", lambda *a, **k: self.log.append(("restamp",)))
         monkeypatch.setattr(S.obs_calendar, "set_today_stat", lambda *a: self.log.append(("cal",) + a))

@@ -1034,7 +1034,48 @@ def _carry_out_noon(rec: dict, resumed: bool):
     obs_calendar.set_today_stat('image', best)
     set_state(State.NOON_CHECK, best, True, slots=slots)
     _run(generate_sequence_task, best, hours, slots=slots)
+    _filter_advice_shadow(slots)
     return slots
+
+
+def _filter_advice_shadow(slots) -> None:
+    """docs/FILTER_ADVISOR_PLAN.md step 1: say what the filter advisor would
+    plan for each slot, beside what the sequence actually holds, and change
+    nothing. A daemon thread like the cross-check: the advisor fetches the
+    seeing forecast and must never hold up the noon check.
+    Off: cfg["nina"]["filter_advisor"] = "off"."""
+    if str((CFG.get("nina") or {}).get("filter_advisor", "shadow")).lower() == "off" or not slots:
+        return
+
+    def run():
+        from fits_processing import filter_advisor
+        from iris import client as conductor_client
+        try:
+            written = {}
+            try:
+                for name, counts, _exp in nina_sequence_gen.read_back(Path(CFG["nina"]["sequence_output"])):
+                    written[name] = counts
+            except Exception:
+                LOGGER.exception("filter advice: could not read the sequence back")
+            lines, records = ["Filter advisor (shadow, nothing changed):"], []
+            for s in slots:
+                adv = filter_advisor.advise_for(s.name, s.start, s.end)
+                plan = adv.get("plan") or {}
+                actual = written.get(s.name) or {}
+                lines.append("%s %s-%s  advised %s  |  sequence %s" % (
+                    s.name, s.start.strftime("%H:%M"), s.end.strftime("%H:%M"),
+                    " ".join("%s=%s" % kv for kv in plan.items()) or "-",
+                    " ".join("%s×%s" % kv for kv in actual.items()) or "-"))
+                lines.extend("    " + r for r in adv.get("reasons") or [])
+                records.append({"dso": s.name, "action": adv.get("action"), "advised": plan,
+                                "sequence": actual, "reasons": adv.get("reasons"),
+                                "tonight": adv.get("tonight")})
+            social_server.post_social_message("\n".join(lines))
+            conductor_client.post_event("FILTER_ADVICE", "scheduler", {"slots": records}, kind="note")
+        except Exception:
+            LOGGER.exception("filter advice (shadow) failed")
+
+    threading.Thread(target=run, daemon=True, name="filter-advice").start()
 
 
 def _carry_out_replan(rec: dict):
