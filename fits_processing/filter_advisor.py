@@ -38,7 +38,11 @@ DETAIL = {"galaxy": "L", "nebula": "Ha"}
 BASE_SET = {"galaxy": ("L", "R", "G", "B"), "nebula": ("Ha", "O-III", "S-II")}
 DEEPEN = {"galaxy": {"L": 2, "R": 1, "G": 1, "B": 1}, "nebula": {"Ha": 1, "O-III": 1, "S-II": 1}}
 
-SEEING_FACTOR = {"good": 1.5, "fair": 1.0, "poor": 0.5, "bad": 0.5}
+SEEING_FACTOR = {"good": 1.5, "fair": 1.0}
+# Poor/bad seeing: the detail channel gets a token share (ratio 1) and the
+# other filters split the night, each weighted at least DEEPEN_FLOOR x its goal.
+SOFT_SEEING = ("poor", "bad")
+DEEPEN_FLOOR = 0.25
 MOON_LIT = 0.5                  # illuminated fraction above which the moon matters
 MOON_FACTOR = {"L": 0.5, "B": 0.5, "Ha": 1.5, "O-III": 0.7}
 
@@ -146,28 +150,47 @@ def advise(frames: list, obj_type: str, entry: Optional[dict] = None,
 
     w = dict(need)
     seeing = tonight.get("seeing") or "unknown"
-    fac = SEEING_FACTOR.get(seeing)
-    if fac and fac != 1.0 and w.get(detail):
-        w[detail] *= fac
-        reasons.append("seeing forecast %s: %s x%.1f" % (seeing, detail, fac))
+    soft_night = seeing in SOFT_SEEING and w.get(detail, 0) > 0
+    if soft_night:
+        # The detail channel's need is for SHARP frames, and a soft night makes
+        # almost none: halving its share (the first rule, 2026-10-18) still gave
+        # ngc1961 five hours of L in 42 km/h of 850 hPa wind on 10-19. So it
+        # gets a token share, and the night goes to the filters that do not
+        # need the seeing -- each at least DEEPEN_FLOOR of its goal, so colour
+        # already at goal keeps deepening instead of idling.
+        for f in w:
+            if f != detail:
+                w[f] = max(w[f], DEEPEN_FLOOR * goals.get(f, 0))
+        reasons.append("seeing forecast %s: few sharp %s frames expected, so %s gets a token "
+                       "share and the night goes to the other filters" % (seeing, detail, detail))
+    else:
+        fac = SEEING_FACTOR.get(seeing)
+        if fac and fac != 1.0 and w.get(detail):
+            w[detail] *= fac
+            reasons.append("seeing forecast %s: %s x%.1f" % (seeing, detail, fac))
     lit = tonight.get("moon_lit")
     if tonight.get("moon_up") and lit is not None and lit > MOON_LIT:
         moved = []
         for f, k in MOON_FACTOR.items():
-            if w.get(f):
+            if w.get(f) and not (soft_night and f == detail):
                 w[f] *= k
                 moved.append("%s x%.1f" % (f, k))
         if moved:
             reasons.append("moon %d%% lit and up: %s" % (round(100 * lit), ", ".join(moved)))
 
     active = {f: v for f, v in w.items() if v > 0}
-    if len(active) > MAX_FILTERS:
+    if soft_night:
+        active.pop(detail, None)
+    if len(active) > MAX_FILTERS - (1 if soft_night else 0):
         out = min(active, key=active.get)
         reasons.append("%s sits out tonight (smallest need, %d filters for %d blocks); "
-                       "it rotates in as the others fill" % (out, len(active), MAX_FILTERS))
+                       "it rotates in as the others fill" % (
+                           out, len(active) + (1 if soft_night else 0), MAX_FILTERS))
         active.pop(out)
     res["need"] = need
     res["plan"] = _ratio(active)
+    if soft_night:
+        res["plan"] = {detail: 1, **res["plan"]}
     res["action"] = "plan"
     reasons.insert(0, "need (goal - have): " + ", ".join(
         "%s %d" % (f, need[f]) for f in fset))

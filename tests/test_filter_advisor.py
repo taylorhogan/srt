@@ -87,3 +87,22 @@ def test_a_nebula_uses_narrowband_with_ha_as_the_detail_channel():
 def test_filter_names_from_headers_are_canonical():
     assert fa.canonical("OIII") == "O-III" and fa.canonical("H-alpha") == "Ha"
     assert fa.canonical("Lum") == "L" and fa.canonical("weird") is None
+
+
+def test_a_soft_night_gives_the_detail_channel_a_token_share():
+    """2026-10-19: ngc1961 needed 22 sharp L, colour was at goal, and the 850 hPa
+    wind was 42 km/h. Halving L still gave it most of five hours. A soft night
+    makes almost no sharp frames, so L gets ratio 1 and colour deepens."""
+    fr = frames({"L": [2.3] * 38 + [2.7] * 46, "R": [2.4] * 25, "G": [2.5] * 25, "B": [2.3] * 25})
+    adv = fa.advise(fr, "galaxy", tonight={"seeing": "poor"})
+    assert adv["plan"]["L"] == 1
+    assert all(adv["plan"][f] > 1 for f in ("R", "G", "B"))     # at goal, still deepening
+    assert any("token share" in r for r in adv["reasons"])
+    assert fa.advise(fr, "galaxy", tonight={"seeing": "bad"})["plan"]["L"] == 1
+
+
+def test_a_soft_night_still_fits_four_blocks_with_the_token_share():
+    fr = frames({"L": [2.2] * 30, "R": [2.3] * 20, "G": [2.3] * 15, "B": [2.4] * 12, "Ha": [2.7] * 20})
+    adv = fa.advise(fr, "galaxy", tonight={"seeing": "poor", "moon_lit": 0.6, "moon_up": True})
+    assert adv["plan"]["L"] == 1 and len(adv["plan"]) <= fa.MAX_FILTERS
+    assert not any("L x" in r for r in adv["reasons"] if r.startswith("moon"))

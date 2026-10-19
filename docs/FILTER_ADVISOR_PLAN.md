@@ -41,8 +41,12 @@ reasons, in words, for the chat post and the journal.
    on its own.
 3. **Tonight's conditions.**
    - Seeing (850 hPa wind over the slot, weather.seeing_from_wind): good
-     -> detail channel x1.5; poor/bad -> x0.5 (colour is binned and blurred
-     by the stretch and does not need the seeing).
+     -> detail channel x1.5. Poor/bad -> the detail channel gets a token
+     share (ratio 1) and the other filters split the night, each weighted at
+     least a quarter of its goal so colour at goal keeps deepening (colour is
+     binned and blurred by the stretch and does not need the seeing). Changed
+     2026-10-19 from "x0.5", which still gave ngc1961 most of five hours of L
+     in 42 km/h of wind: a soft night makes almost no sharp frames.
    - Moon up during the slot and > 50 % lit: L and B x0.5, Hα x1.5, O-III x0.7.
 4. **Leave alone.** Monitor targets (`lightcurve: true`) keep their plan.
 5. **All goals met.** The advisor says so (the target is a candidate to retire)
