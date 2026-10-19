@@ -77,6 +77,25 @@ KEEP_VIDEOS = 20
 MIN_ALT_DEG = 40.0
 SUN_DARK_DEG = -6.0        # site darkness: civil twilight
 
+# "In the camera's frame" is the plate solution's answer, not a flat altitude
+# (2026-10-19). The fisheye's field is not a circle above alt 40: off to the
+# sides it is cut much higher (measured ~58 deg W, ~70 deg E). That morning
+# the ISS was in Earth's shadow from rise through its 78-deg peak and lit only
+# for its last 35 s, at alt 46 -> 31 in the north-east, which maps to x = 76
+# -> -266 px: five seconds inside the frame, at its very edge. The flat rule
+# armed it, the analyser rightly found nothing, and the pass read as a failed
+# recording. A pass now needs MIN_VISIBLE_S of samples that are sunlit, over a
+# dark site, and at least EDGE_MARGIN_PX inside the frame. Replayed on all 12
+# recorded passes (1 s steps, their own TLEs): every pass the analyser FOUND had
+# >= 15 s in frame at a 25 px margin (the tightest, Tiangong 10-03), and the
+# 10-19 ISS pass had 3 s. 100 px / 20 s, the first guess, would have skipped
+# two found passes. When in doubt the rule records: the analyser's TLE
+# cross-check still rejects anything that is not the station.
+FRAME_PX = (2560, 1440)    # (width, height) of the sky camera's recordings
+EDGE_MARGIN_PX = 25
+MIN_VISIBLE_S = 10.0
+SAMPLE_S = 2.0
+
 # Spawn the recorder when the pass starts within this window. sky_monitor
 # ticks every 5 minutes, so 6 guarantees exactly one tick arms it.
 SPAWN_AHEAD_S = 6 * 60
@@ -192,10 +211,44 @@ def passes_tonight(hours=18.5, arm=True):
     return out
 
 
-def _passes_for(name, sat, site, eph, ts, hours):
+def frame_test(sol=None, frame=FRAME_PX, margin=EDGE_MARGIN_PX):
+    """(alt, az) -> True when that point lands at least *margin* px inside the
+    sky camera's frame, from its stored plate solution. Falls back to the old
+    flat MIN_ALT_DEG floor when there is no solution: better a loose test than
+    none, and the analyser's TLE cross-check still guards the result."""
+    if sol is None:
+        try:
+            from sentry import plate_solve
+            sol = plate_solve.load()
+        except Exception:  # noqa: BLE001
+            sol = None
+    if sol is None:
+        return lambda alt, az: alt >= MIN_ALT_DEG
+    from sentry import plate_solve
+    import numpy as np
+    w, h = frame
+
+    def inside(alt, az):
+        if alt <= 0:
+            return False
+        x, y = plate_solve.altaz_to_pixel(sol, alt, az)
+        x, y = float(np.ravel(x)[0]), float(np.ravel(y)[0])
+        return margin <= x <= w - margin and margin <= y <= h - margin
+    return inside
+
+
+def visible_seconds(samples, step_s=SAMPLE_S) -> float:
+    """Seconds of a pass the camera can actually record. Pure.
+
+    *samples*: [(sunlit, site_dark, in_frame), ...] at *step_s* spacing."""
+    return step_s * sum(1 for lit, dark, inside in samples if lit and dark and inside)
+
+
+def _passes_for(name, sat, site, eph, ts, hours, in_frame=None):
     """One satellite's qualifying passes, each tagged with its name."""
     sun, earth = eph["sun"], eph["earth"]
     hz = _horizon()
+    in_frame = in_frame or frame_test()
     t0 = ts.now()
     t1 = ts.from_datetime(t0.utc_datetime() + timedelta(hours=hours))
     # 35, not MIN_ALT_DEG: the horizon dips to 36.9 in places, so a pass can
@@ -210,29 +263,31 @@ def _passes_for(name, sat, site, eph, ts, hours):
             current["peak"] = ti
         elif ev == 2 and "peak" in current:
             current["set"] = ti
-            # Sample the arc every ~15 s. A pass counts for a category if
-            # ANY sampled point satisfies it while the ISS is sunlit over a
-            # dark site; the categories are judged independently because the
-            # camera floor is flat and the horizon is azimuth-shaped.
+            # Sample the arc every SAMPLE_S. The camera category needs
+            # MIN_VISIBLE_S of samples sunlit, over a dark site and inside the
+            # frame (frame_test); "above the Iris horizon" needs any one sunlit,
+            # dark sample over the tree line. Judged independently: the frame
+            # and the horizon are different shapes.
             span = (current["set"].utc_datetime()
                     - current["rise"].utc_datetime()).total_seconds()
-            in_camera = above_horizon = False
-            n = max(2, int(span // 15))
+            above_horizon = False
+            samples = []
+            n = max(2, int(span // SAMPLE_S))
+            step = span / n
             for i in range(n + 1):
                 tx = ts.from_datetime(current["rise"].utc_datetime()
-                                      + timedelta(seconds=span * i / n))
+                                      + timedelta(seconds=step * i))
                 sunlit = bool(sat.at(tx).is_sunlit(eph))
                 sun_alt = (earth + site).at(tx).observe(sun).apparent()\
                     .altaz()[0].degrees
-                if not (sunlit and sun_alt < SUN_DARK_DEG):
-                    continue
+                dark = sun_alt < SUN_DARK_DEG
                 alt, az, _ = (sat - site).at(tx).altaz()
-                if alt.degrees >= MIN_ALT_DEG:
-                    in_camera = True
-                if alt.degrees > _horizon_alt(az.degrees, hz):
+                inside = bool(sunlit and dark and in_frame(alt.degrees, az.degrees))
+                samples.append((sunlit, dark, inside))
+                if sunlit and dark and alt.degrees > _horizon_alt(az.degrees, hz):
                     above_horizon = True
-                if in_camera and above_horizon:
-                    break
+            cam_s = visible_seconds(samples, step)
+            in_camera = cam_s >= MIN_VISIBLE_S
             if in_camera or above_horizon:
                 alt, _, _ = (sat - site).at(current["peak"]).altaz()
                 out.append({
@@ -242,6 +297,7 @@ def _passes_for(name, sat, site, eph, ts, hours):
                     "set": current["set"].utc_datetime().astimezone().isoformat(timespec="seconds"),
                     "peak_alt_deg": round(float(alt.degrees), 1),
                     "in_camera": in_camera,
+                    "camera_visible_s": round(cam_s),
                     "above_horizon": above_horizon,
                 })
             current = {}
