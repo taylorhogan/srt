@@ -26,6 +26,14 @@ The flow, per channel set (L first, it supplies the star list):
    denoiser eroded) and a star in a neighbour's wing reads the same, so
    that test took 10 kADU stars for knots, restored them with their spikes
    and let the neighbour's deep fill erase them (ngc6946, 2026-10-19).
+   A BRIGHT knot (BRIGHT_AMP above the floor) is put back as imaged AFTER
+   the RL pass, not before: a close double star fails the ring test the
+   same way a knot does (NGC 1961's pair at 4 px, 1.4x the kernel at 4-6
+   px in every channel), and RL on a 7 kADU unresolved pair made the
+   ringed, moated core this module exists to prevent (2026-10-19). A knot
+   that bright is either a pair, a compact galaxy or a nucleus, none of
+   which rings visibly when left alone; a faint HII region stays in the
+   deconvolution, where it never rings visibly either.
 3. Bright stars (amplitude BRIGHT_AMP or clipped) get a DEEP mask: the disc
    out to where the wing drops under DEEP_SIGMA sigma, which the
    star_layer's 10-16 px core fill does not cover. Twenty sigma, because at
@@ -57,6 +65,19 @@ The flow, per channel set (L first, it supplies the star list):
    channel, at a radius from its L flux: the companion of a double that B's
    own fitter missed stayed as a broad blob under a tight L core and came out
    as a pure-blue dot.
+
+stars="imaged" (the DEFAULT since 2026-10-19 evening; "points" is the
+rendering above, kept as a switch) skips step 5: the star layer
+star_layer lifted off (core, fitted wing, spikes) is added back on the
+deconvolved field exactly as imaged, every star at its denoised width.
+Nothing is fitted, rendered or coloured, so a close double, a missed
+companion or a mask edge cannot show -- at the cost that the stars stay at
+the kernel's 7-8 px while the galaxy sharpens to 5. Chosen on NGC 1961 at
+full resolution: the 4 px pair that the ring test calls a knot matched its
+neighbours only this way, and nothing else in the field paid for it. Open
+question from that comparison: the imaged stars carry a cyan-white cast at
+2x saturation where the rendered points were neutral, and which of the two
+star colours is right has not been run down.
 
 Only the reference channel is deconvolved unless the caller says otherwise
 (LRGB/HALRGB show L's sharpness; HOO/SHO show every plane). The colour
@@ -91,6 +112,7 @@ DEEP_SIGMA_CLIPPED = 1.0   # ...for a clipped star, whose wing is not fitted off
 DEEP_RADIUS = (16, 200)    # px: bounds on a deep mask's radius (10 for a colour channel's)
 RING_X = 1.4               # core at 4-6 px more than this times the kernel's: not a star
 KNOT_RADIUS = 36           # a non-stellar peak goes back as imaged within this
+KNOT_FEATHER = 6           # px over which a bright knot's untouched disc blends into the RL'd field
 STAR_DISC = 18             # ...but never inside a star's own disc
 STAMP = 24                 # half-size of the rendered star stamp, 49 px across
 STAMP_TAPER = 8            # cosine taper on its edge
@@ -219,7 +241,8 @@ def _wing_at(A: dict) -> Callable[[np.ndarray], np.ndarray]:
 
 def _channel(name: str, chan: np.ndarray, A: dict, A_ref: dict, stars: list, knots: list,
              core: np.ndarray, iters: int, deconvolve: bool, clamp_to: str,
-             ref: Optional[tuple], log: Callable[[str], None]) -> tuple[np.ndarray, np.ndarray, np.ndarray, dict]:
+             ref: Optional[tuple], log: Callable[[str], None],
+             stars_mode: str = "imaged") -> tuple[np.ndarray, np.ndarray, np.ndarray, dict]:
     """One channel through steps 3-5 of the module doc. Returns (image, flux, apertures, info)."""
     from scipy.ndimage import shift as ndshift
 
@@ -290,6 +313,11 @@ def _channel(name: str, chan: np.ndarray, A: dict, A_ref: dict, stars: list, kno
     info = {"method": "starless", "iters": int(iters) if deconvolve else 0, "stars": len(stars),
             "non_stellar": len(knots), "fwhm_px": float(A["pinfo"]["fwhm_px"]),
             "deep_masks": n_deep, "deep_frac": float(deep.mean()), "sky_sigma": float(sig)}
+    # Bright knots are classified on the reference, so every channel protects
+    # the same ones; the disc is feathered over KNOT_FEATHER px so the join
+    # between the RL'd field and the untouched core does not show.
+    bright = [(y, x) for (y, x) in knots if A_ref["above"][y, x] >= BRIGHT_AMP]
+    info["bright_knots"] = len(bright)
     if deconvolve:
         base, dinfo = db.deblur(sl2, iters, psf=A["kernel"], spikes=A["spikes"],
                                 axes=A["pinfo"].get("spike_axes"),
@@ -297,6 +325,14 @@ def _channel(name: str, chan: np.ndarray, A: dict, A_ref: dict, stars: list, kno
         info["deblurred_frac"] = dinfo.get("deblurred_frac", 0.0)
         if dinfo.get("why"):
             info["why_rl"] = dinfo["why"]
+        if bright:
+            from scipy.ndimage import distance_transform_edt
+            keep = np.zeros((h, w), bool)
+            for (y, x) in bright:
+                _disc(keep, y, x, KNOT_RADIUS)
+            keep &= ~(star_fp | deep)
+            wgt = np.clip(distance_transform_edt(keep) / float(KNOT_FEATHER), 0.0, 1.0).astype(np.float32)
+            base = (wgt * sl2 + (1.0 - wgt) * base).astype(np.float32)
     else:
         base = sl2
 
@@ -322,17 +358,24 @@ def _channel(name: str, chan: np.ndarray, A: dict, A_ref: dict, stars: list, kno
         info["ratio_to_ref"] = med
         info["ratio_from_field"] = int((wgt < 0.5).sum())
 
-    star_img = np.zeros((h, w), np.float32)
-    cs = STAMP
-    for (y, x, dy, dx), f_ in zip(stars, flux):
-        if f_ <= 0:
-            continue
-        stamp = ndshift(core, (dy, dx), order=1, mode="constant") * f_
-        y0, y1, x0, x1 = max(0, y - cs), min(h, y + cs + 1), max(0, x - cs), min(w, x + cs + 1)
-        star_img[y0:y1, x0:x1] += stamp[cs - (y - y0):cs + (y1 - y), cs - (x - x0):cs + (x1 - x)]
+    info["stars_mode"] = stars_mode
+    if stars_mode == "imaged":
+        # The layer as lifted off, back on the deconvolved field: every star
+        # at its imaged width and flux, nothing rendered.
+        star_img = layer.astype(np.float32)
+    else:
+        star_img = np.zeros((h, w), np.float32)
+        cs = STAMP
+        for (y, x, dy, dx), f_ in zip(stars, flux):
+            if f_ <= 0:
+                continue
+            stamp = ndshift(core, (dy, dx), order=1, mode="constant") * f_
+            y0, y1, x0, x1 = max(0, y - cs), min(h, y + cs + 1), max(0, x - cs), min(w, x + cs + 1)
+            star_img[y0:y1, x0:x1] += stamp[cs - (y - y0):cs + (y1 - y), cs - (x - x0):cs + (x1 - x)]
     info["star_flux"] = float(star_img.sum())
     out = (base + star_img).astype(np.float32)
-    log(f"{name}: FWHM {info['fwhm_px']:.2f} px, {len(stars)} stars, {len(knots)} non-stellar, "
+    log(f"{name}: FWHM {info['fwhm_px']:.2f} px, {len(stars)} stars ({stars_mode}), {len(knots)} non-stellar "
+        f"({len(bright)} bright, kept as imaged), "
         f"{n_deep} deep masks ({100 * deep.mean():.1f}% of the frame)"
         + (f", RL{int(iters)}" if deconvolve else "")
         + (f", colour ratio to reference {info['ratio_to_ref']:.3f}" if ref is not None else ""))
@@ -341,8 +384,12 @@ def _channel(name: str, chan: np.ndarray, A: dict, A_ref: dict, stars: list, kno
 
 def deblur_set(channels: dict[str, np.ndarray], iters: int = ITERS, ref: Optional[str] = None,
                deconvolve: Optional[set] = None, clamp_to: str = "sky",
-               log: Optional[Callable[[str], None]] = None) -> tuple[dict, dict]:
+               log: Optional[Callable[[str], None]] = None,
+               stars: str = "imaged") -> tuple[dict, dict]:
     """Starless-deconvolve a channel set. Returns (channels, info per channel).
+
+    *stars* is "imaged" (the lifted-off layer put back as it was, the
+    default) or "points" (rendered back as points at their flux; module doc).
 
     *ref* names the channel the star list comes from ("L" if present, else the
     first of R, G, B); *deconvolve* the channels RL runs on (the reference
@@ -356,6 +403,8 @@ def deblur_set(channels: dict[str, np.ndarray], iters: int = ITERS, ref: Optiona
     iters = int(iters)
     if iters <= 0 or not channels:
         return channels, {}
+    if stars not in ("points", "imaged"):
+        raise ValueError(f"stars must be 'points' or 'imaged', not {stars!r}")
     say = log or (lambda m: _logger.info("starless %s", m))
     if ref is None:
         ref = "L" if "L" in channels else next((c for c in ("R", "G", "B") if c in channels), None)
@@ -377,6 +426,7 @@ def deblur_set(channels: dict[str, np.ndarray], iters: int = ITERS, ref: Optiona
     if "why" in A_ref:
         say(f"{ref}: left as given — {A_ref['why']}")
         return channels, {ref: {"method": "starless", "iters": 0, "why": A_ref["why"]}}
+    stars_mode = stars
     stars, knots = _classify(filled[ref], A_ref)
     if len(stars) < MIN_STARS:
         why = f"only {len(stars)} stars in {ref}"
@@ -386,7 +436,8 @@ def deblur_set(channels: dict[str, np.ndarray], iters: int = ITERS, ref: Optiona
 
     out, infos = dict(channels), {}
     out[ref], flux, aps, infos[ref] = _channel(ref, filled[ref], A_ref, A_ref, stars, knots, core,
-                                               iters, ref in deconvolve, clamp_to, None, say)
+                                               iters, ref in deconvolve, clamp_to, None, say,
+                                               stars_mode=stars_mode)
     for name in channels:
         if name == ref:
             continue
@@ -396,7 +447,8 @@ def deblur_set(channels: dict[str, np.ndarray], iters: int = ITERS, ref: Optiona
             infos[name] = {"method": "starless", "iters": 0, "why": A["why"]}
             continue
         out[name], _f, _a, infos[name] = _channel(name, filled[name], A, A_ref, stars, knots, core,
-                                                  iters, name in deconvolve, clamp_to, (flux, aps), say)
+                                                  iters, name in deconvolve, clamp_to, (flux, aps), say,
+                                                  stars_mode=stars_mode)
     for k in out:
         if k in infos and "why" not in infos[k] and nans[k].any():
             out[k] = out[k].copy()

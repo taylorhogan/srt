@@ -102,11 +102,14 @@ Since 2026-09-25 the conductor decides both invariants (ADR 0014): every roof fi
   `method=starless`, since 2026-10-19; `deblur=0` turns it off). The default
   is `stacking/starless.py`: every channel's stars are taken off
   (`deblur.star_layer`), the luminance is Richardson-Lucy'd with the field's
-  own kernel on what is left, and the stars are rendered back as points at
-  each channel's own flux (colour from matched apertures against L). Nothing
-  RL sees is a point source, so the stars cannot ring, halo or moat; peaks
-  broader than the kernel at 4-6 px or with an envelope at 12-20 px (nuclei,
-  HII knots, an elliptical's core) are left to RL. `method=rl` is the earlier
+  own kernel on what is left, and the lifted-off star layer is put back as
+  imaged (`stars=imaged`, default since the evening of 2026-10-19; `stars=points`
+  renders them back as 5 px points at each channel's own flux, colour from
+  matched apertures against L). Nothing RL sees is a point source, so the
+  stars cannot ring, halo or moat; peaks broader than the kernel at 4-6 px
+  (nuclei, HII knots) are left to RL, except that a BRIGHT one (2000 ADU
+  above the floor) goes back as imaged after RL, because a close double
+  reads as a knot and RL rings it (NGC 1961's 4 px pair). `method=rl` is the earlier
   whole-luminance RL in `stacking/deblur.py`: RL rings around every star
   unless the sky is out, the floor follows the galaxy without clipping, and a
   dark clamp holds — the module doc has the measurements — and on a denoised

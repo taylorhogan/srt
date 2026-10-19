@@ -1009,14 +1009,16 @@ def deblur(chan: np.ndarray, iters: int = DEFAULT_ITERS,
 
 
 def deblur_channels(channels: dict, iters: int, clamp_to: str = "input",
-                    method: str = "starless", log=None) -> tuple[dict, dict]:
+                    method: str = "starless", log=None,
+                    stars: str = "imaged") -> tuple[dict, dict]:
     """Deblur a channel set. Returns (channels, info per channel touched).
 
     method="starless" (the default since 2026-10-19): stacking/starless --
-    RL on the picture with its stars taken off, the stars rendered back as
-    points at each channel's own flux. Every channel is touched (its stars
-    are re-rendered) and RL runs on the luminance, or on every distinct plane
-    when there is no L.
+    RL on the picture with its stars taken off, the stars put back
+    afterwards. Every channel is touched (its stars are lifted and put back)
+    and RL runs on the luminance, or on every distinct plane when there is
+    no L. *stars* is starless's star mode: "imaged" put back as lifted off
+    (default since 2026-10-19) or "points" rendered back at their flux.
 
     method="rl": this module's deblur() on the luminance alone, or on every
     distinct plane when there is no L. LRGB/HALRGB take their brightness
@@ -1037,7 +1039,7 @@ def deblur_channels(channels: dict, iters: int, clamp_to: str = "input",
         rl_on = {"L"} if "L" in uniq else set(uniq)
         done, infos_u = starless.deblur_set(uniq, iters, ref=ref, deconvolve=rl_on,
                                             clamp_to=clamp_to if clamp_to in ("input", "sky") else "sky",
-                                            log=log)
+                                            log=log, stars=stars)
         out = {name: done[distinct[id(a)]] for name, a in channels.items()}
         infos = {name: infos_u[distinct[id(a)]] for name, a in channels.items()
                  if distinct[id(a)] in infos_u}

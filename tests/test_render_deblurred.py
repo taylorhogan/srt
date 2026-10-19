@@ -40,7 +40,7 @@ def test_a_refusal_or_a_failure_costs_only_the_deblurred_composite(monkeypatch):
 def test_a_deblurred_set_comes_back_with_every_channel(monkeypatch):
     from stacking import deblur
     img = np.full((50, 50), 300.0, np.float32)
-    def fake(channels, iters, clamp_to, method, log):
+    def fake(channels, iters, clamp_to, method, log, stars="imaged"):
         return {k: v + 1 for k, v in channels.items()}, {"L": {"method": method, "iters": iters}}
     monkeypatch.setattr(deblur, "deblur_channels", fake)
     out = r.deblurred_channels({"L": img, "R": img}, 40, log=lambda m: None)

@@ -525,7 +525,7 @@ def push_render(args, out_dir: Path, written: list, meta: dict, log=print) -> bo
         log(f"  push failed: {e}")
         return False
 
-def deblurred_channels(channels: dict, iters: int, log=print):
+def deblurred_channels(channels: dict, iters: int, log=print, stars: str = "imaged"):
     """The channel set through stacking/starless, or None with the reason logged.
 
     Never raises: the deblurred composite is the newest and least proven of
@@ -535,10 +535,10 @@ def deblurred_channels(channels: dict, iters: int, log=print):
     from stacking import color_process, deblur as _deblur
     t0 = time.time()
     log("")
-    log(f"deblur: starless RL{int(iters)} on {', '.join(channels)}")
+    log(f"deblur: starless RL{int(iters)} on {', '.join(channels)}, stars {stars}")
     try:
         out, infos = _deblur.deblur_channels(channels, int(iters), clamp_to=color_process.DEBLUR_DERING,
-                                             method="starless", log=lambda m: log(f"  {m}"))
+                                             method="starless", log=lambda m: log(f"  {m}"), stars=stars)
     except Exception as e:  # noqa: BLE001
         log(f"  deblur failed — no deblurred composite: {e!r}")
         return None
@@ -707,6 +707,14 @@ def routine(args) -> int:
             with np.errstate(divide="ignore", invalid="ignore"):
                 sc = np.where(rl > 1e-4, lum / np.maximum(rl, 1e-4), 0.0)
             rgb = rgb * np.clip(sc, 0.0, color_process.MAX_LUM_BOOST)[:, :, None]
+        if args.saturation != 1.0:
+            # Chroma scaled about each pixel's own luminance, so brightness is
+            # untouched and only the colour difference from grey grows (or
+            # shrinks). Applied before the star recolouring: the stars keep
+            # the colour the RGB stacks gave them.
+            rgb = np.clip(np.nan_to_num(rgb), 0, 1)
+            y = (rgb @ np.array([0.299, 0.587, 0.114], dtype=np.float32))[:, :, None]
+            rgb = y + (rgb - y) * float(args.saturation)
         if star_mask_arr is not None:
             rgb = color_process.rgb_stars(np.clip(np.nan_to_num(rgb), 0, 1), star_img, star_mask_arr)
         pth = color_process.save_rgb(np.clip(np.nan_to_num(rgb), 0, 1),
@@ -728,7 +736,8 @@ def routine(args) -> int:
     # the starless deconvolution, on the same pinned stretch. A refusal or a
     # failure here costs the deblurred products only.
     if args.deblur > 0:
-        deb = deblurred_channels(to_channels(den if den else raw), args.deblur, log)
+        deb = deblurred_channels(to_channels(den if den else raw), args.deblur, log,
+                                 stars=args.deblur_stars)
         if deb is not None:
             subbed_deb, _ = color_process._prepare(
                 deb, opts["subtract_background"], opts["mesh"],
@@ -769,7 +778,11 @@ def main() -> int:
     ap.add_argument("--model", default="",
                     help="checkpoint for the compose stage; omit to render only "
                          "the raw composite")
-    ap.add_argument("--max-px", type=int, default=2400)
+    ap.add_argument("--max-px", type=int, default=2400,
+                    help="longest side of the composite JPEGs; 0 keeps full resolution")
+    ap.add_argument("--saturation", type=float, default=1.0,
+                    help="scale each composite's chroma about its luminance; "
+                         "1 leaves the colour as composed, 2 doubles it")
     ap.add_argument("--white-pct", type=float, default=99.95,
                     help="shared white point percentile; compose()'s 99.0 "
                          "saturates this field completely")
@@ -811,6 +824,9 @@ def main() -> int:
     ap.add_argument("--deblur", type=int, default=None,
                     help="starless deconvolution iterations for the third composite "
                          "(stacking/starless); default color_process.DEBLUR_ITERS, 0 = off")
+    ap.add_argument("--deblur-stars", default="imaged", choices=("imaged", "points"),
+                    help="starless star mode: the denoised stars put back as imaged "
+                         "(default) or points rendered at their flux")
     ap.add_argument("--push", action="store_true",
                     help="Pushover the three composites when the render finishes")
     ap.add_argument("--no-push", dest="push", action="store_false")
