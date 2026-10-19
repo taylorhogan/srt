@@ -18,6 +18,7 @@ np = pytest.importorskip("numpy")
 pytest.importorskip("scipy")
 pytest.importorskip("skimage")
 pytest.importorskip("sep")
+pytest.importorskip("torch")   # the Spark has it; iris-pc's .venv and CI do not
 
 from nn import deblur_data as dd  # noqa: E402
 
