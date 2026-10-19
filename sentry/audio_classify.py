@@ -50,6 +50,10 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 # self-extending: a move classify() judges "good" is auto-filed here by the roof
 # flow (capped at MAX_GOOD_REFS, rolling). Captures that come back "bad"/"unknown"
 # stay in unlabeled/ for a human to file with `audio <open|close> <good|bad>`.
+# The 44.1 kHz roof_audio/ tree (webcam mic, retired 2026-09-07) was deleted from
+# iris-pc on 2026-10-19 and lives on in the Spark's iris_sentry/ archive. Every
+# live caller passes root= (kasa_audio: roof_audio_kasa/), so this default only
+# serves old scripts such as roof_golden_freeze.
 ROOF_AUDIO_ROOT = os.path.join(_HERE, "roof_audio")
 FIG_SIZE = (10, 6)              # Fixed figure size for consistent image dimensions
 DPI = 100                       # Fixed DPI → consistent pixel size (1000×600 here)

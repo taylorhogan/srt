@@ -24,8 +24,10 @@ and the self-tuning threshold (the good library's own worst pairwise similarity)
 would collapse toward zero and start calling everything good. So: parallel tree,
 parallel counts, same code.
 
-    roof_audio/        eMeet mic, 44.1 kHz  -- live, still the one in the roof path
-    roof_audio_kasa/   Kasa mic,   8 kHz    -- this one, being built
+    roof_audio/        eMeet mic, 44.1 kHz  -- retired with the webcam 2026-09-07;
+                                               deleted from iris-pc 2026-10-19
+                                               (archived on the Spark, iris_sentry/)
+    roof_audio_kasa/   Kasa mic,   8 kHz    -- this one, the live library
 
 The classifier itself is reused unchanged. classify() compares rendered PNGs, so
 it never sees a sample rate; only the rendering and the capture are rate-bound,

@@ -12,7 +12,9 @@
 #
 # No arguments — source and destination are hardcoded.
 #
-# Source:      iriso@100.95.7.19:.../srt/sentry/{roof_audio,roof_signatures}
+# Source:      iriso@100.95.7.19:.../srt/sentry/roof_signatures
+#              (roof_audio, the retired 44.1 kHz library, deleted from iris-pc
+#              2026-10-19; archived on the Spark)
 # Destination: /Users/taylorhogan/Desktop/iris_sentry
 #
 # Cron (run at 6am daily) — add via `crontab -e`:
@@ -37,7 +39,7 @@ mkdir -p "$DESTINATION"
 RSYNC="/opt/homebrew/bin/rsync"
 [ -x "$RSYNC" ] || RSYNC="rsync"
 
-for dir in roof_audio roof_signatures; do
+for dir in roof_signatures; do
     "$RSYNC" -avz --ignore-existing \
         --rsync-path="C:/Users/iriso/Documents/cwrsync_6.4.7_x64_free/bin/rsync" \
         "iriso@100.95.7.19:$SRT_ROOT/$dir" \
