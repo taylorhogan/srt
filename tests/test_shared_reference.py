@@ -8,11 +8,16 @@ stop a whole target.
 """
 from pathlib import Path
 
-import numpy as np
 import pytest
 
-from nn import stacks
-from stacking import stacker
+# CI runs on bare Python + pytest (see .github/workflows): guard the science
+# stack the way every other test here does, or collection fails and the
+# whole gate goes red.
+np = pytest.importorskip("numpy")
+pytest.importorskip("astropy")
+
+from nn import stacks  # noqa: E402
+from stacking import stacker  # noqa: E402
 
 
 def _paths(n):
