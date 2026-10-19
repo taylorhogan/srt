@@ -48,3 +48,18 @@ def test_tree_limb_holds_for_both_readers():
 def test_azimuths_increase():
     az, _ = _points()
     assert az == sorted(az) and len(set(az)) == len(az)
+
+
+def test_the_planner_reads_the_file_the_way_nina_does():
+    """2026-10-19: the planner's staircase put the tree line at 44.1 deg at
+    az 28 where N.I.N.A's linear reading has 50.6, so ngc1961 was planned from
+    00:00, the generator saw no wait and did not park, and N.I.N.A then waited
+    an hour behind the trees. The planner now interpolates linearly too."""
+    import sys
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+    from iris_astronomy.astro_dso_visibility import get_horizon_from_azimuth
+    az, al = _points()
+    for a in (0.0, 5.0, 12.95, 15.0, 20.0, 28.0, 100.0, 200.0, 300.0, 354.0):
+        assert abs(get_horizon_from_azimuth(a, az, al) - _linear(a, az, al)) < 1e-9, a
+    # Past the last point the profile wraps through 360 to the first.
+    assert abs(get_horizon_from_azimuth(357.5, az, al) - (al[-1] + (al[0] - al[-1]) * 2.5 / 5.0)) < 1e-9
