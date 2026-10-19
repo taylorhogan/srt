@@ -57,7 +57,7 @@ def test_the_planner_reads_the_file_the_way_nina_does():
     an hour behind the trees. The planner now interpolates linearly too."""
     import sys
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-    from iris_astronomy.astro_dso_visibility import get_horizon_from_azimuth
+    from iris_astronomy.horizon import altitude_at as get_horizon_from_azimuth
     az, al = _points()
     for a in (0.0, 5.0, 12.95, 15.0, 20.0, 28.0, 100.0, 200.0, 300.0, 354.0):
         assert abs(get_horizon_from_azimuth(a, az, al) - _linear(a, az, al)) < 1e-9, a
