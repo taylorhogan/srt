@@ -47,7 +47,8 @@ WAITING_FOR_BOOT
 
 Inter-process communication
 ---------------------------
-- **scheduler_state.json**: this module's state, written by ``set_state``.
+- **scheduler_state.json**: this module's state, written by ``set_state``
+  only on the legacy path (conductor.drives_checks False; 2026-10-19).
   (MQTT carried it once and retired 2026-10-18: nothing ever asked.)
 - **imaging.txt** (file on disk, written by ``super_user_commands``):
   shared state between this process, ``doit_cmd`` / ``end.py``, and the
@@ -184,8 +185,9 @@ def _slots_record(slots) -> list:
 def set_state(state: State, dso=None, will_image_tonight=None, slots=None):
     """Update the in-memory ``observatory_state`` dict and log the transition.
 
-    The dict is written to scheduler_state.json for the readers that still
-    use it (docs/ARCHITECTURE_PLAN.md Phase 3: they move to the conductor).
+    On the legacy path (no conductor.drives_checks) the dict is written to
+    scheduler_state.json for the legacy conductor; while the conductor drives
+    the checks the file is removed instead (Phase 3, 2026-10-19).
 
     Args:
         state: The new ``State`` enum value.
@@ -204,13 +206,23 @@ def set_state(state: State, dso=None, will_image_tonight=None, slots=None):
         # The night's slot plan (control/slot_plan). The shadow conductor reads
         # its length as the number of slots; the chat reads it for the plan.
         observatory_state["slots"] = _slots_record(slots)
+    # noon_watch reads this line from iris.log; it stays when the file goes.
     LOGGER.info("State: %s", state.name)
     print(f"State: {state.name}")
-    # Persist for the readers that still use the file (Phase 3: they move to the conductor).
+    # Phase 3, 2026-10-19: with the conductor driving the checks nothing reads
+    # scheduler_state.json any more (its readers moved to /v1/state and
+    # /v1/plan on 10-18, and the first night on that code was clean), so it is
+    # neither written nor left on disk to be mistaken for current. Without the
+    # flag -- the rollback path -- the legacy conductor reads it again, so it
+    # is written exactly as before.
     try:
         utils.set_install_dir()
-        with open("scheduler_state.json", "w") as f:
-            json.dump(observatory_state, f)
+        if bool((CFG.get("conductor") or {}).get("drives_checks", False)):
+            if os.path.exists("scheduler_state.json"):
+                os.remove("scheduler_state.json")
+        else:
+            with open("scheduler_state.json", "w") as f:
+                json.dump(observatory_state, f)
     except Exception:
         LOGGER.warning("Could not write scheduler_state.json")
 
