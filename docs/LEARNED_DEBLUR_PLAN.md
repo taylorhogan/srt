@@ -240,3 +240,207 @@ becomes the problem; it is not today.
 | 4 acceptance | half a day | — |
 
 About a week and a half of calendar time, two to three days of attention.
+
+---
+
+## Phase 0 results — 2026-10-19
+
+Run on the Spark in one day with `scripts/deconv_phase0.py` (synthetic truth,
+the four heads, the seed floor) and `scripts/deconv_phase0_real.py` (the
+baseline table on real half-stacks). Everything under `local/deconv_phase0/`.
+**Verdict: Phase 2 exists, with one architectural condition** (0e below).
+
+### 0a. One-kernel removal composes on the real kernel — for extended structure
+
+Synthetic fields: ngc6946's measured kernel (profile FWHM 7.47 px, 4% of the
+flux beyond 24 px, spikes), saturation 66 031 ADU, sky 497, sigma 3.2; Sérsic
+galaxies with nuclei, knots and dust lanes; 1500 stars with
+dN/dlog(amp) ~ amp^-0.6 over 2–20 000 ADU plus 6 at 20 000–300 000 (half
+clipped). Six training fields, two test fields, 2048 px. Twenty epochs of
+2000 256-px pairs, four runs sharing the GPU at ~100 s/epoch.
+
+The kernel convolved with itself has FWHM 12.38 px, not the Gaussian 10.56,
+so one-kernel removal predicts a 4.50 px star, not 5.28. Measured, against
+the known sharp scene, mean over both test fields:
+
+| galaxy residual rms (sigma) | 2–4 px | 4–8 | 8–16 | 16–32 | 32–64 | total |
+| --- | --- | --- | --- | --- | --- | --- |
+| input (one kernel of blur) | 1.41 | 1.58 | 1.30 | 0.81 | 0.38 | 5.10 |
+| RL40, true kernel | 1.06 | 0.66 | 0.25 | 0.21 | 0.18 | 3.00 |
+| starless (the default) | 1.11 | 0.75 | 0.31 | 0.23 | 0.18 | 3.14 |
+| learned, asinh head, 3 seeds | 1.08 ±0.01 | 0.70 ±0.02 | 0.20 ±0.01 | 0.08 ±0.01 | 0.17 | 2.87 ±0.03 |
+| learned, scatter head (0e) | 1.07 | 0.69 | 0.20 | 0.10 | 0.09 | 2.86 |
+
+Every learned head beats RL40 from 8 px up and matches it at 2–8 px, after a
+20-epoch run on six synthetic fields. The composition assumption holds for
+everything that is not a point source. (The 1–2 px band is the noise floor,
+~1.4–1.8 sigma for everything.)
+
+### 0b. The three pointwise heads all fail on stars; the fourth passes
+
+Stars, per amplitude bin above sky, median over isolated stars (counts are
+thin: 2–8 stars per field above 1000 ADU, so read the trend across bins):
+
+| 1000–10 000 ADU | FWHM px | flux r≤12 / truth | ring (sigma) |
+| --- | --- | --- | --- |
+| input | 7.09 | 0.84 (the wing holds the rest) | +0.9 |
+| RL40 | 2.86 | 1.01 | −1.21 (the moat) |
+| starless | 3.62 | 1.01 | −0.21 |
+| asinh head | 4.40 ±0.16 (3 seeds) | **1.56 ±0.17** | |
+| loggain head | 4.24 | **1.56** | |
+| linear head | 6.16 | 1.05 | |
+| asinh + chi² flux term | 4.23 | **1.62** | |
+| **scatter head + chi²** | 4.41 | **0.93** | +2.2 (no ring) |
+
+The asinh and loggain heads sharpen to the predicted width and **create
+flux**: 1.4–1.8× the truth at every bin above 100 ADU, seed-dependent (the
+seed floor on this number is ±0.2, the largest of any metric). The linear
+head conserves flux and barely sharpens a bright star, as the plan predicted.
+A Poisson-weighted chi² term in linear units did not move the flux at all
+(1.62 vs 1.56 ±0.17), so this is not loss weighting. The mechanism: the flux
+that must move into the core sits in the wing, below the noise for all but
+the brightest stars, so a pointwise head cannot measure it and learns a
+*core gain* instead — the gain that is right for K*K (training) is wrong for
+K (inference). That is the composition failure, and it is specific to point
+sources.
+
+**0e. A flux-conserving head fixes it.** The network emits, per pixel, a
+15×15 window of softmax weights, and each input pixel's flux is scattered
+over its window by those weights (`F.fold`): flux is conserved by
+construction, nothing can go negative, nothing can ring. Trained once (seed
+0, with the chi² term): stars at 4.1–5.2 px, flux 0.92–0.94 of the truth
+(the input's 0.84 plus what the window could reach of the wing), no negative
+ring at any bin above 100 ADU, galaxy residual at the asinh floor. Its limit
+is the window: flux can move 7 px per pass, so a bright star keeps a faint
+halo at the window's edge. Phase 1's architecture is therefore the scatter
+head with reach to the wing (a second, coarser scatter level, or a 2-pass
+scheme), not any of the three heads the plan listed.
+
+Also measured: all three learned heads suppress noise as well as sharpen,
+since the L2 optimum is the conditional mean — the outputs are visibly
+smoother than RL's. Not a defect, but it means the learned deblur partly
+overlaps the denoiser, and the order of the two should be re-measured in
+Phase 2.
+
+### 0c. The seed floor (asinh head, seeds 0/1/2, half-range)
+
+| | floor |
+| --- | --- |
+| galaxy residual, total | ±0.03 sigma |
+| galaxy residual, 4–8 px band | ±0.02 |
+| star FWHM, 1000–10 000 ADU | ±0.16 px |
+| star flux ratio, 1000–10 000 ADU | ±0.17 |
+| ring depth | ±0.3–1.5 sigma (thin bins) |
+
+Galaxy metrics are stable; star metrics are not, at these star counts. Phase
+1 needs more test fields (or a fixed star grid) before any star claim finer
+than 0.2 px / 20% flux.
+
+### 0d. The bar: starless and RL40 on real half-stacks
+
+ngc5907 and ngc7320, L, the ladder's two independent half-stacks, 3000 px
+round the galaxy, raw and denoised (both measured in the raw half's sigma).
+The first numbers the starless default has had.
+
+| stars 1000–10 000 sigma | FWHM | flux out:in r≤12 | ring |
+| --- | --- | --- | --- |
+| ngc5907 raw, RL40 | 3.25 | 1.18 | −1.43 |
+| ngc5907 raw, starless | 3.93 | 1.16 | +0.11 |
+| ngc7320 raw, RL40 | 3.08 | 1.20 | −1.42 |
+| ngc7320 raw, starless | 3.82 | 1.20 | −2.13 |
+| ngc7320 denoised, RL40 | 3.07 | 1.20 | −0.76 |
+| ngc7320 denoised, starless | 3.87 | 1.20 | −3.48 |
+
+A flux ratio of ~1.19 is what a perfect deconvolution gives here (1/0.84, the
+wing brought inside the aperture), so both conserve flux on real stars. The
+starless path's rings are not moats but the **NGC 7317 case**: on the
+denoised ngc7320 half-stack the 100–1000 sigma bin bottoms at −164 sigma
+(raw sigma), a hole beside the bright star on NGC 7317's envelope, worse on
+the half-stack than on the full stack where it showed as coloured rings.
+That is the one known failure of the default and it is now a number.
+
+Split-half correlation (Spearman, band-passed added detail 1–8 px, galaxy
+pixels with every star disc cut):
+
+| | rho added (RL40 / starless) | rho of the input's own detail |
+| --- | --- | --- |
+| ngc5907 raw | 0.64 / 0.65 | 0.40 |
+| ngc7320 raw | 0.94 / 0.94 | 0.74 |
+| ngc5907 denoised | 0.57 / 0.44 | 0.79 |
+| ngc7320 denoised | 0.90 / 0.88 | 0.97 |
+
+On raw stacks what the deconvolution adds agrees between halves *better*
+than the input's own fine structure does: the added detail is real. On
+denoised stacks it agrees *less* well than the input's, which the denoiser
+has already made smooth and consistent; the deconvolution of a denoised
+stack adds more half-specific structure. Not a verdict on the current
+stack → denoise → deblur order, but the first measurement that questions it,
+and Phase 2's injection test on real stacks is where it gets settled.
+
+### What changes in the plan
+
+- Phase 1 builds the scatter head with reach to the wing, not the asinh head.
+- The synthetic star catalogue stays as a *test* instrument alongside the
+  real half-stacks: it is the only place star flux has a truth.
+- Phase 2's gate adds: flux ratio within 0.05 of the starless path on real
+  stars, and rho_added on denoised stacks no lower than the starless path's.
+- The teacher–student fallback is not needed.
+
+---
+
+## Phase 1 built — 2026-10-19
+
+What exists, where, and how it is run. Phase 2 (training arms and scoring)
+starts from here.
+
+- **`nn/deblur_data.py`** — `prepare_stack` writes a background-subtracted
+  stack (`<name>_sub.npy`, memory-mapped at training time) and its sidecar
+  (`<name>.psf.npz`: kernel, spikes, FWHM, saturation, sky sigma, plateau
+  and coverage-fill masks, measured once on the stack the model will see).
+  `DeblurDataset` draws source-biased 512 px patches and builds the pair on
+  the fly: the patch re-blurred by its own kernel scaled U(0.8, 1.25), noise
+  restored, the kernel plane beside it, the target the patch itself, a mask
+  that drops plateaus (+6 px) and fill. Patches are read with a 160 px margin
+  so the two convolutions see real context. Normalisation is
+  `denoiser.normalise`'s, the same rule inference uses.
+- **`nn/deblur_model.py`** — the scatter head on the N2N U-Net: 449 softmax
+  weights per pixel over a dense 15×15 window and a dilation-3 15×15 window
+  (reach 21 px, the wing), flux moved by `F.fold`. Identity at init.
+  `deblur_frame` is the tiled inference (1024 px tiles, 128 px overlap, crop
+  stitch, planes built on the whole frame, plateau guard, sep background off
+  and on). Checkpoints carry the asinh scale and refuse a mismatch.
+- **`scripts/deconv_train.py`** — `prepare` walks the ladder manifest and
+  writes both domains for every usable group's two training halves (~25 s
+  and 0.5 GB per stack; the denoised domain through the broadband or
+  narrowband N2N model as the render does it). Holdouts ngc5907, ngc6946,
+  ngc7320 are prepared and flagged, never trained on. `train --name --seed
+  --domain raw|den|both` fits the model, epoch selection on m13 + abell2218
+  (whole targets), loss L2 in asinh space + λ·chi² in linear units.
+  `smoke` runs one short epoch end to end. `list` prints the pool.
+- **`tests/test_deblur_learned.py`** — flux conservation and identity of the
+  head, kernel scaling, sidecar round-trip and pair construction (shapes,
+  blur ordering, mask), tiled inference equal to a single tile.
+- **Extra half-stacks** for ngc6946, ngc1961 and ngc7380 are being built
+  through the ladder's own `stacks` stage (`--dsos`), so they join the
+  manifest like every other group; ngc6946 is a holdout, the other two train.
+
+Two things found while building it:
+
+1. The first smoke run's loss was 18.8 at identity, and the cause was not an
+   unmasked plateau (abell2151 B has none, raw or denoised) but the chi²
+   term's scale on real fields: a 10 000-sigma star blurred once more is
+   6 000 sigma off at its core, and Poisson-weighted that is thousands per
+   pixel. Measured at identity on 24 real 512 px patches: asinh L2 1.29,
+   chi² 5.7 on average with a tail to 51, where Phase 0's synthetic fields
+   had few such stars. λ defaults to 0.2 so the two terms are comparable at
+   init; Phase 2 should sweep it once (0.05, 0.2, 1).
+   The denoised sidecar also ORs in the raw half's plateau mask as a
+   precaution, since the raw half is where a ceiling is certain to be seen.
+2. The epoch-selection scenes are a globular cluster and a rich cluster, so
+   the val loss is star-heavy. Fine for picking an epoch, not a quality
+   number; the quality numbers are Phase 2's.
+
+Run order for Phase 2: wait for `prepare` (all groups) and the extra stacks;
+`train --name scatter_both_s0 --seed 0 --domain both`, then seeds 1 and 2;
+score with `deconv_phase0.py`'s synthetic catalogue (star flux truth) and
+`deconv_phase0_real.py`'s half-stack metrics against the starless rows.
