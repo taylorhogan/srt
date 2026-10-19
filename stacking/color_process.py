@@ -112,16 +112,22 @@ BG_MESH_FRACTION = 4      # mesh boxes across the short axis
 # (see _scnr), so it has to be asked for rather than assumed.
 SCNR_AMOUNT = 0.0
 
-# Richardson-Lucy iterations on the luminance before the stretch, 0 = off.
-# `deblur=40` on the process command is the working setting (2026-10-17):
-# the stars converge in 8-15 but the galaxies need 40 (ngc7320's nuclei
-# 12.4 -> 6.7 px FWHM, stars 2.00" -> 1.04"). The rules that make it
-# ring-free (sky out, non-clipping floor, dark clamp at the local sky,
-# signal-only blend, spikes fitted off star by star, azimuthal kernel)
-# live in stacking/deblur.py with the measurements behind them. On a
-# denoised stack the order is stack, denoise, deblur; the other way round
-# was measured worse (see the module doc).
-DEBLUR_ITERS = 0
+# Deconvolution before the stretch: RL iterations, 0 = off. ON by default
+# since 2026-10-19, as `deblur=40` with method=starless (stacking/starless):
+# the stars are taken off, RL runs on what is left with the field's own
+# kernel, and the stars are rendered back as points at each channel's own
+# flux -- so the galaxy sharpens and the stars cannot ring, halo or moat.
+# 40 because the stars converge in 8-15 but the galaxies need 40 (ngc7320's
+# nuclei 12.4 -> 6.7 px FWHM). On a denoised stack the order is stack,
+# denoise, deblur; the other way round was measured worse (deblur module doc).
+DEBLUR_ITERS = 40
+# method=rl is the earlier form, RL on the whole luminance with the stars in
+# (stacking/deblur: sky out, non-clipping floor, dark clamp at the local sky,
+# signal-only blend, spikes fitted off star by star, azimuthal kernel). It
+# sharpens the stars too but on a denoised stack every bright star paid for
+# it with a halo, moat, ring or notch in turn (2026-10-09 to 10-18); kept for
+# comparison.
+DEBLUR_METHOD = "starless"
 # `dering=sky` (default) lets a star's halo drain down to the local sky mean
 # and no further, which conserves flux and is what a kernel with a measured
 # wing needs: the wing cannot drain under `dering=input`, which holds every
@@ -982,7 +988,7 @@ def effective_options(**overrides) -> dict:
             "softening": SOFTENING, "mesh": BG_MESH_FRACTION,
             "subtract_background": SUBTRACT_BACKGROUND, "scnr": SCNR_AMOUNT,
             "ha_gain": HA_GAIN, "white_balance": WHITE_BALANCE,
-            "deblur": DEBLUR_ITERS, "dering": DEBLUR_DERING}
+            "deblur": DEBLUR_ITERS, "dering": DEBLUR_DERING, "method": DEBLUR_METHOD}
     opts.update({k: v for k, v in overrides.items() if k in opts})
     return opts
 
@@ -1005,6 +1011,8 @@ def describe_options(opts: dict, scale: int = 1) -> str:
         parts.append(f"deblur={int(opts['deblur'])}")
         if str(opts.get("dering", DEBLUR_DERING)).lower() != DEBLUR_DERING:
             parts.append(f"dering={opts['dering']}")
+        if str(opts.get("method", DEBLUR_METHOD)).lower() != DEBLUR_METHOD:
+            parts.append(f"method={opts['method']}")
     if scale and scale > 1:
         parts.append(f"scale={scale:g}")
     return "  ".join(parts)
@@ -1049,15 +1057,22 @@ def _scnr(rgb: np.ndarray, amount: float = 1.0) -> np.ndarray:
 
 
 def _deblurred(channels: dict[str, np.ndarray], iters,
-               dering: str = DEBLUR_DERING) -> dict[str, np.ndarray]:
-    """The channel set with its luminance deconvolved, or itself for deblur=0."""
+               dering: str = DEBLUR_DERING,
+               method: str = DEBLUR_METHOD) -> dict[str, np.ndarray]:
+    """The channel set deconvolved (see DEBLUR_ITERS), or itself for deblur=0."""
     if not iters or int(iters) <= 0:
         return channels
     from stacking import deblur as _deblur
-    out, infos = _deblur.deblur_channels(channels, int(iters), clamp_to=str(dering).lower())
+    out, infos = _deblur.deblur_channels(channels, int(iters), clamp_to=str(dering).lower(),
+                                         method=str(method).lower())
     for c, info in infos.items():
         if info.get("why"):
             _logger.warning("deblur %s: left as stacked — %s", c, info["why"])
+        elif info.get("method") == "starless":
+            _logger.info("deblur %s: starless RL%d, %d stars re-rendered, %d non-stellar, "
+                         "FWHM %.2f px, %.1f%% of the frame filled",
+                         c, info["iters"], info.get("stars", 0), info.get("non_stellar", 0),
+                         info.get("fwhm_px", 0.0), 100 * info.get("deep_frac", 0.0))
         else:
             _logger.info("deblur %s: RL%d, %d stars, FWHM %.2f px, %.2f%% of pixels",
                          c, info["iters"], info.get("stars", 0), info.get("fwhm_px", 0.0),
@@ -1074,18 +1089,22 @@ def compose(channels: dict[str, np.ndarray], black_pct: float = BLACK_PCT,
             ha_gain: float = HA_GAIN,
             white_balance: str = WHITE_BALANCE,
             deblur: int = DEBLUR_ITERS,
-            dering: str = DEBLUR_DERING) -> np.ndarray:
+            dering: str = DEBLUR_DERING,
+            method: str = DEBLUR_METHOD) -> np.ndarray:
     """Combine channel stacks into an RGB image in 0..1.
 
     channels holds any of R/G/B plus an optional L, and for HALRGB an HA plane
     that _prepare folds into R and L. Every channel must already be on the
     same pixel grid — that is what the shared reference guarantees.
 
-    deblur > 0 deconvolves the luminance (every plane when there is no L)
-    first, on the linear stack with its sky, which is what the kernel
-    measurement and the floor model need; see stacking/deblur.
+    deblur > 0 (the default, DEBLUR_ITERS) deconvolves first, on the linear
+    stacks with their sky, which is what the kernel measurement and the
+    floor model need: method=starless (default) takes the stars off every
+    channel, RL's the luminance (every plane when there is no L) and renders
+    the stars back as points; method=rl is RL on the whole luminance. See
+    stacking/starless and stacking/deblur.
     """
-    channels = _deblurred(channels, deblur, dering)
+    channels = _deblurred(channels, deblur, dering, method)
     subbed, white = _prepare(channels, subtract_background, mesh, white_pct, ha_gain,
                              white_balance)
     _logger.info("Compose: shared white point %.2f ADU (p%.1f)", white, white_pct)
@@ -1672,7 +1691,8 @@ def save_channel_jpgs(channels: dict[str, np.ndarray], out_dir: Path, dso: str,
                       ha_gain: float = HA_GAIN,
                       white_balance: str = WHITE_BALANCE,
                       deblur: int = DEBLUR_ITERS,
-                      dering: str = DEBLUR_DERING) -> list[Path]:
+                      dering: str = DEBLUR_DERING,
+                      method: str = DEBLUR_METHOD) -> list[Path]:
     """Write one mono JPEG per channel, on the composite's shared scale.
 
     Deliberately not per-channel autostretch: these are meant to explain the
@@ -1687,7 +1707,7 @@ def save_channel_jpgs(channels: dict[str, np.ndarray], out_dir: Path, dso: str,
     """
     from PIL import Image
     from stacking import stacker
-    channels = _deblurred(channels, deblur, dering)
+    channels = _deblurred(channels, deblur, dering, method)
     subbed, white = _prepare(channels, subtract_background, mesh, white_pct, ha_gain,
                              white_balance)
     out_dir.mkdir(parents=True, exist_ok=True)

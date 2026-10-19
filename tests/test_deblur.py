@@ -195,27 +195,65 @@ def test_too_few_stars_returns_the_input():
 
 
 def test_only_the_luminance_is_deblurred_when_there_is_one():
+    """method=rl, the whole-luminance form."""
     img, _, _ = _field()
     chans = {"L": img, "R": img.copy(), "G": img.copy(), "B": img.copy()}
-    out, infos = db.deblur_channels(chans, 4)
+    out, infos = db.deblur_channels(chans, 4, method="rl")
     assert set(infos) == {"L"}
     assert out["R"] is chans["R"] and not np.array_equal(out["L"], img)
     # No L: every distinct plane once, shared planes shared.
     o3 = img.copy()
-    out, infos = db.deblur_channels({"R": img, "G": o3, "B": o3}, 4)
+    out, infos = db.deblur_channels({"R": img, "G": o3, "B": o3}, 4, method="rl")
     assert set(infos) == {"R", "G", "B"} and out["G"] is out["B"]
+    with pytest.raises(ValueError):
+        db.deblur_channels(chans, 4, method="wavelet")
 
 
 def test_option_reaches_compose_and_the_options_line():
     img, pos, _ = _field()
     chans = {"L": img, "R": img * 0.8, "G": img * 0.9, "B": img}
     plain = cp.compose(chans, deblur=0)
-    sharp = cp.compose(chans, deblur=4)
+    sharp = cp.compose(chans, deblur=4, method="rl")
     assert plain.shape == sharp.shape and not np.array_equal(plain, sharp)
-    assert cp.effective_options()["deblur"] == 0
-    assert "deblur" not in cp.describe_options(cp.effective_options())
+    # On by default since 2026-10-19, starless; the line names the count
+    # always and the method only when it is not the default.
+    assert cp.effective_options()["deblur"] == 40
+    assert cp.effective_options()["method"] == "starless"
+    assert "deblur=40" in cp.describe_options(cp.effective_options())
+    assert "method" not in cp.describe_options(cp.effective_options())
+    assert "method=rl" in cp.describe_options(cp.effective_options(method="rl"))
+    assert "deblur" not in cp.describe_options(cp.effective_options(deblur=0))
     assert "deblur=8" in cp.describe_options(cp.effective_options(deblur=8))
     line = cp.describe_options(cp.effective_options(deblur=15, dering="input"))
     assert "deblur=15" in line and "dering=input" in line
     assert "dering" not in cp.describe_options(cp.effective_options(deblur=8))       # sky is the default
-    assert "dering" not in cp.describe_options(cp.effective_options(dering="input"))   # meaningless without deblur
+    assert "dering" not in cp.describe_options(cp.effective_options(deblur=0, dering="input"))   # meaningless without deblur
+
+
+def test_flat_tops_finds_clipped_plateaus_only():
+    """A stacked saturated star is a plateau BELOW the ceiling (ngc6946: the
+    twelve brightest at 0.93-0.97 of it); a Gaussian star, a broad galaxy
+    nucleus and a faint flattened bump are not clipped."""
+    rng = np.random.default_rng(3)
+    sky, sig = 500.0, 2.0
+    a = sky + rng.normal(0, sig, (600, 600)).astype(np.float32)
+    yy, xx = np.mgrid[-20:21, -20:21]
+    g = np.exp(-(yy**2 + xx**2) / (2 * 3.4**2))                     # FWHM 8 px
+
+    def put(y, x, img):
+        a[y-20:y+21, x-20:x+21] += img
+
+    put(100, 100, 60000.0 * g)                                       # the ceiling: one bright, unclipped star
+    plateau = np.minimum(80000.0 * g, 45000.0)                       # clipped at 0.75 of the ceiling
+    put(300, 300, plateau)
+    put(100, 400, 30000.0 * g)                                       # bright but Gaussian
+    put(400, 100, 3000.0 * np.exp(-(yy**2 + xx**2) / (2 * 7.0**2)))  # broad nucleus, FWHM 16
+    put(450, 450, np.minimum(60.0 * g, 40.0))                        # faint flat bump, 40 ADU
+    m = db.flat_tops(a)
+    assert m[300, 300] and m[300-3:300+4, 300-3:300+4].all()          # the plateau and its interior
+    assert not m[100, 100] and not m[100, 400] and not m[400, 100] and not m[450, 450]
+    assert 100 <= m.sum() <= 500      # the disc out to SAT_PLATEAU_EDGE of the peak, r ~10 px
+    # and such a star is not a kernel star
+    sat = db.saturation_level(a)
+    assert sat is None or sat > 0
+    assert db.saturated_mask(a, sat)[300, 300]

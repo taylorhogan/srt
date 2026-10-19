@@ -5799,13 +5799,19 @@ def process_cmd(words: list[str], account: str) -> None:
         mesh=4      background mesh boxes across the short axis; higher removes
                     gradients harder but eats large nebulosity
         scnr=0      average-neutral green removal, g = min(g, (r+b)/2), 0..1.
-        deblur=0    Richardson-Lucy iterations on the luminance (every plane
-                    for HOO/SHO), kernel measured from the field's own stars,
-                    core and wing, each star's spikes fitted off first. 40 is
-                    the working value: stars converge by 15 but galaxies need
-                    40 (ngc7320 L 2.00" -> 1.04", nuclei 12 -> 7 px, the
-                    added detail shared by both half stacks). Runs at render
-                    time; on the GPU 40 iterations is half a minute.
+        deblur=40   deconvolution, Richardson-Lucy iterations; 0 turns it off.
+                    The stars are taken off every channel, RL runs on what is
+                    left (the luminance; every plane for HOO/SHO) with the
+                    kernel measured from the field's own stars, and the stars
+                    are rendered back as points at each channel's own flux,
+                    so the galaxy sharpens and the stars cannot ring or halo.
+                    40 because the stars converge by 15 but galaxies need 40
+                    (ngc7320 L 2.00" -> 1.04", nuclei 12 -> 7 px, the added
+                    detail shared by both half stacks). A minute or two on
+                    the GPU for five channels.
+        method=starless  `rl` instead deconvolves the whole luminance, stars
+                    in; sharper stars, but on a denoised stack every bright
+                    one pays with a halo, moat or ring. Kept for comparison.
         dering=sky  what stops the rings. `sky` (default) lets a star's halo
                     drain to the local sky and no further; `input` holds
                     every pixel at or above its input, which leaves halos
@@ -5909,7 +5915,7 @@ def _process_run(words: list[str]) -> None:
              "scnr": ("scnr", float), "scale": ("scale", int),
              "ha": ("ha_gain", float), "wb": ("white_balance", str),
              "stars": ("star_source", str), "deblur": ("deblur", int),
-             "dering": ("dering", str)}
+             "dering": ("dering", str), "method": ("method", str)}
     opts = {"use_flats": True, "reuse": False}
     rest = []
     bad = []

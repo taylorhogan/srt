@@ -5,8 +5,8 @@
 
 Runs after the 05:00 rsync. For each DSO whose LIGHT frames changed recently it
 picks EVERY recipe the filters support and runs `n2n_lrgb_render.py routine`
-once per recipe, which writes a mono JPEG per channel, a denoised set, and both
-colour composites into `<image_dir>/Iris/<dso>/`. A three-filter narrowband
+once per recipe, which writes a mono JPEG per channel, a denoised set, and three
+colour composites -- raw, denoised, deblurred -- into `<image_dir>/Iris/<dso>/`. A three-filter narrowband
 target therefore gets HSO, SHO and HOO in one morning; the palettes disagree
 about presentation, not data, so all of them get to exist and the eye chooses.
 
@@ -18,12 +18,14 @@ the stacks that first render just wrote: they cost a denoise+compose, not a
 20-60 minute stack. If the first render fails, the rest of that target's
 recipes are skipped rather than composed from a half-rebuilt cache.
 
-**Both composites are always written and neither is chosen.** Whether the
+**All three composites are always written and none is chosen.** Whether the
 denoised version is better depends on surface brightness, not object class: NGC
 6888's bright filaments survive denoising and its denoised SHO is the better
 image, while ic1396's 1-5 sigma emission is destroyed by the same model (lab
 manual steps 23, 29). Until that threshold is calibrated against more targets,
-the choice needs an eye and this job does not make it.
+the choice needs an eye and this job does not make it. The deblurred composite
+(since 2026-10-19) is the denoised set through the starless deconvolution,
+`stacking/starless`; a field it refuses still gets the other two.
 
 Bounded on purpose. Stacking is 20-60 min per target and peak RSS is ~64 GB, so
 `--max-targets` caps a run and targets are processed one at a time. A morning
@@ -197,7 +199,7 @@ def render_command(dso: str, recipe: str, first: bool, exptime: int,
                    galaxy: bool) -> list[str]:
     """The n2n_lrgb_render.py routine invocation for one recipe of one target.
 
-    Every routine render writes both the raw and the denoised composite. A
+    Every routine render writes the raw, denoised and deblurred composites. A
     galaxy's broadband recipes get --wb stars, measured on the raw set and
     pinned on the denoised one. Only the target's first recipe rebuilds the
     shared channel stacks (--force); the rest reuse them (module docstring).

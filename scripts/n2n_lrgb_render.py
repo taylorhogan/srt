@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Render a DSO as a colour image, raw vs denoised, in any of the recipes.
+"""Render a DSO as a colour image -- raw, denoised and deblurred -- in any of the recipes.
 
     python scripts/n2n_lrgb_render.py stacks --dso ic1396 --recipe HOO --lum Ha
     python scripts/n2n_lrgb_render.py compose --dso ic1396 --recipe HOO --model <path>
@@ -28,6 +28,14 @@ Two other differences from the ladder's stacks, both deliberate:
   the same axis and the raw/denoised pair below should be read as a display
   comparison, not as evidence about the model. A depth-matched render is the
   honest one for judging the network, and `--depth` produces it.
+
+The routine path writes THREE composites since 2026-10-19: raw, denoised, and
+deblurred -- the denoised set (the raw one when no model applies) through
+`stacking/starless`: the stars taken off every channel, the luminance
+deconvolved with the field's own kernel, the stars rendered back as points at
+each channel's flux. `--deblur 0` turns it off. All three share the raw set's
+stretch, white balance and Ha ratio, so what differs between them is the
+denoiser and the deconvolution and nothing else.
 """
 
 import argparse
@@ -47,6 +55,9 @@ if _root not in sys.path:
 from configs import config
 
 OUT = Path(_root) / "local" / "n2n_lrgb_render"
+
+# The three image classes a routine render writes, in pipeline order.
+TAGS = ("raw", "denoised", "deblurred")
 
 
 def suffix(args) -> str:
@@ -478,15 +489,16 @@ def _fit_for_push(src: Path, work: Path) -> Path:
 
 
 def push_render(args, out_dir: Path, written: list, meta: dict, log=print) -> bool:
-    """Pushover the raw and the denoised composite, as a pair. Never raises --
+    """Pushover the raw, denoised and deblurred composites. Never raises --
     a render must not fail because a notification did.
 
-    A PAIR, since 2026-09-08. Whether the denoised version is the better
-    image depends on surface brightness, not object class (module docstring:
-    NGC 6888 yes, ic1396 no), and that call needs an eye on both. Pushover
-    takes one attachment per message, so the pair is two messages, raw first
-    so they read top-down in the order the pipeline made them. Returns True
-    if at least one was accepted.
+    A PAIR since 2026-09-08, a triple since 2026-10-19. Whether the denoised
+    version is the better image depends on surface brightness, not object
+    class (module docstring: NGC 6888 yes, ic1396 no), and the deblurred one
+    is newer still, so that call needs an eye on all of them. Pushover takes
+    one attachment per message, so each is its own message, raw first so
+    they read top-down in the order the pipeline made them. Returns True if
+    at least one was accepted.
     """
     try:
         from utils import pushover
@@ -497,7 +509,7 @@ def push_render(args, out_dir: Path, written: list, meta: dict, log=print) -> bo
         tail = (", ".join(parts)
                 + (f" ({total} frames x {args.exptime}s)" if total else ""))
         sent = 0
-        for tag in ("raw", "denoised"):
+        for tag in TAGS:
             pick = [p for p in written if p.name == f"{args.dso}_{args.recipe}_{tag}.jpg"]
             if not pick:
                 log(f"  push: no {tag} composite to send")
@@ -513,8 +525,33 @@ def push_render(args, out_dir: Path, written: list, meta: dict, log=print) -> bo
         log(f"  push failed: {e}")
         return False
 
+def deblurred_channels(channels: dict, iters: int, log=print):
+    """The channel set through stacking/starless, or None with the reason logged.
+
+    Never raises: the deblurred composite is the newest and least proven of
+    the three, and a target must not lose its raw and denoised renders to a
+    field the deconvolution cannot handle.
+    """
+    from stacking import color_process, deblur as _deblur
+    t0 = time.time()
+    log("")
+    log(f"deblur: starless RL{int(iters)} on {', '.join(channels)}")
+    try:
+        out, infos = _deblur.deblur_channels(channels, int(iters), clamp_to=color_process.DEBLUR_DERING,
+                                             method="starless", log=lambda m: log(f"  {m}"))
+    except Exception as e:  # noqa: BLE001
+        log(f"  deblur failed — no deblurred composite: {e!r}")
+        return None
+    why = [f"{c}: {i['why']}" for c, i in infos.items() if i.get("why")]
+    if not infos or all(i.get("why") for i in infos.values()):
+        log(f"  deblur refused — no deblurred composite: {'; '.join(why) or 'nothing done'}")
+        return None
+    log(f"  deblurred in {time.time() - t0:.0f}s")
+    return out
+
+
 def routine(args) -> int:
-    """Stack, export each channel, denoise, export again, compose both.
+    """Stack, export each channel, denoise, deblur, compose all three.
 
     The nightly path for a target that already has a suitable model: no
     training, no held-out scoring, just the products. Everything lands in
@@ -523,8 +560,11 @@ def routine(args) -> int:
     **Denoised output is a display product for point-source-dominated fields
     only.** On extended emission the model is band-limited — it keeps 96-98% of
     structure above 512 px and 30-50% of the fine texture that makes a nebula
-    read as one (lab manual step 29). Both composites are written so the pair
-    can be compared rather than the denoised one silently replacing the raw.
+    read as one (lab manual step 29). All three composites are written so they
+    can be compared rather than one silently replacing another. The deblurred
+    one is the denoised set (raw if there is no model) through the starless
+    deconvolution; if that refuses or fails, the other two are still written
+    and the log says why.
     """
     from stacking import color_process, stacker
 
@@ -684,6 +724,17 @@ def routine(args) -> int:
             opts["white_pct"], **shared_from_raw(raw_info))
         emit(subbed_den, "denoised")
 
+    # The third class: the denoised set (raw when no model applies) through
+    # the starless deconvolution, on the same pinned stretch. A refusal or a
+    # failure here costs the deblurred products only.
+    if args.deblur > 0:
+        deb = deblurred_channels(to_channels(den if den else raw), args.deblur, log)
+        if deb is not None:
+            subbed_deb, _ = color_process._prepare(
+                deb, opts["subtract_background"], opts["mesh"],
+                opts["white_pct"], **shared_from_raw(raw_info))
+            emit(subbed_deb, "deblurred")
+
     log("")
     for pth in written:
         log(f"  wrote {pth.name}")
@@ -757,11 +808,17 @@ def main() -> int:
     ap.add_argument("--out-dir", default="",
                     help="default is <image_dir>/Iris/<dso>/")
     ap.add_argument("--force", action="store_true")
+    ap.add_argument("--deblur", type=int, default=None,
+                    help="starless deconvolution iterations for the third composite "
+                         "(stacking/starless); default color_process.DEBLUR_ITERS, 0 = off")
     ap.add_argument("--push", action="store_true",
-                    help="Pushover the denoised composite when the render finishes")
+                    help="Pushover the three composites when the render finishes")
     ap.add_argument("--no-push", dest="push", action="store_false")
     ap.set_defaults(push=True)
     args = ap.parse_args()
+    if args.deblur is None:
+        from stacking import color_process
+        args.deblur = int(color_process.DEBLUR_ITERS)
 
     import sep
     sep.set_extract_pixstack(5_000_000)

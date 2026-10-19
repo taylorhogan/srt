@@ -130,6 +130,12 @@ MIN_STARS = 15            # fewer isolated stars than this and nothing happens
 MAX_STARS = 400           # brightest isolated stars used for the kernel
 SAT_FRAC = 0.98           # of the saturation level: protected as clipped
 SAT_MIN_PIXELS = 4        # pixels at the ceiling before it counts as saturation
+SAT_PLATEAU_SIGMA = 50.0  # local maxima this far above the sky are checked for a flat top
+SAT_PLATEAU_MIN = 12      # px within 10% of the peak before a top can count as flat
+SAT_FLATNESS = 0.7        # of those within 5%: a Gaussian of any width has 0.49
+SAT_PLATEAU_EDGE = 0.02   # of the peak: a clipped star is kept as imaged out to here
+SAT_PLATEAU_MAX = 2500    # px: a kept disc bigger than this (r ~28 px) is not a star
+SAT_PLATEAU_MIN_AMP = 0.2 # of the ceiling above the local base: a clipped star is bright
 SAT_DILATE = 6            # px of protection around the clipped pixels
 SAT_FEATHER = 3.0         # and the feather on its edge
 FLOOR_MIN_SIZE = 25       # minimum-filter window for the local floor model
@@ -181,6 +187,81 @@ def saturation_level(chan: np.ndarray) -> Optional[float]:
     return ceiling if at_top >= SAT_MIN_PIXELS else None
 
 
+def flat_tops(chan: np.ndarray, sig: Optional[float] = None,
+              ceiling: Optional[float] = None) -> np.ndarray:
+    """Pixels on a star's flat top, whether or not the top is at the ceiling.
+
+    A saturated star in a STACK is a plateau below the per-frame ceiling,
+    not at it: sub-pixel registration smears the clipped disc's edge, the
+    flat divides it by a different gain at every star, and the sigma clip
+    mixes frames where the star did and did not clip. On ngc6946's L the
+    twelve brightest stars sat at 0.94-0.97 of the ceiling with 20-140
+    pixels within 5% of their peak each, and SAT_FRAC protected none of
+    them; RL then read each plateau as a broad real core, dug a hole in its
+    middle and raised a ring round it (2026-10-18). A star clipped in only
+    some frames is a plateau at a fraction of the ceiling and does the same.
+
+    Flat, not merely broad: of the pixels within 10% of the peak, a Gaussian
+    of any width has ln(0.95)/ln(0.9) = 49% within 5%, a plateau 80-90%. A
+    galaxy nucleus is broad but not flat and is left to RL. Every local
+    maximum SAT_PLATEAU_SIGMA above the sky is checked; the top must hold
+    SAT_PLATEAU_MIN pixels and SAT_FLATNESS of them within 5%. The protected
+    region is the connected top down to SAT_PLATEAU_EDGE of the peak, holes
+    filled (a stacked plateau is jagged, and RL dug to the sky through a gap
+    in the 90% mask).
+    """
+    from scipy.ndimage import binary_fill_holes, label, maximum_filter, minimum_filter
+
+    a = np.nan_to_num(np.asarray(chan, dtype=np.float32), nan=-np.inf)
+    out = np.zeros(a.shape, bool)
+    if ceiling is None:
+        ceiling = float(np.nanmax(chan))
+    if not np.isfinite(ceiling) or ceiling <= 0:
+        return out
+    sky = float(np.nanmedian(chan))
+    if sig is None:
+        sig = sky_sigma(np.nan_to_num(np.asarray(chan, dtype=np.float32), nan=sky))
+    # Against a LOCAL base, not the sky: on a denoised stack the galaxy's
+    # disc is smooth enough that, measured from the sky, its gentle local
+    # maxima read as flat tops (ngc6946: 150k px of disc flagged). The base
+    # is the window's minimum over 25 px, the top must be compact -- inside
+    # the window, at most SAT_PLATEAU_MAX px -- and the whole top above the
+    # base must be well out of the noise.
+    base = minimum_filter(a, 25)
+    peaks = ((a == maximum_filter(a, 25)) & (a - base > SAT_PLATEAU_SIGMA * sig)
+             & (a - base > SAT_PLATEAU_MIN_AMP * ceiling))
+    h, w = a.shape
+    r = 40
+    for y, x in zip(*np.nonzero(peaks)):
+        y0, y1 = max(0, y - r), min(h, y + r + 1)
+        x0, x1 = max(0, x - r), min(w, x + r + 1)
+        win = a[y0:y1, x0:x1]
+        lo = float(base[y, x])
+        amp = float(a[y, x]) - lo
+        lab, _ = label(win >= lo + 0.9 * amp)
+        top90 = lab == lab[y - y0, x - x0]
+        n90 = int(top90.sum())
+        if n90 < SAT_PLATEAU_MIN:
+            continue
+        n95 = int((top90 & (win >= lo + 0.95 * amp)).sum())
+        if n95 < SAT_FLATNESS * n90:
+            continue
+        lab, _ = label(win >= lo + SAT_PLATEAU_EDGE * amp)
+        disc = lab == lab[y - y0, x - x0]
+        if disc.sum() > SAT_PLATEAU_MAX or disc[0].any() or disc[-1].any() or disc[:, 0].any() or disc[:, -1].any():
+            continue
+        out[y0:y1, x0:x1] |= binary_fill_holes(disc)
+    return out
+
+
+def saturated_mask(chan: np.ndarray, level: Optional[float],
+                   sig: Optional[float] = None) -> np.ndarray:
+    """Clipped pixels: at the ceiling (SAT_FRAC of *level*) or on a flat top."""
+    x = np.asarray(chan)
+    sat = x > SAT_FRAC * level if level is not None else np.zeros(x.shape, bool)
+    return sat | flat_tops(x, sig, level)
+
+
 def local_sky(x: np.ndarray, binning: int = 4, size: int = 25) -> np.ndarray:
     """Local sky that follows the galaxy's slopes: a median filter over
     size x size blocks of binning x binning px, back at full size."""
@@ -226,6 +307,7 @@ def measure_psf(chan: np.ndarray, radius: int = PSF_RADIUS,
     peaks = (finite == maximum_filter(finite, 25)) & (finite > sky + 20.0 * sig)
     if sat is not None:
         peaks &= finite < SAT_FRAC * sat
+    peaks &= ~flat_tops(a, sig, sat)           # a plateau below the ceiling is clipped too
     ys, xs = np.nonzero(peaks)
     stars = []
     yy7, xx7 = np.mgrid[:15, :15]
@@ -581,7 +663,8 @@ def star_layer(x: np.ndarray, model: np.ndarray, sig: float,
                kernel: np.ndarray, level: Optional[float] = None,
                spikes: Optional[np.ndarray] = None,
                axes: Optional[list] = None, arm_sigma: float = ARM_SIGMA,
-               ) -> tuple[np.ndarray, np.ndarray, np.ndarray, int, np.ndarray, np.ndarray, np.ndarray]:
+               
+               clipped: Optional[np.ndarray] = None) -> tuple[np.ndarray, np.ndarray, np.ndarray, int, np.ndarray, np.ndarray, np.ndarray]:
     """(starless, inner, mask, count, fits, wing, spikes): the stars taken off the image.
 
     Candidates are local maxima STAR_SPLIT_MIN_SIGMA (or 1e-3 of the
@@ -649,7 +732,14 @@ def star_layer(x: np.ndarray, model: np.ndarray, sig: float,
     spike_part = np.zeros(x.shape, np.float32)
 
     inner_mask = np.zeros(x.shape, bool)
-    clipped = (x >= 0.98 * level) if level is not None else np.zeros(x.shape, bool)
+    # *clipped* (deblur passes its flat-top mask) says which stars are not
+    # PSF-shaped. They are not fitted at all: fitting a clipped core's
+    # smeared edge overshoots the wing, and the clamp's sky reference then
+    # read below the sky round the brightest stars -- a dark moat (ngc6946,
+    # 2026-10-18). Left unfitted, their halo lifts the reference and the
+    # clamp holds it: a clipped star keeps its halo, which is the trade.
+    if clipped is None:
+        clipped = (x >= 0.98 * level) if level is not None else np.zeros(x.shape, bool)
     ky, kx = np.mgrid[-R:R + 1, -R:R + 1]; kr = np.hypot(ky, kx)
     core_fit = (kr <= 6)
     wing_fit = (kr > 10) & (kr <= 36)
@@ -663,6 +753,8 @@ def star_layer(x: np.ndarray, model: np.ndarray, sig: float,
     g7y, g7x = np.mgrid[:7, :7]
     for i in order:
         y, xx_ = int(ys[i]), int(xs[i])
+        if clipped[y, xx_]:
+            continue
         c = work[y - 3:y + 4, xx_ - 3:xx_ + 4]
         if c.max() <= 0:
             continue
@@ -826,14 +918,19 @@ def deblur(chan: np.ndarray, iters: int = DEFAULT_ITERS,
     sig = sky_sigma(x, model0)
     info["sky_sigma"] = sig
     level = saturation_level(x)
-    sat = x > SAT_FRAC * level if level is not None else np.zeros(x.shape, bool)
+    sat = saturated_mask(x, level, sig)
     full = x
     stars = None
     # The star fit runs either way: its wing model is what the clamp's sky
     # reference is measured without (below).
     starless, inner, smask, nstars, fits, wing_part, spike_part = star_layer(
-        x, model0, sig, kernel, level, spikes, axes if spikes is not None else None, arm_sigma)
+        x, model0, sig, kernel, level, spikes, axes if spikes is not None else None, arm_sigma,
+        clipped=sat)
     info["fitted_stars"] = nstars
+    # Never more than the pixel holds above the floor: the template's
+    # inner pixels times a clipped star's amplitude exceed the plateau's
+    # edge, and the subtraction cut a notch into the core (ngc6946).
+    spike_part = np.minimum(spike_part, np.clip(x - model0, 0.0, None)).astype(np.float32)
     info["spike_flux_frac"] = float(spike_part.sum() / max(float(np.abs(x - model0).sum()), 1e-12))
     x = full = (x - spike_part).astype(np.float32)          # the picture without its spikes
     if split:
@@ -890,10 +987,17 @@ def deblur(chan: np.ndarray, iters: int = DEFAULT_ITERS,
     lo, hi = BLEND_LO_SIGMA * sig, BLEND_HI_SIGMA * sig
     t = np.clip((gaussian_filter(x, 1.5) - ref - lo) / max(hi - lo, 1e-6), 0.0, 1.0)
     blend = t * t * (3 - 2 * t)
+    keep = None
     if sat.any() and not split:
         m = gaussian_filter(binary_dilation(sat, iterations=SAT_DILATE).astype(np.float32), SAT_FEATHER)
-        blend = blend * (1.0 - np.clip(m / max(float(m.max()), 1e-6), 0.0, 1.0))
+        keep = np.clip(m / max(float(m.max()), 1e-6), 0.0, 1.0)
+        blend = blend * (1.0 - keep)
     out = (x + blend * (rl - x)).astype(np.float32)
+    if keep is not None:
+        # The clipped disc is given back AS INPUT, spikes included: the spike
+        # fit runs through the core, and a clipped core minus a fitted spike
+        # is a notch, not a star (ngc6946, 2026-10-18).
+        out = (out * (1.0 - keep) + np.nan_to_num(np.asarray(chan, dtype=np.float32), nan=0.0) * keep).astype(np.float32)
     if split:
         out = (out + stars_out).astype(np.float32)
     info["deblurred_frac"] = float(np.mean(blend > 0.5))
@@ -904,16 +1008,42 @@ def deblur(chan: np.ndarray, iters: int = DEFAULT_ITERS,
     return out, info
 
 
-def deblur_channels(channels: dict, iters: int, clamp_to: str = "input") -> tuple[dict, dict]:
-    """Deblur the luminance of a channel set, or every plane if there is no L.
+def deblur_channels(channels: dict, iters: int, clamp_to: str = "input",
+                    method: str = "starless", log=None) -> tuple[dict, dict]:
+    """Deblur a channel set. Returns (channels, info per channel touched).
 
-    LRGB/HALRGB take their brightness from L, so L is the plane whose
-    sharpness is seen; the colour planes only set hue and would cost a kernel
-    measurement each for nothing. HOO/SHO have no L and show their planes
-    directly, so each distinct array is done once (G and B share O-III).
+    method="starless" (the default since 2026-10-19): stacking/starless --
+    RL on the picture with its stars taken off, the stars rendered back as
+    points at each channel's own flux. Every channel is touched (its stars
+    are re-rendered) and RL runs on the luminance, or on every distinct plane
+    when there is no L.
+
+    method="rl": this module's deblur() on the luminance alone, or on every
+    distinct plane when there is no L. LRGB/HALRGB take their brightness
+    from L, so L is the plane whose sharpness is seen; HOO/SHO show their
+    planes directly, so each distinct array is done once (G and B share
+    O-III).
     """
     if int(iters) <= 0:
         return channels, {}
+    if method == "starless":
+        from stacking import starless
+        # Distinct arrays once: HOO's G and B are one O-III stack.
+        distinct: dict[int, str] = {}
+        for name, a in channels.items():
+            distinct.setdefault(id(a), name)
+        uniq = {distinct[id(a)]: a for a in channels.values()}
+        ref = "L" if "L" in uniq else None
+        rl_on = {"L"} if "L" in uniq else set(uniq)
+        done, infos_u = starless.deblur_set(uniq, iters, ref=ref, deconvolve=rl_on,
+                                            clamp_to=clamp_to if clamp_to in ("input", "sky") else "sky",
+                                            log=log)
+        out = {name: done[distinct[id(a)]] for name, a in channels.items()}
+        infos = {name: infos_u[distinct[id(a)]] for name, a in channels.items()
+                 if distinct[id(a)] in infos_u}
+        return out, infos
+    if method != "rl":
+        raise ValueError(f"method must be 'starless' or 'rl', not {method!r}")
     out = dict(channels)
     infos = {}
     if "L" in channels:

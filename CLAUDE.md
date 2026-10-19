@@ -98,16 +98,30 @@ Since 2026-09-25 the conductor decides both invariants (ADR 0014): every roof fi
   land on the same pixels, then stretches them on a **shared** brightness scale so
   the ratio between channels survives into the image. Both of those are easy to
   get wrong in ways that still produce a plausible-looking picture.
-  `deblur=N` runs Richardson-Lucy on the luminance first (`stacking/deblur.py`);
-  RL rings around every star unless the sky is out, the floor follows the
-  galaxy without clipping, and a dark clamp holds — the module doc has the
-  measurements, and all four were needed. `deblur=40` is the working count
+  `deblur=N` deconvolves before the stretch and is ON by default (`deblur=40`,
+  `method=starless`, since 2026-10-19; `deblur=0` turns it off). The default
+  is `stacking/starless.py`: every channel's stars are taken off
+  (`deblur.star_layer`), the luminance is Richardson-Lucy'd with the field's
+  own kernel on what is left, and the stars are rendered back as points at
+  each channel's own flux (colour from matched apertures against L). Nothing
+  RL sees is a point source, so the stars cannot ring, halo or moat; peaks
+  broader than the kernel at 4-6 px or with an envelope at 12-20 px (nuclei,
+  HII knots, an elliptical's core) are left to RL. `method=rl` is the earlier
+  whole-luminance RL in `stacking/deblur.py`: RL rings around every star
+  unless the sky is out, the floor follows the galaxy without clipping, and a
+  dark clamp holds — the module doc has the measurements — and on a denoised
+  stack every bright star still paid with some artefact, which is why the
+  stars are no longer deconvolved at all. 40 iterations is the working count
   (stars converge by 15, galaxies need 40; split-half test says the added
   detail is real). On a denoised stack the order is stack → denoise → deblur:
   the denoiser erodes faint stars' wings and spikes, so the denoised stack has
   no single PSF; the spikes are fitted off star by star and RL runs with the
   azimuthal kernel. Deblurring the raw stack and denoising after was measured
-  worse (2026-10-17).
+  worse (2026-10-17). The morning render (`scripts/n2n_lrgb_render.py routine`)
+  writes three composites per recipe — raw, denoised, deblurred — on one
+  stretch pinned to the raw set; a field the deconvolution refuses still gets
+  the first two. Known weak case: a bright star on a smooth galaxy's envelope
+  (coloured rings where the per-channel masks meet the fill, NGC 7317).
 
   Frames are **levelled to a common sky before combining** and the level is
   restored afterwards. This is not cosmetic: sky varies 3x across nights (moon,
