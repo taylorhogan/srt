@@ -356,9 +356,15 @@ HELP: dict[str, dict] = {
                     "redundant night; irreversible, so older lights lose the "
                     "option of epoch-matched flats. 'purge bad' does the same for "
                     "frames `bad` rejected, once they were marked more than 30 days "
-                    "ago (dab restores one until then)."),
-        "usage": ["purge", "purge go", "purge bad", "purge bad go"],
-        "examples": ["purge", "purge go", "purge bad", "purge bad go"],
+                    "ago (dab restores one until then). 'purge lights' lists raw "
+                    "light frames of targets idle 90+ days and deletes, with 'go', "
+                    "only those whose SHA-256 matches the Spark's copy (its daily "
+                    "manifest); anything unverified stays, and the Spark keeps "
+                    "its copy. Name a target to limit it."),
+        "usage": ["purge", "purge go", "purge bad", "purge bad go",
+                  "purge lights", "purge lights <dso>", "purge lights <dso> go"],
+        "examples": ["purge", "purge go", "purge bad", "purge bad go",
+                     "purge lights", "purge lights ngc5907 go"],
     },
     "process": {
         "category": "super",

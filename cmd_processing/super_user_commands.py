@@ -6627,6 +6627,9 @@ def purge_cmd(words: list[str], account: str) -> None:
         purge go         — actually delete
         purge bad        — dry run: rejected frames (`bad`) marked > 30 days ago
         purge bad go     — actually delete them
+        purge lights [dso] [go] — raw lights idle 90+ days whose SHA-256 matches
+                           the Spark's copy (utils/light_archive); dry run
+                           unless go
 
     Flats accumulate fast: 20 frames per filter per night at 122 MB each is
     2.45 GB a night for two filters, and this observatory has ~1000 of them.
@@ -6645,7 +6648,42 @@ def purge_cmd(words: list[str], account: str) -> None:
     if len(words) > 2 and words[2].lower() == "bad":
         jobs.spawn(_purge_bad_run, args=(words,))
         return
+    if len(words) > 2 and words[2].lower() == "lights":
+        jobs.spawn(_purge_lights_run, args=(words,))
+        return
     jobs.spawn(_purge_run, args=(words,))
+
+
+def _purge_lights_run(words: list[str]) -> None:
+    """`purge lights [dso] [go]`: raw light frames the Spark provably holds.
+
+    utils/light_archive: a frame goes only when the Spark's manifest has the
+    same SHA-256 and its target has been idle disk.light_keep_days (90). Dry
+    run unless `go`; unverified frames are never touched. First run on a
+    target hashes its frames here (cached afterwards), so it can take minutes.
+    """
+    _job_id = jobs.get_current_job()
+    from utils import light_archive
+
+    cfg = config.data()
+    rest = [w for w in words[3:] if w]
+    go = any(w.lower() == "go" for w in rest)
+    names = [w for w in rest if w.lower() != "go"]
+    only = names[0] if names else None
+    social_server.post_social_message(
+        "Checking light frames against the Spark's copy%s (first run hashes them; may take minutes)..."
+        % (" for " + only if only else ""))
+    p, keep = light_archive.survey(cfg, only=only, progress=social_server.post_social_message)
+    if go and p["deletable"] and not p["refused"]:
+        n, freed, failed = light_archive.delete(p["deletable"], Path(cfg["nina"]["image_dir"]))
+        msg = light_archive.describe(p, keep, go=True)
+        msg += "\nRemoved %d frames, %.1f GB; logged to local/%s." % (
+            n, freed / 1e9, light_archive.PURGE_LOG_NAME)
+        if failed:
+            msg += "\n%d could not be removed, e.g. %s: %s" % (len(failed), failed[0][0], failed[0][1])
+        social_server.post_social_message(msg)
+        return
+    social_server.post_social_message(light_archive.describe(p, keep, go=False))
 
 
 def _purge_bad_run(words: list[str]) -> None:

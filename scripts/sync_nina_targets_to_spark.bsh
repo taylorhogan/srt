@@ -24,3 +24,16 @@ rsync -avz --update \
     --rsync-path="C:/Users/iriso/Documents/cwrsync_6.4.7_x64_free/bin/rsync" \
     "$SOURCE" \
     "$DESTINATION"
+
+# The light-frame manifest (2026-10-19): a SHA-256 of every LIGHT frame in the
+# copy just pulled, pushed back to iris-pc. `purge lights` there deletes a
+# frame only when this manifest holds the same hash -- the proof that the
+# Spark has it. No --delete above, so nothing removed on iris-pc is removed
+# here. Hashes are cached; a normal morning hashes only the night's frames.
+SRT=/home/taylor/Documents/srt
+MANIFEST="$SRT/local/spark_light_manifest.json"
+python3 "$SRT/scripts/spark_light_manifest.py" --root "$DESTINATION/Targets" --out "$MANIFEST" \
+    && rsync -az \
+        --rsync-path="C:/Users/iriso/Documents/cwrsync_6.4.7_x64_free/bin/rsync" \
+        "$MANIFEST" \
+        "iriso@100.95.7.19:/cygdrive/c/Users/iriso/Documents/development/srt/local/spark_light_manifest.json"
