@@ -17,7 +17,10 @@ from configs import config
 _PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 _INSTRUCTIONS_PATH = os.path.join(_PROJECT_ROOT, config.data()["location"]["instructions"])
 
-status_dict = {"in process": 3, "waiting": 2, "completed": 1}
+# "held" (2026-10-15: a queued target the scheduler must not take yet, e.g.
+# ngc7790) sorts below waiting and above completed. Unknown, it ranked 0 and
+# landed under every completed row, where nobody could find it.
+status_dict = {"in process": 3, "waiting": 2, "held": 1.5, "completed": 1}
 
 
 def delete_instruction_db(hash_value):
@@ -213,6 +216,7 @@ _TBL_BG, _TBL_TILE_BORDER = "#0d1117", "#30363d"
 _STATUS_STYLE = {
     "in process": ("#3fb950", "rgba(63,185,80,0.15)"),
     "waiting":    ("#58a6ff", "rgba(88,166,255,0.15)"),
+    "held":       ("#d29922", "rgba(210,153,34,0.15)"),
     "completed":  ("#f778ba", "rgba(247,120,182,0.14)"),
 }
 
