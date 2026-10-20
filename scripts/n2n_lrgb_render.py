@@ -780,9 +780,12 @@ def main() -> int:
                          "the raw composite")
     ap.add_argument("--max-px", type=int, default=2400,
                     help="longest side of the composite JPEGs; 0 keeps full resolution")
-    ap.add_argument("--saturation", type=float, default=1.0,
+    # 2.5 by the operator's choice on 2026-10-20, after NGC 1961 at 1, 2 and 3:
+    # the HII regions and the red field stars want it, and the one cost (the
+    # cyan halos on bright stars) is the G stack's broader PSF, not the boost.
+    ap.add_argument("--saturation", type=float, default=2.5,
                     help="scale each composite's chroma about its luminance; "
-                         "1 leaves the colour as composed, 2 doubles it")
+                         "1 leaves the colour as composed, 2.5 (default) boosts it")
     ap.add_argument("--white-pct", type=float, default=99.95,
                     help="shared white point percentile; compose()'s 99.0 "
                          "saturates this field completely")
