@@ -6,7 +6,7 @@ class PublicConfig():
 
         },
         "version": {
-            "date": "2026.10.20.3"
+            "date": "2026.10.20.4"
         },
 
         "logger": {
@@ -292,7 +292,10 @@ class PublicConfig():
             # winter nights and a Cepheid-monitoring block). max_slots=1
             # restores one-target nights; min_slot_hours is the least a later
             # slot must offer to be worth the slew, centering and refocus.
-            "max_slots": 3,
+            # 4 since 2026-10-20: two monitoring blocks (ngc7790, hubblev1)
+            # competed for one gap and one lost its night while the hour after
+            # the other sat empty. A fourth slot is only ever a gap-fill.
+            "max_slots": 4,
             "min_slot_hours": 2.0,
             # Fraction of a target's good hours that becomes exposures; the
             # rest is centering, autofocus, filter changes and dither settles.

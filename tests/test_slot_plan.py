@@ -263,3 +263,19 @@ def test_signature_changes_when_a_filter_plan_changes():
     assert before != after
     assert signature(a, {"ngc7320": {"B": 1, "L": 2, "G": 1, "R": 1}}) == before   # order-free
     assert signature(a) == signature(a, {}) == signature(a, {"other": {"L": 1}})
+
+
+def test_two_capped_targets_share_a_two_hour_gap_on_a_four_slot_night():
+    """2026-10-20: ngc7790 and hubblev1 (both max_hours, priority 50) competed for
+    the one gap a three-slot night had, and one lost its night while the hour
+    after the other sat empty. With four slots both fit."""
+    rows = [row("a", "+++-----"), row("b", "-----+++"),
+            row("n7790", "++++++++", priority=50), row("v1", "++++++++", priority=50)]
+    caps = {"n7790": 0.5, "v1": 1}
+    s3 = plan_slots(rows, HOURS, WX_ALL, min_slot_hours=2, max_slots=3, max_hours=caps)
+    s4 = plan_slots(rows, HOURS, WX_ALL, min_slot_hours=2, max_slots=4, max_hours=caps)
+    assert len(s3) == 3
+    assert [x.name for x in s4][0] == "a" and [x.name for x in s4][-1] == "b"
+    assert {x.name for x in s4[1:3]} == {"n7790", "v1"}
+    for x, y in zip(s4, s4[1:]):
+        assert x.end <= y.start

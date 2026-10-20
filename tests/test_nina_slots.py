@@ -629,3 +629,22 @@ def test_a_capped_target_is_sized_to_its_cap_not_its_whole_slot(tmp_path, _queue
     _CAPS["ngc7790"] = None
     plans = g.generate_slots_sequence(tpl, _one_slot("ngc7790", 1.0), out, lint_scripts=False)
     assert plans[0] == {"L": 80, "G": 27}        # uncapped: the whole hour
+
+
+FOURTH = {"name": "ngc7790", "ra_hours": 23.99, "dec_degrees": 61.09, "seconds": None,
+          "start": datetime(2026, 9, 8, 5, 30), "end": datetime(2026, 9, 8, 6, 0)}
+
+
+def test_four_slots_give_four_containers_each_later_one_bracketed(tmp_path):
+    """2026-10-20: max_slots 4, for two monitoring blocks in one gap."""
+    seq, plans = _gen(tmp_path, SLOTS + [THIRD, FOURTH])
+    dsos = [it for it in g._items_of(g._find_target_area(seq))
+            if g._short_type(it) == "DeepSkyObjectContainer"]
+    assert [d["Name"] for d in dsos] == ["squid", "ngc7380", "m31", "ngc7790"] and len(plans) == 4
+    ids, refs = [], []
+    _ids_refs(seq, ids, refs)
+    assert len(ids) == len(set(ids)) and set(refs) <= set(ids)
+    for k, d in enumerate(dsos[1:], 1):
+        setup = g._items_of(g._items_of(d)[0])
+        scripts = [i["Script"] for i in setup if g._short_type(i) == "ExternalScript"]
+        assert scripts[0].endswith("DONE_MAIN") and scripts[-1].endswith("IN_MAIN")
