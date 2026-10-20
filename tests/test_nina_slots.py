@@ -487,6 +487,8 @@ def _template4():
 def _galaxy_default(monkeypatch):
     monkeypatch.setattr(g, "_classify_object_type", lambda name: "galaxy")
     monkeypatch.setattr(g, "_need_plan", lambda *a, **k: None)
+    monkeypatch.setattr(g, "_frame_overhead", lambda: 12.4)
+    monkeypatch.setattr(g, "_max_seconds_for", lambda d: None)
 
 
 def test_the_written_file_reads_back_as_the_returned_plans(tmp_path, _galaxy_default):
@@ -501,7 +503,8 @@ def test_the_written_file_reads_back_as_the_returned_plans(tmp_path, _galaxy_def
     plans = g.generate_slots_sequence(tpl, slots, out, state_script="C:\\\\x\\\\s.bat", lint_scripts=False)
     back = g.read_back(out)
     assert [b[0] for b in back] == ["testgal1", "testgal2"]
-    assert plans[0] == {"L": 18, "R": 6, "G": 6, "B": 6}                   # 4 h x 0.75, 300 s
+    # 4 h x 0.75 = 10800 s, half to L: 5400 / (300 + 12.4 s overhead) = 17; colour 1800 / 312.4 = 5
+    assert plans[0] == {"L": 17, "R": 5, "G": 5, "B": 5}
     assert [b[1] for b in back] == [{f: n for f, n in p.items() if n > 0} for p in plans]
     assert all(set(b[2]) == set(b[1]) for b in back)       # an exposure length per written filter
     assert not list(tmp_path.glob("*.unverified*"))
@@ -524,16 +527,22 @@ def test_a_file_that_disagrees_with_the_plan_is_refused_and_not_left_on_disk(tmp
 
 # --------------------------------------------------------------------------- exposure_s
 
+_CAPS = {}     # {dso: max_hours} for the fake queue
+
+
 @pytest.fixture
 def _queue(monkeypatch):
     """A fake control.instructions holding {dso: (filter_plan, exposure_s)}."""
     import types
     import control
     table = {}
+    _CAPS.clear()
     fake = types.SimpleNamespace(
         get_filter_plan=lambda d: (table.get(d) or (None, None))[0],
         get_exposure_plan=lambda d: (table.get(d) or (None, None))[1],
-        get_rotation=lambda d: None)
+        get_rotation=lambda d: None,
+        get_instruction_by_dso=lambda d: {"max_hours": _CAPS.get(d)})
+    monkeypatch.setattr(g, "_frame_overhead", lambda: 12.4)
     monkeypatch.setitem(sys.modules, "control.instructions", fake)
     monkeypatch.setattr(control, "instructions", fake, raising=False)
     monkeypatch.setattr(g, "_need_plan", lambda *a, **k: None)
@@ -552,9 +561,11 @@ def test_exposure_override_sets_the_frames_and_sizes_the_counts(tmp_path, _queue
     out = tmp_path / "out.json"
     plans = g.generate_slots_sequence(tpl, _one_slot("ngc7790"), out, lint_scripts=False)
     # 0.5 h x 0.75 = 1350 s: L 2/3 = 900 s / 10 s, G 1/3 = 450 s / 20 s
-    assert plans[0] == {"L": 90, "G": 22}
+    # With the 12.4 s per-frame overhead (2026-10-20): L 900 / 22.4 = 40,
+    # G 450 / 32.4 = 13. Before it this was 90 + 22: ~50 minutes of work in 30.
+    assert plans[0] == {"L": 40, "G": 13}
     (name, plan, exposures), = g.read_back(out)
-    assert plan == {"L": 90, "G": 22} and exposures == {"L": 10.0, "G": 20.0}
+    assert plan == {"L": 40, "G": 13} and exposures == {"L": 10.0, "G": 20.0}
     seq = json.loads(out.read_text())
     dithers = {g._filter_node(se)["_name"]: se["Triggers"]["$values"][0]["AfterExposures"]
                for se in g._collect_smart_exposures(seq) if g._iterations(se) > 0}
@@ -603,3 +614,18 @@ def test_verify_written_catches_a_block_at_the_wrong_exposure():
         g._verify_written({"x": [se]}, {"R": 5}, "ngc7790", {"R": 10})
     g._set_exposure_time(se, 10)
     g._verify_written({"x": [se]}, {"R": 5}, "ngc7790", {"R": 10})
+
+
+def test_a_capped_target_is_sized_to_its_cap_not_its_whole_slot(tmp_path, _queue):
+    """2026-10-20: slots are whole hours, so max_hours 0.5 got a full hour's
+    frames. The block is now sized to the cap and ends early."""
+    _queue["ngc7790"] = ({"L": 2, "G": 1}, {"L": 10, "G": 20})
+    _CAPS["ngc7790"] = 0.5
+    tpl = tmp_path / "tpl.json"
+    tpl.write_text(json.dumps(_template4()))
+    out = tmp_path / "out.json"
+    plans = g.generate_slots_sequence(tpl, _one_slot("ngc7790", 1.0), out, lint_scripts=False)
+    assert plans[0] == {"L": 40, "G": 13}        # the same as a 30-minute slot
+    _CAPS["ngc7790"] = None
+    plans = g.generate_slots_sequence(tpl, _one_slot("ngc7790", 1.0), out, lint_scripts=False)
+    assert plans[0] == {"L": 80, "G": 27}        # uncapped: the whole hour

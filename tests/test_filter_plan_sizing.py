@@ -13,7 +13,17 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from nina_gen import nina_sequence_gen as g  # noqa: E402
 
+import pytest  # noqa: E402
+
 NS = "NINA.Sequencer"
+
+
+@pytest.fixture(autouse=True)
+def _no_overhead(monkeypatch):
+    """These tests pin the ratio and efficiency arithmetic; the per-frame
+    overhead (2026-10-20) has its own test at the end."""
+    monkeypatch.setattr(g, "_frame_overhead", lambda: 0.0)
+
 
 
 def _se(idn, filt, exposure=300.0, iters=30):
@@ -99,3 +109,14 @@ def test_automatic_nebula_split_uses_the_efficiency(monkeypatch):
     # 8100 s / 3 = 2700 s each = 9 frames of 300 s
     assert plan == {"Ha": 9, "O-III": 9, "S-II": 9}
     assert _iters(blocks[0]) == 0
+
+
+def test_counts_include_the_per_frame_overhead(monkeypatch):
+    """2026-10-20: every frame costs ~12.4 s beyond its exposure (download, save,
+    dither). Negligible at 300 s; more than the exposure itself at 10 s."""
+    monkeypatch.setattr(g, "_wheel", lambda: {})
+    monkeypatch.setattr(g, "_frame_overhead", lambda: 12.4)
+    blocks = _blocks()
+    applied = g._apply_explicit_plan(blocks[:1], {"L": 1}, usable_seconds=1350.0,
+                                     exposures={"L": 10})
+    assert applied == {"L": 60}                     # 1350 / 22.4, not 1350 / 10 = 135

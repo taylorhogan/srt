@@ -258,6 +258,38 @@ def max_explicit_filters(sequence: Any) -> int:
                if _filter_node(se) is not None)
 
 
+DEFAULT_FRAME_OVERHEAD_S = 12.4
+
+
+def _frame_overhead() -> float:
+    """Seconds each frame costs beyond its exposure: download, save, dither.
+
+    Measured 2026-10-20 from DATE-OBS gaps between consecutive same-filter
+    frames on three targets: median 12.1-12.5 s, p90 13.3 s. Ignored until
+    then, which cost 300 s frames ~4% but doubled the true time of 10 s ones:
+    ngc7790's hour was sized as 180 L + 45 G, ~90 minutes of work. Every count
+    below divides by exposure + this. cfg["nina"]["frame_overhead_s"]."""
+    try:
+        v = float(config.data().get("nina", {}).get("frame_overhead_s", DEFAULT_FRAME_OVERHEAD_S))
+    except Exception:
+        v = DEFAULT_FRAME_OVERHEAD_S
+    return v if v >= 0 else DEFAULT_FRAME_OVERHEAD_S
+
+
+def _max_seconds_for(dso_name: str) -> Optional[float]:
+    """The queue entry's max_hours in seconds, or None. A capped target's
+    frames are sized to the cap, not to its whole slot: slots are planned in
+    whole hours, so max_hours 0.5 got a full hour's frames (2026-10-20). The
+    block then finishes early and the next slot starts sooner."""
+    try:
+        from control import instructions as _instr
+        rec = _instr.get_instruction_by_dso(dso_name) or {}
+        mh = rec.get("max_hours")
+        return float(mh) * 3600.0 if mh else None
+    except Exception:
+        return None
+
+
 def _apply_explicit_plan(smart_exposures: list, plan: dict,
                          usable_seconds: Optional[float] = None,
                          exposures: Optional[dict] = None) -> dict[str, int]:
@@ -294,7 +326,7 @@ def _apply_explicit_plan(smart_exposures: list, plan: dict,
             _set_exposure_time(se, exposures[name])
         if scale and count > 0:
             exp_s = _get_exposure_time(se) or 1.0
-            count = max(1, int(usable_seconds * count / total // exp_s))
+            count = max(1, int(usable_seconds * count / total // (exp_s + _frame_overhead())))
         _update_smart_exposure(se, iterations=count, filter_name=name,
                                position=wheel.get(name))
         applied[name] = count
@@ -344,10 +376,11 @@ def _apply_filter_plan(sequence: Any, above_horizon_seconds: float, obj_type: st
         # name for the same reason (see _update_smart_exposure).
         wheel = _wheel()
         each = actual_seconds / 3.0
+        oh = _frame_overhead()
         plan = {
-            "Ha":    math.floor(each / exp_r),
-            "O-III": math.floor(each / exp_g),
-            "S-II":  math.floor(each / exp_b),
+            "Ha":    math.floor(each / (exp_r + oh)),
+            "O-III": math.floor(each / (exp_g + oh)),
+            "S-II":  math.floor(each / (exp_b + oh)),
         }
         _update_smart_exposure(se_l, iterations=0)
         _update_smart_exposure(se_r, iterations=plan["Ha"], filter_name="Ha",
@@ -361,11 +394,12 @@ def _apply_filter_plan(sequence: Any, above_horizon_seconds: float, obj_type: st
         # Galaxy / unknown: L = 50%, R+G+B = 50%/3 each
         l_secs = actual_seconds * 0.5
         rgb_secs = actual_seconds * 0.5 / 3.0
+        oh = _frame_overhead()
         plan = {
-            "L": math.floor(l_secs  / exp_l),
-            "R": math.floor(rgb_secs / exp_r),
-            "G": math.floor(rgb_secs / exp_g),
-            "B": math.floor(rgb_secs / exp_b),
+            "L": math.floor(l_secs  / (exp_l + oh)),
+            "R": math.floor(rgb_secs / (exp_r + oh)),
+            "G": math.floor(rgb_secs / (exp_g + oh)),
+            "B": math.floor(rgb_secs / (exp_b + oh)),
         }
         # Every block named, with its wheel position. Until 2026-10-14 this
         # branch set only the counts and trusted the template's names, and
@@ -413,7 +447,7 @@ def _need_plan(sequence: Any, dso_name: str, obj_type: str,
         return None                    # 2-block template: let the guard handle it
     exposure_s = _get_exposure_time(smart_exposures[0])
     counts = _fn.counts_from_weights(weights, above_horizon_seconds * _efficiency(),
-                                     exposure_s)
+                                     exposure_s + _frame_overhead())
     if not counts or not any(counts.values()):
         return None
     logging.getLogger(__name__).info(
@@ -478,6 +512,12 @@ def _plan_for(container: Any, dso_name: str, seconds: Optional[float]) -> dict[s
         logging.getLogger(__name__).warning(
             "%s: exposure_s %s ignored -- it needs an explicit filter_plan", dso_name, exposures)
         exposures = None
+    cap = _max_seconds_for(dso_name)
+    if cap and seconds and seconds > cap:
+        logging.getLogger(__name__).info(
+            "%s: frames sized to max_hours (%.0f min), not the %.0f-min slot",
+            dso_name, cap / 60.0, seconds / 60.0)
+        seconds = cap
     if explicit:
         plan = _apply_filter_plan(container, seconds or 0.0, "explicit", explicit=explicit,
                                   exposures=exposures)
