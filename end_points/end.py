@@ -1,4 +1,5 @@
 import asyncio
+import json
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 import logging
@@ -417,6 +418,270 @@ def write_fallback_marker(confirmed_closed: bool, evidence: dict, root: str | No
     return path
 
 
+LAST_VISION = (False, False, False)     # (parked, closed, open) of the last read
+
+# Dawn close retry (owner, 2026-10-20). When the end sequence cannot confirm the
+# park -- the 2026-10-20 review: losing the internet blinds both roof cameras,
+# whose pan/tilt is cloud-only -- the roof used to stay open with nothing ever
+# trying again. Now a detached retry repeats the same gated check every
+# DAWN_RETRY_S until the roof is closed, for at most DAWN_RETRY_MAX_S, telling
+# the chat and the phone each hour it is still open.
+DAWN_RETRY_S = 600
+DAWN_RETRY_MAX_S = 8 * 3600
+DAWN_RETRY_NOTIFY_S = 3600
+DAWN_RETRY_LOCK = "local/dawn_close_retry.json"
+
+
+def dawn_retry_loop(attempt, sleep, now, notify, interval_s=DAWN_RETRY_S,
+                    max_s=DAWN_RETRY_MAX_S, notify_every_s=DAWN_RETRY_NOTIFY_S) -> str:
+    """Retry *attempt* until it reports done. Pure (everything injected).
+
+    attempt() -> "closed" (roof closed: by this retry or found closed),
+    "stop" (someone else is operating; leave it to them) or "waiting"
+    (park or roof not confirmed; nothing moved). -> the last answer, or
+    "gave_up" after *max_s*.
+    """
+    t0 = now()
+    last_note = t0
+    tries = 0
+    while True:
+        tries += 1
+        r = attempt()
+        if r in ("closed", "stop"):
+            return r
+        if now() - t0 >= max_s:
+            notify("Dawn close retry gave up after %d tries over %.0f h: the roof is still not "
+                   "confirmed closed. Close it by hand (roof!! close force at the observatory)."
+                   % (tries, (now() - t0) / 3600.0), True)
+            return "gave_up"
+        if now() - last_note >= notify_every_s:
+            last_note = now()
+            notify("Roof still OPEN after the end sequence: dawn close retry %d, next in %d min."
+                   % (tries, interval_s // 60), True)
+        sleep(interval_s)
+
+
+def _dawn_attempt() -> str:
+    """One retry: power the motor and light, read, close if parked and open."""
+    logger = utils.set_logger()
+    if super_user_commands.is_nina_running():
+        logger.info("dawn retry: N.I.N.A is running -- someone is operating; stopping")
+        return "stop"
+    dev_map = asyncio.run(ku.make_discovery_map())
+    from iris.hardware import roof as roof_hw
+    roof_hw.switch_motor(dev_map, True, also={"Telescope mount": 'off', "Iris inside light": 'on'})
+    time.sleep(60)
+    try:
+        _parked, closed_now = _close_if_parked(dev_map, require_open=True)
+    except Exception:
+        logger.exception("dawn retry: close attempt failed")
+        _parked, closed_now = False, False
+    _p, read_closed, _o = LAST_VISION
+    if not closed_now:
+        try:
+            asyncio.run(ku.kasa_do(dev_map, {"Iris inside light": 'off', "Roof motor": 'off'}))
+        except Exception:
+            logger.exception("dawn retry: could not switch light / roof motor off")
+    if closed_now:
+        social_server.post_social_message("Dawn close retry: roof CLOSED.")
+        return "closed"
+    if read_closed:
+        social_server.post_social_message("Dawn close retry: the roof reads closed now; stopping.")
+        return "closed"
+    logger.info("dawn retry: still waiting (vision parked=%s closed=%s open=%s)", *LAST_VISION)
+    return "waiting"
+
+
+def retry_dawn_close() -> str:
+    """The detached retry process. One at a time (DAWN_RETRY_LOCK)."""
+    logger = utils.set_logger()
+    lock = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), DAWN_RETRY_LOCK)
+    os.makedirs(os.path.dirname(lock), exist_ok=True)
+    with open(lock, "w") as fh:
+        json.dump({"pid": os.getpid(), "started": datetime.now().astimezone().isoformat()}, fh)
+    social_server.post_social_message(
+        "Roof left OPEN: the end sequence could not confirm the park. Retrying the close "
+        "every %d min (same checks as the end sequence)." % (DAWN_RETRY_S // 60))
+    pushover.push_message("Roof left OPEN at the end sequence -- retrying the close every %d min"
+                          % (DAWN_RETRY_S // 60), priority=1)
+
+    def notify(msg, phone):
+        social_server.post_social_message(msg)
+        if phone:
+            pushover.push_message(msg, priority=1)
+    try:
+        r = dawn_retry_loop(_dawn_attempt, time.sleep, time.time, notify)
+        logger.info("dawn close retry finished: %s", r)
+        return r
+    finally:
+        try:
+            os.remove(lock)
+        except OSError:
+            pass
+
+
+def _spawn_dawn_retry() -> bool:
+    """Start retry_dawn_close detached, unless one is already running."""
+    logger = utils.set_logger()
+    lock = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), DAWN_RETRY_LOCK)
+    # A lock younger than the retry's whole budget means one is still running
+    # (it removes the lock when it ends). By age, not by pid: psutil is not
+    # installed, and os.kill(pid, 0) on Windows sends CTRL_C_EVENT.
+    try:
+        age = time.time() - os.path.getmtime(lock)
+        if age < DAWN_RETRY_MAX_S + 3600:
+            logger.info("dawn close retry already running (lock %.0f min old)", age / 60)
+            return False
+    except OSError:
+        pass
+    flags = 0
+    if os.name == "nt":
+        flags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
+    try:
+        subprocess.Popen([sys.executable, os.path.abspath(__file__), "--retry-close"],
+                         creationflags=flags, close_fds=True, stdin=subprocess.DEVNULL,
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        logger.info("dawn close retry spawned")
+        return True
+    except Exception:
+        logger.exception("could not spawn the dawn close retry")
+        social_server.post_social_message("Could not start the dawn close retry: the roof is OPEN, "
+                                          "close it by hand")
+        return False
+
+
+def _close_if_parked(dev_map, require_open: bool = False) -> tuple:
+    """Sense the park and, if it is confirmed, ask the conductor and close.
+
+    -> (parked, roof_closed). The end sequence's first attempt and every dawn
+    retry (retry_dawn_close) run this same code, so a retry can never close on
+    less evidence than the first attempt needed: vision must confirm the park
+    and the conductor must allow the close (or be unreachable: the designed
+    last-resort fallback). Not parked -> (False, False), nothing moved. A
+    conductor refusal raises RuntimeError, as it always has.
+    """
+    global LAST_VISION
+    logger = utils.set_logger()
+    roof_closed = False
+    cfg = config.data()
+
+    inside_view = cfg["camera safety"]["scope_view"]
+    # visual_status() retries internally on a garbage (torn/starved/
+    # unreadable) frame: the mount is already confirmed parked by PWI4
+    # above, so a single vision frame reading "not parked" is a corrupt
+    # snapshot, not a real state. One such frame once left the roof open.
+    parked, closed, is_open, mod_date = vision_safety.visual_status()
+    LAST_VISION = (bool(parked), bool(closed), bool(is_open))
+    pushover.push_message("Investigating if scope is parked", inside_view)
+    if parked and require_open and not (is_open and not closed):
+        # A dawn retry acts only on a roof vision positively reads OPEN. The
+        # relay TOGGLES: a pulse at a roof someone already closed by hand
+        # would open it. Closed or unknown -> nothing moves; the caller decides.
+        logger.info("close skipped: roof not read open (closed=%s open=%s)", closed, is_open)
+        return True, False
+    if parked:
+        logger.info("step 3")
+        # Ask the conductor for the close, with what was just
+        # sensed. Three answers: accepted (close); refused under
+        # authority (roof stays open, loudly -- the guard saw
+        # something this sequence did not); unreachable (the
+        # LAST-RESORT FALLBACK: the close must happen even if
+        # the brain died, so it proceeds on the vision check
+        # alone and leaves a marker the conductor ingests at
+        # its next start).
+        evidence = conductor.evidence_from_vision(parked, closed, is_open)
+        allowed, reason, reply = conductor.request_roof_move(
+            "MOUNT_PARK_CONFIRMED", "end.py", evidence)
+        if reply is not None and reply.get("kind") == "ignored":
+            # The night machine is not in PARKING: a night it lost
+            # track of, or a stop! that put it in a hold. Closing
+            # is the safe direction, so ask for it as a plain
+            # close, which the resting states and the holds answer
+            # on Invariant A's guards alone.
+            allowed, reason, reply = conductor.request_roof_move(
+                "ROOF_CLOSE_REQUESTED", "end.py", evidence,
+                {"why": "night machine not in PARKING (%s)" % reply.get("state")})
+        fallback = reply is None
+        if not allowed:
+            msg = ("End sequence: conductor REFUSED the roof close — %s. "
+                   "Roof stays open; check the observatory" % reason)
+            logger.error(msg)
+            social_server.post_social_message(msg)
+            pushover.push_message(msg, inside_view, priority=1)
+            raise RuntimeError(msg)
+        if fallback:
+            logger.error("end: conductor unreachable — closing on the "
+                         "vision check alone (last-resort fallback)")
+            social_server.post_social_message(
+                "End sequence: conductor unreachable — closing on the "
+                "vision check alone (fallback)")
+        elif reason:
+            social_server.post_social_message("ℹ️ " + reason)
+        social_server.post_social_message("Vision Safety says Scope is parked, closing roof")
+        super_user_commands.announce_roof_movement("The roof will be closing in one minute")
+        try:
+            super_user_commands.toggle_roof(dev_map, capture_direction="close")
+        except super_user_commands.RoofFireError:
+            # The command never went out. Tell the conductor
+            # (back to PARKING if the roof still reads open) and
+            # let the outer handler log it; the roof is open and
+            # the phone must say so.
+            super_user_commands._report_roof_fire_failure("close", "end.py")
+            pushover.push_message(
+                "ROOF RELAY FAILED at the end sequence — roof still open, "
+                "check the observatory", inside_view, priority=1)
+            raise
+        # Judge the close exactly as roof!! close does — a single
+        # frame 30s after the relay is not a verdict, and reporting
+        # one as though it were is what told the imaging card the
+        # roof had not closed when it had (2026-08-04). Runs with
+        # imaging_run=True so a cancel on the imaging card can never
+        # unwind the shutdown half-done: each check posts its own
+        # annotated snapshot, and the loop gives the roof 20 minutes.
+        closed = super_user_commands.confirm_roof_state(
+            "closed", imaging_run=True)
+        roof_closed = bool(closed)
+        conductor.report("ROOF_CLOSE_CONFIRMED" if roof_closed else "ROOF_TIMEOUT",
+                         "end.py", {"direction": "close", "confirmed": roof_closed})
+        if fallback:
+            write_fallback_marker(roof_closed, evidence)
+        if closed:
+            social_server.post_social_message("Vision Safety says roof is closed")
+        else:
+            social_server.post_social_message("Vision Safety says roof is NOT closed")
+            # An unclosed roof at end of night is the one thing here
+            # that needs a human tonight, not in the morning log.
+            pushover.push_message(
+                "ROOF NOT CONFIRMED CLOSED after the end sequence — check the observatory",
+                inside_view)
+        logger.info("step 4")
+        # Turn off the inside light + roof motor FIRST so a later
+        # failure (e.g. an unreachable dehumidifier relay) can never
+        # skip the light-off and leave the observatory lit.
+        try:
+            instructions = (dict
+                (
+                {
+                    "Iris inside light": 'off',
+                    "Roof motor": 'off',
+                }
+            ))
+            logger.info("step 5")
+            r5 = asyncio.run(ku.kasa_do(dev_map, instructions))
+            bad5 = [n for n, ok in r5.items() if not ok]
+            if bad5:
+                logger.error("step 6: FAILED: %s", ", ".join(bad5))
+            else:
+                logger.info("step 6 (all %d verified)", len(r5))
+        except Exception:
+            logger.exception("Failed to turn off inside light / roof motor")
+        # Turn on dehumidifier (best-effort; bounded + isolated so a
+        # relay blip can't abort the rest of the shutdown).
+        utl_shelly.set_dehumidifier(True)
+        return True, roof_closed
+    return False, False
+
+
 def do_main():
     """The end-of-night shutdown. Returns True iff the roof was CONFIRMED closed.
 
@@ -483,122 +748,20 @@ def do_main():
                     logger.info("step 2 (all %d verified)", len(results))
                 # make sure lights are on
                 time.sleep(60)
-                cfg = config.data()
-
-                inside_view = cfg["camera safety"]["scope_view"]
-                # visual_status() retries internally on a garbage (torn/starved/
-                # unreadable) frame: the mount is already confirmed parked by PWI4
-                # above, so a single vision frame reading "not parked" is a corrupt
-                # snapshot, not a real state. One such frame once left the roof open.
-                parked, closed, is_open, mod_date = vision_safety.visual_status()
-                pushover.push_message("Investigating if scope is parked", inside_view)
-                if parked:
-                    logger.info("step 3")
-                    # Ask the conductor for the close, with what was just
-                    # sensed. Three answers: accepted (close); refused under
-                    # authority (roof stays open, loudly -- the guard saw
-                    # something this sequence did not); unreachable (the
-                    # LAST-RESORT FALLBACK: the close must happen even if
-                    # the brain died, so it proceeds on the vision check
-                    # alone and leaves a marker the conductor ingests at
-                    # its next start).
-                    evidence = conductor.evidence_from_vision(parked, closed, is_open)
-                    allowed, reason, reply = conductor.request_roof_move(
-                        "MOUNT_PARK_CONFIRMED", "end.py", evidence)
-                    if reply is not None and reply.get("kind") == "ignored":
-                        # The night machine is not in PARKING: a night it lost
-                        # track of, or a stop! that put it in a hold. Closing
-                        # is the safe direction, so ask for it as a plain
-                        # close, which the resting states and the holds answer
-                        # on Invariant A's guards alone.
-                        allowed, reason, reply = conductor.request_roof_move(
-                            "ROOF_CLOSE_REQUESTED", "end.py", evidence,
-                            {"why": "night machine not in PARKING (%s)" % reply.get("state")})
-                    fallback = reply is None
-                    if not allowed:
-                        msg = ("End sequence: conductor REFUSED the roof close — %s. "
-                               "Roof stays open; check the observatory" % reason)
-                        logger.error(msg)
-                        social_server.post_social_message(msg)
-                        pushover.push_message(msg, inside_view, priority=1)
-                        raise RuntimeError(msg)
-                    if fallback:
-                        logger.error("end: conductor unreachable — closing on the "
-                                     "vision check alone (last-resort fallback)")
-                        social_server.post_social_message(
-                            "End sequence: conductor unreachable — closing on the "
-                            "vision check alone (fallback)")
-                    elif reason:
-                        social_server.post_social_message("ℹ️ " + reason)
-                    social_server.post_social_message("Vision Safety says Scope is parked, closing roof")
-                    super_user_commands.announce_roof_movement("The roof will be closing in one minute")
-                    try:
-                        super_user_commands.toggle_roof(dev_map, capture_direction="close")
-                    except super_user_commands.RoofFireError:
-                        # The command never went out. Tell the conductor
-                        # (back to PARKING if the roof still reads open) and
-                        # let the outer handler log it; the roof is open and
-                        # the phone must say so.
-                        super_user_commands._report_roof_fire_failure("close", "end.py")
-                        pushover.push_message(
-                            "ROOF RELAY FAILED at the end sequence — roof still open, "
-                            "check the observatory", inside_view, priority=1)
-                        raise
-                    # Judge the close exactly as roof!! close does — a single
-                    # frame 30s after the relay is not a verdict, and reporting
-                    # one as though it were is what told the imaging card the
-                    # roof had not closed when it had (2026-08-04). Runs with
-                    # imaging_run=True so a cancel on the imaging card can never
-                    # unwind the shutdown half-done: each check posts its own
-                    # annotated snapshot, and the loop gives the roof 20 minutes.
-                    closed = super_user_commands.confirm_roof_state(
-                        "closed", imaging_run=True)
-                    roof_closed = bool(closed)
-                    conductor.report("ROOF_CLOSE_CONFIRMED" if roof_closed else "ROOF_TIMEOUT",
-                                     "end.py", {"direction": "close", "confirmed": roof_closed})
-                    if fallback:
-                        write_fallback_marker(roof_closed, evidence)
-                    if closed:
-                        social_server.post_social_message("Vision Safety says roof is closed")
-                    else:
-                        social_server.post_social_message("Vision Safety says roof is NOT closed")
-                        # An unclosed roof at end of night is the one thing here
-                        # that needs a human tonight, not in the morning log.
-                        pushover.push_message(
-                            "ROOF NOT CONFIRMED CLOSED after the end sequence — check the observatory",
-                            inside_view)
-                    logger.info("step 4")
-                    # Turn off the inside light + roof motor FIRST so a later
-                    # failure (e.g. an unreachable dehumidifier relay) can never
-                    # skip the light-off and leave the observatory lit.
-                    try:
-                        instructions = (dict
-                            (
-                            {
-                                "Iris inside light": 'off',
-                                "Roof motor": 'off',
-                            }
-                        ))
-                        logger.info("step 5")
-                        r5 = asyncio.run(ku.kasa_do(dev_map, instructions))
-                        bad5 = [n for n, ok in r5.items() if not ok]
-                        if bad5:
-                            logger.error("step 6: FAILED: %s", ", ".join(bad5))
-                        else:
-                            logger.info("step 6 (all %d verified)", len(r5))
-                    except Exception:
-                        logger.exception("Failed to turn off inside light / roof motor")
-                    # Turn on dehumidifier (best-effort; bounded + isolated so a
-                    # relay blip can't abort the rest of the shutdown).
-                    utl_shelly.set_dehumidifier(True)
-                else:
+                parked, roof_closed = _close_if_parked(dev_map)
+                if not parked:
                     social_server.post_social_message("Vision Safety says Scope is NOT parked")
-                    # Roof stays open (scope not confirmed parked), but the inside
-                    # light was switched on for vision and must still be turned off.
+                    # Roof stays open for now. The inside light was switched on
+                    # for vision and goes off; so does the roof motor plug, which
+                    # was left powered here until 2026-10-20 (the Shelly relay
+                    # armed all day). Then the dawn retry takes over: the same
+                    # check every DAWN_RETRY_S until the close happens.
                     try:
-                        asyncio.run(ku.kasa_do(dev_map, {"Iris inside light": 'off'}))
+                        asyncio.run(ku.kasa_do(dev_map, {"Iris inside light": 'off',
+                                                         "Roof motor": 'off'}))
                     except Exception:
-                        logger.exception("Failed to turn off inside light (scope-not-parked path)")
+                        logger.exception("Failed to turn off inside light / roof motor (scope-not-parked path)")
+                    _spawn_dawn_retry()
 
             else:
                 social_server.post_social_message("Mount says Iris is NOT parked, roof will remain open")
@@ -713,5 +876,7 @@ if __name__ == "__main__":
     # --summary-only flag selects the reporting-only path.
     if len(sys.argv) > 2 and sys.argv[1] == "--summary-only":
         _post_imaging_summary(datetime.fromisoformat(sys.argv[2]))
+    elif len(sys.argv) > 1 and sys.argv[1] == "--retry-close":
+        retry_dawn_close()
     else:
         do_main()
