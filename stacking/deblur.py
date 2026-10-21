@@ -1010,7 +1010,7 @@ def deblur(chan: np.ndarray, iters: int = DEFAULT_ITERS,
 
 def deblur_channels(channels: dict, iters: int, clamp_to: str = "input",
                     method: str = "starless", log=None,
-                    stars: str = "imaged", model=None) -> tuple[dict, dict]:
+                    stars: str = "imaged", model=None, planes=None) -> tuple[dict, dict]:
     """Deblur a channel set. Returns (channels, info per channel touched).
 
     method="learned" (the default since 2026-10-21 afternoon): the luminance
@@ -1020,9 +1020,17 @@ def deblur_channels(channels: dict, iters: int, clamp_to: str = "input",
     planes too was measured on ngc6946 to sharpen each plane's own noise
     into coloured specks and to turn a saturated star's core cyan, so the
     colour stays where the blur put it under a sharpened L. Without an L
-    (HOO/SHO) every distinct plane goes through, each by its own kernel --
-    untested as of the switch. *iters* only decides on/off here. *model* is
-    a loaded checkpoint (tests); None loads deblur_model.DEFAULT_MODEL.
+    (HOO/SHO) the set goes to STARLESS instead, info["fallback"] saying so:
+    the nebula sweep of 2026-10-21 (ic1396, squid, ngc7380, trunk) put every
+    narrowband plane through the network and it sharpened the denoiser's
+    faint residual hatch into a visible mesh over the smooth emission, broke
+    bright rims into beads, and gave the saturated stars mottled halos. The
+    network has never seen a narrowband stack. *iters* is starless's RL
+    count on that path and only on/off on the learned one. *model* is a
+    loaded checkpoint (tests); None loads deblur_model.DEFAULT_MODEL.
+    *planes* names planes to sharpen explicitly (the render's
+    --learned-planes); None is the rule above, and a selection that names
+    nothing in the set falls back to the rule rather than refusing.
     Without torch or the checkpoint the set falls back to starless, with
     info["fallback"] saying why: this path exists on the Spark.
 
@@ -1062,8 +1070,23 @@ def deblur_channels(channels: dict, iters: int, clamp_to: str = "input",
             for i in infos.values():
                 i["fallback"] = f"starless: {e!r}"
             return out, infos
-        planes = ("L",) if "L" in uniq else None
-        done, infos_u = _dm.deblur_channels(uniq, model, device=dev, planes=planes,
+        chosen = None if planes is None else tuple(p for p in planes if p in uniq)
+        if not chosen and "L" not in uniq:
+            why = ("starless: no luminance plane -- the learned deconvolution is luminance-only "
+                   "and on narrowband planes it sharpened the denoiser's texture into a mesh "
+                   "(nebula sweep 2026-10-21)")
+            if log:
+                log(f"learned: {why}; RL{int(iters)} on every distinct plane instead")
+            out, infos = deblur_channels(channels, iters, clamp_to=clamp_to, method="starless",
+                                         log=log, stars=stars)
+            for i in infos.values():
+                i["fallback"] = why
+            return out, infos
+        if not chosen:
+            if planes is not None and log:
+                log(f"learned: none of {planes} in the set -- the luminance instead")
+            chosen = ("L",)
+        done, infos_u = _dm.deblur_channels(uniq, model, device=dev, planes=chosen,
                                             log=log or (lambda s: None))
         out = {name: done[distinct[id(a)]] for name, a in channels.items()}
         infos = {}

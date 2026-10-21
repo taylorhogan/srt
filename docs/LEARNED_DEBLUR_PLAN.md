@@ -657,3 +657,36 @@ three composites, raw / denoised / learned, with the starless one as an
 optional `--deblur N` extra. The week-of-mornings test now runs on the
 default rather than on a fourth picture; the untested cases are the same
 (nebulae, crowded fields, narrowband without an L).
+
+### Nebula sweep — 2026-10-21 afternoon
+
+ic1396 HOO, squid HOO, ngc7380 SHO, trunk SHO re-rendered from cached
+stacks (ngc6888's lights are not on the Spark). First pass: the render's
+luminance-only selection matched nothing in a set with no L and silently
+wrote no learned composite — the morning would have dropped every nebula.
+Second pass, every narrowband plane through the network by its own kernel
+(kernels 6.5–7.4 px from 240–400 stars; normalisation scale 0.02–0.05
+against 0.09–0.28 on the galaxies, i.e. far below anything in training):
+
+- **A mesh over the smooth emission.** Confirmed at 1:1 on trunk Hα: the
+  denoised narrowband plane carries a faint hatch from the N2N narrowband
+  model, invisible at the composite's stretch, and the network sharpens it
+  into a visible grid across the nebulosity and the dark lanes. Power at
+  2–3 px periods is *lower* in the output, so it is not the dilated window
+  aliasing; it is real texture in the input, amplified.
+- **Bright rims broken into beads** (trunk, ngc7380): smooth ionisation
+  fronts come out clumpy. Not checked by split-half; not trusted.
+- **Saturated stars with mottled halos** (ic1396, squid, ngc7380): the
+  plateau guard writes the core back as imaged per plane while the wing
+  around it is sharpened per plane; the planes disagree and the halo reads
+  as rings and colour.
+- The faint sky and the faint stars were acceptable; fewer coloured specks
+  than ngc6946's broadband planes showed.
+
+Decision: **no luminance plane → starless**, `stacking/deblur` method
+"learned" falls back with info["fallback"], and the morning render writes
+that product as `deblurred` so its name says which deconvolution made it.
+`--learned-planes all` (or a named list) still forces the planes through
+the network for experiments. The narrowband fix, if wanted, is training
+data: the network has never seen a narrowband stack, and the denoiser's
+hatch would have to be out of the training targets too.

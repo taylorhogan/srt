@@ -107,8 +107,14 @@ Since 2026-09-25 the conductor decides both invariants (ADR 0014): every roof fi
   cyan star core); measured on the holdouts it gives stars 7.5 -> ~4 px with
   no rings, 96-98 % of their flux, and the galaxy improved at every scale
   (`docs/LEARNED_DEBLUR_PLAN.md`); chosen by the owner by eye on ngc6946 and
-  ngc1961. Without torch or the checkpoint it falls back to starless with a
-  warning. `method=starless` (the default 2026-10-19 to 10-21) is
+  ngc1961. A set with no luminance (HOO/SHO) goes to starless instead, and
+  the morning render writes that product as `deblurred`, not `learned`: the
+  nebula sweep of 2026-10-21 (ic1396, squid, ngc7380, trunk) put every
+  narrowband plane through the network and it sharpened the denoiser's faint
+  residual hatch into a mesh over the smooth emission, broke bright rims into
+  beads and gave saturated stars mottled halos; the network has never seen a
+  narrowband stack. Without torch or the checkpoint it also falls back to
+  starless with a warning. `method=starless` (the default 2026-10-19 to 10-21) is
   `stacking/starless.py`: every channel's stars are taken off
   (`deblur.star_layer`), the luminance is Richardson-Lucy'd with the field's
   own kernel on what is left, and the lifted-off star layer is put back as

@@ -568,9 +568,12 @@ def deblurred_channels(channels: dict, iters: int, log=print, stars: str = "imag
     return out
 
 
-def learned_channels(channels: dict, model_path: str, log=print, planes=("L",)):
-    """The channel set with *planes* through nn/deblur_model and the rest as
-    given, or None with the reason logged. *planes* None means every channel.
+def learned_channels(channels: dict, model_path: str, log=print, planes=("L",), iters=40):
+    """(channel set, tag): *planes* through nn/deblur_model and the rest as
+    given under tag "learned"; (None, "learned") with the reason logged when
+    nothing could be done. A set with no luminance (HOO/SHO) comes back from
+    stacking/deblur's starless fallback under tag "deblurred" (RL *iters*),
+    so the product's name says which deconvolution made it.
 
     Never raises: a field the model cannot handle (no measurable kernel, no
     checkpoint, a failure inside) must not cost the target its raw and
@@ -580,32 +583,35 @@ def learned_channels(channels: dict, model_path: str, log=print, planes=("L",)):
     log("")
     if not model_path or not os.path.exists(model_path):
         log(f"learned deblur: no checkpoint at {model_path or '(none)'} — no learned composite")
-        return None
-    chosen = [c for c in channels if planes is None or c in planes]
-    kept = [c for c in channels if c not in chosen]
-    if not chosen:
-        log(f"learned deblur: none of {', '.join(channels)} selected ({planes}) — no learned composite")
-        return None
-    log(f"learned deblur: {os.path.basename(os.path.realpath(model_path))} on {', '.join(chosen)}"
-        + (f"; {', '.join(kept)} kept as given" if kept else ""))
+        return None, "learned"
+    log(f"learned deblur: {os.path.basename(os.path.realpath(model_path))} on {', '.join(channels)}, "
+        f"planes {'all' if planes is None else ','.join(planes)}")
     try:
         import torch
         from nn import deblur_model
+        from stacking import deblur as _deblur
         dev = "cuda" if torch.cuda.is_available() else "cpu"
         model, _meta = deblur_model.load(model_path, dev)
-        out, infos = deblur_model.deblur_channels(channels, model, device=dev, planes=chosen,
-                                                  log=lambda m: log(f"  {m}"))
+        # The same call `process` makes (stacking/deblur, method="learned"):
+        # one rule for which planes are sharpened, one dedupe of shared planes.
+        out, infos = _deblur.deblur_channels(channels, int(iters), method="learned", model=model,
+                                             planes=planes, log=lambda m: log(f"  {m}"))
     except Exception as e:  # noqa: BLE001
         log(f"  learned deblur failed — no learned composite: {e!r}")
-        return None
-    why = [f"{c}: {infos[c]['why']}" for c in chosen if infos.get(c, {}).get("why")]
-    if all(infos.get(c, {}).get("why") for c in chosen):
-        log(f"  learned deblur refused — no learned composite: {'; '.join(why) or 'nothing done'}")
-        return None
+        return None, "learned"
+    tag = "deblurred" if any(i.get("fallback") for i in infos.values()) else "learned"
+    done = [c for c, i in infos.items() if not i.get("why") and not i.get("kept")]
+    kept = [c for c, i in infos.items() if i.get("kept")]
+    why = [f"{c}: {i['why']}" for c, i in infos.items() if i.get("why")]
+    if not done:
+        log(f"  learned deblur refused — no {tag} composite: {'; '.join(why) or 'nothing done'}")
+        return None, tag
+    log(f"  sharpened {', '.join(done)}" + (f"; kept as given {', '.join(kept)}" if kept else "")
+        + (" -- written as the 'deblurred' composite (starless fallback)" if tag == "deblurred" else ""))
     if why:
         log(f"  passed through unchanged: {'; '.join(why)}")
     log(f"  learned deblur in {time.time() - t0:.0f}s")
-    return out
+    return out, tag
 
 
 def routine(args) -> int:
@@ -794,19 +800,23 @@ def routine(args) -> int:
     # luminance (by default) through the learned deconvolver, on the same
     # pinned stretch. Off with --no-learned; skipped without a checkpoint.
     # A refusal or a failure here costs the learned products only.
+    lea_tag = "learned"
     if args.learned:
-        planes = None if args.learned_planes.strip().lower() == "all" else \
+        chans = to_channels(den if den else raw)
+        planes = tuple(chans) if args.learned_planes.strip().lower() == "all" else \
             tuple(p.strip().upper() for p in args.learned_planes.split(",") if p.strip())
-        lea = learned_channels(to_channels(den if den else raw), args.learned_model, log, planes=planes)
+        lea, lea_tag = learned_channels(chans, args.learned_model, log, planes=planes,
+                                        iters=args.deblur or color_process.DEBLUR_ITERS)
         if lea is not None:
             subbed_lea, _ = color_process._prepare(
                 lea, opts["subtract_background"], opts["mesh"],
                 opts["white_pct"], **shared_from_raw(raw_info))
-            emit(subbed_lea, "learned")
+            emit(subbed_lea, lea_tag)
 
     # Optional: the same set through the starless deconvolution, the third
     # composite from 2026-10-19 to 10-21, kept for comparison (--deblur N).
-    if args.deblur > 0:
+    # Not again when the learned step already fell back to it (no L).
+    if args.deblur > 0 and lea_tag != "deblurred":
         deb = deblurred_channels(to_channels(den if den else raw), args.deblur, log,
                                  stars=args.deblur_stars)
         if deb is not None:

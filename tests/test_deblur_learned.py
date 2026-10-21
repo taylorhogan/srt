@@ -198,3 +198,27 @@ def test_stacking_deblur_method_learned_falls_back_to_starless_without_a_model(m
     flat = (300 + rng.normal(0, 2, (300, 300))).astype(np.float32)    # starless refuses: no stars
     out, infos = sd.deblur_channels({"L": flat}, 8, method="learned", log=None)
     assert out["L"] is flat and infos["L"]["fallback"].startswith("starless:")
+
+
+def test_stacking_deblur_method_learned_without_an_l_goes_to_starless():
+    """An HOO set has no L. The first nebula sweep (2026-10-21) refused and left
+    the recipe without a composite; the second put every plane through the
+    network and got a mesh over the emission. The rule now: no L -> starless,
+    info["fallback"] saying why, unless planes names planes that are there."""
+    torch = pytest.importorskip("torch")
+    from nn import deblur_model as dm
+    from stacking import deblur as sd
+    rng = np.random.default_rng(1)
+    flat = (300 + rng.normal(0, 2, (300, 300))).astype(np.float32)      # starless refuses: no stars
+    lines = []
+    out, infos = sd.deblur_channels({"R": flat, "G": flat, "B": flat}, 8, method="learned",
+                                    model=dm.build(), planes=("L",), log=lines.append)
+    assert all(infos[c]["fallback"].startswith("starless: no luminance plane") for c in "RGB")
+    assert out["R"] is flat and any("RL8 on every distinct plane" in m for m in lines)
+    # named explicitly, the planes go through the network
+    X, _k = _field(seed=3, size=700)
+    O3 = X * 0.7
+    out, infos = sd.deblur_channels({"R": X, "G": O3, "B": O3}, 40, method="learned", model=dm.build(),
+                                    planes=("R", "G", "B"))
+    assert all(infos[c]["why"] is None and not infos[c].get("fallback") for c in "RGB")
+    assert out["G"] is out["B"]                                        # the shared plane, done once
