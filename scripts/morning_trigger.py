@@ -114,6 +114,18 @@ def flats_done_in_journal() -> bool:
         return False
 
 
+def warn_operator(message: str) -> None:
+    """A Pushover warning; never lets a notification failure stop the run."""
+    try:
+        if str(ROOT) not in sys.path:
+            sys.path.insert(0, str(ROOT))
+        from utils import pushover
+        pushover.push_message(message, priority=1)
+        log("  operator warned by Pushover")
+    except Exception as e:                      # noqa: BLE001
+        log(f"  Pushover warning failed: {e}")
+
+
 def run(script: str, label: str) -> bool:
     log(f"running {label}")
     t0 = time.time()
@@ -166,7 +178,18 @@ def main() -> int:
         log("dry run: not syncing, not rendering")
         return 0
     if not run("sync_nina_targets_to_spark.bsh", "Targets sync"):
-        log("sync failed -- continuing against whatever is on disk")
+        # The script already retried four times over ~5 min. One more go a
+        # quarter hour later covers a longer wobble on the link; after that
+        # the operator hears about it, because the render below will say
+        # "nothing new" about a night that may have 300 frames on iris-pc
+        # (2026-10-21: 290 frames, a pull that died in under a second).
+        log("sync failed -- retrying once in 15 min")
+        time.sleep(15 * 60)
+        if not run("sync_nina_targets_to_spark.bsh", "Targets sync (retry)"):
+            log("sync failed twice -- continuing against whatever is on disk")
+            warn_operator("Iris morning sync failed twice; last night's frames are still on "
+                          "iris-pc and the morning render will report nothing new. "
+                          "Run scripts/sync_nina_targets_to_spark.bsh by hand.")
     # Moved off its own 06:00 cron entry on 2026-10-09: the roof closes at
     # 06:01-06:02, so that run missed the morning's roof-close signature every
     # single day and collected it 24 h late. By the time the flats are quiet

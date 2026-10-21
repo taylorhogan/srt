@@ -8,11 +8,25 @@
 # Source:      iriso@100.95.7.19:/cygdrive/c/Users/iriso/Documents/N.I.N.A/Targets
 # Destination: /home/taylor/Desktop
 #
-# Cron (run at 6am daily) — add via `crontab -e`:
-#   0 6 * * * /home/taylor/Documents/srt/scripts/sync_nina_targets_to_spark.bsh
+# Run by scripts/morning_trigger.py once the flats have settled (cron 06:30).
+#
+# Exit status is the PULL's (2026-10-21). Until then it was the last
+# command's -- the small manifest push back to iris-pc -- so on 2026-10-21 a
+# pull that died in under a second (nothing landed, not even the 503-byte
+# frame_ticker.json that had changed) while the push a moment later went
+# through was logged as "rc=0 in 1s", and 290 frames of a 10 h night sat on
+# iris-pc while the render reported nothing new. The pull now retries, with
+# an I/O timeout so a stalled socket (2026-10-20's "safe_write failed ...
+# Resource temporarily unavailable", code 12) errors instead of hanging, and
+# a dry run afterwards must list nothing left to copy before the pull counts
+# as done. The manifest is pushed only after a complete pull: it is the proof
+# that the Spark holds every frame, and must not vouch for a partial copy.
 
 SOURCE="iriso@100.95.7.19:/cygdrive/c/Users/iriso/Documents/N.I.N.A/Targets"
 DESTINATION="/home/taylor/Desktop"
+REMOTE_RSYNC="C:/Users/iriso/Documents/cwrsync_6.4.7_x64_free/bin/rsync"
+ATTEMPTS=${SYNC_ATTEMPTS:-4}
+PAUSE=${SYNC_PAUSE:-90}
 
 # --update (not --ignore-existing): Iris/<dso>/ processed outputs (stack_*,
 # process_*, channels_*) are overwritten in place under the same filename on
@@ -20,20 +34,76 @@ DESTINATION="/home/taylor/Desktop"
 # copy already exists by that name, silently dropping reprocessed results.
 # --update instead compares mtimes and re-pulls when the remote is newer,
 # while still skipping unchanged LIGHT/FLAT capture frames (unique names).
-rsync -avz --update \
-    --rsync-path="C:/Users/iriso/Documents/cwrsync_6.4.7_x64_free/bin/rsync" \
-    "$SOURCE" \
-    "$DESTINATION"
+# --partial keeps a half-copied frame for the next attempt to finish.
+PULL=(rsync -avz --update --partial --timeout=300 --rsync-path="$REMOTE_RSYNC" "$SOURCE" "$DESTINATION")
+XFER=$(mktemp /tmp/targets_sync.XXXXXX)      # every file name rsync printed, all attempts
+BYTES=0
+T_START=$(date +%s)
+
+pull_rc=1
+for attempt in $(seq 1 "$ATTEMPTS"); do
+    echo "=== pull attempt $attempt of $ATTEMPTS $(date -Is)"
+    "${PULL[@]}" --stats | tee -a "$XFER"
+    pull_rc=${PIPESTATUS[0]}
+    b=$(grep -o "Total transferred file size: [0-9,]*" "$XFER" | tail -1 | tr -dc 0-9)
+    BYTES=$((BYTES + ${b:-0}))
+    if [ "$pull_rc" -eq 0 ]; then
+        # Complete only if a dry run finds no capture frame left to copy. A
+        # pull that returns 0 with an empty file list (the 2026-10-21 case)
+        # fails here rather than passing as a quiet night.
+        left=$("${PULL[@]}" -n --out-format='%n' 2>/dev/null | grep -c '\.fits$')
+        if [ "$left" -eq 0 ]; then
+            echo "=== pull complete $(date -Is)"
+            break
+        fi
+        echo "=== pull returned 0 but $left frame(s) still to copy; retrying"
+        pull_rc=23
+    else
+        echo "=== pull failed rc=$pull_rc"
+    fi
+    [ "$attempt" -lt "$ATTEMPTS" ] && sleep "$PAUSE"
+done
+
+if [ "$pull_rc" -ne 0 ]; then
+    echo "=== Targets pull FAILED after $ATTEMPTS attempts (rc=$pull_rc); manifest not pushed" >&2
+    rm -f "$XFER"
+    exit "$pull_rc"
+fi
+
+# The operator's receipt (2026-10-21): what landed, by target, and how big.
+# A quiet night says so in one line, so a "nothing new" render is never a
+# surprise again. Priority 0, rate-limited like every routine push; a
+# notification failure never fails the sync.
+SRT=/home/taylor/Documents/srt
+lights=$(grep -c '/LIGHT/.*\.fits$' "$XFER")
+flats=$(grep -c '/FLAT/.*\.fits$' "$XFER")
+per_target=$(grep '/LIGHT/.*\.fits$' "$XFER" | sed 's|^Targets/||; s|/.*||' | sort | uniq -c | sort -rn \
+             | awk '{printf "%s%s %d", (NR>1?", ":""), $2, $1}')
+mins=$(( ($(date +%s) - T_START + 30) / 60 ))
+gb=$(awk -v b="$BYTES" 'BEGIN{printf "%.1f", b/1e9}')
+if [ "$lights" -gt 0 ]; then
+    msg="Iris sync: $lights lights ($per_target), $flats flats, $gb GB in $mins min"
+else
+    msg="Iris sync: no new lights ($flats flats, $gb GB)"
+fi
+echo "=== $msg"
+"$SRT/.venv/bin/python" - "$msg" <<'PY' || echo "=== Pushover receipt failed" >&2
+import sys; sys.path.insert(0, "/home/taylor/Documents/srt")
+from utils import pushover
+pushover.push_message(sys.argv[1])
+PY
+rm -f "$XFER"
 
 # The light-frame manifest (2026-10-19): a SHA-256 of every LIGHT frame in the
 # copy just pulled, pushed back to iris-pc. `purge lights` there deletes a
 # frame only when this manifest holds the same hash -- the proof that the
 # Spark has it. No --delete above, so nothing removed on iris-pc is removed
 # here. Hashes are cached; a normal morning hashes only the night's frames.
-SRT=/home/taylor/Documents/srt
 MANIFEST="$SRT/local/spark_light_manifest.json"
 python3 "$SRT/scripts/spark_light_manifest.py" --root "$DESTINATION/Targets" --out "$MANIFEST" \
-    && rsync -az \
-        --rsync-path="C:/Users/iriso/Documents/cwrsync_6.4.7_x64_free/bin/rsync" \
+    && rsync -az --timeout=120 \
+        --rsync-path="$REMOTE_RSYNC" \
         "$MANIFEST" \
-        "iriso@100.95.7.19:/cygdrive/c/Users/iriso/Documents/development/srt/local/spark_light_manifest.json"
+        "iriso@100.95.7.19:/cygdrive/c/Users/iriso/Documents/development/srt/local/spark_light_manifest.json" \
+    || echo "=== manifest push failed (frames are here; purge lights on iris-pc will wait for the next push)" >&2
+exit 0
