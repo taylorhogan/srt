@@ -190,7 +190,7 @@ def cmd_report(a):
             sig_raw = sig_raw or sig
             stars = find_stars(X[0], sig)
             extra = sorted({q.stem.split("_", 2)[2] for q in BASE.glob(f"{t}_{dom}0_*.npy")}
-                           - {"input", "rl40", "starless"})      # learned models, by their --name
+                           - {"input", "rl40", "starless", "full"})   # learned models, by their --name; _full = cached frames
             for m in ("input", "rl40", "starless", *extra):
                 O = X if m == "input" else [np.load(BASE / f"{t}_{dom}{i}_{m}.npy") for i in (0, 1)]
                 key = f"{t}/{dom}/{m}"

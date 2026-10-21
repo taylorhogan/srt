@@ -1010,10 +1010,23 @@ def deblur(chan: np.ndarray, iters: int = DEFAULT_ITERS,
 
 def deblur_channels(channels: dict, iters: int, clamp_to: str = "input",
                     method: str = "starless", log=None,
-                    stars: str = "imaged") -> tuple[dict, dict]:
+                    stars: str = "imaged", model=None) -> tuple[dict, dict]:
     """Deblur a channel set. Returns (channels, info per channel touched).
 
-    method="starless" (the default since 2026-10-19): stacking/starless --
+    method="learned" (the default since 2026-10-21 afternoon): the luminance
+    through nn/deblur_model, the flux-moving network trained on re-blurred
+    stacks of this telescope, by the field's own measured kernel; every
+    other plane comes back as given (info["kept"]). Deconvolving the colour
+    planes too was measured on ngc6946 to sharpen each plane's own noise
+    into coloured specks and to turn a saturated star's core cyan, so the
+    colour stays where the blur put it under a sharpened L. Without an L
+    (HOO/SHO) every distinct plane goes through, each by its own kernel --
+    untested as of the switch. *iters* only decides on/off here. *model* is
+    a loaded checkpoint (tests); None loads deblur_model.DEFAULT_MODEL.
+    Without torch or the checkpoint the set falls back to starless, with
+    info["fallback"] saying why: this path exists on the Spark.
+
+    method="starless" (the default 2026-10-19 to 2026-10-21): stacking/starless --
     RL on the picture with its stars taken off, the stars put back
     afterwards. Every channel is touched (its stars are lifted and put back)
     and RL runs on the luminance, or on every distinct plane when there is
@@ -1028,13 +1041,41 @@ def deblur_channels(channels: dict, iters: int, clamp_to: str = "input",
     """
     if int(iters) <= 0:
         return channels, {}
+    # Distinct arrays once: HOO's G and B are one O-III stack.
+    distinct: dict[int, str] = {}
+    for name, a in channels.items():
+        distinct.setdefault(id(a), name)
+    uniq = {distinct[id(a)]: a for a in channels.values()}
+    if method == "learned":
+        try:
+            import torch
+            from nn import deblur_model as _dm
+            dev = "cuda" if torch.cuda.is_available() else "cpu"
+            if model is None:
+                model, _meta = _dm.load(_dm.DEFAULT_MODEL, dev)
+            dev = str(next(model.parameters()).device)     # a model handed in says where it lives
+        except Exception as e:  # noqa: BLE001 -- no torch, no checkpoint: not the Spark
+            if log:
+                log(f"learned deconvolution unavailable ({e!r}) -- starless RL{int(iters)} instead")
+            out, infos = deblur_channels(channels, iters, clamp_to=clamp_to, method="starless",
+                                         log=log, stars=stars)
+            for i in infos.values():
+                i["fallback"] = f"starless: {e!r}"
+            return out, infos
+        planes = ("L",) if "L" in uniq else None
+        done, infos_u = _dm.deblur_channels(uniq, model, device=dev, planes=planes,
+                                            log=log or (lambda s: None))
+        out = {name: done[distinct[id(a)]] for name, a in channels.items()}
+        infos = {}
+        for name, a in channels.items():
+            i = dict(infos_u[distinct[id(a)]])
+            i.update(method="learned", iters=0)
+            if i.get("why") == "not selected":
+                i.update(why=None, kept=True)
+            infos[name] = i
+        return out, infos
     if method == "starless":
         from stacking import starless
-        # Distinct arrays once: HOO's G and B are one O-III stack.
-        distinct: dict[int, str] = {}
-        for name, a in channels.items():
-            distinct.setdefault(id(a), name)
-        uniq = {distinct[id(a)]: a for a in channels.values()}
         ref = "L" if "L" in uniq else None
         rl_on = {"L"} if "L" in uniq else set(uniq)
         done, infos_u = starless.deblur_set(uniq, iters, ref=ref, deconvolve=rl_on,
@@ -1045,7 +1086,7 @@ def deblur_channels(channels: dict, iters: int, clamp_to: str = "input",
                  if distinct[id(a)] in infos_u}
         return out, infos
     if method != "rl":
-        raise ValueError(f"method must be 'starless' or 'rl', not {method!r}")
+        raise ValueError(f"method must be 'learned', 'starless' or 'rl', not {method!r}")
     out = dict(channels)
     infos = {}
     if "L" in channels:

@@ -42,7 +42,7 @@ from __future__ import annotations
 import os
 import sys
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Iterable, Callable, Optional
 
 import numpy as np
 
@@ -59,6 +59,10 @@ IDENTITY_LOGIT = 10.0    # softmax(10 vs 0 x 449) = 0.98 on the centre at init
 TILE = 1024
 OVERLAP = 128
 SAT_DILATE = 6
+# The checkpoint the morning render's fourth composite uses: a symlink under
+# local/deconv/models/ pointed at the arm that scored best (lam 1.0, seed 0 on
+# 2026-10-21). Missing file = no learned composite, the render says so.
+DEFAULT_MODEL = Path(_root) / "local" / "deconv" / "models" / "learned_default.pt"
 
 
 def n_weights() -> int:
@@ -181,3 +185,50 @@ def deblur_frame(frame: np.ndarray, model, psf: np.ndarray, device: Optional[str
     info = {"tiles": n, "scale": float(scale), "plateau_px": int(sat.sum()), "sky_sigma": float(sig)}
     log(f"learned deblur: {n} tiles of {tile}, scale {scale:.2f}, {int(sat.sum())} plateau px kept")
     return lin, info
+
+
+def deblur_channels(channels: dict, model, device: Optional[str] = None,
+                    log: Callable[[str], None] = lambda s: None,
+                    planes: Optional[Iterable[str]] = None) -> tuple[dict, dict]:
+    """The selected *planes* of *channels* (linear ADU, sky in, one pixel grid)
+    through the learned deconvolver, each with ITS OWN measured kernel; the
+    rest come back as given. Returns (out, info per channel); a selected
+    channel whose field gives no kernel comes back as given with info["why"]
+    "no kernel", an unselected one with "not selected", so the set never
+    loses a plane.
+
+    *planes* None means every channel. The production choice (2026-10-21) is
+    the luminance alone: deconvolving R, G and B independently was measured
+    on ngc6946 HALRGB to sharpen each plane's own residual noise into
+    single-pixel specks that do not coincide across planes (coloured dots
+    over the faint sky), and to spread one plane's saturated core while the
+    others kept theirs (a cyan-cored bright star). The colour planes left as
+    denoised keep the colour where the blur put it, under a sharpened L,
+    which is what the eye reads. Per-channel deconvolution is kept because
+    the head conserves flux per pixel, so when it IS wanted the colour ratio
+    survives. The registration border (NaN) is filled for the work and put
+    back, as stacking/starless does.
+    """
+    from nn import deblur_data as dd
+    out, infos = {}, {}
+    chosen = None if planes is None else set(planes)
+    for name, frame in channels.items():
+        if chosen is not None and name not in chosen:
+            out[name] = frame
+            infos[name] = {"why": "not selected"}
+            continue
+        x = np.asarray(frame, dtype=np.float32)
+        nan = ~np.isfinite(x)
+        side = dd.measure_sidecar(x, log=lambda m: log(f"{name}: {m.strip()}"))
+        if side is None:
+            out[name] = frame
+            infos[name] = {"why": "no kernel"}
+            continue
+        lin, info = deblur_frame(x, model, side["psf"], device=device, sat_level=side["sat"] or None,
+                                 sky_sigma=side["sky_sigma"], log=lambda m: log(f"{name}: {m}"))
+        if nan.any():
+            lin = lin.copy(); lin[nan] = np.nan
+        out[name] = lin
+        infos[name] = {**info, "fwhm_px": side["fwhm"], "stars": side["stars"], "why": None}
+        log(f"{name}: kernel {side['fwhm']:.2f} px from {side['stars']} stars")
+    return out, infos

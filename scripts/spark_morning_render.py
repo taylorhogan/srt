@@ -6,7 +6,7 @@
 Runs after the 05:00 rsync. For each DSO whose LIGHT frames changed recently it
 picks EVERY recipe the filters support and runs `n2n_lrgb_render.py routine`
 once per recipe, which writes a mono JPEG per channel, a denoised set, and three
-colour composites -- raw, denoised, deblurred -- into `<image_dir>/Iris/<dso>/`. A three-filter narrowband
+colour composites -- raw, denoised, learned -- into `<image_dir>/Iris/<dso>/`. A three-filter narrowband
 target therefore gets HSO, SHO and HOO in one morning; the palettes disagree
 about presentation, not data, so all of them get to exist and the eye chooses.
 
@@ -23,9 +23,11 @@ denoised version is better depends on surface brightness, not object class: NGC
 6888's bright filaments survive denoising and its denoised SHO is the better
 image, while ic1396's 1-5 sigma emission is destroyed by the same model (lab
 manual steps 23, 29). Until that threshold is calibrated against more targets,
-the choice needs an eye and this job does not make it. The deblurred composite
-(since 2026-10-19) is the denoised set through the starless deconvolution,
-`stacking/starless`; a field it refuses still gets the other two.
+the choice needs an eye and this job does not make it. The learned composite
+(the third since the afternoon of 2026-10-21; the starless `deblurred` one
+held that slot from 2026-10-19) is the denoised set with its luminance through
+the learned deconvolver, `nn/deblur_model`; a field it refuses still gets the
+other two.
 
 Bounded on purpose. Stacking is 20-60 min per target and peak RSS is ~64 GB, so
 `--max-targets` caps a run and targets are processed one at a time. A morning
@@ -199,7 +201,7 @@ def render_command(dso: str, recipe: str, first: bool, exptime: int,
                    galaxy: bool) -> list[str]:
     """The n2n_lrgb_render.py routine invocation for one recipe of one target.
 
-    Every routine render writes the raw, denoised and deblurred composites. A
+    Every routine render writes the raw, denoised and learned composites. A
     galaxy's broadband recipes get --wb stars, measured on the raw set and
     pinned on the denoised one. Only the target's first recipe rebuilds the
     shared channel stacks (--force); the rest reuse them (module docstring).

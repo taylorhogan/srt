@@ -563,3 +563,97 @@ nondeterminism is at the seed floor, so "recoverable" means the
 distribution, not the weights. λ 1.0 is running (the other session's,
 epoch 25 of 60 at 06:20, done ~10:30); if it too leaves flux at 0.95 the
 lever is the head's reach, not the loss.
+
+### Full-frame re-measurement and the production baseline — 2026-10-21
+
+Two corrections to everything above this line in the real-stack tables.
+
+1. **The starless rows were a crop artefact.** The real harness ran
+   starless and RL40 on the 3000 px crop. On the crop starless found too
+   few stars for its star layer, classified disk clumps of ngc5907 as deep
+   star masks and filled them at sky (64 masks on the crop, none on the
+   frame), and sharpened what stars it had with rings — the −164 σ "NGC
+   7317 hole" was that regime, not the morning render. The harness now
+   deblurs the whole half-stack and crops after; ngc6946 is a third holdout.
+2. **Production starless does not sharpen stars.** `stars="imaged"` has
+   been the default since 2026-10-19 evening: the star layer goes back as
+   imaged and only the galaxy is deconvolved. On the full frames the
+   starless star columns are the input's (7.5 px, flux 1.000, no ring).
+
+So the comparison that matters is: starless = galaxy RL40 with untouched
+stars; learned = galaxy one-kernel-removed AND stars sharpened. Five
+models, full-frame, all three holdouts, denoised halves (the pipeline's
+order); seeds 0–2 at λ 0.2, plus λ 0.05 and 1.0 at seed 0:
+
+| | starless (prod.) | RL40 | learned, 5 models |
+|---|---|---|---|
+| star FWHM px (real, den) | 7.1–7.5 (input) | 3.1–3.2 | 3.8–4.3 |
+| flux out:in r≤12 | 1.00–1.01 | 1.17–1.20 | 1.11–1.16 |
+| deepest ring σ | ≥ −0.03 (none) | −0.9 to −3.9 | −0.47 worst, none in practice |
+| ρ_added ngc5907 / ngc7320 / ngc6946 (den) | 0.52 / 0.70 / 0.63 | 0.59 / 0.91 / 0.73 | 0.47 / 0.88 / 0.65 |
+| added rms σ (den) | 0.9 / 1.7 / 1.1 | 1.0 / 2.8 / 1.5 | 0.8–0.9 / 1.9–2.1 / 1.0–1.1 |
+| synthetic galaxy residual σ | 3.14 | 3.00 | 2.46–2.58 |
+| synthetic star flux (100–64k) | 1.01 | 1.00–1.13 | 0.96–0.98 |
+
+Reading: against what actually runs, the learned model sharpens the stars
+from 7.5 to ~3.9 px with no rings (RL40 gets 3.1 px and rings every bright
+star on a denoised stack), carries 96–98 % of the star flux, and improves
+the galaxy at every scale. The one column it loses is split-half agreement
+on ngc5907's denoised half (0.47 vs 0.52), with less added change than
+starless. On raw halves ρ_added stays well under starless's (0.29 / 0.66 /
+0.40 vs 0.60 / 0.85 / 0.87), the noise-sharpening explained above; the
+pipeline denoises first. λ 1.0 (seed 0) is the sharpest of the five on
+real stars (3.8–3.9 px) at the same flux and ring numbers and the best
+synthetic galaxy residual (2.46), and is `learned_default.pt`.
+
+**Decision (owner, 2026-10-21):** not the default yet. Built as the
+FOURTH composite of the morning render (`n2n_lrgb_render.py` tag
+`learned`; `nn/deblur_model.deblur_channels`, every channel by its own
+kernel so flux conservation carries the colour ratio) beside raw, denoised
+and starless, to be judged by eye at full resolution in colour on each
+morning's targets, including the cases never measured here: nebulae,
+crowded fields, Hα planes. What would make it the default: a week of
+mornings where the learned composite is the one the owner would post, and
+no target it breaks that starless does not.
+
+### First colour composite, and the luminance-only form — 2026-10-21 noon
+
+The first morning render with the fourth composite (ngc6946 HALRGB, every
+plane through the network by its own kernel) showed the galaxy as the
+sharpest of the four — arm knots resolved to points, dust lanes defined,
+no rings on ordinary stars — and two artefacts the luminance measurements
+above could not see:
+
+- **Coloured specks over the sky.** Faint sources came out as
+  single-pixel dots of red, cyan or yellow. Not misregistration: R, G and B
+  star centroids agree to 0.02 JPEG px (0.1 px full-res) in the learned
+  channels as in the denoised ones. Each plane sharpens its own residual
+  noise into specks that do not coincide across planes; the raw-half
+  ρ_added numbers above are the same effect in luminance.
+- **A cyan-cored bright star.** The brightest (saturated) star's L core
+  stayed a flat saturated disc, but the R plane's core was spread while
+  G and B kept theirs (R peak fell to 250/255 with 1 px clipped against
+  6 in the denoised plane; G and B unchanged at 10 and 13), so the centre
+  reads cyan with a dark inner ring.
+
+Both come from deconvolving the colour planes independently. Owner
+decision: the learned composite is now **luminance-only** — L through the
+network, R, G, B and Hα as denoised (`--learned-planes L`, default;
+`all` is the old form). The colour stays where the blur put it under a
+sharpened L, which is what the eye reads; per-plane deconvolution is kept
+as a switch because the head conserves flux per pixel, so when it is
+wanted the colour ratio survives.
+
+### Promoted — 2026-10-21 afternoon
+
+Re-rendered ngc6946 HALRGB (luminance-only) and ngc1961 LRGB at full
+resolution; the owner, on the four-composite panels: "i like the learned
+luminance only the best". Decision: **learned luminance-only is the
+default.** `color_process.DEBLUR_METHOD = "learned"` (the `process`
+command; `stacking/deblur.deblur_channels(method="learned")`, L through
+the network, colour planes kept, every distinct plane when there is no L,
+starless fallback without torch/checkpoint), and the morning render writes
+three composites, raw / denoised / learned, with the starless one as an
+optional `--deblur N` extra. The week-of-mornings test now runs on the
+default rather than on a fourth picture; the untested cases are the same
+(nebulae, crowded fields, narrowband without an L).

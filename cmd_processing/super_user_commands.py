@@ -5799,19 +5799,22 @@ def process_cmd(words: list[str], account: str) -> None:
         mesh=4      background mesh boxes across the short axis; higher removes
                     gradients harder but eats large nebulosity
         scnr=0      average-neutral green removal, g = min(g, (r+b)/2), 0..1.
-        deblur=40   deconvolution, Richardson-Lucy iterations; 0 turns it off.
-                    The stars are taken off every channel, RL runs on what is
-                    left (the luminance; every plane for HOO/SHO) with the
-                    kernel measured from the field's own stars, and the stars
-                    are rendered back as points at each channel's own flux,
-                    so the galaxy sharpens and the stars cannot ring or halo.
-                    40 because the stars converge by 15 but galaxies need 40
-                    (ngc7320 L 2.00" -> 1.04", nuclei 12 -> 7 px, the added
-                    detail shared by both half stacks). A minute or two on
-                    the GPU for five channels.
-        method=starless  `rl` instead deconvolves the whole luminance, stars
-                    in; sharper stars, but on a denoised stack every bright
-                    one pays with a halo, moat or ring. Kept for comparison.
+        deblur=40   deconvolution; 0 turns it off. With the default method
+                    the number only switches it on: the luminance goes
+                    through the learned deconvolver (nn/deblur_model, a
+                    network trained on re-blurred stacks of this telescope,
+                    kernel measured from the field's own stars, flux
+                    conserved by construction) and the colour planes stay
+                    as stacked, so the galaxy sharpens at every scale, the
+                    stars tighten from 7.5 to ~4 px with 96-98 % of their
+                    flux, and nothing rings. About a minute on the GPU.
+        method=learned  the default since 2026-10-21. `starless` is the
+                    earlier form (stars taken off every channel, RL for
+                    deblur= iterations on what is left, stars put back as
+                    imaged; 40 because galaxies need 40); `rl` deconvolves
+                    the whole luminance, stars in, sharper stars but on a
+                    denoised stack every bright one pays with a halo, moat
+                    or ring. Both kept for comparison.
         dering=sky  what stops the rings. `sky` (default) lets a star's halo
                     drain to the local sky and no further; `input` holds
                     every pixel at or above its input, which leaves halos

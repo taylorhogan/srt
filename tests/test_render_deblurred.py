@@ -1,8 +1,9 @@
-"""n2n_lrgb_render's third composite: the deblurred set is optional output.
+"""n2n_lrgb_render's deconvolved composites are optional output.
 
-A field the starless deconvolution refuses (too few stars) or a failure
-inside it must cost the deblurred products only -- the raw and denoised
-renders are the morning's deliverable and were there first.
+A field the deconvolution refuses (too few stars) or a failure inside it must
+cost that composite only -- the raw and denoised renders are the morning's
+deliverable and were there first. The starless "deblurred" composite is an
+extra since 2026-10-21 (--deblur N); "learned" is the third.
 """
 import sys
 from pathlib import Path
@@ -18,7 +19,8 @@ import n2n_lrgb_render as r  # noqa: E402
 
 
 def test_three_classes_in_pipeline_order():
-    assert r.TAGS == ("raw", "denoised", "deblurred")
+    assert r.TAGS == ("raw", "denoised", "learned")
+    assert r.EXTRA_TAGS == ("deblurred",)
 
 
 def test_a_refusal_or_a_failure_costs_only_the_deblurred_composite(monkeypatch):

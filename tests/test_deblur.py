@@ -215,10 +215,12 @@ def test_option_reaches_compose_and_the_options_line():
     plain = cp.compose(chans, deblur=0)
     sharp = cp.compose(chans, deblur=4, method="rl")
     assert plain.shape == sharp.shape and not np.array_equal(plain, sharp)
-    # On by default since 2026-10-19, starless; the line names the count
-    # always and the method only when it is not the default.
+    # On by default since 2026-10-19; learned since 2026-10-21 (starless
+    # before that); the line names the count always and the method only
+    # when it is not the default.
     assert cp.effective_options()["deblur"] == 40
-    assert cp.effective_options()["method"] == "starless"
+    assert cp.effective_options()["method"] == "learned"
+    assert "method=starless" in cp.describe_options(cp.effective_options(method="starless"))
     assert "deblur=40" in cp.describe_options(cp.effective_options())
     assert "method" not in cp.describe_options(cp.effective_options())
     assert "method=rl" in cp.describe_options(cp.effective_options(method="rl"))

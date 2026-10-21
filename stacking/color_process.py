@@ -112,22 +112,29 @@ BG_MESH_FRACTION = 4      # mesh boxes across the short axis
 # (see _scnr), so it has to be asked for rather than assumed.
 SCNR_AMOUNT = 0.0
 
-# Deconvolution before the stretch: RL iterations, 0 = off. ON by default
-# since 2026-10-19, as `deblur=40` with method=starless (stacking/starless):
-# the stars are taken off, RL runs on what is left with the field's own
-# kernel, and the stars are rendered back as points at each channel's own
-# flux -- so the galaxy sharpens and the stars cannot ring, halo or moat.
-# 40 because the stars converge in 8-15 but the galaxies need 40 (ngc7320's
-# nuclei 12.4 -> 6.7 px FWHM). On a denoised stack the order is stack,
-# denoise, deblur; the other way round was measured worse (deblur module doc).
+# Deconvolution before the stretch: 0 = off. ON by default since 2026-10-19.
+# Since the afternoon of 2026-10-21 the method is `learned` (nn/deblur_model
+# via stacking/deblur.deblur_channels): the luminance through the network
+# trained on re-blurred stacks of this telescope, by the field's own kernel,
+# flux conserved by construction; the colour planes are left as stacked.
+# Measured on the three holdout galaxies (docs/LEARNED_DEBLUR_PLAN.md): stars
+# 7.5 -> ~4 px with no rings, 96-98 % of the flux kept, the galaxy improved
+# at every scale; chosen by the owner by eye on ngc6946 and ngc1961. The
+# iteration count only matters to the RL methods: method=starless (the
+# default 2026-10-19 to 10-21) takes the stars off, RL40s what is left and
+# puts the stars back as imaged -- 40 because the stars converge in 8-15 but
+# the galaxies need 40 (ngc7320's nuclei 12.4 -> 6.7 px FWHM). On a denoised
+# stack the order is stack, denoise, deblur; the other way round was
+# measured worse (deblur module doc), and the learned model sharpens noise on
+# a raw stack, so it is not optional for it.
 DEBLUR_ITERS = 40
-# method=rl is the earlier form, RL on the whole luminance with the stars in
+# method=rl is the earliest form, RL on the whole luminance with the stars in
 # (stacking/deblur: sky out, non-clipping floor, dark clamp at the local sky,
 # signal-only blend, spikes fitted off star by star, azimuthal kernel). It
 # sharpens the stars too but on a denoised stack every bright star paid for
 # it with a halo, moat, ring or notch in turn (2026-10-09 to 10-18); kept for
-# comparison.
-DEBLUR_METHOD = "starless"
+# comparison, as is starless.
+DEBLUR_METHOD = "learned"
 # `dering=sky` (default) lets a star's halo drain down to the local sky mean
 # and no further, which conserves flux and is what a kernel with a measured
 # wing needs: the wing cannot drain under `dering=input`, which holds every
@@ -1066,8 +1073,16 @@ def _deblurred(channels: dict[str, np.ndarray], iters,
     out, infos = _deblur.deblur_channels(channels, int(iters), clamp_to=str(dering).lower(),
                                          method=str(method).lower())
     for c, info in infos.items():
+        if info.get("fallback"):
+            _logger.warning("deblur %s: %s", c, info["fallback"])
         if info.get("why"):
             _logger.warning("deblur %s: left as stacked — %s", c, info["why"])
+        elif info.get("method") == "learned":
+            if info.get("kept"):
+                _logger.info("deblur %s: kept as stacked (learned deconvolution is luminance-only)", c)
+            else:
+                _logger.info("deblur %s: learned deconvolution, kernel %.2f px from %d stars",
+                             c, info.get("fwhm_px", 0.0), info.get("stars", 0))
         elif info.get("method") == "starless":
             _logger.info("deblur %s: starless RL%d, %d stars re-rendered, %d non-stellar, "
                          "FWHM %.2f px, %.1f%% of the frame filled",
@@ -1099,10 +1114,11 @@ def compose(channels: dict[str, np.ndarray], black_pct: float = BLACK_PCT,
 
     deblur > 0 (the default, DEBLUR_ITERS) deconvolves first, on the linear
     stacks with their sky, which is what the kernel measurement and the
-    floor model need: method=starless (default) takes the stars off every
-    channel, RL's the luminance (every plane when there is no L) and renders
-    the stars back as points; method=rl is RL on the whole luminance. See
-    stacking/starless and stacking/deblur.
+    floor model need: method=learned (default since 2026-10-21) puts the
+    luminance through nn/deblur_model and leaves the colour planes as
+    stacked; method=starless takes the stars off every channel, RL's the
+    luminance (every plane when there is no L) and puts the stars back as
+    imaged; method=rl is RL on the whole luminance. See stacking/deblur.
     """
     channels = _deblurred(channels, deblur, dering, method)
     subbed, white = _prepare(channels, subtract_background, mesh, white_pct, ha_gain,

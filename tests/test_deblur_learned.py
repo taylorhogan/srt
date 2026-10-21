@@ -146,3 +146,55 @@ def test_tiled_inference_identity_returns_input():
     assert np.abs(out - whole)[48:-48, 48:-48].max() < 0.05
     # the plateau is the input exactly
     assert np.array_equal(out[445:456, 445:456], X[445:456, 445:456])
+
+
+def test_deblur_channels_each_by_own_kernel_keeps_border_and_passes_thin_planes():
+    torch = pytest.importorskip("torch")
+    from nn import deblur_model as dm
+    X, _k = _field(seed=3, size=700)
+    X = X.copy()
+    X[:20, :] = np.nan                                   # a registration border
+    flat = np.full_like(X, 500.0) + np.random.default_rng(0).normal(0, 3.0, X.shape).astype(np.float32)
+    m = dm.build()                                       # identity at init
+    out, infos = dm.deblur_channels({"L": X, "Ha": flat}, m, device="cpu")
+    assert set(out) == {"L", "Ha"}
+    assert infos["L"]["why"] is None and infos["L"]["stars"] > 0
+    assert np.isnan(out["L"][:20, :]).all() and np.isfinite(out["L"][20:, :]).all()
+    assert np.median(np.abs(out["L"][20:] - X[20:])) < 0.5
+    assert infos["Ha"]["why"] == "no kernel" and out["Ha"] is flat   # starless plane: untouched
+
+
+def test_deblur_channels_planes_selects_the_luminance_only():
+    torch = pytest.importorskip("torch")
+    from nn import deblur_model as dm
+    X, _k = _field(seed=3, size=700)
+    R = X * 0.5
+    m = dm.build()
+    out, infos = dm.deblur_channels({"L": X, "R": R}, m, device="cpu", planes=("L",))
+    assert set(out) == {"L", "R"}
+    assert infos["L"]["why"] is None and infos["L"]["stars"] > 0
+    assert infos["R"] == {"why": "not selected"} and out["R"] is R   # the colour plane as given
+
+
+def test_stacking_deblur_method_learned_is_luminance_only_and_the_default():
+    torch = pytest.importorskip("torch")
+    from nn import deblur_model as dm
+    from stacking import deblur as sd, color_process
+    assert color_process.DEBLUR_METHOD == "learned"
+    X, _k = _field(seed=3, size=700)
+    R = X * 0.5
+    out, infos = sd.deblur_channels({"L": X, "R": R, "G": R}, 40, method="learned", model=dm.build())
+    assert infos["L"]["method"] == "learned" and infos["L"]["why"] is None and infos["L"]["stars"] > 0
+    assert infos["R"].get("kept") and infos["R"]["why"] is None and out["R"] is R and out["G"] is R
+    assert np.median(np.abs(out["L"] - X)) < 0.5                      # identity model: unchanged
+
+
+def test_stacking_deblur_method_learned_falls_back_to_starless_without_a_model(monkeypatch):
+    pytest.importorskip("torch")
+    from nn import deblur_model as dm
+    from stacking import deblur as sd
+    monkeypatch.setattr(dm, "load", lambda *a, **k: (_ for _ in ()).throw(FileNotFoundError("no checkpoint")))
+    rng = np.random.default_rng(1)
+    flat = (300 + rng.normal(0, 2, (300, 300))).astype(np.float32)    # starless refuses: no stars
+    out, infos = sd.deblur_channels({"L": flat}, 8, method="learned", log=None)
+    assert out["L"] is flat and infos["L"]["fallback"].startswith("starless:")

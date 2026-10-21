@@ -98,9 +98,18 @@ Since 2026-09-25 the conductor decides both invariants (ADR 0014): every roof fi
   land on the same pixels, then stretches them on a **shared** brightness scale so
   the ratio between channels survives into the image. Both of those are easy to
   get wrong in ways that still produce a plausible-looking picture.
-  `deblur=N` deconvolves before the stretch and is ON by default (`deblur=40`,
-  `method=starless`, since 2026-10-19; `deblur=0` turns it off). The default
-  is `stacking/starless.py`: every channel's stars are taken off
+  `deblur=N` deconvolves before the stretch and is ON by default (`deblur=40`;
+  `deblur=0` turns it off). Since the afternoon of 2026-10-21 the default
+  method is `learned` (`stacking/deblur.deblur_channels` -> `nn/deblur_model`):
+  the luminance goes through the flux-moving network trained on re-blurred
+  stacks of this telescope, by the field's own kernel, and the colour planes
+  stay as stacked (per-plane deconvolution made coloured noise specks and a
+  cyan star core); measured on the holdouts it gives stars 7.5 -> ~4 px with
+  no rings, 96-98 % of their flux, and the galaxy improved at every scale
+  (`docs/LEARNED_DEBLUR_PLAN.md`); chosen by the owner by eye on ngc6946 and
+  ngc1961. Without torch or the checkpoint it falls back to starless with a
+  warning. `method=starless` (the default 2026-10-19 to 10-21) is
+  `stacking/starless.py`: every channel's stars are taken off
   (`deblur.star_layer`), the luminance is Richardson-Lucy'd with the field's
   own kernel on what is left, and the lifted-off star layer is put back as
   imaged (`stars=imaged`, default since the evening of 2026-10-19; `stars=points`
@@ -121,9 +130,12 @@ Since 2026-09-25 the conductor decides both invariants (ADR 0014): every roof fi
   no single PSF; the spikes are fitted off star by star and RL runs with the
   azimuthal kernel. Deblurring the raw stack and denoising after was measured
   worse (2026-10-17). The morning render (`scripts/n2n_lrgb_render.py routine`)
-  writes three composites per recipe — raw, denoised, deblurred — on one
-  stretch pinned to the raw set; a field the deconvolution refuses still gets
-  the first two. Known weak case: a bright star on a smooth galaxy's envelope
+  writes three composites per recipe — raw, denoised, and since the afternoon
+  of 2026-10-21 `learned` (the denoised set with its luminance through the
+  learned deconvolver, `--learned-planes L`; checkpoint
+  `local/deconv/models/learned_default.pt`); the starless `deblurred` one is
+  an optional extra (`--deblur N`) — on one stretch pinned
+  to the raw set; a field a deconvolution refuses still gets the others. Known weak case: a bright star on a smooth galaxy's envelope
   (coloured rings where the per-channel masks meet the fill, NGC 7317).
 
   Frames are **levelled to a common sky before combining** and the level is

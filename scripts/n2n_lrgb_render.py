@@ -29,13 +29,21 @@ Two other differences from the ladder's stacks, both deliberate:
   comparison, not as evidence about the model. A depth-matched render is the
   honest one for judging the network, and `--depth` produces it.
 
-The routine path writes THREE composites since 2026-10-19: raw, denoised, and
-deblurred -- the denoised set (the raw one when no model applies) through
-`stacking/starless`: the stars taken off every channel, the luminance
-deconvolved with the field's own kernel, the stars rendered back as points at
-each channel's flux. `--deblur 0` turns it off. All three share the raw set's
-stretch, white balance and Ha ratio, so what differs between them is the
-denoiser and the deconvolution and nothing else.
+The routine path writes THREE composites: raw, denoised, and (since the
+afternoon of 2026-10-21, the owner's choice by eye on ngc6946 and ngc1961)
+"learned" -- the denoised set (the raw one when no model applies) with its
+LUMINANCE through the learned deconvolver (nn/deblur_model, the field's own
+kernel, flux conserved) and the colour planes left as denoised. Deconvolving
+R, G, B and Ha too was tried first and sharpened each plane's own noise into
+coloured specks over the sky and turned the brightest star's core cyan
+(ngc6946, 2026-10-21 noon), so `--learned-planes` is "L" by default and
+"all" is the switch back. `--no-learned` turns it off and a missing
+checkpoint skips it with a line in the log. The starless composite that was
+the third from 2026-10-19 to 10-21 (`stacking/starless`: stars off, RL on
+the luminance, stars back as imaged) is an optional fourth, "deblurred",
+with `--deblur N`. All share the raw set's stretch, white balance and Ha
+ratio, so what differs between them is the denoiser and the deconvolution
+and nothing else.
 """
 
 import argparse
@@ -56,8 +64,15 @@ from configs import config
 
 OUT = Path(_root) / "local" / "n2n_lrgb_render"
 
-# The three image classes a routine render writes, in pipeline order.
-TAGS = ("raw", "denoised", "deblurred")
+# The image classes a routine render writes, in pipeline order. "learned"
+# (2026-10-21) is the fourth: the denoised set through nn/deblur_model, the
+# flux-moving network trained on re-blurred stacks of this telescope, beside
+# the starless one so the two deconvolutions can be judged on every morning
+# target before either is made the only one.
+TAGS = ("raw", "denoised", "learned")
+# Optional extras, written and pushed only when asked for (--deblur N adds
+# the starless composite back for comparison).
+EXTRA_TAGS = ("deblurred",)
 
 
 def suffix(args) -> str:
@@ -489,8 +504,9 @@ def _fit_for_push(src: Path, work: Path) -> Path:
 
 
 def push_render(args, out_dir: Path, written: list, meta: dict, log=print) -> bool:
-    """Pushover the raw, denoised and deblurred composites. Never raises --
-    a render must not fail because a notification did.
+    """Pushover the raw, denoised and learned composites (TAGS), plus any
+    extra one that was written. Never raises -- a render must not fail
+    because a notification did.
 
     A PAIR since 2026-09-08, a triple since 2026-10-19. Whether the denoised
     version is the better image depends on surface brightness, not object
@@ -509,7 +525,9 @@ def push_render(args, out_dir: Path, written: list, meta: dict, log=print) -> bo
         tail = (", ".join(parts)
                 + (f" ({total} frames x {args.exptime}s)" if total else ""))
         sent = 0
-        for tag in TAGS:
+        extras = tuple(t for t in EXTRA_TAGS
+                       if any(p.name == f"{args.dso}_{args.recipe}_{t}.jpg" for p in written))
+        for tag in TAGS + extras:
             pick = [p for p in written if p.name == f"{args.dso}_{args.recipe}_{tag}.jpg"]
             if not pick:
                 log(f"  push: no {tag} composite to send")
@@ -528,9 +546,9 @@ def push_render(args, out_dir: Path, written: list, meta: dict, log=print) -> bo
 def deblurred_channels(channels: dict, iters: int, log=print, stars: str = "imaged"):
     """The channel set through stacking/starless, or None with the reason logged.
 
-    Never raises: the deblurred composite is the newest and least proven of
-    the three, and a target must not lose its raw and denoised renders to a
-    field the deconvolution cannot handle.
+    Never raises: this is an optional extra, and a target must not lose its
+    raw, denoised and learned renders to a field the deconvolution cannot
+    handle.
     """
     from stacking import color_process, deblur as _deblur
     t0 = time.time()
@@ -547,6 +565,46 @@ def deblurred_channels(channels: dict, iters: int, log=print, stars: str = "imag
         log(f"  deblur refused — no deblurred composite: {'; '.join(why) or 'nothing done'}")
         return None
     log(f"  deblurred in {time.time() - t0:.0f}s")
+    return out
+
+
+def learned_channels(channels: dict, model_path: str, log=print, planes=("L",)):
+    """The channel set with *planes* through nn/deblur_model and the rest as
+    given, or None with the reason logged. *planes* None means every channel.
+
+    Never raises: a field the model cannot handle (no measurable kernel, no
+    checkpoint, a failure inside) must not cost the target its raw and
+    denoised renders.
+    """
+    t0 = time.time()
+    log("")
+    if not model_path or not os.path.exists(model_path):
+        log(f"learned deblur: no checkpoint at {model_path or '(none)'} — no learned composite")
+        return None
+    chosen = [c for c in channels if planes is None or c in planes]
+    kept = [c for c in channels if c not in chosen]
+    if not chosen:
+        log(f"learned deblur: none of {', '.join(channels)} selected ({planes}) — no learned composite")
+        return None
+    log(f"learned deblur: {os.path.basename(os.path.realpath(model_path))} on {', '.join(chosen)}"
+        + (f"; {', '.join(kept)} kept as given" if kept else ""))
+    try:
+        import torch
+        from nn import deblur_model
+        dev = "cuda" if torch.cuda.is_available() else "cpu"
+        model, _meta = deblur_model.load(model_path, dev)
+        out, infos = deblur_model.deblur_channels(channels, model, device=dev, planes=chosen,
+                                                  log=lambda m: log(f"  {m}"))
+    except Exception as e:  # noqa: BLE001
+        log(f"  learned deblur failed — no learned composite: {e!r}")
+        return None
+    why = [f"{c}: {infos[c]['why']}" for c in chosen if infos.get(c, {}).get("why")]
+    if all(infos.get(c, {}).get("why") for c in chosen):
+        log(f"  learned deblur refused — no learned composite: {'; '.join(why) or 'nothing done'}")
+        return None
+    if why:
+        log(f"  passed through unchanged: {'; '.join(why)}")
+    log(f"  learned deblur in {time.time() - t0:.0f}s")
     return out
 
 
@@ -732,9 +790,22 @@ def routine(args) -> int:
             opts["white_pct"], **shared_from_raw(raw_info))
         emit(subbed_den, "denoised")
 
-    # The third class: the denoised set (raw when no model applies) through
-    # the starless deconvolution, on the same pinned stretch. A refusal or a
-    # failure here costs the deblurred products only.
+    # The third class: the denoised set (raw when no model applies) with its
+    # luminance (by default) through the learned deconvolver, on the same
+    # pinned stretch. Off with --no-learned; skipped without a checkpoint.
+    # A refusal or a failure here costs the learned products only.
+    if args.learned:
+        planes = None if args.learned_planes.strip().lower() == "all" else \
+            tuple(p.strip().upper() for p in args.learned_planes.split(",") if p.strip())
+        lea = learned_channels(to_channels(den if den else raw), args.learned_model, log, planes=planes)
+        if lea is not None:
+            subbed_lea, _ = color_process._prepare(
+                lea, opts["subtract_background"], opts["mesh"],
+                opts["white_pct"], **shared_from_raw(raw_info))
+            emit(subbed_lea, "learned")
+
+    # Optional: the same set through the starless deconvolution, the third
+    # composite from 2026-10-19 to 10-21, kept for comparison (--deblur N).
     if args.deblur > 0:
         deb = deblurred_channels(to_channels(den if den else raw), args.deblur, log,
                                  stars=args.deblur_stars)
@@ -824,21 +895,31 @@ def main() -> int:
     ap.add_argument("--out-dir", default="",
                     help="default is <image_dir>/Iris/<dso>/")
     ap.add_argument("--force", action="store_true")
-    ap.add_argument("--deblur", type=int, default=None,
-                    help="starless deconvolution iterations for the third composite "
-                         "(stacking/starless); default color_process.DEBLUR_ITERS, 0 = off")
+    ap.add_argument("--deblur", type=int, default=0,
+                    help="also write the starless-RL composite (\"deblurred\", the third "
+                         "composite until 2026-10-21) with this many iterations; 0 (default) "
+                         "= not written")
     ap.add_argument("--deblur-stars", default="imaged", choices=("imaged", "points"),
                     help="starless star mode: the denoised stars put back as imaged "
                          "(default) or points rendered at their flux")
+    ap.add_argument("--learned-model", default=None,
+                    help="checkpoint for the learned-deconvolution composite "
+                         "(default nn/deblur_model.DEFAULT_MODEL; missing = skipped)")
+    ap.add_argument("--learned-planes", default="L",
+                    help="which planes the learned deconvolver sharpens, comma-separated "
+                         "(default L: the luminance; the colour planes stay denoised). "
+                         "'all' deconvolves every plane by its own kernel")
+    ap.add_argument("--no-learned", dest="learned", action="store_false",
+                    help="skip the learned composite")
+    ap.set_defaults(learned=True)
     ap.add_argument("--push", action="store_true",
-                    help="Pushover the three composites when the render finishes")
+                    help="Pushover the composites when the render finishes")
     ap.add_argument("--no-push", dest="push", action="store_false")
     ap.set_defaults(push=True)
     args = ap.parse_args()
-    if args.deblur is None:
-        from stacking import color_process
-        args.deblur = int(color_process.DEBLUR_ITERS)
-
+    if args.learned_model is None:
+        from nn import deblur_model
+        args.learned_model = str(deblur_model.DEFAULT_MODEL)
     import sep
     sep.set_extract_pixstack(5_000_000)
 
