@@ -200,17 +200,51 @@ def _top_target(root: Path):
     if got is None:
         return None
     name, ra, dec, mode = got
-    good_hours = 0
-    try:
-        import json as _json
-        with open(os.path.join(root, config.data()["location"]["tonight_target"]),
-                  encoding="utf-8") as fh:
-            d = _json.load(fh)
-        if d.get("dso") == name:
-            good_hours = int(d.get("good_hours") or 0)
-    except Exception:
-        pass
+    good_hours = _slot_hours(name)
+    if good_hours is None:
+        good_hours = 0
+        try:
+            import json as _json
+            with open(os.path.join(root, config.data()["location"]["tonight_target"]),
+                      encoding="utf-8") as fh:
+                d = _json.load(fh)
+            if d.get("dso") == name:
+                good_hours = int(d.get("good_hours") or 0)
+        except Exception:
+            pass
     return name, ra, dec, good_hours, mode
+
+
+def slot_hours_from_plan(plan_reply, name):
+    """Hours of *name*'s slot in a GET /v1/plan reply, or None. Pure.
+
+    The latest record (sunset, else noon) is the plan the night runs."""
+    rec = (plan_reply or {}).get("sunset") or (plan_reply or {}).get("noon")
+    for s in ((rec or {}).get("plan") or {}).get("slots") or []:
+        if str(s.get("dso", "")).lower() == str(name).lower():
+            try:
+                return int(s.get("hours") or 0)
+            except (TypeError, ValueError):
+                return None
+    return None
+
+
+def _slot_hours(name):
+    """The running target's own slot hours from the conductor's plan.
+
+    Until 2026-10-20 the panel read good_hours from tonight_target.json, which
+    describes only the night's BEST target, so every other slot -- ngc6946 in
+    the first slot of the 10-20 four-slot night -- showed "0 usable hours".
+    The night's date is yesterday before local noon (the plan that started it).
+    """
+    try:
+        from datetime import datetime, timedelta
+        from iris import client
+        now = datetime.now()
+        night = (now - timedelta(days=1)).date() if now.hour < 12 else now.date()
+        return slot_hours_from_plan(client.get_plan(night.isoformat(), timeout=3.0), name)
+    except Exception:
+        return None
 
 
 
