@@ -444,3 +444,122 @@ Run order for Phase 2: wait for `prepare` (all groups) and the extra stacks;
 `train --name scatter_both_s0 --seed 0 --domain both`, then seeds 1 and 2;
 score with `deconv_phase0.py`'s synthetic catalogue (star flux truth) and
 `deconv_phase0_real.py`'s half-stack metrics against the starless rows.
+
+## Phase 2, first arm — 2026-10-20
+
+`scatter_both_s0`: scatter head, both domains, seed 0, 60 epochs of 2000
+pairs on 104 stacks (9 targets; 168 prepared in all after the extra
+ngc1961 / ngc6946 / ngc7380 halves), 12 validation stacks, λ 0.2. 6 h on
+the Spark (416 s/epoch). Train loss 4.52 → 0.58, settled by epoch 30; val
+0.69 at the best epoch (50) and bouncing 0.77–1.12 after, a factor 1.5
+between neighbouring epochs — the star-heavy validation scenes let a few
+bright stars swing the χ² term. Scored with `deconv_train.py score`
+(`learned_s0` rows in both harnesses).
+
+**Synthetic (truth S, ngc6946 kernel).** Star flux 0.93–0.97 of truth across
+the four unsaturated bins (Phase 0 scatter 0.92–0.94; starless 1.01; every
+pointwise head 1.4–1.8), FWHM 3.7–4.7 px against the one-kernel prediction
+4.50 (starless 3.6, RL40 2.6–3.7), no rings (deepest −0.8 σ, the input's
+own −0.4). Galaxy residual 2.58 σ total — the best row in the table (RL40
+3.00, starless 3.14, previous best learned 2.73) — and the only method
+that improves every octave including 32 px and above (0.074 / 0.047 vs
+starless 0.180 / 0.145). The saturated bin is the input, by the guard.
+
+**Real half-stacks (ngc5907, ngc7320 L; holdouts).**
+
+| target/domain | method | FWHM px | flux out:in | deepest ring σ | ρ_added | ρ_input | added rms σ |
+|---|---|---|---|---|---|---|---|
+| ngc5907/raw | starless | 3.9–4.0 | 1.16–1.20 | −0.54 | 0.654 | 0.403 | 0.76 |
+| | learned_s0 | 4.3–4.4 | 1.15 | −0.83 | 0.282 | | 0.72 |
+| ngc5907/den | starless | 4.2–4.3 | 1.22–1.25 | −2.49 | 0.437 | 0.794 | 1.74 |
+| | learned_s0 | 4.1–4.3 | 1.14–1.15 | −0.03 | 0.474 | | 0.82 |
+| ngc7320/raw | starless | 3.8–3.9 | 1.20 | −16.7 | 0.937 | 0.742 | 2.29 |
+| | learned_s0 | 4.2–4.4 | 1.15 | −0.86 | 0.656 | | 1.82 |
+| ngc7320/den | starless | 3.9 | 1.20–1.21 | −163.9 | 0.884 | 0.969 | 2.44 |
+| | learned_s0 | 4.1–4.2 | 1.13–1.16 | −0.19 | 0.879 | | 1.92 |
+
+(flux out:in is the r ≤ 12 aperture after over before; the synthetic truth
+for this kernel sits at 1/0.84 = 1.19, so starless 1.20 is on it and learned
+1.15 is the synthetic 0.95 again — the wing is collected to 95 %.)
+
+- **The weak case is gone.** NGC 7317's star: starless −164 σ, RL40 −4.9 σ,
+  learned −0.19 σ on the denoised half, −0.86 on the raw. By eye the star
+  is a tight disc with the galaxy envelope and the spikes running through
+  it unbroken; starless has rings and a moat, RL40 a moat with the wing in
+  fragments. No star in any bin on any half rings deeper than −0.9 σ.
+- **Flux gate (within 0.05 of starless):** 1.145 vs 1.200, just outside,
+  in the under-collecting direction the synthetic predicts. The head's
+  reach (21 px) or the kernel-scale range is the lever; the pointwise heads'
+  failure mode (creating flux) does not appear.
+- **Sharpness:** learned stars are 0.3–0.5 px broader than starless on real
+  halves (4.1–4.4 vs 3.8–4.3) and 0.8–1.2 px broader than RL40.
+- **Split-half:** on the denoised halves the gate holds (ρ_added 0.474 ≥
+  0.437 on ngc5907; 0.879 vs 0.884 on ngc7320, a tie) with half the added
+  rms — the same agreement from less change. On the raw halves ρ_added is
+  well below starless's (0.28 vs 0.65; 0.66 vs 0.94): what the net adds to a
+  raw half agrees less with what it adds to the other. The net was trained
+  with the noise restored on re-blurred stacks, so on a raw input it may be
+  sharpening noise peaks; the denoised rows say that goes away once the
+  noise does, which is the order the pipeline uses. Seeds 1 and 2 (running)
+  say whether 0.28 is the model or the seed; the λ sweep is the second
+  check.
+- Plateau guard did nothing on the real crops (brightest pixel 52.5 k of a
+  63.9 k ceiling): the −164 σ starless hole was never a saturation effect.
+
+Next: seeds 1 and 2 (`scatter_both_s1/2`, ~6 h each, queued), λ sweep
+(0.05, 1.0) at seed 0, then the reach question if the flux stays at 0.95.
+
+### Seeds 1 and 2 — 2026-10-20
+
+Same recipe, seeds 1 and 2 (seed 2 is the first run with the loader
+workers keyed on worker index rather than pid, so it is the first
+recoverable one; the sampling distribution is unchanged). Best epochs 49
+and 59. The seed floor, three runs:
+
+| metric | s0 | s1 | s2 | starless |
+|---|---|---|---|---|
+| synthetic star flux (100–64k bins) | 0.96–0.97 | 0.97 | 0.97 | 1.01 |
+| synthetic FWHM px, 1000–10000 bin | 3.85 | 3.55 | 3.73 | 3.62 |
+| galaxy residual σ total | 2.58 | 2.56 | 2.48 | 3.14 |
+| real FWHM px (median of bins) | 4.1–4.4 | 3.8–4.1 | 3.9–4.5 | 3.8–4.3 |
+| real flux out:in | 1.15 | 1.15–1.16 | 1.15–1.16 | 1.20 |
+| NGC 7317 ring σ (den) | −0.19 | −0.38 | −0.30 | −163.9 |
+| ρ_added ngc5907 raw / den | 0.28 / 0.47 | 0.29 / 0.48 | 0.29 / 0.48 | 0.65 / 0.44 |
+| ρ_added ngc7320 raw / den | 0.66 / 0.88 | 0.67 / 0.88 | 0.66 / 0.88 | 0.94 / 0.88 |
+
+Seed spread: flux ±0.01, galaxy residual ±0.05, real FWHM ±0.3 px,
+ρ_added ±0.01. So every finding of the first arm is the model, not the
+draw: the galaxy residual beats starless by 0.6 σ (12 seed spreads), the
+0.05 flux shortfall is real, and the low ρ_added on raw halves is a
+property of the design, as is its absence on denoised halves. Nothing
+here depends on the seed except star FWHM, where s1 is the sharpest and
+matches starless; any single-seed sharpness claim under 0.3 px is noise.
+
+λ sweep started 17:41 (0.05 then 1.0, seed 0, ~6 h each): does the χ²
+weight move the flux shortfall or the raw-half ρ_added?
+
+### λ sweep, first half — 2026-10-21
+
+λ 0.05 at seed 0, two independent runs of the same recipe (a second
+launcher from another session, `scatter_both_lam0p05_s0`, and this one,
+`scatter_both_s0_lam0p05`; they shared the GPU overnight and both wrote to
+`lam_launch.log`, so that log is interleaved — read the models' own
+`.json`). Against λ 0.2 (seed 0):
+
+| metric | λ 0.2 | λ 0.05 (two runs) | starless |
+|---|---|---|---|
+| synthetic star flux (100–64k) | 0.96–0.97 | 0.97–0.98 | 1.01 |
+| galaxy residual σ total | 2.58 | 2.49–2.50 | 3.14 |
+| real flux out:in | 1.15 | 1.15–1.16 | 1.20 |
+| real FWHM px | 4.1–4.4 | 3.9–4.8 | 3.8–4.3 |
+| ρ_added ngc5907 raw / den | 0.28 / 0.47 | 0.29 / 0.46–0.47 | 0.65 / 0.44 |
+| ρ_added ngc7320 raw / den | 0.66 / 0.88 | 0.66 / 0.87–0.88 | 0.94 / 0.88 |
+
+The χ² weight moves neither the flux shortfall nor the raw-half ρ_added:
+both sit at the seed floor at 0.05 and 0.2. The galaxy residual gain
+(0.08 σ) is under two seed spreads. The two λ 0.05 runs, identical recipe
+and seed, differ by up to 0.4 px in star FWHM — cuDNN's own
+nondeterminism is at the seed floor, so "recoverable" means the
+distribution, not the weights. λ 1.0 is running (the other session's,
+epoch 25 of 60 at 06:20, done ~10:30); if it too leaves flux at 0.95 the
+lever is the head's reach, not the loss.

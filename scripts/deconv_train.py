@@ -234,6 +234,74 @@ def cmd_smoke(a):
     return cmd_train(a)
 
 
+def _phase0_module(name):
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(name, Path(_root) / "scripts" / f"{name}.py")
+    mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
+    return mod
+
+
+def _real_full_frames(pr, t, i, dev) -> dict:
+    """Raw and denoised full half-stacks for the real harness, cached under
+    its BASE as <t>_{raw,den}<i>_full.npy (245 MB each) so five models do
+    not denoise the same frame five times."""
+    out = {}
+    for dom in ("raw", "den"):
+        p = pr.BASE / f"{t}_{dom}{i}_full.npy"
+        if p.exists():
+            out[dom] = np.load(p, mmap_mode="r")
+    if len(out) == 2:
+        return out
+    raw = np.array(np.load(pr.STACKS / f"{t}__L_train{i}.npy", mmap_mode="r"), dtype=np.float32)
+    raw[~np.isfinite(raw)] = np.nanmedian(raw)
+    from nn import denoiser
+    den = denoiser.denoise_frame(raw, denoiser.load_model(pr.MODEL), device=dev)[:raw.shape[0], :raw.shape[1]]
+    np.save(pr.BASE / f"{t}_raw{i}_full.npy", raw); np.save(pr.BASE / f"{t}_den{i}_full.npy", den.astype(np.float32))
+    return {"raw": raw, "den": den.astype(np.float32)}
+
+
+def cmd_score(a):
+    """Score a trained model with both Phase 0 harnesses.
+
+    Synthetic: deconv_phase0's test fields against their truth S (star flux
+    is the number that matters; the results JSON joins `deconv_phase0.py
+    report`). Real: the ngc5907 / ngc7320 L half-stack crops that
+    deconv_phase0_real.py `run` saved, each deblurred with the kernel its
+    prepared sidecar measured; `deconv_phase0_real.py report` picks the
+    outputs up as a method named after --name.
+    """
+    import torch
+    from nn import deblur_model as dm
+    dev = "cuda" if torch.cuda.is_available() else "cpu"
+    model, meta = dm.load(a.model, dev)
+    name = a.name or Path(a.model).stem
+    p0 = _phase0_module("deconv_phase0")
+    K = p0.load_kernel(p0.BASE / "kernel.npz")
+    images = {}
+    for p in sorted((p0.BASE / "fields").glob("test*.npz")):
+        sc = np.load(p)
+        t0 = time.time()
+        out, info = dm.deblur_frame(sc["X"].astype(np.float32), model, K["psf"], device=dev,
+                                    sat_level=K["sat"], sky_sigma=K["sky_sigma"])
+        images[p.stem] = out
+        np.save(p0.BASE / "results" / f"{name}_{p.stem}.npy", out)
+        print(f"synthetic {p.stem}: {time.time() - t0:.1f}s, {info['plateau_px']} plateau px")
+    p0.evaluate(name, images, K)
+    pr = _phase0_module("deconv_phase0_real")
+    for t in pr.CENTRES:
+        for i in (0, 1):
+            frames = _real_full_frames(pr, t, i, dev)       # the whole half-stack, like the baselines
+            for dom in ("raw", "den"):
+                side = dd.load_sidecar(dd.PREPARED / f"{t}__L_train{i}_{dom}.psf.npz")
+                t0 = time.time()
+                out, info = dm.deblur_frame(frames[dom], model, side["psf"], device=dev,
+                                            sat_level=side["sat"] or None, sky_sigma=side["sky_sigma"])
+                np.save(pr.BASE / f"{t}_{dom}{i}_{name}.npy", pr._crop(out, pr.CENTRES[t]))
+                print(f"{t} {dom}{i}: {time.time() - t0:.1f}s, kernel FWHM {side['fwhm']:.2f}, "
+                      f"{info['plateau_px']} plateau px, {info['tiles']} tiles")
+    print("now: deconv_phase0.py report; deconv_phase0_real.py report")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -254,6 +322,8 @@ def main():
     t.add_argument("--lam", type=float, default=0.2)
     t.set_defaults(fn=cmd_train)
     sub.add_parser("smoke").set_defaults(fn=cmd_smoke)
+    sc = sub.add_parser("score"); sc.add_argument("--model", required=True); sc.add_argument("--name", default="")
+    sc.set_defaults(fn=cmd_score)
     sub.add_parser("list").set_defaults(fn=cmd_list)
     a = ap.parse_args()
     rc = a.fn(a)

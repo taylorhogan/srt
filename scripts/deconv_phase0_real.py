@@ -40,23 +40,27 @@ BASE = Path(_root) / "local" / "deconv_phase0" / "real"
 STACKS = Path(_root) / "local" / "n2n_ladder" / "stacks"
 MODEL = Path(_root) / "local" / "models" / "n2n_ladder_groups_galaxies_300s.pt"
 CROP = 3000
-CENTRES = {"ngc5907": (3194, 4788), "ngc7320": (3080, 4620)}     # frame centre; the approved crop
+CENTRES = {"ngc5907": (3194, 4788), "ngc7320": (3080, 4620), "ngc6946": (3194, 4788)}   # crop centres (frame centre; the approved crop)
 STAR_BINS = [(30, 100), (100, 1000), (1000, 10000), (10000, 1e9)]
 
 
-def crop(path, centre):
-    a = np.load(path, mmap_mode="r")
+def _crop(a, centre):
     cy, cx = centre
     h = CROP // 2
-    x = np.array(a[cy - h:cy + h, cx - h:cx + h], dtype=np.float32)
-    x[~np.isfinite(x)] = np.nanmedian(x)
-    return x
+    return np.ascontiguousarray(a[cy - h:cy + h, cx - h:cx + h], dtype=np.float32)
 
 
 def inputs():
+    """(target, half, full raw half-stack). The methods run on the FULL frame
+    and are cropped after: run on a 3000 px crop, starless classified disk
+    clumps of ngc5907 as deep star masks and filled them at sky (measured
+    2026-10-21, 64 masks on the crop vs none on the full frame), which the
+    first baseline tables carried as the starless row."""
     for t, c in CENTRES.items():
         for i in (0, 1):
-            yield t, i, crop(STACKS / f"{t}__L_train{i}.npy", c)
+            a = np.array(np.load(STACKS / f"{t}__L_train{i}.npy", mmap_mode="r"), dtype=np.float32)
+            a[~np.isfinite(a)] = np.nanmedian(a)
+            yield t, i, a
 
 
 def cmd_run(a):
@@ -68,20 +72,24 @@ def cmd_run(a):
     dev = "cuda" if torch.cuda.is_available() else "cpu"
     model = denoiser.load_model(MODEL)
     for t, i, raw in inputs():
+        c = CENTRES[t]
         t0 = time.time()
-        den = denoiser.denoise_frame(raw, model, device=dev)[:CROP, :CROP]
+        den = denoiser.denoise_frame(raw, model, device=dev)[:raw.shape[0], :raw.shape[1]]
         print(f"{t} half{i}: denoised in {time.time() - t0:.0f}s")
         for dom, X in (("raw", raw), ("den", den)):
-            np.save(BASE / f"{t}_{dom}{i}_input.npy", X)
+            np.save(BASE / f"{t}_{dom}{i}_input.npy", _crop(X, c))
             t0 = time.time()
             out, info = db.deblur(X, iters=40, clamp_to="sky")
-            np.save(BASE / f"{t}_{dom}{i}_rl40.npy", out.astype(np.float32))
+            np.save(BASE / f"{t}_{dom}{i}_rl40.npy", _crop(out, c))
             print(f"{t} {dom}{i}: rl40 {time.time() - t0:.0f}s {info.get('why', '')}")
+            del out
             t0 = time.time()
             res, infos = starless.deblur_set({"L": X}, iters=40, log=lambda s: None)
-            np.save(BASE / f"{t}_{dom}{i}_starless.npy", res["L"].astype(np.float32))
+            np.save(BASE / f"{t}_{dom}{i}_starless.npy", _crop(res["L"], c))
             print(f"{t} {dom}{i}: starless {time.time() - t0:.0f}s {infos['L'].get('why', '')} "
                   f"stars={infos['L'].get('stars')}")
+            del res
+        del raw, den
 
 
 # -------------------------------------------------------------- metrics ----
@@ -181,7 +189,9 @@ def cmd_report(a):
             sig = db.sky_sigma(X[0]) if dom == "raw" else sig_raw
             sig_raw = sig_raw or sig
             stars = find_stars(X[0], sig)
-            for m in ("input", "rl40", "starless"):
+            extra = sorted({q.stem.split("_", 2)[2] for q in BASE.glob(f"{t}_{dom}0_*.npy")}
+                           - {"input", "rl40", "starless"})      # learned models, by their --name
+            for m in ("input", "rl40", "starless", *extra):
                 O = X if m == "input" else [np.load(BASE / f"{t}_{dom}{i}_{m}.npy") for i in (0, 1)]
                 key = f"{t}/{dom}/{m}"
                 res[key] = {"stars": star_metrics(O[0], X[0], stars, sig),

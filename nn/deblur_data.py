@@ -283,11 +283,25 @@ class DeblurDataset:
         return self.pairs
 
     def _worker_rng(self) -> None:
+        """One generator per loader worker, keyed on the worker's index.
+
+        Keyed on the OS pid (as it was until 2026-10-20) the patch stream
+        differed on every launch at the same seed, so a seeded run was not
+        recoverable. Worker ids run 0..n-1 and are the same on every launch;
+        the main process (no worker info) keeps the seed itself.
+        """
         pid = os.getpid()
         if self._pid != pid:
             self._pid = pid
             base = self.seed if self.seed is not None else int.from_bytes(os.urandom(4), "little")
-            self.rng = np.random.default_rng(base + pid)
+            wid = 0
+            try:
+                import torch.utils.data as tud
+                info = tud.get_worker_info()
+                wid = 0 if info is None else int(info.id) + 1
+            except ImportError:
+                pass
+            self.rng = np.random.default_rng([base, wid])
 
     def _origin(self, it: Prepared) -> tuple[int, int]:
         h, w = it.frame.shape
