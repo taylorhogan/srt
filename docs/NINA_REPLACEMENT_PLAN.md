@@ -4,6 +4,16 @@ Status 2026-10-16: research done, nothing built. Owner's project 2 of 3
 (auto-stretch, NINA→Linux, autonomy gaps). Next decisions for the owner:
 ask PlaneWave for a current PWI4 Linux build + L-500 support; confirm the
 Alnitak model and how the Gemini is connected; then Stage 0/1 below.
+**PlaneWave's answer, 2026-10-21 (Cullen Harwood, Sales): PWI4 on Linux is NOT
+supported.** No Linux build of 4.1.6+, Mono unsupported, the L-500 (Elmo over
+USB, homing, tracking, pointing model) and the Delta-T not validated on Linux,
+headless Linux not a supported configuration. Their recommended setup is a
+dedicated Windows PC running PWI4, driven over the HTTP API (port 8220, no
+authentication, so trusted LAN only). They also recommend 4.1.4.99 -> 4.1.6
+(.NET Framework 4.8). **With the owner's no-second-box rule below, the Linux
+move (Stage 4) is OFF: the observatory stays on one Windows machine.** Stages
+0-3, N.I.N.A out on Windows, stand on their own and remain the plan.
+
 **Owner decision 2026-10-16: no second Windows box.** A PWI4-only Windows
 PC or VM beside a Linux computer is not an acceptable fallback ("the system
 is only stable as its weakest link"). The Linux move therefore depends on
