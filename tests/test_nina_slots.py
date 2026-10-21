@@ -648,3 +648,27 @@ def test_four_slots_give_four_containers_each_later_one_bracketed(tmp_path):
         setup = g._items_of(g._items_of(d)[0])
         scripts = [i["Script"] for i in setup if g._short_type(i) == "ExternalScript"]
         assert scripts[0].endswith("DONE_MAIN") and scripts[-1].endswith("IN_MAIN")
+
+
+def test_a_capped_slot_ends_at_its_start_plus_the_cap(tmp_path, monkeypatch):
+    """2026-10-20: the counts size ONE pass and the container repeats passes to
+    its hard end, so ngc7790's 30-minute pass ran 3.8 times in its 60-minute
+    slot (191 frames). A capped target's hard end is now start + max_hours,
+    and the next slot's parking decision measures from that earlier end."""
+    monkeypatch.setattr(g, "_max_seconds_for", lambda d: 1800.0 if d == "squid" else None)
+    seq, _ = _gen(tmp_path, SLOTS)
+    dsos = [it for it in g._items_of(g._find_target_area(seq))
+            if g._short_type(it) == "DeepSkyObjectContainer"]
+    first = g._find_first(dsos[0], "TimeCondition")
+    second = g._find_first(dsos[1], "TimeCondition")
+    assert (first["Hours"], first["Minutes"]) == (21, 30)        # 21:00 + 30 min, not 02:15
+    assert (second["Hours"], second["Minutes"]) == (4, 40)       # uncapped: its own end
+
+
+def test_a_cap_longer_than_the_slot_changes_nothing(tmp_path, monkeypatch):
+    monkeypatch.setattr(g, "_max_seconds_for", lambda d: 99 * 3600.0)
+    seq, _ = _gen(tmp_path, SLOTS)
+    dsos = [it for it in g._items_of(g._find_target_area(seq))
+            if g._short_type(it) == "DeepSkyObjectContainer"]
+    tc = g._find_first(dsos[0], "TimeCondition")
+    assert (tc["Hours"], tc["Minutes"]) == (2, 15)

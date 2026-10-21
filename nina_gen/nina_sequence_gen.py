@@ -270,6 +270,7 @@ def _frame_overhead() -> float:
     ngc7790's hour was sized as 180 L + 45 G, ~90 minutes of work. Every count
     below divides by exposure + this. cfg["nina"]["frame_overhead_s"]."""
     try:
+        from configs import config      # this module imports config locally everywhere
         v = float(config.data().get("nina", {}).get("frame_overhead_s", DEFAULT_FRAME_OVERHEAD_S))
     except Exception:
         v = DEFAULT_FRAME_OVERHEAD_S
@@ -1293,7 +1294,7 @@ def generate_slots_sequence(template_path: Path, slots: list, output_path: Path,
     import copy
     pristine = copy.deepcopy(proto)
 
-    clones, plans = [], []
+    clones, plans, ends = [], [], []
     for k, slot in enumerate(slots):
         c = proto if k == 0 else _clone_with_fresh_ids(pristine, next_id)
         ra_h, ra_m, ra_s = _decompose_ra(slot["ra_hours"])
@@ -1304,7 +1305,22 @@ def generate_slots_sequence(template_path: Path, slots: list, output_path: Path,
         _walk_and_replace(c, slot["name"], coords)
         _apply_rotation(c, slot.get("rotation", _rotation_for(slot["name"])))
         ensure_center_filter(c, sequence, next_id)
-        _set_hard_end(c, slot.get("end"), next_id)
+        # A capped target (max_hours) ENDS at its start + cap. The counts only
+        # size one pass; the container repeats passes until this hard end, so
+        # sizing the counts to the cap (5eb465f) did nothing on its own: on
+        # 2026-10-20 ngc7790's 40 L + 13 G pass ran 3.8 times to its 00:00 end,
+        # 191 frames instead of ~53. The next slot then starts at the earlier end.
+        from datetime import timedelta
+        end = slot.get("end")
+        cap = _max_seconds_for(slot["name"])
+        start = slot.get("start")
+        if cap and start is not None and end is not None and start + timedelta(seconds=cap) < end:
+            end = start + timedelta(seconds=cap)
+            logging.getLogger(__name__).info(
+                "Slot %d (%s): ends at %s, its max_hours, not the slot's %s",
+                k + 1, slot["name"], end.strftime("%H:%M"), slot["end"].strftime("%H:%M"))
+        ends.append(end)
+        _set_hard_end(c, end, next_id)
         plans.append(_plan_for(c, slot["name"], slot.get("seconds")))
         seed_focus(c, focus_model, next_id, ids=_index_ids(sequence))
         if k > 0:
@@ -1325,7 +1341,7 @@ def generate_slots_sequence(template_path: Path, slots: list, output_path: Path,
             # own Center re-acquires, so the park costs two slews and nothing
             # else. Inserted BEFORE the hand-over scripts below, which then
             # bracket the whole thing.
-            prev_end = slots[k - 1].get("end")
+            prev_end = ends[k - 1]          # the previous slot's EFFECTIVE end (cap applied)
             rise = (horizon_rise(slot["name"], slot["ra_hours"], slot["dec_degrees"], prev_end)
                     if prev_end is not None else None)
             gap_s = max(0.0, (rise - prev_end).total_seconds()) if rise is not None else 0.0
