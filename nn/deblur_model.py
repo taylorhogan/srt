@@ -102,10 +102,11 @@ def build(features=(32, 64, 128, 256)):
             with torch.no_grad():
                 self.net.head.bias[(DENSE * DENSE) // 2] = IDENTITY_LOGIT
 
-        def forward(self, inp):
+        def forward(self, inp, return_logits: bool = False):
             logits = self.net(inp)
             x0 = torch.sinh(inp[:, :1])
-            return torch.asinh(scatter(x0, logits))
+            out = torch.asinh(scatter(x0, logits))
+            return (out, logits) if return_logits else out
 
     return ScatterDeconv()
 

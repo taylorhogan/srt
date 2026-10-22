@@ -155,12 +155,32 @@ def _split(domain: str):
     return train, val
 
 
-def _loss(out, tgt, mask, lam):
+def _loss(out, tgt, mask, lam, logits=None, pen=0.0):
+    """L2 in asinh units + lam * Poisson-weighted linear chi^2, and with
+    *logits* and *pen* a logit-norm term pen * mean(logits^2).
+
+    The logit term (2026-10-22): the first core-kernel arm collapsed in its
+    first epoch -- the softmax saturated at every pixel (one weight > 0.999,
+    logits in the thousands), the gradient vanished and the model froze on a
+    hard identity worse than the identity it started from. Reproduced on the
+    first 400 steps: a burst of 1e3-1e5 gradient norms round step 50-100
+    (clipped to 1, but Adam's per-parameter steps still carry the direction)
+    drives the UNet's features, which have no normalisation, until the head
+    saturates; the whole-kernel recipe rode the same burst out at |logit|
+    < 260. With pen 1e-6 the run excursed to |logit| 18000 and came back
+    within ten steps -- the penalty keeps a gradient when the softmax has
+    none -- and settled where the whole-kernel run sits (|logit| 50-130,
+    mean logit^2 ~ 16 on the promoted model: 1.6e-5 of loss, nothing). A
+    learning-rate warm-up alone did not hold.
+    """
     import torch
     l2 = (((out - tgt) ** 2) * mask).sum() / mask.sum().clamp(min=1)
     xo, xt = torch.sinh(out), torch.sinh(tgt)
     chi2 = (((xo - xt) ** 2) / (xt.abs() + 1.0) * mask).sum() / mask.sum().clamp(min=1)
-    return l2 + lam * chi2
+    loss = l2 + lam * chi2
+    if logits is not None and pen:
+        loss = loss + pen * logits.pow(2).mean()
+    return loss
 
 
 def _taper(text: str):
@@ -203,7 +223,7 @@ def cmd_train(a):
     MODELS.mkdir(parents=True, exist_ok=True)
     best = float("inf")
     meta = {"name": a.name, "domain": a.domain, "seed": a.seed, "epochs": a.epochs, "patch": a.patch,
-            "pairs": a.pairs, "lam": a.lam, "lr": a.lr, "kernel_scale": list(dd.KERNEL_SCALE),
+            "pairs": a.pairs, "lam": a.lam, "lr": a.lr, "logit_pen": a.logit_pen, "kernel_scale": list(dd.KERNEL_SCALE),
             "kernel_taper": None if taper is None else list(taper),
             "train": sorted({t.dso for t in train}), "val": sorted({v.dso for v in val}),
             "holdout": sorted(HOLDOUT), "history": []}
@@ -213,7 +233,8 @@ def cmd_train(a):
         tot, n = 0.0, 0
         for xb, yb, mb in tl:
             xb, yb, mb = xb.to(dev), yb.to(dev), mb.to(dev)
-            loss = _loss(model(xb), yb, mb, a.lam)
+            out, logits = model(xb, return_logits=True)
+            loss = _loss(out, yb, mb, a.lam, logits, a.logit_pen)
             opt.zero_grad(); loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             opt.step()
@@ -247,6 +268,7 @@ def cmd_smoke(a):
     a.name, a.domain, a.seed, a.epochs, a.pairs, a.batch = "smoke", "both", 0, 1, 16, 4
     a.patch, a.workers, a.lr, a.lam = 256, 2, 3e-4, 0.2
     a.taper = "%g,%g" % dd.KERNEL_TAPER
+    a.logit_pen = 1e-6
     return cmd_train(a)
 
 
@@ -341,6 +363,9 @@ def main():
     # model to halve bright stars' halos out to the stamp's edge.
     t.add_argument("--taper", default="%g,%g" % dd.KERNEL_TAPER,
                    help="inner,outer in FWHM units, or none (default %(default)s)")
+    # logit-norm penalty against softmax collapse (see _loss); 0 = off, as every
+    # arm to 2026-10-21 ran. Negligible on a healthy run (1.6e-5 of the loss).
+    t.add_argument("--logit-pen", type=float, default=1e-6)
     t.set_defaults(fn=cmd_train)
     sub.add_parser("smoke").set_defaults(fn=cmd_smoke)
     sc = sub.add_parser("score"); sc.add_argument("--model", required=True); sc.add_argument("--name", default="")

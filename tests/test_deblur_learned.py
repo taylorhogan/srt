@@ -335,3 +335,20 @@ def test_pair_is_made_with_the_tapered_kernel_and_the_checkpoint_carries_it(tmp_
         dd.taper_kernel = orig
     assert seen == [(1.5, 3.0), None]
     assert info_c["kernel_taper"] == (1.5, 3.0) and info_w["kernel_taper"] is None
+
+
+def test_forward_can_return_the_logits_and_the_loss_takes_a_logit_penalty():
+    torch = pytest.importorskip("torch")
+    from nn import deblur_model as dm
+    import deconv_train as dt
+    m = dm.build()
+    x = torch.randn(1, 2, 64, 64) * 0.5
+    with torch.no_grad():
+        out, logits = m(x, return_logits=True)
+        only = m(x)
+    assert tuple(logits.shape) == (1, dm.n_weights(), 64, 64) and torch.equal(out, only)
+    tgt, mask = torch.zeros_like(out), torch.ones_like(out)
+    base = dt._loss(out, tgt, mask, 1.0)
+    assert torch.equal(dt._loss(out, tgt, mask, 1.0, logits, 0.0), base)
+    pen = dt._loss(out, tgt, mask, 1.0, logits, 1e-2)       # large enough to resolve in float32
+    assert float(pen - base) == pytest.approx(1e-2 * float(logits.pow(2).mean()), rel=1e-3)

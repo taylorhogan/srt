@@ -859,3 +859,25 @@ composite by eye for the moat. Promotion means repointing
 `local/deconv/models/learned_default.pt` and, if the moat is gone, revisiting
 `NO_L_RULE` for narrowband.
 
+**First launch collapsed (07:09–08:00).** Val loss identical to five decimals
+over four epochs, train not descending: the softmax had saturated at every
+pixel (one weight > 0.999, logits in the thousands), the gradient was zero
+and the model was frozen on a hard identity *worse* than the identity it
+started from (val 5.96 against 3.65 for a fresh model). Reproduced on the
+first 400 steps with the gradient norm and saturation logged: round step
+50–100 a burst of 1e3–1e5 gradient norms (clipped to 1, but Adam's
+per-parameter steps keep the direction) drives the unnormalised UNet
+features until the head saturates; the whole-kernel recipe rides the same
+burst out at |logit| < 260 — the core-kernel task is nearer identity, so
+the sky's "stay put" pull has less star signal against it. Three
+stabilisers tried on those 400 steps: a learning-rate warm-up alone (lr
+1e-4 over 500 steps) still saturated 25 % of the pixels at step 300; a
+logit-norm penalty `--logit-pen 1e-6` (pen·mean(logits²)) excursed to
+|logit| 18 000 at step 59 and was back within ten steps, then settled where
+the whole-kernel run sits (|logit| 50–130); it keeps a gradient when the
+softmax has none. On the promoted model mean logit² is 16, so the term is
+1.6e-5 of the loss on a healthy run. Relaunched 08:05 with it
+(`local/deconv/taper_launch.log`; the collapsed log kept as
+`taper_launch_collapsed.log`); validation is scored without the penalty so
+arms stay comparable.
+
