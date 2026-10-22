@@ -20,7 +20,10 @@ halo at its edge on bright stars; the dilated window is the reach fix.
 
 Input: two planes, the frame and the frame convolved with the kernel to
 remove, both sky-subtracted and asinh-normalised by denoiser.normalise's
-scale. The second plane is how the network is told the kernel (the plan's
+scale. The kernel to remove is the measured kernel's CORE (deblur_data.
+taper_kernel, by the taper stamped on the checkpoint; checkpoints before
+2026-10-22 carry none and remove the whole stamp, which halved every bright
+star's halo out to the stamp's edge). The second plane is how the network is told the kernel (the plan's
 design choice 1): the difference between the planes shows what one kernel
 of blur does to this image, locally. A narrower kernel than measured gives
 a milder correction; that is the strength knob.
@@ -107,10 +110,14 @@ def build(features=(32, 64, 128, 256)):
     return ScatterDeconv()
 
 
-def save(model, path: Path, meta: Optional[dict] = None) -> None:
+def save(model, path: Path, meta: Optional[dict] = None, kernel_taper: Optional[tuple] = None) -> None:
+    """*kernel_taper* is the (inner, outer) FWHM taper the model was trained to
+    remove (nn/deblur_data.taper_kernel); None = the whole measured kernel.
+    It is stamped on the checkpoint so inference removes the same kernel."""
     import torch
     torch.save({"state": model.state_dict(), "asinh_sigma_mult": denoiser.ASINH_SIGMA_MULT,
                 "dense": DENSE, "dilated": DILATED, "dilation": DILATION,
+                "kernel_taper": None if kernel_taper is None else [float(kernel_taper[0]), float(kernel_taper[1])],
                 "meta": meta or {}}, path)
 
 
@@ -126,6 +133,10 @@ def load(path: Path, device: Optional[str] = None):
     m = build().to(device)
     m.load_state_dict(ck["state"])
     m.eval()
+    taper = ck.get("kernel_taper", (ck.get("meta") or {}).get("kernel_taper"))
+    # checkpoints from before 2026-10-22 carry no taper and were trained on the
+    # whole measured kernel: None keeps their behaviour exactly
+    m.kernel_taper = None if taper is None else (float(taper[0]), float(taper[1]))
     return m, ck.get("meta", {})
 
 
@@ -139,8 +150,19 @@ def _conv(x: np.ndarray, k: np.ndarray) -> np.ndarray:
 def deblur_frame(frame: np.ndarray, model, psf: np.ndarray, device: Optional[str] = None,
                  tile: int = TILE, overlap: int = OVERLAP, sat_level: Optional[float] = None,
                  sky_sigma: Optional[float] = None,
-                 log: Callable[[str], None] = lambda s: None) -> tuple[np.ndarray, dict]:
-    """Deconvolve *frame* (linear ADU, sky in) by one *psf*. Returns (out, info)."""
+                 log: Callable[[str], None] = lambda s: None,
+                 plateau: Optional[np.ndarray] = None) -> tuple[np.ndarray, dict]:
+    """Deconvolve *frame* (linear ADU, sky in) by one *psf*. Returns (out, info).
+
+    *plateau* is an extra mask of pixels to keep as given, united with the
+    frame's own saturation/flat-top detection. A synthetic luminance (a
+    weighted sum of planes) needs it: a core clipped in Ha alone sits in the
+    sum at Ha's weight times the ceiling plus whatever the other planes put
+    there, which is neither at a ceiling nor flat, so the sum's own detector
+    finds nothing (trunk SHO, 2026-10-22: 0 plateau px) and the network
+    deconvolves the clipped star as a real profile into a black moat with a
+    lit centre. The planes' own masks, united, are what the sum inherits.
+    """
     import torch
     from stacking import deblur as db
     device = device or ("cuda" if torch.cuda.is_available() else "cpu")
@@ -150,8 +172,9 @@ def deblur_frame(frame: np.ndarray, model, psf: np.ndarray, device: Optional[str
     x = np.where(np.isfinite(x), x, med)
     sub, bg = denoiser.subtract_background(x)
     t, scale = denoiser.normalise(sub)
-    k = np.asarray(psf, dtype=np.float64)
-    k = k / k.sum()
+    from nn import deblur_data as dd
+    taper = getattr(model, "kernel_taper", None)
+    k = dd.taper_kernel(np.asarray(psf, dtype=np.float64), taper)    # the kernel the model was trained on
     plane2 = np.arcsinh(_conv(sub.astype(np.float64), k) / scale).astype(np.float32)
     planes = np.stack([t, plane2])
     pad = overlap
@@ -178,18 +201,23 @@ def deblur_frame(frame: np.ndarray, model, psf: np.ndarray, device: Optional[str
     sig = sky_sigma if sky_sigma is not None else db.sky_sigma(x)
     level = sat_level if sat_level is not None else db.saturation_level(x)
     sat = db.saturated_mask(x, level, sig) if level else db.flat_tops(x, sig)
+    if plateau is not None:
+        sat = sat | np.asarray(plateau, dtype=bool)
     if sat.any():
         from scipy.ndimage import binary_dilation
         keep = binary_dilation(sat, iterations=SAT_DILATE)
         lin[keep] = x[keep]
-    info = {"tiles": n, "scale": float(scale), "plateau_px": int(sat.sum()), "sky_sigma": float(sig)}
-    log(f"learned deblur: {n} tiles of {tile}, scale {scale:.2f}, {int(sat.sum())} plateau px kept")
+    info = {"tiles": n, "scale": float(scale), "plateau_px": int(sat.sum()), "sky_sigma": float(sig),
+            "kernel_taper": taper}
+    log(f"learned deblur: {n} tiles of {tile}, scale {scale:.2f}, {int(sat.sum())} plateau px kept, "
+        f"kernel {'whole' if taper is None else 'core to %.1f-%.1f FWHM' % taper}")
     return lin, info
 
 
 def deblur_channels(channels: dict, model, device: Optional[str] = None,
                     log: Callable[[str], None] = lambda s: None,
-                    planes: Optional[Iterable[str]] = None) -> tuple[dict, dict]:
+                    planes: Optional[Iterable[str]] = None,
+                    plateau: Optional[dict] = None) -> tuple[dict, dict]:
     """The selected *planes* of *channels* (linear ADU, sky in, one pixel grid)
     through the learned deconvolver, each with ITS OWN measured kernel; the
     rest come back as given. Returns (out, info per channel); a selected
@@ -197,7 +225,8 @@ def deblur_channels(channels: dict, model, device: Optional[str] = None,
     "no kernel", an unselected one with "not selected", so the set never
     loses a plane.
 
-    *planes* None means every channel. The production choice (2026-10-21) is
+    *plateau* maps a channel name to an extra keep-as-given mask (see
+    deblur_frame). *planes* None means every channel. The production choice (2026-10-21) is
     the luminance alone: deconvolving R, G and B independently was measured
     on ngc6946 HALRGB to sharpen each plane's own residual noise into
     single-pixel specks that do not coincide across planes (coloured dots
@@ -225,7 +254,8 @@ def deblur_channels(channels: dict, model, device: Optional[str] = None,
             infos[name] = {"why": "no kernel"}
             continue
         lin, info = deblur_frame(x, model, side["psf"], device=device, sat_level=side["sat"] or None,
-                                 sky_sigma=side["sky_sigma"], log=lambda m: log(f"{name}: {m}"))
+                                 sky_sigma=side["sky_sigma"], log=lambda m: log(f"{name}: {m}"),
+                                 plateau=None if plateau is None else plateau.get(name))
         if nan.any():
             lin = lin.copy(); lin[nan] = np.nan
         out[name] = lin

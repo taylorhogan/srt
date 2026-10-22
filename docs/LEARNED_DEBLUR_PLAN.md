@@ -760,3 +760,102 @@ deconvolution on narrowband has no luminance to hide behind, so the next
 lever is either a synthetic luminance (deconvolve the plane sum, carry
 colour from the denoised planes) or training the scatter head on
 narrowband stacks.
+
+### Synthetic luminance for narrowband — 2026-10-22 morning
+
+Tried, works mechanically, not promoted. `stacking/deblur.synthetic_luminance`
+makes an L for a set that has none from the planes as mapped to R, G and B
+with the palette's own weights (0.299/0.587/0.114), deconvolves that, and
+hands back the deconvolved frame beside its reference (`LSYN` / `LSYN_REF`);
+compose scales the picture by the ratio of the two stretched with one black
+and the reference's background (`color_process.synthetic_gain`), so an
+identical pair composes to the identical picture. Substituting the
+deconvolved L as a real L was tried first and relit the faint end 27 %
+darker: the per-plane black clip keeps the positive part of each plane
+where a summed L carries the deficit. The planes' plateau masks are united
+into the sum's (`plateau_union`), since a core clipped in Hα alone is
+neither at a ceiling nor flat in the sum.
+
+**What it fixed**, on trunk, ic1396, ngc7380 and squid with the promoted
+bilinear denoiser (panels `~/Desktop/*_syntheticL_panel.jpg`): no mesh, no
+coloured specks (the colour is the planes' own), rims sharpened, the dark
+clouds at the same brightness as the denoised composite (smoothed
+luminance ratio 0.94–0.99 above the faintest bin, and in linear ADU the
+sky edit is +0.0004).
+
+**What it exposed.** Around every bright star the network collects the
+sky along with the halo over a ~110 px square (its receptive field) and
+leaves the halo outside: trunk's brightest star, peak 2400 ADU, comes out
+3.6× brighter in the core with the sky inside the square 0.37 ADU
+(3.5σ of the denoised sky) *below* the local background and the halo
+intact beyond 60 px — a dark square inside a halo at full resolution
+(`~/Desktop/trunk_syntheticL_bright_star_fullres.jpg`). Saturated stars
+(squid, ic1396) keep a mottled halo just outside the kept plateau. The same
+over-collection is on broadband: ngc1961's learned L takes its brightest
+stars' halos to the sky level out to ~80 px; faint broadband halos hide it,
+large bright narrowband reflection halos do not. **It is the model, not the
+synthetic path.** Split-half on trunk's synthetic L (halves of 2×16–30
+frames, ρ_input only 0.47–0.52): learned ρ_added 0.34–0.38 at 2–5σ added
+rms against starless 0.41–0.43 at 1.1σ — the learned nebula edit is larger
+and reproduces less, though the two halves' learned frames agree by eye
+(`~/Desktop/trunk_syntheticL_two_halves.jpg`; starless rings its bright
+stars there, learned does not).
+
+**State.** `stacking/deblur.NO_L_RULE = "starless"`; `no_l="synthetic"`
+(render `--no-l synthetic`) selects the synthetic path. The next lever is
+the model: bright-star halos in training (a loss term against output below
+the local sky, or halo-bearing stacks in the pool) — the same fix would
+tidy the broadband stars too.
+
+### The bright-star moat is the kernel's wing — 2026-10-22 morning
+
+Diagnosed before changing anything (`scripts/deconv_halo_check.py`, on the
+promoted `scatter_both_lam1p0_s0`):
+
+- **Not the plateau mask.** On saturated training stars the model pours
+  back into the loss-masked plateau exactly what the re-blur took out
+  (1.0× on seven stars, ngc1961 / ic1396 / m92): the mask is not a sink.
+- **Not the loss.** On the training pairs (the frame re-blurred by its own
+  kernel) the model's wing is right to within a sigma from 8 px out, on
+  unsaturated 5000 ADU stars and saturated ones alike. The loss saw the wing
+  and the model learned it.
+- **It is the task.** `measure_psf` follows the wing out to 72 px, where the
+  kernel is 1e-5 of its peak and still a 145 px stamp. A 5900 ADU star's
+  wing at 45 px (10σ over the sky) *is* that kernel at 1.7e-4 of the peak,
+  and a model taught to remove one such kernel removes it: on the frame
+  itself the 32–60 px wing came back 63 % removed (mean of 12 stars on four
+  stacks; 43–82 %), the core 2.3× within 4 px, the halo beyond the stamp
+  untouched — a dark moat inside a halo, square because the stamp is. The
+  "receptive field" of the morning's note was the kernel's footprint.
+  Re-blurring the answer by the kernel does not give the frame back
+  (`cycle` row: +80σ at 16–24 px, +25σ at 24–32), so the one-kernel
+  composition assumption fails exactly on bright stars' wings.
+
+**The fix is the kernel to remove, not the network.** 95 % of the kernel's
+flux is inside 20 px; the core is the deconvolution and the wing is scene,
+to be left as imaged the way starless leaves it. `nn/deblur_data.taper_kernel`
+keeps the measured kernel as it is inside 1.5 FWHM and cosine-tapers it to
+nothing at 3 FWHM (`KERNEL_TAPER`; 18–24 px on these stacks, holding
+94–96 % of the measured kernel's energy), the dataset re-blurs by that
+core (`DeblurDataset(kernel_taper=...)`), the checkpoint stamps the taper
+and `deblur_model.load` attaches it to the model, and `deblur_frame`
+tapers the measured kernel by the model's own setting before building the
+kernel plane — so training and inference cannot drift. Checkpoints from
+before today carry no taper and behave exactly as they did. Handing the
+*promoted* model a tapered kernel at inference (out of its distribution)
+already cut the 32–45 px removal from −15σ to −3σ on the 5900 ADU star and
+kept 94–97 % of the galaxy's band-pass sharpening, which says the
+mechanism is the right one; the retrained model should be identity beyond
+the taper by construction. The core sharpening (7.5 → ~4 px) is untouched,
+since the core is kept as measured.
+
+**Arm launched 07:09:** `scatter_both_taper_s0` — seed 0, domain both,
+λ 1.0, `--taper 1.5,3`, otherwise the promoted recipe (~8.5 h at 510 s per
+epoch). Acceptance: `deconv_halo_check.py` against the baseline above
+(target: wing 32–60 px removed near 0 %, core gain kept near 2×),
+`deconv_train.py score` on the holdouts (star flux and FWHM, the galaxy
+scales), the trunk synthetic L (`--no-l synthetic`) and ngc1961's learned
+composite by eye for the moat. Promotion means repointing
+`local/deconv/models/learned_default.pt` and, if the moat is gone, revisiting
+`NO_L_RULE` for narrowband.
+

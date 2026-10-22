@@ -15,7 +15,9 @@ Ha/O-III/S-II, exactly as the morning render does it. HOLDOUT targets are
 prepared too -- they are the test set -- and flagged in the manifest so
 `train` never sees them. ~1.5 min and 0.5 GB per half per domain.
 
-`train` fits nn/deblur_model on the non-holdout stacks of the chosen domain,
+`train` fits nn/deblur_model on the non-holdout stacks of the chosen domain
+(the kernel it learns to remove is the measured one's core, --taper; see
+nn/deblur_data.taper_kernel for why the far wing is left as scene),
 epoch selection on VAL_DSOS (whole targets, so no scene leaks between train
 and val), the loss L2 in asinh space plus a Poisson-weighted linear chi^2
 (Phase 0 found the linear term helps extended structure even though it does
@@ -161,6 +163,16 @@ def _loss(out, tgt, mask, lam):
     return l2 + lam * chi2
 
 
+def _taper(text: str):
+    """--taper: 'none' (the whole measured kernel, the recipe before 2026-10-22)
+    or 'inner,outer' in FWHM units (nn/deblur_data.taper_kernel)."""
+    t = (text or "").strip().lower()
+    if t in ("", "none", "whole", "off"):
+        return None
+    lo, hi = (float(v) for v in t.split(","))
+    return (lo, hi)
+
+
 def cmd_train(a):
     import torch
     from torch.utils.data import DataLoader
@@ -176,10 +188,12 @@ def cmd_train(a):
         log("no training stacks — run prepare first")
         return 1
     log(f"{a.name}: domain={a.domain} train={len(train)} stacks ({len({t.dso for t in train})} targets) "
-        f"val={len(val)} stacks seed={a.seed} epochs={a.epochs} patch={a.patch} pairs={a.pairs} device={dev}")
-    tds = dd.DeblurDataset(train, patch_size=a.patch, pairs_per_epoch=a.pairs, seed=a.seed)
+        f"val={len(val)} stacks seed={a.seed} epochs={a.epochs} patch={a.patch} pairs={a.pairs} device={dev} "
+        f"kernel={'whole' if _taper(a.taper) is None else 'core %s FWHM' % (_taper(a.taper),)}")
+    taper = _taper(a.taper)
+    tds = dd.DeblurDataset(train, patch_size=a.patch, pairs_per_epoch=a.pairs, seed=a.seed, kernel_taper=taper)
     vds = dd.DeblurDataset(val, patch_size=a.patch, pairs_per_epoch=max(a.batch, a.pairs // 10),
-                           seed=a.seed + 1) if val else None
+                           seed=a.seed + 1, kernel_taper=taper) if val else None
     tl = DataLoader(tds.torch_dataset(), batch_size=a.batch, num_workers=a.workers, pin_memory=(dev == "cuda"),
                     persistent_workers=a.workers > 0)
     vl = DataLoader(vds.torch_dataset(), batch_size=a.batch, num_workers=min(a.workers, 2)) if vds else None
@@ -190,6 +204,7 @@ def cmd_train(a):
     best = float("inf")
     meta = {"name": a.name, "domain": a.domain, "seed": a.seed, "epochs": a.epochs, "patch": a.patch,
             "pairs": a.pairs, "lam": a.lam, "lr": a.lr, "kernel_scale": list(dd.KERNEL_SCALE),
+            "kernel_taper": None if taper is None else list(taper),
             "train": sorted({t.dso for t in train}), "val": sorted({v.dso for v in val}),
             "holdout": sorted(HOLDOUT), "history": []}
     t0 = time.time()
@@ -219,9 +234,9 @@ def cmd_train(a):
         if score < best:
             best = score; mark = " *"
             meta["best_epoch"] = ep + 1
-            dm.save(model, MODELS / f"{a.name}.pt", meta)
+            dm.save(model, MODELS / f"{a.name}.pt", meta, kernel_taper=taper)
         log(f"  epoch {ep + 1:3d}  train {tr:.5f}  val {va:.5f}  {time.time() - t0:.0f}s{mark}")
-    dm.save(model, MODELS / f"{a.name}_last.pt", meta)
+    dm.save(model, MODELS / f"{a.name}_last.pt", meta, kernel_taper=taper)
     with open(MODELS / f"{a.name}.json", "w") as f:
         json.dump(meta, f, indent=1)
     log(f"best epoch {meta.get('best_epoch')} -> {MODELS / (a.name + '.pt')}")
@@ -231,6 +246,7 @@ def cmd_train(a):
 def cmd_smoke(a):
     a.name, a.domain, a.seed, a.epochs, a.pairs, a.batch = "smoke", "both", 0, 1, 16, 4
     a.patch, a.workers, a.lr, a.lam = 256, 2, 3e-4, 0.2
+    a.taper = "%g,%g" % dd.KERNEL_TAPER
     return cmd_train(a)
 
 
@@ -320,6 +336,11 @@ def main():
     # comparable at init. Phase 0's 1.0 was right for synthetic fields with
     # few bright stars and would let the stars' cores own the loss here.
     t.add_argument("--lam", type=float, default=0.2)
+    # the kernel the model learns to remove: the measured kernel's core. 'none'
+    # is the whole 145 px stamp (every arm to 2026-10-21), which taught the
+    # model to halve bright stars' halos out to the stamp's edge.
+    t.add_argument("--taper", default="%g,%g" % dd.KERNEL_TAPER,
+                   help="inner,outer in FWHM units, or none (default %(default)s)")
     t.set_defaults(fn=cmd_train)
     sub.add_parser("smoke").set_defaults(fn=cmd_smoke)
     sc = sub.add_parser("score"); sc.add_argument("--model", required=True); sc.add_argument("--name", default="")

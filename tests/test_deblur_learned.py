@@ -200,25 +200,138 @@ def test_stacking_deblur_method_learned_falls_back_to_starless_without_a_model(m
     assert out["L"] is flat and infos["L"]["fallback"].startswith("starless:")
 
 
-def test_stacking_deblur_method_learned_without_an_l_goes_to_starless():
-    """An HOO set has no L. The first nebula sweep (2026-10-21) refused and left
-    the recipe without a composite; the second put every plane through the
-    network and got a mesh over the emission. The rule now: no L -> starless,
-    info["fallback"] saying why, unless planes names planes that are there."""
+def test_stacking_deblur_method_learned_without_an_l_makes_one():
+    """An HOO set has no L. Per-plane deconvolution made coloured specks
+    (nebula sweep 2026-10-21); no_l="synthetic" (2026-10-22) makes a
+    luminance from the planes by the palette's weights, sharpens that, and
+    hands back the sharpened and unsharpened pair (LSYN / LSYN_REF) with the
+    planes kept as given, so compose() scales the picture by their ratio.
+    The default rule stays starless (dark squares round bright stars).
+    Named explicitly, the planes still go through."""
     torch = pytest.importorskip("torch")
     from nn import deblur_model as dm
     from stacking import deblur as sd
+    X, _k = _field(seed=3, size=700)
+    O3 = X * 0.7
+    lines = []
+    out, infos = sd.deblur_channels({"R": X, "G": O3, "B": O3}, 40, method="learned",
+                                    model=dm.build(), planes=("L",), log=lines.append,
+                                    no_l="synthetic")
+    assert "L" not in out and out["LSYN"].shape == X.shape and "LSYN_REF" in out
+    assert infos["LSYN"]["synthetic"] == "0.299 R + 0.587 G + 0.114 B"
+    assert infos["LSYN"]["why"] is None and not infos["LSYN"].get("fallback")
+    np.testing.assert_allclose(out["LSYN_REF"], 0.299 * X + 0.701 * O3, rtol=1e-5)
+    assert np.nanmax(np.abs(out["LSYN"] - out["LSYN_REF"])) > 0        # the network moved something
+    # the clipped star (R clips at 450,450; the sum does not) is kept as given:
+    # the planes' plateau masks are inherited, so no moat is dug round it
+    keep = sd.plateau_union({"R": X, "G": O3, "B": O3})
+    assert keep[450, 450] and any("plateau px inherited" in m for m in lines)
+    np.testing.assert_array_equal(out["LSYN"][keep], out["LSYN_REF"][keep])
+    assert all(infos[c]["kept"] and out[c] is {"R": X, "G": O3, "B": O3}[c] for c in "RGB")
+    assert any("made one, L = 0.299 R + 0.587 G + 0.114 B" in m for m in lines)
+    # the synthetic plane is the weighted sum of the planes, with their sky in
+    L, w = sd.synthetic_luminance({"R": X, "G": O3, "B": O3})
+    assert abs(sum(w.values()) - 1.0) < 1e-6
+    np.testing.assert_allclose(L, 0.299 * X + 0.701 * O3, rtol=1e-5)
+    # a set whose planes give no kernel goes to starless, saying why
     rng = np.random.default_rng(1)
     flat = (300 + rng.normal(0, 2, (300, 300))).astype(np.float32)      # starless refuses: no stars
     lines = []
     out, infos = sd.deblur_channels({"R": flat, "G": flat, "B": flat}, 8, method="learned",
+                                    model=dm.build(), planes=("L",), log=lines.append,
+                                    no_l="synthetic")
+    assert "LSYN" not in out and out["R"] is flat
+    assert all(infos[c]["fallback"].startswith("starless: the synthetic luminance") for c in "RGB")
+    assert any("RL8 on every distinct plane" in m for m in lines)
+    # the default rule for a set with no L is still starless (NO_L_RULE), saying why
+    assert sd.NO_L_RULE == "starless"
+    lines = []
+    out, infos = sd.deblur_channels({"R": flat, "G": flat, "B": flat}, 8, method="learned",
                                     model=dm.build(), planes=("L",), log=lines.append)
+    assert "LSYN" not in out and out["R"] is flat
     assert all(infos[c]["fallback"].startswith("starless: no luminance plane") for c in "RGB")
-    assert out["R"] is flat and any("RL8 on every distinct plane" in m for m in lines)
+    with pytest.raises(ValueError):
+        sd.deblur_channels({"R": flat}, 8, method="learned", model=dm.build(), no_l="magic")
     # named explicitly, the planes go through the network
-    X, _k = _field(seed=3, size=700)
-    O3 = X * 0.7
     out, infos = sd.deblur_channels({"R": X, "G": O3, "B": O3}, 40, method="learned", model=dm.build(),
                                     planes=("R", "G", "B"))
     assert all(infos[c]["why"] is None and not infos[c].get("fallback") for c in "RGB")
     assert out["G"] is out["B"]                                        # the shared plane, done once
+
+
+def test_compose_synthetic_pair_is_a_no_op_when_nothing_moved_and_a_gain_where_it_did():
+    """The composite lit by a synthetic pair differs from the plain composite
+    only where the deconvolved frame differs from its reference: identical
+    frames compose to the identical picture (a real L would not -- the
+    per-plane black clip makes a summed L darker at the faint end, measured
+    27 % on trunk), and a brighter spot in LSYN brightens that spot only."""
+    from stacking import color_process as cp
+    rng = np.random.default_rng(5)
+    base = 50 + rng.normal(0, 2, (200, 200)).astype(np.float32)
+    R, G, B = base * 1.0, base * 0.8 + 20, base * 0.6
+    L = 0.299 * R + 0.587 * G + 0.114 * B
+    plain = cp.compose({"R": R, "G": G, "B": B}, deblur=0, white_balance="none")
+    same = cp.compose({"R": R, "G": G, "B": B, "LSYN": L.copy(), "LSYN_REF": L.copy()},
+                      deblur=0, white_balance="none")
+    np.testing.assert_allclose(same, plain, atol=1e-6)
+    moved = L.copy(); moved[90:110, 90:110] *= 1.5
+    lit = cp.compose({"R": R, "G": G, "B": B, "LSYN": moved, "LSYN_REF": L.copy()},
+                     deblur=0, white_balance="none")
+    inside = (slice(90, 110), slice(90, 110))
+    assert np.all(lit[inside] >= plain[inside]) and lit[inside].mean() > plain[inside].mean() * 1.05
+    outside = np.ones((200, 200), bool); outside[inside] = False
+    np.testing.assert_allclose(lit[outside], plain[outside], atol=1e-6)
+
+
+def test_taper_kernel_keeps_the_core_drops_the_wing_and_measures_fwhm():
+    k = _kernel(fwhm=7.5)
+    assert abs(dd.kernel_fwhm(k) - 7.5) < 0.6                 # the wing term broadens it a little
+    t = dd.taper_kernel(k, (1.5, 3.0))
+    assert abs(t.sum() - 1) < 1e-9 and t.shape == k.shape
+    c = k.shape[0] // 2
+    yy, xx = np.mgrid[:k.shape[0], :k.shape[0]] - c
+    r = np.hypot(yy, xx)
+    inner, outer = r <= 1.5 * 7.5 - 1, r >= 3.0 * 7.5 + 1
+    # inside the inner radius the shape is the kernel's own (one factor), beyond the outer nothing
+    ratio = t[inner] / k[inner]
+    assert ratio.std() / ratio.mean() < 1e-6 and ratio.mean() > 1.0
+    assert t[outer].max() == 0.0 and k[outer].max() > 0.0
+    # None is the whole kernel, unit sum
+    assert np.allclose(dd.taper_kernel(k, None), k / k.sum())
+    with pytest.raises(ValueError):
+        dd.taper_kernel(k, (3.0, 1.5))
+
+
+def test_pair_is_made_with_the_tapered_kernel_and_the_checkpoint_carries_it(tmp_path):
+    torch = pytest.importorskip("torch")
+    from nn import deblur_model as dm
+    X, k = _field(seed=3)
+    dd.prepare_stack(X, "t__L_train0_raw", out_dir=tmp_path, log=lambda s: None)
+    items = dd.list_prepared(tmp_path)
+    whole = dd.DeblurDataset(items, patch_size=256, pairs_per_epoch=2, seed=1, kernel_taper=None)
+    core = dd.DeblurDataset(items, patch_size=256, pairs_per_epoch=2, seed=1, kernel_taper=(1.5, 3.0))
+    assert whole.kernel_taper is None and core.kernel_taper == (1.5, 3.0)
+    iw, tw, _ = whole.make_pair(whole.items[0], 300, 300, factor=1.0)
+    ic, tc, _ = core.make_pair(core.items[0], 300, 300, factor=1.0)
+    assert np.allclose(tw, tc)                                  # same target
+    assert not np.allclose(iw[1], ic[1])                        # the kernel plane differs
+    # the core kernel blurs less, so the core input sits nearer the target
+    assert np.abs(ic[0] - tc[0]).mean() < np.abs(iw[0] - tw[0]).mean()
+    # the checkpoint stamps the taper and load attaches it to the model
+    m = dm.build()
+    dm.save(m, tmp_path / "core.pt", {"name": "core"}, kernel_taper=(1.5, 3.0))
+    dm.save(m, tmp_path / "whole.pt", {"name": "whole"})
+    mc, _ = dm.load(tmp_path / "core.pt", "cpu")
+    mw, _ = dm.load(tmp_path / "whole.pt", "cpu")
+    assert mc.kernel_taper == (1.5, 3.0) and mw.kernel_taper is None
+    # inference tapers by the model's own setting
+    seen = []
+    orig = dd.taper_kernel
+    try:
+        dd.taper_kernel = lambda psf, taper=dd.KERNEL_TAPER: seen.append(taper) or orig(psf, taper)
+        out_c, info_c = dm.deblur_frame(X, mc, k, device="cpu", tile=512, overlap=48)
+        out_w, info_w = dm.deblur_frame(X, mw, k, device="cpu", tile=512, overlap=48)
+    finally:
+        dd.taper_kernel = orig
+    assert seen == [(1.5, 3.0), None]
+    assert info_c["kernel_taper"] == (1.5, 3.0) and info_w["kernel_taper"] is None

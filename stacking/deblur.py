@@ -1008,9 +1008,84 @@ def deblur(chan: np.ndarray, iters: int = DEFAULT_ITERS,
     return out, info
 
 
+# How a luminance is made for a set that has none (HOO/SHO) before the learned
+# deconvolution: the palette's own luminance weights on the planes as mapped
+# to R, G and B. compose() lights the picture by L through the ratio of the
+# stretched L to the 0.299/0.587/0.114 luminance of the stretched RGB, so an L
+# built with those same weights is, before deconvolution, the luminance the
+# compose will divide by: the substitution ratio is then pure sharpening gain
+# and no region is relit. An inverse-variance sum would have more signal but
+# would weight O-III-only structure down and light the picture by an L that
+# disagrees with its colour. Renormalised over the planes present.
+LUM_WEIGHTS = {"R": 0.299, "G": 0.587, "B": 0.114}
+# The deconvolved synthetic luminance and the one it was made from, returned
+# side by side. compose() lights the picture by their RATIO, not by the
+# deconvolved one alone as it does a real L: the stretch clips every plane at
+# its own black before the RGB luminance is taken, so where one plane is above
+# black and the others below, the RGB keeps the positive part and a summed L
+# carries the deficit -- measured on trunk SHO as the faintest levels coming
+# out 27 % darker with no deconvolution involved. The ratio of two frames
+# built, subtracted and stretched the same way is 1 wherever the network did
+# nothing, by construction.
+SYNTHETIC_LUM = "LSYN"
+SYNTHETIC_LUM_REF = "LSYN_REF"
+# What the learned method does with a set that has no luminance (HOO/SHO).
+# "starless": stacking/starless on every plane, the product written as
+# "deblurred" (the rule since the nebula sweep of 2026-10-21). "synthetic":
+# make a luminance and sharpen that (above). Tried 2026-10-22 on trunk,
+# ic1396, ngc7380 and squid: no mesh, no specks, the rims sharpen, the colour
+# is the planes' own, the picture is not relit -- but the network collects
+# the SKY along with the halo of every bright star over a ~110 px square
+# (its receptive field) and leaves the halo outside it, so each bright star
+# sits in a dark square inside its own halo, and the saturated ones keep a
+# mottled halo. The same over-collection is there on broadband (ngc1961's
+# halos go to the sky out to ~80 px) where the faint halos hide it;
+# narrowband halos are large and bright. A model problem, for the next
+# training round; until then starless stays the rule.
+NO_L_RULE = "starless"
+
+
+def plateau_union(channels: dict) -> np.ndarray:
+    """The planes' clipped cores and flat tops, united: what a sum of the
+    planes must keep as given, since the sum's own detector cannot see them
+    (nn/deblur_model.deblur_frame). Each plane is measured as the sidecar
+    measures it, NaN filled with its median first."""
+    seen: set = set()
+    union = None
+    for a in channels.values():
+        if id(a) in seen:
+            continue
+        seen.add(id(a))
+        work = np.asarray(a, dtype=np.float32)
+        nan = ~np.isfinite(work)
+        if nan.any():
+            work = np.where(nan, float(np.nanmedian(work)), work)
+        sig = sky_sigma(work)
+        level = saturation_level(work)
+        m = saturated_mask(work, level, sig) if level else flat_tops(work, sig)
+        union = m if union is None else (union | m)
+    return union
+
+
+def synthetic_luminance(channels: dict) -> tuple:
+    """(L, weights used) from the R/G/B planes of *channels* (sky in), by
+    LUM_WEIGHTS; (None, {}) when none of them is there. NaN borders propagate,
+    as the planes share one grid."""
+    present = {c: float(LUM_WEIGHTS[c]) for c in ("R", "G", "B") if c in channels}
+    if not present:
+        return None, {}
+    tot = sum(present.values())
+    weights = {c: w / tot for c, w in present.items()}
+    L = np.zeros(np.shape(channels[next(iter(present))]), dtype=np.float32)
+    for c, w in weights.items():
+        L += np.float32(w) * np.asarray(channels[c], dtype=np.float32)
+    return L, weights
+
+
 def deblur_channels(channels: dict, iters: int, clamp_to: str = "input",
                     method: str = "starless", log=None,
-                    stars: str = "imaged", model=None, planes=None) -> tuple[dict, dict]:
+                    stars: str = "imaged", model=None, planes=None,
+                    no_l: Optional[str] = None) -> tuple[dict, dict]:
     """Deblur a channel set. Returns (channels, info per channel touched).
 
     method="learned" (the default since 2026-10-21 afternoon): the luminance
@@ -1020,12 +1095,20 @@ def deblur_channels(channels: dict, iters: int, clamp_to: str = "input",
     planes too was measured on ngc6946 to sharpen each plane's own noise
     into coloured specks and to turn a saturated star's core cyan, so the
     colour stays where the blur put it under a sharpened L. Without an L
-    (HOO/SHO) the set goes to STARLESS instead, info["fallback"] saying so:
-    the nebula sweep of 2026-10-21 (ic1396, squid, ngc7380, trunk) put every
-    narrowband plane through the network and it sharpened the denoiser's
-    faint residual hatch into a visible mesh over the smooth emission, broke
-    bright rims into beads, and gave the saturated stars mottled halos. The
-    network has never seen a narrowband stack. *iters* is starless's RL
+    (HOO/SHO) *no_l* decides (None: NO_L_RULE): "starless" sends the set
+    to STARLESS, info["fallback"] saying so; "synthetic" makes one
+    (synthetic_luminance: the palette's luminance weights on the mapped
+    planes, 2026-10-22), deconvolves it, and
+    returned beside its undeconvolved self as the SYNTHETIC_LUM /
+    SYNTHETIC_LUM_REF planes; compose() scales the picture by the ratio of
+    the two, info[SYNTHETIC_LUM]["synthetic"] saying how it was built and
+    the planes kept as given. Per-plane deconvolution of narrowband sets was
+    tried first (nebula sweep 2026-10-21) and made coloured single-pixel
+    specks and mottled star halos for the same reason it did on broadband
+    colour planes; the mesh it also showed was the old narrowband denoiser's
+    checkerboard (lab manual step 39), not the network. A synthetic L whose
+    field gives no kernel sends the set to STARLESS instead, info["fallback"]
+    saying so. *iters* is starless's RL
     count on that path and only on/off on the learned one. *model* is a
     loaded checkpoint (tests); None loads deblur_model.DEFAULT_MODEL.
     *planes* names planes to sharpen explicitly (the render's
@@ -1071,16 +1154,52 @@ def deblur_channels(channels: dict, iters: int, clamp_to: str = "input",
                 i["fallback"] = f"starless: {e!r}"
             return out, infos
         chosen = None if planes is None else tuple(p for p in planes if p in uniq)
-        if not chosen and "L" not in uniq:
-            why = ("starless: no luminance plane -- the learned deconvolution is luminance-only "
-                   "and on narrowband planes it sharpened the denoiser's texture into a mesh "
-                   "(nebula sweep 2026-10-21)")
+        rule = (no_l or NO_L_RULE).lower()
+        if rule not in ("starless", "synthetic"):
+            raise ValueError(f"no_l must be 'starless' or 'synthetic', not {no_l!r}")
+        if not chosen and "L" not in uniq and rule == "starless":
+            why = ("starless: no luminance plane -- the learned deconvolution is luminance-only; "
+                   "a synthetic luminance (no_l='synthetic') puts every bright star in a dark "
+                   "square inside its own halo (2026-10-22)")
             if log:
                 log(f"learned: {why}; RL{int(iters)} on every distinct plane instead")
             out, infos = deblur_channels(channels, iters, clamp_to=clamp_to, method="starless",
                                          log=log, stars=stars)
             for i in infos.values():
                 i["fallback"] = why
+            return out, infos
+        if not chosen and "L" not in uniq:
+            L, weights = synthetic_luminance(channels)      # the full set: B weighs the shared O-III too
+            recipe = " + ".join(f"{w:.3f} {c}" for c, w in weights.items())
+            why = None
+            if L is None:
+                why = "starless: no luminance plane and no R/G/B plane to make one from"
+            else:
+                keep = plateau_union(uniq)
+                if log:
+                    log(f"learned: no luminance plane -- made one, L = {recipe}; "
+                        f"{int(keep.sum())} plateau px inherited from the planes")
+                done, infos_u = _dm.deblur_channels({"L": L}, model, device=dev, planes=("L",),
+                                                    log=log or (lambda s: None),
+                                                    plateau={"L": keep})
+                if infos_u["L"].get("why"):
+                    why = (f"starless: the synthetic luminance ({recipe}) gave "
+                           f"{infos_u['L']['why']}")
+            if why:
+                if log:
+                    log(f"learned: {why}; RL{int(iters)} on every distinct plane instead")
+                out, infos = deblur_channels(channels, iters, clamp_to=clamp_to, method="starless",
+                                             log=log, stars=stars)
+                for i in infos.values():
+                    i["fallback"] = why
+                return out, infos
+            out = dict(channels)
+            out[SYNTHETIC_LUM] = done["L"]
+            out[SYNTHETIC_LUM_REF] = L
+            infos = {name: {"why": None, "kept": True, "method": "learned", "iters": 0}
+                     for name in channels}
+            infos[SYNTHETIC_LUM] = {**infos_u["L"], "method": "learned", "iters": 0,
+                                    "synthetic": recipe}
             return out, infos
         if not chosen:
             if planes is not None and log:

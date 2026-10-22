@@ -23,7 +23,8 @@ the stack it belongs to: a denoised stack's kernel is not the raw stack's
 (the denoiser erodes faint stars' wings).
 
 `DeblurDataset` draws source-biased 512 px patches. Per patch, with the
-stack's own kernel scaled by a random factor in `kernel_scale`:
+stack's own kernel's CORE (`taper_kernel`: the far wing is scene, not blur
+to remove -- see its docstring) scaled by a random factor in `kernel_scale`:
 
     a      = patch of X, sky-subtracted, linear ADU, read with a margin so the
              two convolutions below see real context, not a padded edge
@@ -60,6 +61,8 @@ PREPARED = Path(_root) / "local" / "deconv" / "prepared"
 PATCH = 512
 SAT_DILATE = 6              # px round a plateau that the loss ignores
 KERNEL_SCALE = (0.8, 1.25)  # the training kernel is the measured one times U(lo, hi)
+KERNEL_TAPER = (1.5, 3.0)   # ...and its CORE: as measured inside 1.5 FWHM, cosine to
+                            # nothing at 3 FWHM (taper_kernel; None = the whole wing)
 MARGIN = 160                # px read round a patch: two kernel radii (72) and change
 BLOCK = 64                  # px: the source-bias map's block
 MIN_STARS = 15              # fewer isolated stars and the stack has no kernel
@@ -163,6 +166,62 @@ def scale_kernel(psf: np.ndarray, factor: float) -> np.ndarray:
     return out / out.sum()
 
 
+def kernel_fwhm(psf: np.ndarray) -> float:
+    """FWHM of a kernel stamp, from its azimuthal profile's half-maximum crossing."""
+    k = np.asarray(psf, dtype=np.float64)
+    n = k.shape[0]; c = n // 2
+    yy, xx = np.ogrid[:n, :n]
+    r = np.hypot(yy - c, xx - c).ravel()
+    v = k.ravel()
+    rb = np.floor(r).astype(int)
+    prof = np.bincount(rb, weights=v, minlength=c + 1)[:c + 1] / np.maximum(np.bincount(rb, minlength=c + 1)[:c + 1], 1)
+    half = prof[0] / 2.0
+    below = np.nonzero(prof < half)[0]
+    if below.size == 0:
+        return float(2 * c)
+    i = int(below[0])
+    if i == 0:
+        return 1.0
+    # linear crossing between bins i-1 (>= half) and i (< half), at bin centres
+    f = (prof[i - 1] - half) / max(prof[i - 1] - prof[i], 1e-12)
+    return float(2.0 * (i - 1 + f))
+
+
+def taper_kernel(psf: np.ndarray, taper: Optional[tuple] = KERNEL_TAPER) -> np.ndarray:
+    """The kernel's core, unit sum: as given inside taper[0] FWHM, a cosine
+    roll-off to nothing at taper[1] FWHM. *taper* None returns the whole
+    kernel, unit sum.
+
+    Why the kernel to remove is the core and not the measured stamp
+    (2026-10-22): measure_psf follows the wing out to 72 px, where the kernel
+    is 1e-5 of its peak, and a network taught to take that kernel off takes
+    the far wing off every bright star -- on the real frame a 5000 ADU star's
+    halo at 30-60 px (10-60 sigma over the sky) came back halved, which the
+    eye reads as a dark square (the stamp) round a tight core inside the
+    halo the kernel does not reach (docs/LEARNED_DEBLUR_PLAN.md). On the
+    training pairs the model was right to a sigma there: it was doing the
+    task as set. 95% of the kernel's flux is inside 20 px, so the core is the
+    deconvolution and the wing is scene, left as imaged like starless leaves
+    it. Inference tapers by the checkpoint's own setting (deblur_model.load),
+    so the two cannot drift apart.
+    """
+    k = np.asarray(psf, dtype=np.float64)
+    if taper is None:
+        return k / k.sum()
+    r1, r2 = (float(taper[0]), float(taper[1]))
+    if not (0 < r1 < r2):
+        raise ValueError(f"kernel taper must be 0 < inner < outer in FWHM units, got {taper}")
+    fwhm = kernel_fwhm(k)
+    n = k.shape[0]; c = n // 2
+    yy, xx = np.ogrid[:n, :n]
+    r = np.hypot(yy - c, xx - c)
+    a, b = r1 * fwhm, r2 * fwhm
+    w = np.clip((b - r) / max(b - a, 1e-6), 0.0, 1.0)
+    w = 0.5 - 0.5 * np.cos(np.pi * w)
+    q = np.clip(k * w, 0, None)
+    return q / q.sum()
+
+
 def conv(x: np.ndarray, k: np.ndarray) -> np.ndarray:
     """'same' convolution, reflect-padded so the edge does not wrap."""
     from scipy.signal import fftconvolve
@@ -262,7 +321,7 @@ class DeblurDataset:
 
     def __init__(self, items: list[Prepared], patch_size: int = PATCH, pairs_per_epoch: int = 2000,
                  kernel_scale: tuple = KERNEL_SCALE, source_bias: float = 0.7,
-                 seed: Optional[int] = None):
+                 seed: Optional[int] = None, kernel_taper: Optional[tuple] = KERNEL_TAPER):
         import torch
         from torch.utils.data import Dataset
         self._Dataset = Dataset
@@ -272,6 +331,7 @@ class DeblurDataset:
         self.patch = int(patch_size)
         self.pairs = int(pairs_per_epoch)
         self.kernel_scale = kernel_scale
+        self.kernel_taper = None if kernel_taper is None else (float(kernel_taper[0]), float(kernel_taper[1]))
         self.source_bias = float(np.clip(source_bias, 0, 1))
         self.seed = seed
         self.rng = np.random.default_rng(seed)
@@ -328,7 +388,7 @@ class DeblurDataset:
         side = it.side
         if factor is None:
             factor = float(self.rng.uniform(*self.kernel_scale))
-        k = scale_kernel(side["psf"], factor)
+        k = scale_kernel(taper_kernel(side["psf"], self.kernel_taper), factor)
         sig = side["sky_sigma"]
         add = sig * np.sqrt(max(1.0 - float((k ** 2).sum()), 0.0))
         Y = conv(a, k) + self.rng.normal(0.0, add, a.shape)

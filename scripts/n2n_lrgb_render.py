@@ -575,12 +575,16 @@ def deblurred_channels(channels: dict, iters: int, log=print, stars: str = "imag
     return out
 
 
-def learned_channels(channels: dict, model_path: str, log=print, planes=("L",), iters=40):
+def learned_channels(channels: dict, model_path: str, log=print, planes=("L",), iters=40,
+                     no_l=None):
     """(channel set, tag): *planes* through nn/deblur_model and the rest as
     given under tag "learned"; (None, "learned") with the reason logged when
-    nothing could be done. A set with no luminance (HOO/SHO) comes back from
-    stacking/deblur's starless fallback under tag "deblurred" (RL *iters*),
-    so the product's name says which deconvolution made it.
+    nothing could be done. A set with no luminance (HOO/SHO) follows
+    *no_l* (None: stacking/deblur.NO_L_RULE, starless): starless comes back
+    under tag "deblurred" (RL *iters*), so the product's name says which
+    deconvolution made it; "synthetic" makes a luminance, sharpens it and
+    returns it beside its unsharpened self as LSYN / LSYN_REF, the
+    composite scaled by their ratio.
 
     Never raises: a field the model cannot handle (no measurable kernel, no
     checkpoint, a failure inside) must not cost the target its raw and
@@ -602,12 +606,13 @@ def learned_channels(channels: dict, model_path: str, log=print, planes=("L",), 
         # The same call `process` makes (stacking/deblur, method="learned"):
         # one rule for which planes are sharpened, one dedupe of shared planes.
         out, infos = _deblur.deblur_channels(channels, int(iters), method="learned", model=model,
-                                             planes=planes, log=lambda m: log(f"  {m}"))
+                                             planes=planes, no_l=no_l, log=lambda m: log(f"  {m}"))
     except Exception as e:  # noqa: BLE001
         log(f"  learned deblur failed — no learned composite: {e!r}")
         return None, "learned"
     tag = "deblurred" if any(i.get("fallback") for i in infos.values()) else "learned"
-    done = [c for c, i in infos.items() if not i.get("why") and not i.get("kept")]
+    done = [c + (f" (synthetic, {i['synthetic']})" if i.get("synthetic") else "")
+            for c, i in infos.items() if not i.get("why") and not i.get("kept")]
     kept = [c for c, i in infos.items() if i.get("kept")]
     why = [f"{c}: {i['why']}" for c, i in infos.items() if i.get("why")]
     if not done:
@@ -753,8 +758,17 @@ def routine(args) -> int:
         # HALRGB: R and L are the blended planes; HA is the raw Ha stack and
         # HA_EXCESS the emission map that was added (black at 0: it is
         # zero-floored, so it has no sky to anchor to).
-        names = {**mapping, "HA_EXCESS": "Ha_excess"}
-        for ch in ("R", "G", "B", "L", "HA", "HA_EXCESS"):
+        names = {**mapping, "HA_EXCESS": "Ha_excess", "LSYN": "Lsyn"}
+        if "LSYN" in subbed and "LSYN" not in blacks:
+            # A synthetic luminance (stacking/deblur.synthetic_luminance, a
+            # set with no L): one black for the pair, the same weighted sum
+            # of the planes' blacks, so it sits on the pinned stretch.
+            from stacking.deblur import LUM_WEIGHTS
+            present = {c: LUM_WEIGHTS[c] for c in ("R", "G", "B") if c in blacks}
+            tot = sum(present.values()) or 1.0
+            blacks["LSYN"] = blacks["LSYN_REF"] = sum(w / tot * blacks[c] for c, w in present.items())
+            log(f"  synthetic L black {blacks['LSYN']:.2f} ADU from the planes' blacks")
+        for ch in ("R", "G", "B", "L", "HA", "HA_EXCESS", "LSYN"):
             if ch not in subbed:
                 continue
             mono = st(subbed[ch], blacks.get(ch, 0.0))
@@ -777,6 +791,9 @@ def routine(args) -> int:
             with np.errstate(divide="ignore", invalid="ignore"):
                 sc = np.where(rl > 1e-4, lum / np.maximum(rl, 1e-4), 0.0)
             rgb = rgb * np.clip(sc, 0.0, color_process.MAX_LUM_BOOST)[:, :, None]
+        elif "LSYN" in subbed and "LSYN_REF" in subbed:
+            rgb = rgb * color_process.synthetic_gain(
+                st(subbed["LSYN"], blacks["LSYN"]), st(subbed["LSYN_REF"], blacks["LSYN_REF"]))[:, :, None]
         if args.saturation != 1.0:
             # Chroma scaled about each pixel's own luminance, so brightness is
             # untouched and only the colour difference from grey grows (or
@@ -812,7 +829,8 @@ def routine(args) -> int:
         planes = tuple(chans) if args.learned_planes.strip().lower() == "all" else \
             tuple(p.strip().upper() for p in args.learned_planes.split(",") if p.strip())
         lea, lea_tag = learned_channels(chans, args.learned_model, log, planes=planes,
-                                        iters=args.deblur or color_process.DEBLUR_ITERS)
+                                        iters=args.deblur or color_process.DEBLUR_ITERS,
+                                        no_l=args.no_l)
         if lea is not None:
             subbed_lea, _ = color_process._prepare(
                 lea, opts["subtract_background"], opts["mesh"],
@@ -921,6 +939,11 @@ def main() -> int:
     ap.add_argument("--learned-model", default=None,
                     help="checkpoint for the learned-deconvolution composite "
                          "(default nn/deblur_model.DEFAULT_MODEL; missing = skipped)")
+    ap.add_argument("--no-l", choices=("starless", "synthetic"), default=None,
+                    help="a set with no luminance (HOO/SHO): starless on every plane "
+                         "(stacking/deblur.NO_L_RULE, the default) or a synthetic "
+                         "luminance through the network (dark squares round bright "
+                         "stars, 2026-10-22)")
     ap.add_argument("--learned-planes", default="L",
                     help="which planes the learned deconvolver sharpens, comma-separated "
                          "(default L: the luminance; the colour planes stay denoised). "

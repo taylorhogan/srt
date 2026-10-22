@@ -189,6 +189,18 @@ HA_NOISE_FLOOR_SIGMA = 2.0
 # its "black point" is 0 by construction. The black-point pickers skip them.
 DERIVED_PLANES = frozenset({"HA_EXCESS"})
 
+
+def synthetic_gain(lum: np.ndarray, ref: np.ndarray) -> np.ndarray:
+    """The brightness factor a deconvolved synthetic luminance applies, from
+    the stretched deconvolved frame and the stretched frame it was made from
+    (stacking/deblur.SYNTHETIC_LUM / _REF, same black, same white, same
+    curve). 1 where the reference is black (no information, nothing moved),
+    capped at MAX_LUM_BOOST like the LRGB substitution. A set whose two
+    frames are identical composes exactly as if neither were there."""
+    with np.errstate(divide="ignore", invalid="ignore"):
+        g = np.where(ref > 1e-4, lum / np.maximum(ref, 1e-4), 1.0)
+    return np.clip(np.nan_to_num(g, nan=1.0), 0.0, MAX_LUM_BOOST)
+
 # Per-channel inspection JPEGs are capped at the preview's size; full resolution
 # is what the per-channel FITS is for.
 CHANNEL_JPG_MAX_PX = 2200
@@ -598,6 +610,15 @@ def _prepare(channels: dict[str, np.ndarray], subtract_background: bool,
         subbed = {k: _remove_gradient(v, mesh) for k, v in channels.items()}
     else:
         subbed = {k: v - float(np.nanmedian(v)) for k, v in channels.items()}
+    if "LSYN" in channels and "LSYN_REF" in channels:
+        # The deconvolved synthetic luminance takes its REFERENCE's background,
+        # not its own: a background model fitted to the sharpened frame differs
+        # from one fitted to the unsharpened frame wherever the network moved
+        # flux, and that difference would ride into the gain as brightness the
+        # network never produced. Same background, same black: the ratio is
+        # the deconvolution and nothing else.
+        bg = channels["LSYN_REF"] - subbed["LSYN_REF"]
+        subbed["LSYN"] = channels["LSYN"] - bg
     # Balance BEFORE the Ha blend: the excess is measured against R and added
     # to R, so scaling R first changes the ratio and the subtraction together
     # and the excess itself is unchanged; balancing afterwards would rescale it.
@@ -1080,6 +1101,10 @@ def _deblurred(channels: dict[str, np.ndarray], iters,
         elif info.get("method") == "learned":
             if info.get("kept"):
                 _logger.info("deblur %s: kept as stacked (learned deconvolution is luminance-only)", c)
+            elif info.get("synthetic"):
+                _logger.info("deblur %s: synthetic luminance (%s), learned deconvolution, "
+                             "kernel %.2f px from %d stars", c, info["synthetic"],
+                             info.get("fwhm_px", 0.0), info.get("stars", 0))
             else:
                 _logger.info("deblur %s: learned deconvolution, kernel %.2f px from %d stars",
                              c, info.get("fwhm_px", 0.0), info.get("stars", 0))
@@ -1144,6 +1169,16 @@ def compose(channels: dict[str, np.ndarray], black_pct: float = BLACK_PCT,
         with np.errstate(divide="ignore", invalid="ignore"):
             scale = np.where(rgb_lum > 1e-4, lum / np.maximum(rgb_lum, 1e-4), 0.0)
         rgb = rgb * np.clip(scale, 0.0, MAX_LUM_BOOST)[:, :, None]
+    elif "LSYN" in subbed and "LSYN_REF" in subbed:
+        # A set with no L whose luminance the deconvolution made (see
+        # stacking/deblur.SYNTHETIC_LUM): one black for the pair, from the
+        # reference, so the ratio carries only what the network moved.
+        black = float(np.nanpercentile(subbed["LSYN_REF"], black_pct))
+        def st(chan):
+            y = np.clip((chan - black) / max(white - black, 1e-6), 0.0, 1.0)
+            return np.arcsinh(y / softening) / np.arcsinh(1.0 / softening)
+        _logger.info("Stretch LSYN: black %.2f ADU (p%.1f, from the reference)", black, black_pct)
+        rgb = rgb * synthetic_gain(st(subbed["LSYN"]), st(subbed["LSYN_REF"]))[:, :, None]
 
     return np.clip(np.nan_to_num(rgb), 0.0, 1.0)
 
@@ -1218,6 +1253,9 @@ def compose_prepared(subbed: dict[str, np.ndarray], blacks: dict[str, float],
         with np.errstate(divide="ignore", invalid="ignore"):
             scale = np.where(rgb_lum > 1e-4, lum / np.maximum(rgb_lum, 1e-4), 0.0)
         rgb = rgb * np.clip(scale, 0.0, MAX_LUM_BOOST)[:, :, None]
+    elif "LSYN" in subbed and "LSYN_REF" in subbed:
+        black = blacks.get("LSYN_REF", blacks.get("LSYN", 0.0))
+        rgb = rgb * synthetic_gain(st(subbed["LSYN"], black), st(subbed["LSYN_REF"], black))[:, :, None]
     return np.clip(np.nan_to_num(rgb), 0.0, 1.0)
 
 
