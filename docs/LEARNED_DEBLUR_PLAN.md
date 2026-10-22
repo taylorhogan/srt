@@ -801,11 +801,10 @@ and reproduces less, though the two halves' learned frames agree by eye
 (`~/Desktop/trunk_syntheticL_two_halves.jpg`; starless rings its bright
 stars there, learned does not).
 
-**State.** `stacking/deblur.NO_L_RULE = "starless"`; `no_l="synthetic"`
-(render `--no-l synthetic`) selects the synthetic path. The next lever is
-the model: bright-star halos in training (a loss term against output below
-the local sky, or halo-bearing stacks in the pool) — the same fix would
-tidy the broadband stars too.
+**State.** `stacking/deblur.NO_L_RULE = "starless"` that morning;
+`no_l="synthetic"` (render `--no-l synthetic`) selected the synthetic path.
+The next lever was the model — the section below — and since the evening
+of 2026-10-22 the rule is `"synthetic"`.
 
 ### The bright-star moat is the kernel's wing — 2026-10-22 morning
 
@@ -881,3 +880,45 @@ softmax has none. On the promoted model mean logit² is 16, so the term is
 `taper_launch_collapsed.log`); validation is scored without the penalty so
 arms stay comparable.
 
+
+**Result (15:28, 60 epochs, 7.4 h).** No collapse; val below the promoted run
+at every epoch (2.80 by epoch 40 where the promoted run never got under 2.94;
+best epoch 57, val 2.51 — a nearer-to-identity task scores lower, so the
+number is not a like-for-like gain). Acceptance (`local/deconv/models/scatter_both_taper_s0.pt`):
+
+| measure | promoted (whole kernel) | taper arm (core) |
+|---|---|---|
+| bright-star wing 32–60 px removed, 12 stars / 4 stacks (`deconv_halo_check.py`) | 62.6 % | 4.9 % |
+| core gain r < 4 px | ×2.32 | ×2.16 |
+| cycle residual K·out − in at 16–24 px (ngc1961, in σ) | +80 | +37 |
+| holdout stars, denoised: FWHM px (30–100 σ bin) ngc5907 / 7320 / 6946 | 3.76 / 3.78 / 3.76 | 3.96 / 3.97 / 3.97 |
+| holdout stars, denoised: flux ratio out:in within 12 px | 1.14–1.16 | 1.05–1.06 |
+| holdout stars, denoised: deepest ring (σ), 30–1000 σ bins | −0.07 … +0.02 | +0.06 … +0.41 |
+| real galaxy band-pass gain 6–12 px, ngc1961 / 6946 / 5907 / 7320 | 1.35 / 1.40 / 1.22 / 1.31 | 1.21 / 1.26 / 1.09 / 1.15 |
+| real galaxy band-pass gain 12–24 px | 1.08 / 1.11 / 1.15 / 1.11 | 1.03 / 1.05 / 1.05 / 1.04 |
+| rho_added (den) ngc5907 / 7320 / 6946 | 0.47 / 0.88 / 0.65 | 0.45 / 0.83 / 0.61 |
+
+The flux ratio is the moat in numbers: the whole-kernel model pulled 14–16 %
+of a star's light from the far wing into r ≤ 12 px; the taper arm pulls 5–6 %,
+which is the 1.5–3 FWHM roll-off region. The "ring" column goes slightly
+positive because the wing the taper leaves alone is now counted as a
+(bright) residual around the sharpened core — it is the star's own halo, as
+imaged. By eye (`~/Desktop/taper_{ngc1961,trunk,ic1396}.jpg`: denoised |
+promoted | taper, three brightest stars and the galaxy/nebula): the dark
+ring between core and halo is gone on every star in all three fields, the
+sky around bright stars is no longer scraped darker than the denoised
+frame, trunk's and ic1396's synthetic-L stars keep their colour instead of
+going blue-white, and the galaxy sharpening on ngc1961 is close to the
+promoted run's. The cost is real: the galaxy band-pass gain at 6–24 px is
+about two thirds of the promoted run's above unity, because the kernel's
+wing blurs the galaxy at those scales too and the core-only task does not
+undo it. The synthetic report's 8–32 px octaves (0.32 / 0.29 vs 0.15 / 0.09)
+say the same thing and are not a fair test for a core-only kernel: the
+synthetic truth is sharper than the task is asked to reach. A wider taper
+(2–4 FWHM) would buy some of that back at the price of more wing removal;
+untested. Promoted by the owner by eye the same evening:
+`learned_default.pt -> scatter_both_taper_s0.pt`, and narrowband sets get
+the synthetic L by default (`NO_L_RULE = "synthetic"`, `--no-l starless`
+for the old rule).
+Scripts: `scratchpad/halo/galaxy_bp.py` (band-pass on the real stacks),
+`scratchpad/halo/taper_panel.py` (the panels), `scratchpad/halo/loss_plot.py`.

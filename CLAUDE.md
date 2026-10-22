@@ -105,16 +105,27 @@ Since 2026-09-25 the conductor decides both invariants (ADR 0014): every roof fi
   stacks of this telescope, by the field's own kernel, and the colour planes
   stay as stacked (per-plane deconvolution made coloured noise specks and a
   cyan star core); measured on the holdouts it gives stars 7.5 -> ~4 px with
-  no rings, 96-98 % of their flux, and the galaxy improved at every scale
+  no rings and the galaxy improved at every scale
   (`docs/LEARNED_DEBLUR_PLAN.md`); chosen by the owner by eye on ngc6946 and
-  ngc1961. A set with no luminance (HOO/SHO) goes to starless instead, and
-  the morning render writes that product as `deblurred`, not `learned`: the
-  nebula sweep of 2026-10-21 (ic1396, squid, ngc7380, trunk) put every
-  narrowband plane through the network and it sharpened the denoiser's faint
-  residual hatch into a mesh over the smooth emission, broke bright rims into
-  beads and gave saturated stars mottled halos; the network has never seen a
-  narrowband stack. Without torch or the checkpoint it also falls back to
-  starless with a warning. `method=starless` (the default 2026-10-19 to 10-21) is
+  ngc1961. Since the evening of 2026-10-22 the checkpoint is the kernel-core
+  model (`scatter_both_taper_s0`): the first model removed the measured
+  kernel's whole far wing from every bright star and left the halo beyond
+  its 145 px stamp, so each bright star sat in a dark ring inside its own
+  halo (worst on narrowband); the model is now trained to remove only the
+  kernel inside 1.5-3 FWHM (`nn/deblur_data.taper_kernel`, stamped on the
+  checkpoint, applied at inference), which took the 32-60 px wing removal
+  from 63 % to 5 % and the moat with it, star flux within 12 px from 1.15x to
+  1.06x, at the price of about a third of the galaxy's 6-24 px sharpening;
+  promoted by the owner by eye on ngc1961, trunk and ic1396. A set with no
+  luminance (HOO/SHO) gets a synthetic one (`stacking/deblur.synthetic_luminance`:
+  the palette's luminance weights on the mapped planes), sharpens that, and
+  the composite is lit by the ratio of the sharpened L to its unsharpened
+  self (`NO_L_RULE="synthetic"`, `--no-l starless` is the old rule, written
+  as `deblurred`); the planes themselves are never put through the network:
+  the nebula sweep of 2026-10-21 (ic1396, squid, ngc7380, trunk) did that and
+  it sharpened each plane's own noise into specks, broke bright rims into
+  beads and gave saturated stars mottled halos. Without torch or the
+  checkpoint it falls back to starless with a warning. `method=starless` (the default 2026-10-19 to 10-21) is
   `stacking/starless.py`: every channel's stars are taken off
   (`deblur.star_layer`), the luminance is Richardson-Lucy'd with the field's
   own kernel on what is left, and the lifted-off star layer is put back as

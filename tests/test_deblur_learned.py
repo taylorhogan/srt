@@ -206,7 +206,7 @@ def test_stacking_deblur_method_learned_without_an_l_makes_one():
     luminance from the planes by the palette's weights, sharpens that, and
     hands back the sharpened and unsharpened pair (LSYN / LSYN_REF) with the
     planes kept as given, so compose() scales the picture by their ratio.
-    The default rule stays starless (dark squares round bright stars).
+    The default rule is synthetic since the kernel-core model of 2026-10-22; starless must be asked for.
     Named explicitly, the planes still go through."""
     torch = pytest.importorskip("torch")
     from nn import deblur_model as dm
@@ -243,11 +243,19 @@ def test_stacking_deblur_method_learned_without_an_l_makes_one():
     assert "LSYN" not in out and out["R"] is flat
     assert all(infos[c]["fallback"].startswith("starless: the synthetic luminance") for c in "RGB")
     assert any("RL8 on every distinct plane" in m for m in lines)
-    # the default rule for a set with no L is still starless (NO_L_RULE), saying why
-    assert sd.NO_L_RULE == "starless"
+    # the default rule for a set with no L is synthetic (NO_L_RULE, since the
+    # taper model of 2026-10-22); this field gives no kernel, so it still lands
+    # on starless, but by the synthetic path's refusal
+    assert sd.NO_L_RULE == "synthetic"
     lines = []
     out, infos = sd.deblur_channels({"R": flat, "G": flat, "B": flat}, 8, method="learned",
                                     model=dm.build(), planes=("L",), log=lines.append)
+    assert "LSYN" not in out and out["R"] is flat
+    assert all(infos[c]["fallback"].startswith("starless: the synthetic luminance") for c in "RGB")
+    # starless on every plane must be asked for, and says so
+    lines = []
+    out, infos = sd.deblur_channels({"R": flat, "G": flat, "B": flat}, 8, method="learned",
+                                    model=dm.build(), planes=("L",), log=lines.append, no_l="starless")
     assert "LSYN" not in out and out["R"] is flat
     assert all(infos[c]["fallback"].startswith("starless: no luminance plane") for c in "RGB")
     with pytest.raises(ValueError):

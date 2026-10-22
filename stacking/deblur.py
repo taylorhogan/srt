@@ -1031,18 +1031,20 @@ SYNTHETIC_LUM = "LSYN"
 SYNTHETIC_LUM_REF = "LSYN_REF"
 # What the learned method does with a set that has no luminance (HOO/SHO).
 # "starless": stacking/starless on every plane, the product written as
-# "deblurred" (the rule since the nebula sweep of 2026-10-21). "synthetic":
-# make a luminance and sharpen that (above). Tried 2026-10-22 on trunk,
-# ic1396, ngc7380 and squid: no mesh, no specks, the rims sharpen, the colour
-# is the planes' own, the picture is not relit -- but the network collects
-# the SKY along with the halo of every bright star over a ~110 px square
-# (its receptive field) and leaves the halo outside it, so each bright star
-# sits in a dark square inside its own halo, and the saturated ones keep a
-# mottled halo. The same over-collection is there on broadband (ngc1961's
-# halos go to the sky out to ~80 px) where the faint halos hide it;
-# narrowband halos are large and bright. A model problem, for the next
-# training round; until then starless stays the rule.
-NO_L_RULE = "starless"
+# "deblurred" (the rule from the nebula sweep of 2026-10-21 to the evening of
+# 2026-10-22). "synthetic": make a luminance and sharpen that (above), the
+# rule since 2026-10-22 evening. Tried that morning on trunk, ic1396, ngc7380
+# and squid: no mesh, no specks, the rims sharpen, the colour is the planes'
+# own, the picture is not relit -- but every bright star sat in a dark
+# square inside its own halo. That was the model removing the measured
+# kernel's far wing (the 145 px stamp's footprint) from the star while the
+# halo beyond the stamp stayed: 63 % of the 32-60 px wing taken, the sky
+# with it. The model is now trained to remove only the kernel's core
+# (nn/deblur_data.taper_kernel, 1.5-3 FWHM, stamped on the checkpoint):
+# 5 % of that wing taken, no moat on ngc1961, trunk or ic1396, stars 4 px,
+# at the price of about a third of the galaxy's 6-24 px sharpening
+# (docs/LEARNED_DEBLUR_PLAN.md, "The bright-star moat is the kernel's wing").
+NO_L_RULE = "synthetic"
 
 
 def plateau_union(channels: dict) -> np.ndarray:
@@ -1158,9 +1160,8 @@ def deblur_channels(channels: dict, iters: int, clamp_to: str = "input",
         if rule not in ("starless", "synthetic"):
             raise ValueError(f"no_l must be 'starless' or 'synthetic', not {no_l!r}")
         if not chosen and "L" not in uniq and rule == "starless":
-            why = ("starless: no luminance plane -- the learned deconvolution is luminance-only; "
-                   "a synthetic luminance (no_l='synthetic') puts every bright star in a dark "
-                   "square inside its own halo (2026-10-22)")
+            why = ("starless: no luminance plane -- the learned deconvolution is luminance-only "
+                   "and no_l='starless' was asked for (a synthetic luminance is the default)")
             if log:
                 log(f"learned: {why}; RL{int(iters)} on every distinct plane instead")
             out, infos = deblur_channels(channels, iters, clamp_to=clamp_to, method="starless",

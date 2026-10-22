@@ -589,11 +589,12 @@ def learned_channels(channels: dict, model_path: str, log=print, planes=("L",), 
     """(channel set, tag): *planes* through nn/deblur_model and the rest as
     given under tag "learned"; (None, "learned") with the reason logged when
     nothing could be done. A set with no luminance (HOO/SHO) follows
-    *no_l* (None: stacking/deblur.NO_L_RULE, starless): starless comes back
+    *no_l* (None: stacking/deblur.NO_L_RULE, synthetic since 2026-10-22
+    evening): "synthetic" makes a luminance, sharpens it and returns it
+    beside its unsharpened self as LSYN / LSYN_REF, the composite scaled by
+    their ratio; "starless" (and a synthetic path that refuses) comes back
     under tag "deblurred" (RL *iters*), so the product's name says which
-    deconvolution made it; "synthetic" makes a luminance, sharpens it and
-    returns it beside its unsharpened self as LSYN / LSYN_REF, the
-    composite scaled by their ratio.
+    deconvolution made it.
 
     Never raises: a field the model cannot handle (no measurable kernel, no
     checkpoint, a failure inside) must not cost the target its raw and
@@ -949,10 +950,10 @@ def main() -> int:
                     help="checkpoint for the learned-deconvolution composite "
                          "(default nn/deblur_model.DEFAULT_MODEL; missing = skipped)")
     ap.add_argument("--no-l", choices=("starless", "synthetic"), default=None,
-                    help="a set with no luminance (HOO/SHO): starless on every plane "
-                         "(stacking/deblur.NO_L_RULE, the default) or a synthetic "
-                         "luminance through the network (dark squares round bright "
-                         "stars, 2026-10-22)")
+                    help="a set with no luminance (HOO/SHO): a synthetic luminance "
+                         "through the network (stacking/deblur.NO_L_RULE, the default "
+                         "since 2026-10-22 evening) or starless on every plane, written "
+                         "as 'deblurred'")
     ap.add_argument("--learned-planes", default="L",
                     help="which planes the learned deconvolver sharpens, comma-separated "
                          "(default L: the luminance; the colour planes stay denoised). "

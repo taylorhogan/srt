@@ -2398,8 +2398,11 @@ gives up against pooledNB is the recipe's and is not visible to the
 objective. What it does *not* unblock: per-plane learned deconvolution on
 narrowband still makes coloured single-pixel specks and a ringed halo on
 saturated stars with either denoiser (the deconvolver's own; the same
-specks made broadband luminance-only), so a set with no luminance still
-goes to starless. `UNet(upsample="bilinear")` is the decoder for every
+specks made broadband luminance-only), so a set with no luminance went to
+starless that morning; since the evening of 2026-10-22 it gets a synthetic
+luminance through the kernel-core deconvolver instead
+(`stacking/deblur.NO_L_RULE = "synthetic"`; docs/LEARNED_DEBLUR_PLAN.md,
+"The bright-star moat is the kernel's wing"). `UNet(upsample="bilinear")` is the decoder for every
 future model; nothing argues for training another transposed one.
 
 ## Choosing training data
