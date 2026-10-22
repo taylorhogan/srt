@@ -75,3 +75,6 @@ openscad/grace_*.scad
 .DS_Store
 docs/M92_HR_Report.pdf
 sentry/roof_frames_kasa/
+
+# Core2 desk display Wi-Fi credentials
+devices/core2_dash/secrets.h

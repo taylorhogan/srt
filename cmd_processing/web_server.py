@@ -579,6 +579,22 @@ async def api_ticker():
     return JSONResponse(content=payload, headers={"Cache-Control": "no-store"})
 
 
+@app.get("/api/dash")
+async def api_dash():
+    """A very short status for the Core2 desk display (cmd_processing/dash.py).
+
+    Read-only: file reads, the conductor's state and plan, PWI4's status.
+    Served like every other route (this PC and the tailnet)."""
+    try:
+        from configs import config
+        from cmd_processing import dash
+        payload = await asyncio.to_thread(dash.build, config.data())
+    except Exception:
+        _logger.exception("api_dash error")
+        payload = {"ok": False}
+    return JSONResponse(content=payload, headers={"Cache-Control": "no-store"})
+
+
 @app.get("/api/imaging_ticker")
 async def api_imaging_ticker():
     """Return live per-frame imaging stats for the second ticker bar."""
