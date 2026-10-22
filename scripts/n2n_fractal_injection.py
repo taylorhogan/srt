@@ -138,9 +138,8 @@ def main() -> int:
             log(f"{name}: missing {path}")
             continue
         ck = torch.load(path, map_location="cpu", weights_only=False)
-        m = UNet(residual="linear",
-                 features=tuple(ck.get("features") or (32, 64, 128, 256)))
-        m.load_state_dict(ck["model_state"])
+        m = UNet.matching(ck["model_state"], residual="linear",
+                          features=tuple(ck.get("features") or (32, 64, 128, 256)))
         m.eval()
         d_base = denoiser.denoise_frame(base, m, device=dev)
         d_inj = denoiser.denoise_frame(injected, m, device=dev)

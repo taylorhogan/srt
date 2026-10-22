@@ -690,3 +690,73 @@ that product as `deblurred` so its name says which deconvolution made it.
 the network for experiments. The narrowband fix, if wanted, is training
 data: the network has never seen a narrowband stack, and the denoiser's
 hatch would have to be out of the training targets too.
+
+### The mesh's source, and M33 — 2026-10-21 evening
+
+**The hatch is the narrowband denoiser's checkerboard.** 2D power spectra
+of a 1024 px smooth region of trunk Hα, large scales removed:
+
+| frame | 4 px line (x radial median) | 2 px line |
+|---|---|---|
+| raw stack | 0.1 | 0.1 |
+| denoised, `n2n_pooledNB_300s.pt` | **410** (x-axis), 39 (y) | 34; 230 in the faintest region |
+| learned output of that | 393 | 33 |
+| raw through the BROADBAND model | 0.2 | 0.1 |
+| ngc1961 L through the NARROWBAND model | 37 | 17 |
+| ngc1961 L through the broadband model | 1.7 | 8 |
+
+Exactly 4 px and 2 px, axis-aligned, absent from the raw, absent when the
+broadband model denoises the same narrowband frame, present when the
+narrowband model denoises a broadband frame: it is the model, not the
+data. The U-Net decoder upsamples with `ConvTranspose2d(k=2, s=2)`
+(nn/noise2noise_model.py:142), the textbook checkerboard source; the
+2026-08-19 narrowband checkpoint never learned to cancel it, the 2026-10-09
+ladder-groups broadband checkpoint did. Amplitude 0.001–0.004 ADU, under
+0.1 % of the emission and far below the raw noise, invisible until the
+denoised sky is smooth enough and the deblurrer sharpens it. The deblurrer
+is innocent: the line power is the same before and after it.
+
+Fix: retrain the narrowband denoiser with the current ladder-groups
+recipe, with "4 px line power under x5" as an acceptance number, and/or
+replace the transposed convolution with upsample+conv in the architecture
+for every future model. Until then narrowband stays on starless.
+
+**M33 (in the training set; shallow, 25 L frames)**: split-half ρ_added on
+three 3000 px crops of the denoised L halves, learned vs starless:
+centre 0.797 vs 0.804, NE arm 0.786 vs 0.803, SW arm 0.783 vs 0.805, with
+added rms 1.03–1.07 σ vs 1.35–1.44 σ. The granular texture the learned
+composite shows across the disc agrees between independent halves as well
+as starless's does, from a smaller edit: resolved star clouds, not
+hallucination. Panel: ~/Desktop/m33_HALRGB_raw_denoised_learned.jpg.
+
+### Narrowband retrain — 2026-10-21 night
+
+The ladder-groups retrain of the narrowband denoiser (twelve groups, trunk
+held out; lab manual step 39) did **not** clear the checkerboard: the worst
+cell fell from x410 to x20 but faint emission still carries x14–24 at 4 px
+and x75–260 at 2 px, and the broadband model shows x85 on the same trunk
+spot. It is the decoder, not the weights; the retrain also kept 0.02–0.06
+less extended flux than pooledNB in every bin. Not promoted. Second arm
+running: the same recipe with `UNet(upsample="bilinear")` (Upsample +
+3×3 conv, cannot make the checkerboard; old checkpoints load unchanged via
+`UNet.matching`). Narrowband stays on starless until a denoiser passes the
+line test, and only then is per-plane learned on narrowband worth re-checking.
+
+**Arm 2 passed the line test** (23:20): every cell under ×5, at the raw
+stack's level (trunk Hα panel ×410 → ×3.1). Rendered with it and
+`--learned-planes all`, the learned trunk and IC 1396 have no mesh and the
+rim is clean. What remains in the learned narrowband product is the
+deconvolver's own: coloured single-pixel specks from per-plane
+deconvolution (the same thing that made broadband luminance-only) and a
+ringed halo on the saturated star. The bilinear denoiser keeps 0.03–0.05
+less extended flux than pooledNB in every bin above 2σ; two bubble-only
+arms (both decoders) showed it is the ladder recipe, not the pool and not
+the decoder, and on the held-out trunk N2N objective the bilinear
+twelve-group model is the best of the four arms (lab manual step 39).
+**Promoted 2026-10-22** as the narrowband default in the render and the
+deblur harness. Once a narrowband denoiser is
+promoted the open question for *this* plan is the specks: per-plane
+deconvolution on narrowband has no luminance to hide behind, so the next
+lever is either a synthetic luminance (deconvolve the plane sum, carry
+colour from the denoised planes) or training the scatter head on
+narrowband stacks.

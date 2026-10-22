@@ -89,10 +89,27 @@ class UNet(nn.Module):
     photometry is preserved by construction.
     """
 
+    UPSAMPLES = ("transpose", "bilinear")
+
     def __init__(self, features: tuple[int, ...] = (32, 64, 128, 256),
                  norm: str = "none", residual: str = "linear",
-                 in_ch: int = 1, out_ch: Optional[int] = None):
+                 in_ch: int = 1, out_ch: Optional[int] = None,
+                 upsample: str = "transpose"):
         """`in_ch` > 1 denoises several filters jointly.
+
+        `upsample` is how the decoder doubles resolution. "transpose" is the
+        historical ConvTranspose2d(k=2, s=2): every checkpoint before
+        2026-10-21 has it. Its four output phases are four independent
+        weight sets, so nothing ties neighbouring pixels together and the
+        decoder leaves an axis-aligned 4 px / 2 px checkerboard. On broadband
+        scenes it is below the noise; on smooth narrowband emission the
+        pooledNB model showed it at x410 the radial power, the retrained
+        narrowband model at x20-260 and even the broadband model at x30-130
+        on the same trunk planes (lab manual step 39), so it is the
+        architecture, not the weights. "bilinear" is Upsample(x2, bilinear)
+        followed by a 3x3 convolution: one weight set for every phase, so the
+        checkerboard cannot be produced. `UNet.matching` reads which one a
+        state dict has, so old checkpoints keep loading unchanged.
 
         The default of 1 is the historical single-filter model and every
         checkpoint written before 2026-08-22 assumes it; `load_state_dict` is
@@ -114,7 +131,10 @@ class UNet(nn.Module):
             raise ValueError(f"residual must be none/asinh/linear, got {residual!r}")
         if in_ch < 1:
             raise ValueError(f"in_ch must be >= 1, got {in_ch}")
+        if upsample not in self.UPSAMPLES:
+            raise ValueError(f"upsample must be one of {self.UPSAMPLES}, got {upsample!r}")
         self.norm = norm
+        self.upsample = upsample
         self.residual = residual
         self.in_ch = in_ch
         self.out_ch = in_ch if out_ch is None else out_ch
@@ -139,7 +159,12 @@ class UNet(nn.Module):
         rev = list(reversed(features))
         in_ch = features[-1] * 2
         for f in rev:
-            self.upconvs.append(nn.ConvTranspose2d(in_ch, f, 2, stride=2))
+            if upsample == "transpose":
+                self.upconvs.append(nn.ConvTranspose2d(in_ch, f, 2, stride=2))
+            else:
+                self.upconvs.append(nn.Sequential(
+                    nn.Upsample(scale_factor=2, mode="bilinear", align_corners=False),
+                    nn.Conv2d(in_ch, f, 3, padding=1)))
             self.decoders.append(_ConvBlock(f * 2, f, norm))
             in_ch = f
 
@@ -147,6 +172,31 @@ class UNet(nn.Module):
         if residual != "none":
             nn.init.zeros_(self.head.weight)
             nn.init.zeros_(self.head.bias)
+
+    @staticmethod
+    def upsample_of(state_dict) -> str:
+        """Which decoder a saved state dict was trained with.
+
+        A ConvTranspose2d upconv stores its weight at `upconvs.N.weight`; the
+        bilinear path is a Sequential whose convolution sits at
+        `upconvs.N.1.weight`. Read from the weights rather than a stamp so a
+        checkpoint saved by a script that never heard of the flag still
+        loads into the right shape.
+        """
+        keys = set(state_dict)
+        if "upconvs.0.1.weight" in keys:
+            return "bilinear"
+        if "upconvs.0.weight" in keys:
+            return "transpose"
+        raise KeyError("state dict has no decoder upconv weights")
+
+    @classmethod
+    def matching(cls, state_dict, **kwargs) -> "UNet":
+        """A UNet built to the decoder the state dict has, with its weights loaded."""
+        kwargs.setdefault("upsample", cls.upsample_of(state_dict))
+        model = cls(**kwargs)
+        model.load_state_dict(state_dict)
+        return model
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         identity = x

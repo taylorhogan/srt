@@ -75,8 +75,7 @@ def load_model(path):
     import torch
     from nn.noise2noise_model import UNet
     ck = torch.load(path, map_location="cpu", weights_only=False)
-    m = UNet(residual="linear")
-    m.load_state_dict(ck["model_state"])
+    m = UNet.matching(ck["model_state"], residual="linear")
     m.eval()
     return m
 

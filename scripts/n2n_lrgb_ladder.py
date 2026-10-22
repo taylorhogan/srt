@@ -337,7 +337,7 @@ def fit(train_frames, train_gids, val_frames, val_gids, args, tag: str):
         f"{len(set(train_gids))} groups; {pairs} patch draws/epoch")
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    model = UNet(residual="linear").to(device)
+    model = UNet(residual="linear", upsample=args.upsample).to(device)
     opt = torch.optim.Adam(model.parameters(), lr=3e-4)
     sch = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=args.epochs)
     crit = nn.MSELoss() if args.loss == "l2" else nn.L1Loss()
@@ -480,6 +480,7 @@ def train_arm(args) -> int:
                     "epoch": best_ep, "asinh_sigma_mult": denoiser.ASINH_SIGMA_MULT,
                     "arm": args.arm, "groups": keys, "test_dso": args.test,
                     "seed": args.seed, "loss": args.loss,
+                    "upsample": args.upsample,
                     # The effective value, not args.pairs — that is 0 when the
                     # config supplies it, and a checkpoint recording "0 pairs
                     # per epoch" is worse than recording nothing.
@@ -556,6 +557,10 @@ def main() -> int:
     ap.add_argument("--epochs", type=int, default=60)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--loss", choices=("l1", "l2"), default="l2")
+    ap.add_argument("--upsample", choices=("transpose", "bilinear"), default="transpose",
+                    help="decoder: transpose (ConvTranspose2d, every checkpoint "
+                         "before 2026-10-21) or bilinear (Upsample + 3x3 conv, "
+                         "cannot make the 4 px checkerboard; lab manual step 39)")
     ap.add_argument("--pairs", type=int, default=0,
                     help="patch pairs per epoch; 0 uses cfg['nn'] (2000)")
     ap.add_argument("--min-depth", type=int, default=6,

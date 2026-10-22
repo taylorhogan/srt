@@ -183,8 +183,7 @@ def main() -> int:
     for spec_s in args.models:
         name, _, path = spec_s.partition("=")
         ck = torch.load(path, map_location="cpu", weights_only=False)
-        m = UNet(residual="linear")
-        m.load_state_dict(ck["model_state"])
+        m = UNet.matching(ck["model_state"], residual="linear")
         m.eval()
         d_base = denoiser.denoise_frame(A, m, device=dev)
         d_inj = denoiser.denoise_frame(injected, m, device=dev)

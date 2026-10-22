@@ -116,7 +116,7 @@ def curve(resp, tag):
 
 # ---- ARM 1: the network ---------------------------------------------------
 ck = torch.load(MODEL, map_location="cpu", weights_only=True)
-model = UNet(); model.load_state_dict(ck["model_state"]); model.eval()
+model = UNet.matching(ck["model_state"]); model.eval()
 print(f"\nmodel epoch {ck['epoch']} residual={model.residual}", flush=True)
 d0 = denoiser.denoise_frame(S.astype(np.float32), model).astype(np.float64)
 d1 = denoiser.denoise_frame((S + inj).astype(np.float32), model).astype(np.float64)

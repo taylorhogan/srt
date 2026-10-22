@@ -45,7 +45,7 @@ isnr=f_true/(rms*np.sqrt(np.pi*8.0**2))
 
 def evaluate(tag, path):
     ck=torch.load(path,map_location="cpu",weights_only=True)
-    m=UNet(); m.load_state_dict(ck["model_state"]); m.eval()
+    m = UNet.matching(ck["model_state"]); m.eval()
     d0=denoiser.denoise_frame(S.astype(np.float32),m).astype(np.float64)
     d1=denoiser.denoise_frame((S+inj).astype(np.float32),m).astype(np.float64)
     ds=d0-np.array(sep.Background(d0))

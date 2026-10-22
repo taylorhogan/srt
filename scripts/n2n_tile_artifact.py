@@ -61,8 +61,7 @@ def main() -> int:
     frame = np.load(args.raw).astype(np.float32)
     h, w = frame.shape
     ck = torch.load(args.model, map_location="cpu", weights_only=False)
-    m = UNet(residual="linear")
-    m.load_state_dict(ck["model_state"])
+    m = UNet.matching(ck["model_state"], residual="linear")
     m.eval()
     dev = "cuda" if torch.cuda.is_available() else "cpu"
 

@@ -340,8 +340,7 @@ def compose(args) -> int:
            - denoiser.ASINH_SIGMA_MULT) > 1e-9:
         log("checkpoint asinh_sigma_mult disagrees with the denoiser — refusing")
         return 1
-    model = UNet(residual="linear")
-    model.load_state_dict(ck["model_state"])
+    model = UNet.matching(ck["model_state"], residual="linear")
     model.eval()
     log(f"model {Path(args.model).name}: arm={ck.get('arm')} "
         f"epoch={ck.get('epoch')} groups={len(ck.get('groups', []) or [])}")
@@ -449,7 +448,15 @@ DOMAIN_MODELS = {
     # Domain-matched by default. The narrowband-trained model beat the
     # broadband one in every bin on both filters when applied to narrowband
     # (lab manual step 23), so picking by domain is not a convenience.
-    "narrowband": "local/models/n2n_pooledNB_300s.pt",
+    # 2026-10-22: the bilinear-decoder `groups` retrain on twelve narrowband
+    # groups (lab manual step 39). pooledNB's ConvTranspose2d decoder left a
+    # 4 px / 2 px checkerboard at x410 the radial power on smooth emission;
+    # this one is at the raw stack's level in every cell, and on the held-out
+    # trunk pairs its N2N loss is the best of the four arms. It keeps
+    # 0.03-0.06 less extended flux than pooledNB, which the transposed twin
+    # (same data, same recipe) also does, so that is the recipe, not the
+    # decoder, and the objective does not see it.
+    "narrowband": "local/models/n2n_ladder_groups_narrowband_up_300s.pt",
     # 2026-10-09: the `groups` retrain on Abell 2151 LRGB + M33 L + NGC 7320
     # LRGB + NGC 2146 LRGB (lab manual step 38). The pooled-filters model it
     # replaces trained on Abell 2151 alone and smoothed resolved galaxies as
@@ -697,8 +704,7 @@ def routine(args) -> int:
                 continue
             if mp_ not in loaded:
                 ck = torch.load(mp_, map_location="cpu", weights_only=False)
-                m = UNet(residual="linear")
-                m.load_state_dict(ck["model_state"])
+                m = UNet.matching(ck["model_state"], residual="linear")
                 m.eval()
                 loaded[mp_] = m
             t0 = time.time()

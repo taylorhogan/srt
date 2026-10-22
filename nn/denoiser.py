@@ -65,8 +65,7 @@ def load_model(model_path: Path) -> nn.Module:
             f"{ASINH_SIGMA_MULT}. Inference would rescale the photometry "
             "silently. Check out the matching revision or retrain."
         )
-    model = UNet()
-    model.load_state_dict(checkpoint["model_state"])
+    model = UNet.matching(checkpoint["model_state"])
     model.eval()
     return model
 

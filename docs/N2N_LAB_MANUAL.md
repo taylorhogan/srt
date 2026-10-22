@@ -2253,6 +2253,155 @@ M33 so a face-on spiral is in the colour pool; and the pool now spans
 depths of 2x9 to 2x37, past the ~2x rule from step 29, with no photometric
 excess seen in the flux ratios above (>32 bin 0.98-0.99) but not swept.
 
+### 39. The narrowband model's checkerboard: retrained, still there; it is the decoder
+
+2026-10-21. The learned deconvolution (docs/LEARNED_DEBLUR_PLAN.md) run
+over narrowband planes sharpened a mesh into the smooth emission of every
+nebula in the sweep. Traced with 2D power spectra: the narrowband
+denoiser `n2n_pooledNB_300s.pt` (2026-08-19) leaves an axis-aligned
+checkerboard at exactly 4 px and 2 px, 0.001-0.004 ADU, x410 the radial
+median power on trunk Ha; the raw stack has none (x0.1-4); the deblurrer
+passes it through unchanged. `ConvTranspose2d(k=2, s=2)` in the decoder is
+the textbook source.
+
+**Arm 1 — retrain with the step-38 recipe, same architecture.** Twelve
+groups, trunk held out in all three filters, `--test ngc5907` only to
+satisfy the manifest:
+
+```
+scripts/n2n_lrgb_ladder.py stacks --test ngc5907 --filters Ha,O-III,S-II --dsos ngc7380,sh2-92,squid,trunk,bubble,ic1396,m33,ngc6946
+scripts/n2n_lrgb_ladder.py train --arm groups --suffix _narrowband --test ngc5907 --filters Ha,O-III,S-II --seed 0 \
+  --groups "bubble|Ha,bubble|O-III,ic1396|Ha,ic1396|O-III,m33|Ha,ngc6946|Ha,ngc7380|Ha,ngc7380|O-III,ngc7380|S-II,sh2-92|Ha,sh2-92|O-III,squid|O-III"
+```
+
+Seven new groups stacked at 33-42 min each (single core; the 7 min of
+step 38 was wrong for narrowband frame counts), squid Ha skipped at 15
+frames. Depths 8-59 (median 29). Training 2.1 h, best val 0.61704 at epoch
+15 of 60 and rising after — twelve groups overfit where thirteen broadband
+ones did not. Checkpoint `n2n_ladder_groups_narrowband_300s.pt`.
+
+**Acceptance: 4 px / 2 px line power over the radial median, held-out
+trunk, 1024 px windows** (accept = every cell under x5):
+
+| plane, region | raw 4/2 px | pooledNB 4/2 | retrained 4/2 | broadband model 4/2 |
+| --- | --- | --- | --- | --- |
+| Ha bright | 0.1 / 0.8 | 0.8 / 0.7 | 0.7 / 2.6 | 0.6 / 1.8 |
+| Ha faint | 2.2 / 1.7 | 17 / 230 | 14 / 155 | 14 / 27 |
+| Ha panel | 3.7 / 1.6 | **410** / 34 | 20 / 57 | 85 / 129 |
+| O-III faint | 0.5 / 2.8 | 10 / 143 | 14 / 143 | 10 / 30 |
+| O-III panel | 1.7 / 1.9 | 16 / 350 | 21 / 261 | 24 / 53 |
+| S-II faint | 2.9 / 1.0 | 21 / 104 | 2.7 / 75 | 11 / 11 |
+| S-II panel | 2.5 / 0.3 | 36 / 221 | 24 / 214 | 31 / 37 |
+
+Fails. The worst cell fell x20 but faint emission still carries the line
+at x14-24 (4 px) and x75-260 (2 px), and the broadband model — which on a
+broadband frame shows x0.2 — shows x85 at the same trunk spot. No weight
+set cancels it on smooth emission; it is the architecture. Extended-flux
+retention on trunk (`n2n_extended_check.py`) moved 0.02-0.06 *down* in
+every bin against pooledNB (4-8 sigma: 0.41 -> 0.35), so the retrain is not
+even a flux-neutral replacement. **Not promoted.**
+
+**Arm 2 — bilinear decoder.** `UNet(upsample="bilinear")` replaces each
+transposed convolution with `Upsample(x2, bilinear) + Conv2d(3x3)`: one
+weight set for every output phase, so the checkerboard cannot be produced.
+`UNet.matching(state_dict)` reads the decoder off the state-dict keys
+(`upconvs.0.weight` vs `upconvs.0.1.weight`), so every old checkpoint loads
+unchanged through `nn/denoiser.load_model`, the render and the checks; the
+ladder takes `--upsample bilinear` and stamps it. Same twelve groups,
+`--suffix _narrowband_up`: 2.5 h (the 3x3 convolutions cost ~20 % over the
+transposed ones), best val 0.61627 at epoch 40, still falling where arm 1
+had turned up at 15. Checkpoint `n2n_ladder_groups_narrowband_up_300s.pt`.
+
+| plane, region | raw 4/2 px | pooledNB 4/2 | arm 1 4/2 | **bilinear 4/2** |
+| --- | --- | --- | --- | --- |
+| Ha faint | 2.2 / 1.7 | 17 / 230 | 14 / 155 | **3.9 / 1.3** |
+| Ha panel | 3.7 / 1.6 | 410 / 34 | 20 / 57 | **3.1 / 2.8** |
+| O-III faint | 0.5 / 2.8 | 10 / 143 | 14 / 143 | **1.9 / 0.3** |
+| O-III panel | 1.7 / 1.9 | 16 / 350 | 21 / 261 | **1.9 / 4.3** |
+| S-II faint | 2.9 / 1.0 | 21 / 104 | 2.7 / 75 | **4.4 / 3.6** |
+| S-II panel | 2.5 / 0.3 | 36 / 221 | 24 / 214 | **1.7 / 2.7** |
+
+Every cell under x5, at the raw stack's own level: the line test passes
+outright and the diagnosis is confirmed — the checkerboard was the
+transposed convolution, nothing else. Rendered (trunk SHO, ic1396 HOO,
+`--model` override, `--learned-planes all`) the learned product on the
+bilinear denoiser has no mesh and the bright rim is clean where the old
+denoiser's was hatched; panels
+`~/Desktop/{trunk_SHO,ic1396_HOO}_old_vs_bilinear_denoiser.jpg`. What is
+left in those learned columns — coloured single-pixel specks from per-plane
+deconvolution, a ringed halo on a saturated star — is the deconvolver's,
+present with both denoisers.
+
+**Retention, held-out trunk, pooledNB -> bilinear** (`n2n_extended_check`):
+
+| SB bin | Ha | O-III | S-II |
+| --- | --- | --- | --- |
+| 2-4 | 0.31 -> 0.28 | 0.34 -> 0.29 | 0.36 -> 0.32 |
+| 4-8 | 0.41 -> 0.36 | 0.41 -> 0.35 | 0.41 -> 0.36 |
+| 8-16 | 0.49 -> 0.45 | 0.43 -> 0.40 | 0.51 -> 0.46 |
+| 16-32 | 0.64 -> 0.61 | 0.76 -> 0.72 | 0.70 -> 0.64 |
+| >32 | 0.85 -> 0.80 | 0.96 -> 0.94 | 0.97 -> 0.92 |
+
+0.03-0.05 down in every bin above 2 sigma, 3-4x the seed floor, and the
+same shortfall arm 1 showed with the old decoder — so it is the pool, not
+the decoder. pooledNB is bubble Ha + O-III alone, 20 epochs, the field this
+manual's "gap" section says teaches better than anything else; the twelve
+groups span depths 8-59, past the ~2x rule, and the manual says a pooled
+set's useful depth is its minimum. **Not promoted yet**: the line test is
+the one that unblocks the learned deconvolution on narrowband, but a
+denoiser that keeps 5 % less of the bright emission than the one it
+replaces is a regression in the denoised product itself.
+
+**Arms 3 and 4 — bubble only, both decoders.** To split the pool from
+the decoder: the ladder recipe on pooledNB's own two groups (bubble Ha +
+O-III, depths 20-28), once bilinear (`--suffix _bubble_up`, best val
+0.61520 at epoch 33) and once transposed (`--suffix _bubble_tr`, best val
+0.61565 at epoch 16, overfitting after). 2.5 h each.
+
+| held-out trunk | pooledNB | bubble, transposed | bubble, bilinear | 12 groups, bilinear |
+| --- | --- | --- | --- | --- |
+| line, Ha panel 4 / 2 px | 410 / 34 | 20 / **395** | 0.8 / 5.0 | 3.1 / 2.8 |
+| line, S-II faint 4 / 2 px | 21 / 104 | 11 / 33 | 3.8 / 3.1 | 4.4 / 3.6 |
+| retention 4-8σ, Ha (paired Δ vs pooledNB) | 0.395 | −0.062 | −0.063 | −0.061 |
+| retention 16-32σ, O-III (paired Δ) | 0.781 | −0.091 | −0.067 | −0.038 |
+| N2N loss, trunk pairs (paired Δ vs pooledNB) | 0.61269 | **+0.00066** | +0.00001 (ns) | **−0.00052** |
+
+(Lines: `nb_lines7.py`; retention: `n2n_compare_paired.py`, 5000
+bootstrap replicates, every Δ significant except where marked; loss: MSE
+in asinh space over 3000 fixed 256 px patch pairs from trunk's four
+half-stacks, which no arm trained on, paired per batch.)
+
+Three things fall out, each from one column pair:
+
+1. **The checkerboard is the decoder.** Same data, same recipe, decoder
+   swapped: the transposed twin brings the line back at x395, the
+   bilinear twin is at raw level.
+2. **The retention shortfall is the ladder recipe, not the decoder and not
+   the pool.** Both bubble-only arms keep 0.06 less at 4-8σ than pooledNB,
+   decoder regardless; pooledNB is `n2n_pooled_nb.py` at 20 epochs on the
+   same field, and the ladder's best-val selection at 60 epochs denoises
+   harder. Retention rewards under-denoising and cannot tell the two
+   apart.
+3. **The objective can.** On a field none of them saw, the bilinear
+   decoder beats its transposed twin by 0.00066 (CI [0.00056, 0.00072]),
+   twelve groups beat bubble-only by 0.00053, and the twelve-group
+   bilinear model is the best of the set, 0.0005 under pooledNB. Small
+   numbers — a tenth of a percent — but every one clears its bootstrap
+   interval, and they rank the arms the opposite way from retention.
+
+**Verdict.** Promoted 2026-10-22: the narrowband default in
+`scripts/n2n_lrgb_render.py` (`DOMAIN_MODELS`) and `scripts/deconv_train.py`
+is `n2n_ladder_groups_narrowband_up_300s.pt`. The line test was the
+blocker for the learned deconvolution on narrowband and it passes at raw
+level; the held-out objective prefers it; the extended-flux retention it
+gives up against pooledNB is the recipe's and is not visible to the
+objective. What it does *not* unblock: per-plane learned deconvolution on
+narrowband still makes coloured single-pixel specks and a ringed halo on
+saturated stars with either denoiser (the deconvolver's own; the same
+specks made broadband luminance-only), so a set with no luminance still
+goes to starless. `UNet(upsample="bilinear")` is the decoder for every
+future model; nothing argues for training another transposed one.
+
 ## Choosing training data
 
 Guidance, distilled from steps 18-29. Everything here is measured; the section

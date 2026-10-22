@@ -44,7 +44,7 @@ HOLDOUT = {"ngc5907", "ngc6946", "ngc7320"}        # the plan's test targets
 VAL_DSOS = {"m13", "abell2218"}                    # epoch selection; never scored
 NARROWBAND = {"Ha", "O-III", "S-II"}
 DOMAIN_MODELS = {"broadband": "local/models/n2n_ladder_groups_galaxies_300s.pt",
-                 "narrowband": "local/models/n2n_pooledNB_300s.pt"}
+                 "narrowband": "local/models/n2n_ladder_groups_narrowband_up_300s.pt"}
 
 
 def log(msg: str) -> None:
