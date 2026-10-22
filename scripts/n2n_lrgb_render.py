@@ -230,9 +230,18 @@ def build(args) -> int:
         np.save(out, img.astype(np.float32))
         log(f"[{filt}] {time.time() - t0:.0f}s, kept {m.get('n_frames')} of "
             f"{len(paths)}, shape {img.shape} -> {out.name}")
+        # The frame lists are the stack's own record of what went in, for
+        # anything that reports on the picture later (scripts/astro_output
+        # writes the per-filter counts from them; a replay of the gate from
+        # frame_stats.json differs by a few frames, 2026-10-22, because the
+        # stacker measures the frames itself).
+        rejected = {Path(p) for p in m.get("rejected", [])}
         meta["channels"][filt] = {"frames": len(paths),
                                   "accepted": m.get("n_frames"),
-                                  "file": out.name}
+                                  "file": out.name,
+                                  "built": time.strftime("%Y-%m-%dT%H:%M"),
+                                  "used": [Path(p).name for p in paths if Path(p) not in rejected],
+                                  "rejected": [Path(p).name for p in sorted(rejected)]}
         del img
     meta_path(args).write_text(json.dumps(meta, indent=2))
     log(f"\nwrote {meta_path(args)}")
