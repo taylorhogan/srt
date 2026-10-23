@@ -268,8 +268,50 @@ def _stretch(chan: np.ndarray, black_pct: float, white: float,
     return np.arcsinh(y / softening) / np.arcsinh(1.0 / softening)
 
 
+PLANE_CELLS = 16          # sky-surface fit: cells across the short axis
+
+
+def sky_plane(chan: np.ndarray, cells: int = PLANE_CELLS) -> np.ndarray:
+    """The smooth surface through the sky: a sigma-clipped least-squares
+    quadratic (1, x, y, x^2, xy, y^2) through the medians of *cells* x
+    (cells * aspect) cells. Galaxies, nebulae and bright stars are outliers
+    to the fit and are clipped out of it; a sky slope (moonlight, haze, a
+    light dome towards one horizon) and the residual vignetting dome are
+    what it carries, out to the frame's edges. Returned at full size."""
+    h, w = chan.shape
+    c = max(16, min(h, w) // max(1, cells))
+    ny, nx = max(3, h // c), max(3, w // c)
+    sub = np.asarray(chan[: ny * c, : nx * c], dtype=np.float32).reshape(ny, c, nx, c)
+    med = np.nanmedian(np.nanmedian(sub, axis=3), axis=1)
+    yy, xx = np.mgrid[:ny, :nx]
+    cx, cy = ((xx + 0.5) * c) / w, ((yy + 0.5) * c) / h          # 0..1, keeps the fit conditioned
+    terms = lambda X, Y: np.stack([np.ones_like(X), X, Y, X * X, X * Y, Y * Y], axis=-1)
+    keep = np.isfinite(med)
+    coef = np.zeros(6)
+    for _ in range(6):
+        coef, *_ = np.linalg.lstsq(terms(cx[keep], cy[keep]), med[keep], rcond=None)
+        res = med - terms(cx, cy) @ coef
+        s = 1.4826 * np.nanmedian(np.abs(res[keep] - np.nanmedian(res[keep]))) + 1e-9
+        new = np.isfinite(med) & (np.abs(res) < 2.5 * s)
+        if new.sum() < 12 or np.array_equal(new, keep):
+            break
+        keep = new
+    Y, X = np.mgrid[:h, :w]
+    return (terms(X / w, Y / h) @ coef).astype(np.float32)
+
+
 def _remove_gradient(chan: np.ndarray, mesh: int = BG_MESH_FRACTION) -> np.ndarray:
     """Subtract a coarse 2-D background model — vignetting and sky gradient.
+
+    The sky's smooth surface goes first (sky_plane: a clipped quadratic), the
+    mesh model second, on what it leaves. The mesh alone cannot reach a slope at the frame's edges:
+    its model is interpolated between the box centres and held constant in
+    the outer half-box, so a 30 ADU left-to-right slope (ngc2276, a moonlit
+    night, 2026-10-22) came out flat in the middle and still +/-5 ADU in the
+    outer 800 px -- a sigma on a 16-frame stack, one edge clipped to black and
+    the other a bright blue band under the stretch. The surface carries the
+    slope and the dome to the edges; the mesh then has only the local sky to
+    model, which it does as before.
 
     Falls back to a flat median subtraction if photutils is unavailable, which
     leaves the gradient in but never makes things worse.
@@ -277,12 +319,13 @@ def _remove_gradient(chan: np.ndarray, mesh: int = BG_MESH_FRACTION) -> np.ndarr
     try:
         from astropy.stats import SigmaClip
         from photutils.background import Background2D, SExtractorBackground
+        flat = chan - sky_plane(chan)
         box = max(64, min(chan.shape) // max(1, mesh))
         bkg = Background2D(
-            chan, box_size=box, filter_size=3,
+            flat, box_size=box, filter_size=3,
             sigma_clip=SigmaClip(sigma=3.0), bkg_estimator=SExtractorBackground(),
         )
-        return chan - bkg.background
+        return flat - bkg.background
     except Exception:
         _logger.warning("Background2D unavailable — leaving the gradient in",
                         exc_info=True)

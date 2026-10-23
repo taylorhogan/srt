@@ -281,14 +281,14 @@ def test_compose_synthetic_pair_is_a_no_op_when_nothing_moved_and_a_gain_where_i
     plain = cp.compose({"R": R, "G": G, "B": B}, deblur=0, white_balance="none")
     same = cp.compose({"R": R, "G": G, "B": B, "LSYN": L.copy(), "LSYN_REF": L.copy()},
                       deblur=0, white_balance="none")
-    np.testing.assert_allclose(same, plain, atol=1e-6)
+    np.testing.assert_allclose(same, plain, atol=2e-5)      # float32 rounding through the sky surface
     moved = L.copy(); moved[90:110, 90:110] *= 1.5
     lit = cp.compose({"R": R, "G": G, "B": B, "LSYN": moved, "LSYN_REF": L.copy()},
                      deblur=0, white_balance="none")
     inside = (slice(90, 110), slice(90, 110))
     assert np.all(lit[inside] >= plain[inside]) and lit[inside].mean() > plain[inside].mean() * 1.05
     outside = np.ones((200, 200), bool); outside[inside] = False
-    np.testing.assert_allclose(lit[outside], plain[outside], atol=1e-6)
+    np.testing.assert_allclose(lit[outside], plain[outside], atol=2e-5)   # the spot is clipped out of the sky surface
 
 
 def test_taper_kernel_keeps_the_core_drops_the_wing_and_measures_fwhm():
