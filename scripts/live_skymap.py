@@ -229,6 +229,74 @@ def slot_hours_from_plan(plan_reply, name):
     return None
 
 
+def sequence_targets(seq) -> dict:
+    """{name (lower): (ra_deg, dec_deg)} for every target in a N.I.N.A sequence. Pure.
+
+    Each slot's container carries TargetName beside its InputCoordinates; these
+    are where the mount is actually sent, so the chart marks exactly that (and
+    needs no SIMBAD round every 5 minutes)."""
+    out = {}
+
+    def walk(obj):
+        if isinstance(obj, dict):
+            name, ic = obj.get("TargetName"), obj.get("InputCoordinates")
+            if name and isinstance(ic, dict) and "RAHours" in ic:
+                ra_h = ic["RAHours"] + ic["RAMinutes"] / 60 + ic["RASeconds"] / 3600
+                dec = ic["DecDegrees"] + ic["DecMinutes"] / 60 + ic["DecSeconds"] / 3600
+                out.setdefault(str(name).lower(), (ra_h * 15.0, -dec if ic.get("NegativeDec") else dec))
+            for v in obj.values():
+                walk(v)
+        elif isinstance(obj, list):
+            for v in obj:
+                walk(v)
+    walk(seq)
+    return out
+
+
+def slot_marks(plan_reply, coords: dict, now) -> list:
+    """[(name, ra_deg, dec_deg, "HH:MM", done)] for tonight's slots, in order. Pure.
+
+    *coords* is sequence_targets(); a slot the sequence does not carry is left
+    out rather than guessed. *done* is True once the slot's end has passed."""
+    from datetime import datetime
+    rec = (plan_reply or {}).get("sunset") or (plan_reply or {}).get("noon")
+    out = []
+    for s in ((rec or {}).get("plan") or {}).get("slots") or []:
+        name = str(s.get("dso", ""))
+        c = coords.get(name.lower())
+        if not c:
+            continue
+        start = datetime.fromisoformat(s["start"])
+        end = datetime.fromisoformat(s["end"]) if s.get("end") else None
+        done = end is not None and end.replace(tzinfo=None) <= now.replace(tzinfo=None)
+        out.append((name, c[0], c[1], start.strftime("%H:%M"), done))
+    return out
+
+
+def _night_plan():
+    """The conductor's plan for the night under way, or None."""
+    try:
+        from datetime import datetime, timedelta
+        from iris import client
+        now = datetime.now()
+        night = (now - timedelta(days=1)).date() if now.hour < 12 else now.date()
+        return client.get_plan(night.isoformat(), timeout=3.0)
+    except Exception:
+        return None
+
+
+def _tonight_slots():
+    """slot_marks() for tonight, from the plan and the generated sequence."""
+    try:
+        import json as _json
+        from datetime import datetime
+        seq = Path(config.data()["nina"]["sequence_output"])
+        coords = sequence_targets(_json.loads(seq.read_text(encoding="utf-8")))
+        return slot_marks(_night_plan(), coords, datetime.now())
+    except Exception:
+        return []
+
+
 def _slot_hours(name):
     """The running target's own slot hours from the conductor's plan.
 
@@ -237,14 +305,7 @@ def _slot_hours(name):
     the first slot of the 10-20 four-slot night -- showed "0 usable hours".
     The night's date is yesterday before local noon (the plan that started it).
     """
-    try:
-        from datetime import datetime, timedelta
-        from iris import client
-        now = datetime.now()
-        night = (now - timedelta(days=1)).date() if now.hour < 12 else now.date()
-        return slot_hours_from_plan(client.get_plan(night.isoformat(), timeout=3.0), name)
-    except Exception:
-        return None
+    return slot_hours_from_plan(_night_plan(), name)
 
 
 
@@ -493,6 +554,26 @@ def main() -> None:
 
     if bodies:
         status["bodies"] = ", ".join(bodies)
+    # Every target of tonight's plan, so the chart shows the whole night: a
+    # finished slot dim, one still to come in the target color. The running
+    # target gets the big marker below and is skipped here.
+    current = (tgt[0].lower() if tgt else "")
+    for sname, sra, sdec, at, done in _tonight_slots():
+        if sname.lower() == current:
+            continue
+        c = SkyCoord(ra=sra * u.deg, dec=sdec * u.deg).transform_to(frame)
+        if c.alt.deg <= 0:
+            continue
+        col, alpha = (DIM, 0.75) if done else (TARGET, 0.85)
+        sth, sr = np.radians(c.az.deg), 90.0 - c.alt.deg
+        ax.scatter([sth], [sr], s=150, facecolors="none", edgecolors=col,
+                   linewidths=1.4, alpha=alpha, zorder=6,
+                   linestyle="solid" if done else (0, (2, 2)))
+        ax.text(sth, sr + 5.0, sname + ("  done" if done else "  " + at), color=col,
+                fontsize=8.5, ha="center", va="bottom", alpha=alpha, zorder=7,
+                fontweight="bold",
+                bbox=dict(boxstyle="round,pad=0.2", facecolor=BG, edgecolor="none", alpha=0.8))
+
     if tgt:
         name, ra, dec, good_hours, mode = tgt
         tc = SkyCoord(ra=ra * u.deg, dec=dec * u.deg).transform_to(frame)
