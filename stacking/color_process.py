@@ -30,6 +30,7 @@ from datetime import datetime, timezone
 from typing import Callable, Optional
 
 import numpy as np
+from scipy.ndimage import gaussian_filter1d
 
 if __package__ is None or __package__ == "":
     project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -300,11 +301,48 @@ def sky_plane(chan: np.ndarray, cells: int = PLANE_CELLS) -> np.ndarray:
     return (terms(X / w, Y / h) @ coef).astype(np.float32)
 
 
+EDGE_BAND = 0.10          # edge roll-off: the outer tenth of each axis is corrected
+EDGE_SMOOTH = 50          # ...with the column/row medians smoothed to 1/50 of the axis
+
+
+def _edge_rolloff(resid: np.ndarray, band: float = EDGE_BAND, smooth: int = EDGE_SMOOTH) -> np.ndarray:
+    """Take the sky's residual roll-off out of the outer *band* of each axis.
+
+    The master flat falls 1.5-3 % in the outer few hundred pixels of a side,
+    and the sky in a light does not always fall with it (stray light does
+    not pass through the same vignetting), so after the flat division the
+    sky at that edge rises by the difference -- on ngc2276 (2026-10-22) +5 ADU,
+    a sigma on a 16-frame stack, in the last 2 % of the width, a feature too
+    sharp for the sky surface and too close to the edge for the mesh, whose
+    model is held constant in its outer half-box. This takes the clipped
+    median of every column (then every row), smooths it to 1/*smooth* of the
+    axis, and subtracts it under a cosine window that is 1 at the edge and 0
+    one *band* in. The interior is untouched: a nebula spanning the frame
+    loses nothing inside the band, and a galaxy is clipped out of the medians.
+    """
+    out = np.asarray(resid, dtype=np.float32).copy()
+    for axis in (0, 1):
+        n = out.shape[1 - axis]
+        med = np.nanmedian(out, axis=axis)
+        dev = out - (med if axis == 0 else med[:, None])
+        sig = 1.4826 * float(np.nanmedian(np.abs(dev))) + 1e-6
+        med = np.nanmedian(np.where(np.abs(dev) < 3 * sig, out, np.nan), axis=axis)
+        med = np.where(np.isfinite(med), med, 0.0).astype(np.float32)
+        sm = gaussian_filter1d(med, max(2.0, n / smooth), mode="nearest")
+        t = np.arange(n, dtype=np.float32)
+        edge = np.minimum(t, n - 1 - t) / max(1.0, band * n)             # 0 at the edge, 1 one band in
+        win = np.where(edge < 1, 0.5 + 0.5 * np.cos(np.pi * np.clip(edge, 0, 1)), 0.0).astype(np.float32)
+        corr = sm * win
+        out -= corr if axis == 0 else corr[:, None]
+    return out
+
+
 def _remove_gradient(chan: np.ndarray, mesh: int = BG_MESH_FRACTION) -> np.ndarray:
     """Subtract a coarse 2-D background model — vignetting and sky gradient.
 
     The sky's smooth surface goes first (sky_plane: a clipped quadratic), the
-    mesh model second, on what it leaves. The mesh alone cannot reach a slope at the frame's edges:
+    mesh model second, on what it leaves, and the edge roll-off last
+    (_edge_rolloff: the flat's edge, which neither of the first two reach). The mesh alone cannot reach a slope at the frame's edges:
     its model is interpolated between the box centres and held constant in
     the outer half-box, so a 30 ADU left-to-right slope (ngc2276, a moonlit
     night, 2026-10-22) came out flat in the middle and still +/-5 ADU in the
@@ -325,7 +363,7 @@ def _remove_gradient(chan: np.ndarray, mesh: int = BG_MESH_FRACTION) -> np.ndarr
             flat, box_size=box, filter_size=3,
             sigma_clip=SigmaClip(sigma=3.0), bkg_estimator=SExtractorBackground(),
         )
-        return flat - bkg.background
+        return _edge_rolloff(flat - bkg.background)
     except Exception:
         _logger.warning("Background2D unavailable — leaving the gradient in",
                         exc_info=True)

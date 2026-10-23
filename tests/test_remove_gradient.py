@@ -65,3 +65,25 @@ def test_a_flat_sky_is_left_flat():
     sub = cp._remove_gradient(frame, 4)
     left, centre, right = _edge_residual(sub)
     assert max(abs(left), abs(centre), abs(right)) < 0.2 * sigma
+
+
+def test_edge_rolloff_is_taken_out_and_the_interior_is_untouched():
+    pytest.importorskip("photutils")
+    frame, galaxy, sigma, sky = _field()
+    h, w = frame.shape
+    x = np.arange(w, dtype=np.float32)
+    rise = 8.0 * np.clip((x - 0.95 * w) / (0.05 * w), 0, 1) ** 2              # the flat's edge: +8 ADU in the last 5 %
+    frame = (frame + rise[None, :]).astype(np.float32)
+    sub = cp._remove_gradient(frame, 4)
+    mid = sub[h // 4: 3 * h // 4]
+    assert abs(float(np.median(mid[:, 98 * w // 100:]))) < 0.3 * sigma
+    assert sub[120, 900] > 0.9 * galaxy[120, 900]
+    # a nebula band across the whole width keeps its interior: only the outer tenth is touched
+    y, xx = np.mgrid[:h, :w]
+    band = 40 * np.exp(-((y - h / 2) ** 2) / (2 * 130.0 ** 2))
+    rng = np.random.default_rng(9)
+    neb = (sky + band + rng.normal(0, sigma, (h, w))).astype(np.float32)
+    mesh_only = cp._remove_gradient(neb, 4)
+    with_edge = cp._edge_rolloff(mesh_only)
+    inner = (slice(h // 2 - 10, h // 2 + 10), slice(w // 4, 3 * w // 4))
+    assert abs(float(np.median(with_edge[inner]) - np.median(mesh_only[inner]))) < 0.1 * sigma
