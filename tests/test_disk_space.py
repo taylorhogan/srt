@@ -147,3 +147,30 @@ def test_purge_bad_is_a_dry_run_until_go(tmp_path, monkeypatch):
     assert old.exists() and "m31: 1 frame" in posted[-1] and "purge bad go" in posted[-1]
     suc._purge_bad_run(["", "purge", "bad", "go"])
     assert not old.exists() and new.exists() and "Deleted 1/1" in posted[-1]
+
+
+# ------------------------------------------------------------ purge (flats)
+
+def test_flat_purge_keeps_the_newest_n_sets_per_filter(tmp_path):
+    import os
+    from cmd_processing import super_user_commands as suc
+    by_filter: dict = {}
+    for i, date in enumerate(["2026-10-01", "2026-10-05", "2026-10-07", "2026-10-09"]):
+        d = tmp_path / date / "FLAT"
+        d.mkdir(parents=True)
+        for filt in ("L", "R"):
+            if filt == "R" and date == "2026-10-09":
+                continue        # the newest session shot no R flats
+            f = d / f"{filt}.fits"
+            f.write_bytes(b"x")
+            os.utime(f, (1_700_000_000 + i * 86400,) * 2)
+            by_filter.setdefault(filt, []).append(f)
+    desc, doomed = suc.plan_flat_purge(by_filter, 3)
+    assert desc[0].startswith("L: 3 from 2026-10-09, 2026-10-07, 2026-10-05 (4 sets on disk)")
+    assert desc[1].startswith("R: 3 from 2026-10-07, 2026-10-05, 2026-10-01 (3 sets on disk)")
+    # R keeps 10-01's directory alive, so only its L frame goes
+    assert [str(p.relative_to(tmp_path)) for p in doomed] == ["2026-10-01/FLAT/L.fits"]
+    _, doomed1 = suc.plan_flat_purge(by_filter, 1)
+    assert len(doomed1) == 5
+    _, none = suc.plan_flat_purge(by_filter, 10)
+    assert none == []

@@ -6623,11 +6623,13 @@ def publish_cmd(words: list[str], account: str) -> None:
 
 
 def purge_cmd(words: list[str], account: str) -> None:
-    """Delete superseded flat frames, keeping the most recent set per filter.
+    """Delete superseded flat frames, keeping the newest sets per filter.
 
     Usage:
         purge            — dry run: list what would be deleted
         purge go         — actually delete
+        purge keep N [go] — keep the newest N sets per filter instead of
+                           cfg["disk"]["flat_keep_sets"] (3)
         purge bad        — dry run: rejected frames (`bad`) marked > 30 days ago
         purge bad go     — actually delete them
         purge lights [dso] [go] — raw lights idle 90+ days whose SHA-256 matches
@@ -6639,6 +6641,9 @@ def purge_cmd(words: list[str], account: str) -> None:
     They are also highly redundant — masters built from 2026-07-14 and
     2026-07-31 agreed to 0.2-0.3% RMS, so the optical train had not moved and
     every set but the newest was contributing noise reduction at best.
+    The stacker combines every flat on disk per filter with no date matching,
+    so a bad newest session would have nothing to fall back on if only one
+    set were kept: the default keeps the newest three (2026-10-23).
 
     Dry run by default. This is the only command that deletes data outright
     (`bad` renames), so it will not act without `go`.
@@ -6736,6 +6741,35 @@ def _purge_bad_run(words: list[str]) -> None:
     social_server.post_social_message("\n".join(lines))
 
 
+def plan_flat_purge(by_filter: dict[str, list[Path]], keep_sets: int
+                    ) -> tuple[list[str], list[Path]]:
+    """Which flats `purge` would delete, keeping the newest *keep_sets* per filter.
+
+    A session's flats live in one FLAT directory, and one directory holds
+    several filters, so "newest" is decided per filter: the most recent
+    sessions (by frame mtime) that actually contain that filter. A frame is
+    kept if any filter keeps it. Returns (one description line per filter,
+    the frames to delete, sorted).
+    """
+    keep: set[Path] = set()
+    kept_desc: list[str] = []
+    doomed: list[Path] = []
+    for filt, paths in sorted(by_filter.items()):
+        sessions: dict[Path, list[Path]] = {}
+        for p in paths:
+            sessions.setdefault(p.parent, []).append(p)
+        newest = sorted(sessions, key=lambda d: max(f.stat().st_mtime for f in sessions[d]),
+                        reverse=True)[:keep_sets]
+        n_kept = sum(len(sessions[d]) for d in newest)
+        keep.update(f for d in newest for f in sessions[d])
+        names = ", ".join(d.parent.name for d in newest)
+        kept_desc.append(f"{filt}: {n_kept} from {names} ({len(sessions)} sets on disk)")
+        for d, fs in sessions.items():
+            if d not in newest:
+                doomed.extend(fs)
+    return kept_desc, sorted(set(doomed) - keep)
+
+
 def _purge_run(words: list[str]) -> None:
     _job_id = jobs.get_current_job()
 
@@ -6750,40 +6784,33 @@ def _purge_run(words: list[str]) -> None:
         return
     root = Path(root)
 
-    do_delete = any(w.lower() == "go" for w in (words[2:] if len(words) > 2 else []))
+    args = [w.lower() for w in words[2:]]
+    do_delete = "go" in args
+    keep_sets = int(cfg.get("disk", {}).get("flat_keep_sets", 3))
+    if "keep" in args:
+        try:
+            keep_sets = int(args[args.index("keep") + 1])
+        except (IndexError, ValueError):
+            social_server.post_social_message("Usage: purge keep N [go]")
+            return
+    if keep_sets < 1:
+        social_server.post_social_message("purge: keep at least one set per filter.")
+        return
 
     by_filter = stacker.flats_by_filter(root)
     if not by_filter:
         social_server.post_social_message(f"No flats found under {root}")
         return
 
-    # A session's flats live in one FLAT directory, and one directory holds
-    # several filters, so "newest" is decided per filter: the most recent
-    # session that actually contains that filter.
-    keep: set[Path] = set()
-    kept_desc: list[str] = []
-    doomed: list[Path] = []
-    for filt, paths in sorted(by_filter.items()):
-        sessions: dict[Path, list[Path]] = {}
-        for p in paths:
-            sessions.setdefault(p.parent, []).append(p)
-        newest = max(sessions, key=lambda d: max(f.stat().st_mtime for f in sessions[d]))
-        keep.update(sessions[newest])
-        kept_desc.append(f"{filt}: {len(sessions[newest])} from {newest.parent.name}"
-                         f" ({len(sessions)} sets on disk)")
-        for d, fs in sessions.items():
-            if d != newest:
-                doomed.extend(fs)
-
-    doomed = sorted(set(doomed) - keep)
+    kept_desc, doomed = plan_flat_purge(by_filter, keep_sets)
     freed = sum(f.stat().st_size for f in doomed) / 1e9
     total = sum(len(v) for v in by_filter.values())
 
     lines = [f"Flat purge under {root.name} — {total} flats on disk",
-             "Keeping the newest set per filter:"]
+             f"Keeping the newest {keep_sets} set(s) per filter:"]
     lines += [f"  {d}" for d in kept_desc]
     if not doomed:
-        lines.append("Nothing to purge — every filter already has one set.")
+        lines.append(f"Nothing to purge — no filter has more than {keep_sets} set(s).")
         social_server.post_social_message("\n".join(lines))
         return
     lines.append(f"{'Deleting' if do_delete else 'Would delete'} "

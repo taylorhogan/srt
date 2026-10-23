@@ -168,7 +168,10 @@ Since 2026-09-25 the conductor decides both invariants (ADR 0014): every roof fi
   together, so they are grouped by FITS `FILTER` header rather than by directory
   (`flats_by_filter`). They accumulate at ~1.2 GB per filter per night and are
   highly redundant — masters from 2026-07-14 and 2026-07-31 agreed to 0.2–0.3%
-  RMS — so the `purge` command deletes all but the newest set per filter. It is
+  RMS — so the `purge` command deletes all but the newest
+  `cfg["disk"]["flat_keep_sets"]` (3) sets per filter (`purge keep N` overrides;
+  the stacker combines every flat on disk with no date matching, so a single
+  kept set would have no fallback if that night's flats were bad). It is
   dry-run unless given `go`, and is the only command that deletes data outright
   (`bad` renames). Irreversible: older lights lose the option of epoch-matched
   flats, which matters only if the optics were disturbed between runs.

@@ -6,7 +6,7 @@ class PublicConfig():
 
         },
         "version": {
-            "date": "2026.10.23.3"
+            "date": "2026.10.23.4"
         },
 
         "logger": {
@@ -606,6 +606,11 @@ class PublicConfig():
             "refuse_free_gb": 25,
             # `purge bad` deletes rejected frames marked longer ago than this.
             "bad_keep_days": 30,
+            # `purge` keeps this many of the newest flat sessions per filter.
+            # The stacker combines every flat on disk with no date matching,
+            # so one kept set would have no fallback if that night's flats
+            # were bad; three cost ~17 GB each (2026-10-23).
+            "flat_keep_sets": 3,
         },
 
         "transit": {
