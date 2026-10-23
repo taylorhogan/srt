@@ -61,8 +61,11 @@ PREPARED = Path(_root) / "local" / "deconv" / "prepared"
 PATCH = 512
 SAT_DILATE = 6              # px round a plateau that the loss ignores
 KERNEL_SCALE = (0.8, 1.25)  # the training kernel is the measured one times U(lo, hi)
-KERNEL_TAPER = (1.5, 3.0)   # ...and its CORE: as measured inside 1.5 FWHM, cosine to
-                            # nothing at 3 FWHM (taper_kernel; None = the whole wing)
+KERNEL_TAPER = (2.0, 4.0)   # ...and its CORE: as measured inside 2 FWHM, cosine to
+                            # nothing at 4 FWHM (taper_kernel; None = the whole wing).
+                            # 1.5-3 was the first taper (2026-10-22): moat gone but a
+                            # third of the galaxy's 6-24 px sharpening with it; 2-4
+                            # (promoted 2026-10-23) keeps the moat fix and most of that.
 MARGIN = 160                # px read round a patch: two kernel radii (72) and change
 BLOCK = 64                  # px: the source-bias map's block
 MIN_STARS = 15              # fewer isolated stars and the stack has no kernel

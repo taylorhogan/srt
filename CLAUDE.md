@@ -107,16 +107,17 @@ Since 2026-09-25 the conductor decides both invariants (ADR 0014): every roof fi
   cyan star core); measured on the holdouts it gives stars 7.5 -> ~4 px with
   no rings and the galaxy improved at every scale
   (`docs/LEARNED_DEBLUR_PLAN.md`); chosen by the owner by eye on ngc6946 and
-  ngc1961. Since the evening of 2026-10-22 the checkpoint is the kernel-core
-  model (`scatter_both_taper_s0`): the first model removed the measured
-  kernel's whole far wing from every bright star and left the halo beyond
-  its 145 px stamp, so each bright star sat in a dark ring inside its own
-  halo (worst on narrowband); the model is now trained to remove only the
-  kernel inside 1.5-3 FWHM (`nn/deblur_data.taper_kernel`, stamped on the
+  ngc1961. Since 2026-10-23 the checkpoint is the kernel-core model
+  `scatter_both_taper24_s0`: the first model removed the measured kernel's
+  whole far wing from every bright star and left the halo beyond its 145 px
+  stamp, so each bright star sat in a dark ring inside its own halo (worst
+  on narrowband); the model is now trained to remove only the kernel inside
+  2-4 FWHM (`nn/deblur_data.taper_kernel`, `KERNEL_TAPER`, stamped on the
   checkpoint, applied at inference), which took the 32-60 px wing removal
-  from 63 % to 5 % and the moat with it, star flux within 12 px from 1.15x to
-  1.06x, at the price of about a third of the galaxy's 6-24 px sharpening;
-  promoted by the owner by eye on ngc1961, trunk and ic1396. A set with no
+  from 63 % to 7 % and the moat with it, star flux within 12 px from 1.15x to
+  1.09x, and keeps 85 % of the galaxy's 6-12 px sharpening (a 1.5-3 taper,
+  the default for one night, kept 65 %); promoted by the owner by eye on
+  ngc1961, trunk and ic1396. A set with no
   luminance (HOO/SHO) gets a synthetic one (`stacking/deblur.synthetic_luminance`:
   the palette's luminance weights on the mapped planes), sharpens that, and
   the composite is lit by the ratio of the sharpened L to its unsharpened

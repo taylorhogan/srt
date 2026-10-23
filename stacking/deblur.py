@@ -1040,9 +1040,10 @@ SYNTHETIC_LUM_REF = "LSYN_REF"
 # kernel's far wing (the 145 px stamp's footprint) from the star while the
 # halo beyond the stamp stayed: 63 % of the 32-60 px wing taken, the sky
 # with it. The model is now trained to remove only the kernel's core
-# (nn/deblur_data.taper_kernel, 1.5-3 FWHM, stamped on the checkpoint):
-# 5 % of that wing taken, no moat on ngc1961, trunk or ic1396, stars 4 px,
-# at the price of about a third of the galaxy's 6-24 px sharpening
+# (nn/deblur_data.taper_kernel, 2-4 FWHM since 2026-10-23, stamped on the
+# checkpoint): 7 % of that wing taken, no moat on ngc1961, trunk or ic1396,
+# stars 3.85 px, the galaxy's 6-12 px sharpening 85 % of the whole-kernel
+# model's (the 1.5-3 taper of the day before: 5 %, 4 px, 65 %)
 # (docs/LEARNED_DEBLUR_PLAN.md, "The bright-star moat is the kernel's wing").
 NO_L_RULE = "synthetic"
 

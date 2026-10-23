@@ -922,3 +922,30 @@ the synthetic L by default (`NO_L_RULE = "synthetic"`, `--no-l starless`
 for the old rule).
 Scripts: `scratchpad/halo/galaxy_bp.py` (band-pass on the real stacks),
 `scratchpad/halo/taper_panel.py` (the panels), `scratchpad/halo/loss_plot.py`.
+
+**The 2–4 FWHM arm (overnight 2026-10-22/23).** `scatter_both_taper24_s0`:
+same recipe, `--taper 2,4 --logit-pen 1e-6`, launched 22:29, done 05:45, no
+collapse, best epoch 60 val 2.64. The middle ground the section above
+asked for, and it is nearer the whole-kernel model's galaxy than the
+promoted arm's while keeping almost all of the moat fix:
+
+| measure | whole kernel | core 1.5–3 (promoted) | core 2–4 |
+|---|---|---|---|
+| bright-star wing 32–60 px removed (12 stars) | 62.6 % | 4.9 % | 7.0 % |
+| core gain r < 4 px | ×2.32 | ×2.16 | ×2.30 |
+| holdout FWHM, denoised (ngc5907 / 7320 / 6946) | 3.76 / 3.78 / 3.76 | 3.96 / 3.97 / 3.97 | 3.83 / 3.85 / 3.85 |
+| star flux pulled within 12 px | 1.14–1.16 | 1.05–1.06 | 1.09–1.10 |
+| real galaxy band-pass gain 6–12 px (ngc1961 / 6946 / 5907 / 7320) | 1.35 / 1.40 / 1.22 / 1.31 | 1.21 / 1.26 / 1.09 / 1.15 | 1.26 / 1.33 / 1.13 / 1.19 |
+| real galaxy band-pass gain 12–24 px | 1.08 / 1.11 / 1.15 / 1.11 | 1.03 / 1.05 / 1.05 / 1.04 | 1.03 / 1.06 / 1.07 / 1.04 |
+| synthetic galaxy residual, total / 8–16 px / 16–32 px | 2.46 / 0.15 / 0.09 | 2.64 / 0.32 / 0.29 | 2.47 / 0.20 / 0.18 |
+| corr. of its edit with the whole-kernel edit | 1 | 0.81–0.96 | 0.89–0.98 |
+
+By eye (`~/Desktop/taper24_{ngc1961,trunk,ic1396}.jpg`: denoised |
+promoted | 2–4) the two tapered models are hard to tell apart: no moat on
+either, the 2–4 stars a touch tighter, the galaxy a touch crisper. The
+wing it does remove (7 %) is the 2–4 FWHM roll-off region, 15–32 px, where
+the halo is still bright enough that a dark ring would show if it were
+over-collected, and it does not. Promoted by the owner the same morning:
+`learned_default.pt -> scatter_both_taper24_s0.pt`, `KERNEL_TAPER = (2, 4)`
+for every future arm. Outputs: `scratchpad/halo/taper24_*`,
+`scratchpad/nebula_taper24/`.
