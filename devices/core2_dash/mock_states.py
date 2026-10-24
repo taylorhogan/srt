@@ -21,9 +21,12 @@ def col(c):
     return {"g": GREEN, "a": ORANGE, "r": RED}.get((c or "x")[0], DGREY)
 
 
+W, H = 240, 320          # portrait, as the sketch (2026-10-24)
+
+
 class Screen:
     def __init__(self):
-        self.im = Image.new("RGB", (320, 240), BLACK)
+        self.im = Image.new("RGB", (W, H), BLACK)
         self.d = ImageDraw.Draw(self.im)
 
     def text(self, x, y, s, size, color):
@@ -32,9 +35,9 @@ class Screen:
             self.d.text((x + i * 6 * size + size // 2, y - size), ch, font=f, fill=color)
 
     def row(self, y, label, value, color):
-        self.text(8, y + 8, label, 1, LGREY)
-        big = len(value) * 18 <= 320 - 78 - 4
-        self.text(78, y if big else y + 4, value[:20], 3 if big else 2, color)
+        self.text(8, y, label, 1, LGREY)
+        big = len(value) * 18 <= W - 12
+        self.text(8, y + 11 if big else y + 14, value[:20], 3 if big else 2, color)
 
 
 def paint(doc, stale_s=None, err=""):
@@ -42,39 +45,40 @@ def paint(doc, stale_s=None, err=""):
     have = doc is not None
     stale = not have or (stale_s is not None and stale_s > 180)
     band = DGREY if stale else col(doc["level"])
-    s.d.rectangle((0, 0, 319, 29), fill=band)
+    s.d.rectangle((0, 0, W - 1, 29), fill=band)
     s.text(8, 8, "IRIS", 2, BLACK)
     if have:
-        s.text(70, 8, doc["t"], 2, BLACK)
-        night = doc["night"]["v"]
-        s.text(320 - 12 * len(night) - 8, 8, night, 2, BLACK)
+        s.text(W - 12 * 5 - 8, 8, doc["t"], 2, BLACK)
     if not have:
         s.row(60, "STATUS", "NO DATA", DGREY)
-        s.text(8, 120, err, 2, LGREY)
+        s.text(8, 110, err, 2, LGREY)
         return s.im
     g = (lambda c: DGREY) if stale else (lambda c: c)
+    s.text(8, 38, doc["night"]["v"], 2, g(col(doc["night"]["c"])))
     roof = doc["roof"]["v"]
     if doc["roof"]["age"] is not None:
         a = doc["roof"]["age"]
         roof += "  %dm" % a if a < 60 else "  %dh" % (a // 60)
-    s.row(40, "ROOF", roof, g(col(doc["roof"]["c"])))
-    s.row(78, "SCOPE", doc["scope"]["v"], g(col(doc["scope"]["c"])))
+    s.row(64, "ROOF", roof, g(col(doc["roof"]["c"])))
+    s.row(108, "SCOPE", doc["scope"]["v"], g(col(doc["scope"]["c"])))
     if doc["now"]:
         n = doc["now"]
         v = "%s %s %d" % (n["dso"], n["filter"], n["n"]) + ("/%d" % n["of"] if n["of"] is not None else "")
-        s.row(116, "NOW", v, g(CYAN))
+        s.row(152, "NOW", v, g(CYAN))
     elif doc["next"]:
-        s.row(116, "NEXT", "%s %s" % (doc["next"]["dso"], doc["next"]["at"]), g(WHITE))
+        s.row(152, "NEXT", "%s %s" % (doc["next"]["dso"], doc["next"]["at"]), g(WHITE))
     else:
-        s.row(116, "NEXT", "-" if doc["tonight"]["image"] else "no imaging", g(WHITE))
+        s.row(152, "NEXT", "-" if doc["tonight"]["image"] else "no imaging", g(WHITE))
     t = doc["tonight"]
-    s.text(8, 162, "open %s  close %s" % (t["opens"] or "--:--", t["closes"] or "--:--"), 2, g(LGREY))
+    s.text(8, 202, "open  %s" % (t["opens"] or "--:--"), 2, g(LGREY))
+    s.text(8, 224, "close %s" % (t["closes"] or "--:--"), 2, g(LGREY))
     if doc["disk"]:
-        s.text(8, 186, "disk %d GB" % doc["disk"]["gb"], 2, g(col(doc["disk"]["c"])))
+        s.text(8, 246, "disk  %d GB" % doc["disk"]["gb"], 2, g(col(doc["disk"]["c"])))
     if stale:
-        s.text(8, 214, ("NO UPDATE %ds  %s" % (stale_s, err))[:26], 2, ORANGE)
+        s.text(8, 282, "NO UPDATE %ds" % stale_s, 2, ORANGE)
+        s.text(8, 304, err, 1, ORANGE)
     elif doc["alerts"]:
-        s.text(8, 214, doc["alerts"][0][:26], 2, col(doc["level"]))
+        s.text(8, 290, doc["alerts"][0][:19], 2, col(doc["level"]))
     return s.im
 
 
@@ -113,18 +117,18 @@ CASES = [
     ("15 PWI4 down at night", mk("2026-10-22 23:40", "OPEN", "2026-10-22 17:54", "?", "SLOT_IMAGING"), None, ""),
 ]
 
-SCALE, PAD, COLS = 2, 24, 3
-W, H = 320 * SCALE, 240 * SCALE
+SCALE, PAD, COLS = 2, 24, 5
+SW, SH = W * SCALE, H * SCALE
 rows = (len(CASES) + COLS - 1) // COLS
-sheet = Image.new("RGB", (COLS * (W + PAD) + PAD, rows * (H + PAD + 40) + PAD), (32, 32, 36))
+sheet = Image.new("RGB", (COLS * (SW + PAD) + PAD, rows * (SH + PAD + 40) + PAD), (32, 32, 36))
 sd = ImageDraw.Draw(sheet)
-cap = ImageFont.truetype(r"C:\Windows\Fonts\segoeuib.ttf", 26)
+cap = ImageFont.truetype(r"C:\Windows\Fonts\segoeuib.ttf", 24)
 for i, (title, doc, stale, err) in enumerate(CASES):
-    x = PAD + (i % COLS) * (W + PAD)
-    y = PAD + (i // COLS) * (H + PAD + 40)
+    x = PAD + (i % COLS) * (SW + PAD)
+    y = PAD + (i // COLS) * (SH + PAD + 40)
     sd.text((x, y), title, font=cap, fill=(230, 230, 230))
-    im = paint(doc, stale, err).resize((W, H), Image.NEAREST)
-    sd.rectangle((x - 3, y + 37, x + W + 2, y + 40 + H + 2), fill=(70, 70, 75))
+    im = paint(doc, stale, err).resize((SW, SH), Image.NEAREST)
+    sd.rectangle((x - 3, y + 37, x + SW + 2, y + 40 + SH + 2), fill=(70, 70, 75))
     sheet.paste(im, (x, y + 40))
 out = os.path.join(os.path.dirname(os.path.abspath(__file__)), "states.png")
 sheet.save(out)

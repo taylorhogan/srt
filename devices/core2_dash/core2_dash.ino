@@ -20,6 +20,9 @@
 static const uint32_t POLL_MS = 30000;
 static const uint32_t STALE_MS = 180000;
 static const uint8_t BRIGHTNESS = 90;          // 0-255
+// Portrait: 0 or 2. If the picture is upside down for the way the unit
+// stands (USB-C at the bottom), switch to the other one.
+static const uint8_t ROTATION = 0;
 
 static JsonDocument doc;
 static bool haveData = false;
@@ -56,19 +59,23 @@ static void fetch() {
   http.end();
 }
 
-// One labelled row: small grey label, big value in its color. The built-in
-// font is 6 px wide per text size, so a value longer than 13 characters drops
-// to size 2 (20 characters) rather than running off the right edge.
+// Portrait (2026-10-24): the Core2 stands on its side so the USB-C cable
+// leaves from the bottom. 240 x 320, so each row is a small grey label with
+// its value BELOW it, full width. The built-in font is 6 px wide per text
+// size: a value of up to 13 characters is size 3, longer drops to size 2
+// (20 characters) rather than running off the right edge.
+static const int W = 240;
+
 static void row(int y, const char* label, const String& value, uint16_t color) {
   auto& d = M5.Display;
   d.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
   d.setTextSize(1);
-  d.setCursor(8, y + 8);
+  d.setCursor(8, y);
   d.print(label);
   d.setTextColor(color, TFT_BLACK);
-  bool big = value.length() * 18 <= 320 - 78 - 4;
+  bool big = value.length() * 18 <= W - 12;
   d.setTextSize(big ? 3 : 2);
-  d.setCursor(78, big ? y : y + 4);
+  d.setCursor(8, big ? y + 11 : y + 14);
   d.print(value.substring(0, 20));
 }
 
@@ -78,30 +85,32 @@ static void paint() {
   d.fillScreen(TFT_BLACK);
   bool stale = !haveData || millis() - lastOk > STALE_MS;
 
-  // Top band: overall level, clock, night state.
+  // Top band: overall level and the clock; the night state on the line below.
   uint16_t band = stale ? TFT_DARKGREY : colorFor(doc["level"]);
-  d.fillRect(0, 0, 320, 30, band);
+  d.fillRect(0, 0, W, 30, band);
   d.setTextColor(TFT_BLACK, band);
   d.setTextSize(2);
   d.setCursor(8, 8);
   d.print("IRIS");
   if (haveData) {
-    d.setCursor(70, 8);
+    d.setCursor(W - 12 * 5 - 8, 8);
     d.print(doc["t"].as<const char*>());
-    String night = doc["night"]["v"] | "";
-    d.setCursor(320 - 12 * night.length() - 8, 8);
-    d.print(night);
   }
 
   if (!haveData) {
     row(60, "STATUS", "NO DATA", TFT_DARKGREY);
     d.setTextSize(2); d.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
-    d.setCursor(8, 120); d.print(lastErr);
+    d.setCursor(8, 110); d.print(lastErr);
     d.endWrite();
     return;
   }
 
   auto grey = [&](uint16_t c) { return stale ? (uint16_t)TFT_DARKGREY : c; };
+
+  d.setTextSize(2);
+  d.setTextColor(grey(colorFor(doc["night"]["c"])), TFT_BLACK);
+  d.setCursor(8, 38);
+  d.print(doc["night"]["v"] | "");
 
   // Roof (north camera's newest read) with its age.
   String roof = doc["roof"]["v"] | "?";
@@ -109,43 +118,47 @@ static void paint() {
     int age = doc["roof"]["age"];
     roof += age < 60 ? "  " + String(age) + "m" : "  " + String(age / 60) + "h";
   }
-  row(40, "ROOF", roof, grey(colorFor(doc["roof"]["c"])));
-  row(78, "SCOPE", doc["scope"]["v"] | "?", grey(colorFor(doc["scope"]["c"])));
+  row(64, "ROOF", roof, grey(colorFor(doc["roof"]["c"])));
+  row(108, "SCOPE", doc["scope"]["v"] | "?", grey(colorFor(doc["scope"]["c"])));
 
   // Now imaging, or what comes next.
   if (!doc["now"].isNull()) {
     String now = String((const char*)doc["now"]["dso"]) + " " + (const char*)doc["now"]["filter"]
                  + " " + String((int)doc["now"]["n"]);
     if (!doc["now"]["of"].isNull()) now += "/" + String((int)doc["now"]["of"]);
-    row(116, "NOW", now, grey(TFT_CYAN));
+    row(152, "NOW", now, grey(TFT_CYAN));
   } else if (!doc["next"].isNull()) {
-    row(116, "NEXT", String((const char*)doc["next"]["dso"]) + " " + (const char*)doc["next"]["at"],
+    row(152, "NEXT", String((const char*)doc["next"]["dso"]) + " " + (const char*)doc["next"]["at"],
         grey(TFT_WHITE));
   } else {
-    row(116, "NEXT", doc["tonight"]["image"] ? "-" : "no imaging", grey(TFT_WHITE));
+    row(152, "NEXT", doc["tonight"]["image"] ? "-" : "no imaging", grey(TFT_WHITE));
   }
 
-  // Roof window and disk on one small line.
+  // Roof window and disk, one per line.
   d.setTextSize(2);
   d.setTextColor(grey(TFT_LIGHTGREY), TFT_BLACK);
-  d.setCursor(8, 162);
   const char* op = doc["tonight"]["opens"] | "--:--";
   const char* cl = doc["tonight"]["closes"] | "--:--";
-  d.printf("open %s  close %s", op, cl);
+  d.setCursor(8, 202); d.printf("open  %s", op);
+  d.setCursor(8, 224); d.printf("close %s", cl);
   if (!doc["disk"].isNull()) {
     d.setTextColor(grey(colorFor(doc["disk"]["c"])), TFT_BLACK);
-    d.setCursor(8, 186);
-    d.printf("disk %d GB", (int)doc["disk"]["gb"]);
+    d.setCursor(8, 246);
+    d.printf("disk  %d GB", (int)doc["disk"]["gb"]);
   }
 
-  // Bottom line: alerts, or how old the data is when it has gone stale.
-  d.setCursor(8, 214);
+  // Bottom: alerts, or how old the data is when it has gone stale.
   if (stale) {
     d.setTextColor(TFT_ORANGE, TFT_BLACK);
-    d.printf("NO UPDATE %lus  %s", (unsigned long)((millis() - lastOk) / 1000), lastErr.c_str());
+    d.setCursor(8, 282);
+    d.printf("NO UPDATE %lus", (unsigned long)((millis() - lastOk) / 1000));
+    d.setTextSize(1);
+    d.setCursor(8, 304);
+    d.print(lastErr);
   } else if (doc["alerts"].size() > 0) {
     d.setTextColor(colorFor(doc["level"]), TFT_BLACK);
-    d.print(doc["alerts"][0].as<const char*>());
+    d.setCursor(8, 290);
+    d.print(String(doc["alerts"][0].as<const char*>()).substring(0, 19));
   }
   d.endWrite();
 }
@@ -153,7 +166,7 @@ static void paint() {
 void setup() {
   auto cfg = M5.config();
   M5.begin(cfg);
-  M5.Display.setRotation(1);
+  M5.Display.setRotation(ROTATION);
   M5.Display.setBrightness(BRIGHTNESS);
   WiFi.mode(WIFI_STA);
   WiFi.setAutoReconnect(true);

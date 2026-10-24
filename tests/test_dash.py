@@ -57,7 +57,7 @@ def test_open_inside_the_window_is_fine_outside_it_is_flagged():
     d = _sum("2026-10-23 06:20", _roof("OPEN", "2026-10-23 06:15"))
     assert d["roof"]["c"] == "a" and d["level"] == "a" and "roof open off-plan" in d["alerts"]
     d = _sum("2026-10-23 08:00", _roof("OPEN", "2026-10-23 07:55"))     # 2 h past the close
-    assert d["roof"]["c"] == "r" and d["level"] == "r" and "roof open past close" in d["alerts"]
+    assert d["roof"]["c"] == "r" and d["level"] == "r" and "roof open late" in d["alerts"]
     assert _sum("2026-10-22 15:00", _roof("OPEN", "2026-10-22 14:55"))["roof"]["c"] == "r"
     assert _sum("2026-10-22 15:00", _roof("OPEN", "2026-10-22 14:55"), state="MANUAL_OPEN")["roof"]["c"] == "a"
 

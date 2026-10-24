@@ -126,7 +126,7 @@ def summarize(now: datetime, roof: Optional[dict], scope: str, conductor: Option
             manual = str((conductor or {}).get("state") or "").startswith("MANUAL")
             late = closes and not manual and _in_window(now, _plus(closes, 30), opens or "12:00")
             c = "r" if late else "a"
-            alerts.append("roof open past close" if late else "roof open off-plan")
+            alerts.append("roof open late" if late else "roof open off-plan")
         roof_out = {"v": roof["v"], "age": age, "c": c}
 
     # PWI4 is not running by day (the mount is powered off), so no answer is
