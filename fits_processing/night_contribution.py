@@ -166,7 +166,7 @@ def measure_filter(dso_dir, filt, paths, night, arcsec, cancel_cb=None):
         if q and q[0]:
             fwhm.setdefault(n, []).append(q[0] * arcsec)
     frames, accepted, _fw = stacker._prepare_for_convergence(
-        paths, calibration=stacker.calibration_from_config(filt),
+        paths, calibration=stacker.calibration_from_config(filt, like=paths[0]),
         precomputed_fwhm_stars=pre, downscale_to=512, cancel_cb=cancel_cb)
     rows = []
     if frames:

@@ -281,7 +281,7 @@ def make_stacking_movie(
         [ref_pre.get(p, (0.0, 0))[0] for p in ref_paths]) or 0
     ref_path = ref_paths[ref_idx]
     say(f"shared reference: {ref_path.name} ({ref_filter})")
-    ref_cal = stacker.calibration_from_config(ref_filter if use_flats else None)
+    ref_cal = stacker.calibration_from_config(ref_filter if use_flats else None, like=ref_path)
     reference = stacker._load_calibrated(ref_path, ref_cal)
     ref_shape = reference.shape
     det_target = stacker._reference_control_points(stacker._despike(reference))
@@ -316,7 +316,7 @@ def make_stacking_movie(
         ckpt()
         paths = by_filter[filt]
         say(f"{filt}: registering {len(paths)} frames…")
-        cal = stacker.calibration_from_config(filt if use_flats else None)
+        cal = stacker.calibration_from_config(filt if use_flats else None, like=paths[0])
         pre = load_precomputed_fwhm_stars(dso_dir, paths, arcsec)
         frames, accepted, fwhm = stacker._prepare_for_convergence(
             paths, register=True, downscale_to=downscale_to,

@@ -232,7 +232,7 @@ def stack_paths(
 
     if len(paths) < 2:
         return None
-    bias, dark, flat = stacker.calibration_paths_from_config(filter_name)
+    bias, dark, flat = stacker.calibration_paths_from_config(filter_name, like=Path(paths[0]))
     if not bias and not dark:
         progress_cb("    no calibration masters in config — stacking uncalibrated")
     img, _meta = stacker.stack(

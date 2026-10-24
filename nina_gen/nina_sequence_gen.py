@@ -231,6 +231,89 @@ def _wheel() -> dict:
     return wheel or dict(DEFAULT_WHEEL)
 
 
+# --------------------------------------------------------------------------- #
+# Per-filter camera gain
+# --------------------------------------------------------------------------- #
+#
+# N.I.N.A has no gain per filter: gain and offset are fields of each exposure
+# instruction, -1 meaning the camera profile's value. So "narrowband at gain
+# 26" is written into the TakeExposure of every block that shoots Ha or O-III,
+# and -1 into every other block, every time a sequence is generated. It has to
+# be every block, every time: the blocks are renamed per plan, so a 26 that
+# stayed on a block after it was renamed to L would shoot L at the wrong gain.
+# cfg["nina"]["gain"] is {filter: [gain, offset]}; a filter not in it is -1/-1.
+# The flats run from their own sequence (scripts/nina_flats.bat ->
+# flat_sequence.json), where the same two instructions carry the same gain,
+# and the stacker matches calibration to the lights' gain (stacker.select_gain).
+
+
+def _gain_map() -> dict:
+    """{filter: (gain, offset)} from cfg["nina"]["gain"]; empty when unset."""
+    try:
+        from configs import config
+        raw = config.data().get("nina", {}).get("gain", {}) or {}
+    except Exception:
+        raw = {}
+    out = {}
+    for name, val in raw.items():
+        try:
+            gain, offset = (int(val[0]), int(val[1])) if isinstance(val, (list, tuple)) else (int(val), -1)
+        except (TypeError, ValueError, IndexError):
+            logging.getLogger(__name__).warning("nina.gain[%r] = %r is not [gain, offset]; ignored", name, val)
+            continue
+        out[str(name)] = (gain, offset)
+    return out
+
+
+def _block_filter_name(se: dict, ids: Optional[dict] = None) -> Optional[str]:
+    """The filter a block shoots: its inline FilterInfo, or the one its $ref points at."""
+    node = _filter_node(se)
+    if node is not None:
+        return node.get("_name")
+    for item in se.get("Items", {}).get("$values", []):
+        if "SwitchFilter" in str(item.get("$type", "")):
+            f = item.get("Filter")
+            if isinstance(f, dict) and "$ref" in f and ids:
+                target = ids.get(str(f["$ref"]))
+                if isinstance(target, dict):
+                    return target.get("_name")
+    return None
+
+
+def _block_gain(se: dict) -> tuple[int, int]:
+    """(Gain, Offset) as written in the block's TakeExposure; -1 where absent."""
+    for item in se.get("Items", {}).get("$values", []):
+        if "TakeExposure" in str(item.get("$type", "")):
+            return int(item.get("Gain", -1)), int(item.get("Offset", -1))
+    return -1, -1
+
+
+def apply_filter_gain(container: Any, ids: Optional[dict] = None,
+                      gain_map: Optional[dict] = None) -> dict:
+    """Write each block's gain and offset from its filter. Returns {filter: (gain, offset)} written.
+
+    Every block gets written, mapped filters at their gain and the rest at
+    -1/-1 (the profile), so nothing a template or an earlier plan left in a
+    block survives a rename. A block whose filter cannot be resolved is left
+    at -1/-1 and logged.
+    """
+    gmap = _gain_map() if gain_map is None else gain_map
+    written: dict = {}
+    for se in _collect_smart_exposures(container):
+        name = _block_filter_name(se, ids)
+        gain, offset = gmap.get(name, (-1, -1)) if name else (-1, -1)
+        if name is None and gmap:
+            logging.getLogger(__name__).warning(
+                "a SmartExposure block's filter could not be resolved; its gain stays at the profile's")
+        for item in se.get("Items", {}).get("$values", []):
+            if "TakeExposure" in str(item.get("$type", "")):
+                item["Gain"] = int(gain)
+                item["Offset"] = int(offset)
+        if name:
+            written[name] = (int(gain), int(offset))
+    return written
+
+
 DEFAULT_EFFICIENCY = 0.75
 
 
@@ -587,6 +670,7 @@ def _verify_written(container: Any, plan: dict, dso_name: str,
         problems.append("%s: the plan is %s but the exposure blocks are written as %s"
                         % (dso_name, want, got))
     wheel = _wheel()
+    gmap = _gain_map()
     for se in _collect_smart_exposures(container):
         node = _filter_node(se)
         if (_iterations(se) > 0 and node and node["_name"] in wheel
@@ -600,6 +684,11 @@ def _verify_written(container: Any, plan: dict, dso_name: str,
             problems.append("%s: block %s exposes %g s, but the plan says %g s"
                             % (dso_name, node["_name"], _get_exposure_time(se),
                                float(exposures[node["_name"]])))
+        if _iterations(se) > 0 and node:
+            want_gain = gmap.get(node["_name"], (-1, -1))
+            if _block_gain(se) != want_gain:
+                problems.append("%s: block %s is written at gain/offset %s, but nina.gain says %s"
+                                % (dso_name, node["_name"], _block_gain(se), want_gain))
     if problems:
         logging.getLogger(__name__).error("REFUSING the plan for %s:\n  %s",
                                           dso_name, "\n  ".join(problems))
@@ -1323,6 +1412,7 @@ def generate_slots_sequence(template_path: Path, slots: list, output_path: Path,
         _set_hard_end(c, end, next_id)
         plans.append(_plan_for(c, slot["name"], slot.get("seconds")))
         seed_focus(c, focus_model, next_id, ids=_index_ids(sequence))
+        apply_filter_gain(c, ids=_index_ids(sequence))
         if k > 0:
             # No explicit autofocus after the first slot. Focus follows
             # temperature and filter, and both already have triggers inside
@@ -1434,6 +1524,7 @@ def generate_sequence(
 
     filter_plan = _plan_for(sequence, dso_name, above_horizon_seconds)
     seed_focus(sequence, _focus_model(), [_max_id(sequence) + 1])
+    apply_filter_gain(sequence, ids=_index_ids(sequence))
     _refuse_if_broken(sequence, template, output_path, lint_scripts)
     _write_verified(sequence, output_path,
                     [(dso_name, filter_plan, _expected_exposures(dso_name))])

@@ -141,7 +141,7 @@ def compute_dso_convergence(dso_name: str, image_dir: Path) -> dict[str, dict]:
     # Resolved per filter inside the loop so each gets its own flat.
     for fname, paths in by_filter.items():
         try:
-            calibration = stacker.calibration_from_config(fname)
+            calibration = stacker.calibration_from_config(fname, like=paths[0])
             counts, resid, slope_pct, final_rmse_pct = stacker.convergence_curve(
                 paths, filter_name=fname, calibration=calibration)
             fit = decay_fit(counts, resid)

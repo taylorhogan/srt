@@ -426,12 +426,15 @@ def results_dir(dso_name: str) -> Path:
 
 def calibration_paths_from_config(
     filter_name: Optional[str] = None,
+    like: Optional[Path] = None,
 ) -> tuple[list[Path], list[Path], list[Path]]:
     """(bias, dark, flat) frame paths from the ``calibration`` config block.
 
     Flats are only returned when *filter_name* is given, since they are
     per-filter, and they are matched by FITS header rather than by directory
-    layout (see flats_by_filter).
+    layout (see flats_by_filter). *like* is a light frame: with it, only the
+    calibration at that frame's camera gain is returned (match_calibration),
+    since a master at another gain is worse than none.
     """
     from configs import config
     cal = config.data().get("calibration", {}) or {}
@@ -440,17 +443,21 @@ def calibration_paths_from_config(
     flat: list[Path] = []
     if filter_name and cal.get("flat_root"):
         flat = flats_by_filter(Path(cal["flat_root"])).get(filter_name, [])
+    if like is not None:
+        bias, dark, flat, _note = match_calibration(camera_gain(Path(like)), bias, dark, flat)
     return bias, dark, flat
 
 
-def calibration_from_config(filter_name: Optional[str] = None) -> Optional[CalibrationSet]:
+def calibration_from_config(filter_name: Optional[str] = None,
+                            like: Optional[Path] = None) -> Optional[CalibrationSet]:
     """Build the masters named by ``calibration`` config, or None.
 
     Pass *filter_name* to get that filter's flat attached as well; without it
     the set is bias+dark only, because a flat is meaningless across filters.
+    Pass *like*, one of the lights, to get the masters at its camera gain.
     """
     try:
-        bias, dark, flat = calibration_paths_from_config(filter_name)
+        bias, dark, flat = calibration_paths_from_config(filter_name, like=like)
         if not bias and not dark:
             return None
         cal = load_calibration_set(bias, dark)
@@ -1423,6 +1430,20 @@ def stack(
     if not light_paths:
         raise ValueError("No light frames provided")
 
+    # One gain per stack: the lights' majority, with the calibration to match.
+    gain, light_paths, other_gain = select_gain(list(light_paths))
+    if other_gain:
+        _logger.warning("%d light(s) at another gain than the majority's %s rejected: %s",
+                        len(other_gain), gain_label(gain),
+                        ", ".join(sorted({gain_label(camera_gain(Path(p))) for p in other_gain})))
+        if progress_cb:
+            progress_cb(f"{len(other_gain)} frame(s) at another camera gain rejected "
+                        f"(stacking at {gain_label(gain)})")
+    if not light_paths:
+        raise ValueError("No light frames left at one camera gain")
+    bias_paths, dark_paths, flat_paths, gain_note = match_calibration(
+        gain, bias_paths, dark_paths, flat_paths, log=progress_cb)
+
     # Build calibration masters
     # Masters go through the scratch .npy cache keyed on the calibration frames'
     # mtimes. Rebuilding them from the raw frames every run costs ~170 frame
@@ -1490,6 +1511,7 @@ def stack(
         )
     accepted, bg_rejected = _background_gate(accepted, progress_cb)
     rejected = rejected + bg_rejected
+    rejected = rejected + list(other_gain)
 
     if rejected:
         _logger.info(
@@ -1712,8 +1734,110 @@ def stack(
         "rejected": rejected,
         "method": method.name,
         "fwhm_values": {str(p): v for p, v in fwhm_values.items()},
+        "gain": {"gain": gain[0], "offset": gain[1],
+                 "rejected_other_gain": [str(p) for p in other_gain],
+                 "calibration_dropped": gain_note},
     }
     return result.astype(np.float32), info
+
+
+# ---------------------------------------------------------------------------
+# Camera gain: the calibration must match the lights
+# ---------------------------------------------------------------------------
+#
+# The QHY600M writes GAIN and OFFSET into every frame. A master bias or dark
+# taken at another gain sits at another floor and another scale, and until
+# 2026-10-24 nothing compared them: bias and darks came from fixed directories
+# and darks were matched on exposure time alone, so the first night shot at a
+# new gain would have been calibrated with the old gain's masters and nothing
+# would have said so. Narrowband is moving to gain 26 (the sensor's
+# high-conversion-gain mode; read noise 3.7 -> 1.7 e-, each Ha sub worth 2.4
+# gain-0 subs) while broadband may stay at 0, so two gains will live side by
+# side on disk.
+#
+# Rules: the lights' majority (GAIN, OFFSET) is the stack's gain; lights at any
+# other gain are rejected (they sit at another ADU scale, which the sky
+# levelling cannot fix) and listed with the quality-gate rejects; bias, darks
+# and flats at another gain are dropped, loudly, and a category that empties
+# is stacked without. A frame with no GAIN header (the 2024 archive) matches
+# anything: unknown is not a mismatch.
+
+_GAIN_CACHE: dict[tuple[str, int], tuple[Optional[int], Optional[int]]] = {}
+
+
+def camera_gain(path: Path) -> tuple[Optional[int], Optional[int]]:
+    """(GAIN, OFFSET) from the FITS header; None for a header that is silent."""
+    try:
+        key = (str(path), path.stat().st_mtime_ns)
+    except OSError:
+        key = (str(path), 0)
+    if key in _GAIN_CACHE:
+        return _GAIN_CACHE[key]
+    gain = offset = None
+    try:
+        h = fits.getheader(path)
+        if h.get("GAIN") is not None:
+            gain = int(round(float(h["GAIN"])))
+        if h.get("OFFSET") is not None:
+            offset = int(round(float(h["OFFSET"])))
+    except Exception:
+        pass
+    _GAIN_CACHE[key] = (gain, offset)
+    return gain, offset
+
+
+def gain_label(gain: tuple[Optional[int], Optional[int]]) -> str:
+    g, o = gain
+    return "gain ?" if g is None else f"gain {g}" + ("" if o is None else f"/offset {o}")
+
+
+def _gain_compatible(a: tuple, b: tuple) -> bool:
+    """Equal where both sides know; a missing value on either side matches."""
+    return all(x is None or y is None or x == y for x, y in zip(a, b))
+
+
+def select_gain(light_paths: list[Path]) -> tuple[tuple[Optional[int], Optional[int]], list[Path], list[Path]]:
+    """(majority gain, lights at it, lights at any other gain)."""
+    groups: dict[tuple, list[Path]] = {}
+    for p in light_paths:
+        groups.setdefault(camera_gain(Path(p)), []).append(p)
+    if not groups:
+        return (None, None), [], []
+    gain = max(groups.items(), key=lambda kv: (len(kv[1]), kv[0] != (None, None)))[0]
+    kept = [p for p in light_paths if _gain_compatible(camera_gain(Path(p)), gain)]
+    other = [p for p in light_paths if p not in set(kept)]
+    return gain, kept, other
+
+
+def match_gain(paths: Optional[list[Path]], gain: tuple) -> tuple[list[Path], list[Path]]:
+    """(matching, other) calibration frames for *gain*."""
+    paths = list(paths or [])
+    ok = [p for p in paths if _gain_compatible(camera_gain(Path(p)), gain)]
+    return ok, [p for p in paths if p not in set(ok)]
+
+
+def match_calibration(gain: tuple, bias_paths, dark_paths, flat_paths,
+                      log: Optional[Callable[[str], None]] = None) -> tuple[list[Path], list[Path], list[Path], dict]:
+    """Keep only the calibration frames at *gain*. Returns (bias, dark, flat, note).
+
+    *note* records, per category, how many frames were dropped and at what
+    gains; a category that empties is reported so the stack's record says
+    the frames went uncalibrated for that term and why.
+    """
+    note: dict = {}
+    out = []
+    for name, paths in (("bias", bias_paths), ("dark", dark_paths), ("flat", flat_paths)):
+        ok, other = match_gain(paths, gain)
+        if other:
+            gains = sorted({gain_label(camera_gain(Path(p))) for p in other})
+            note[name] = {"kept": len(ok), "dropped": len(other), "dropped_gains": gains}
+            msg = (f"{name}: {len(other)} frame(s) at {', '.join(gains)} dropped, lights are at "
+                   f"{gain_label(gain)}" + ("" if ok else f" -- NO {name} at this gain, stacking without one"))
+            (_logger.warning if not ok else _logger.info)(msg)
+            if log:
+                log(msg)
+        out.append(ok)
+    return out[0], out[1], out[2], note
 
 
 # ---------------------------------------------------------------------------

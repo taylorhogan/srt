@@ -6,7 +6,7 @@ class PublicConfig():
 
         },
         "version": {
-            "date": "2026.10.24.2"
+            "date": "2026.10.24.3"
         },
 
         "logger": {
@@ -322,6 +322,20 @@ class PublicConfig():
             "sequence_input": "C:/Users/iriso/Documents/N.I.N.A/Sequences/cdk_full_sequence_4block.json",
             "sequence_input1": "/home/taylor/Documents/srt/nina_gen/nina_sequence_gen.py",
             "arc_sec_per_pixel": 0.26,
+            # Per-filter camera gain, {filter: [gain, offset]}, written into
+            # the TakeExposure of every exposure block the generator names
+            # for that filter; a filter not listed shoots at the profile's
+            # gain (-1/-1). Planned (2026-10-24): narrowband at the QHY600M's
+            # high-conversion-gain mode, {"Ha": [26, 30], "O-III": [26, 30],
+            # "S-II": [26, 30]} -- the Ha subs are read-noise limited at gain
+            # 0 (sky 6 ADU in 300 s against 3.7 e- of read noise), and gain
+            # 26 makes each one worth 2.4 of them. Left EMPTY until the
+            # N.I.N.A side is ready: the same gain in flat_sequence.json's
+            # Trained Flat Exposure for those filters, the Flat Wizard
+            # re-trained at that gain, and bias + 300 s darks shot at it
+            # (the stacker matches calibration to the lights' gain and
+            # stacks WITHOUT a term it cannot match, loudly).
+            "gain": {},
             # Filter wheel: name -> wheel position. Taken from the flats
             # sequence, which is the one place these are known to be right --
             # it produces correctly labelled flats for every filter.

@@ -164,6 +164,24 @@ Since 2026-09-25 the conductor decides both invariants (ADR 0014): every roof fi
   39 frames, worse than a single frame, and it got worse with more frames — so
   it hides in any small test.
 
+  **Calibration matches the lights' camera gain (since 2026-10-24).** The
+  QHY600M writes GAIN and OFFSET into every frame; the lights' majority
+  (GAIN, OFFSET) is the stack's gain (`stacker.select_gain`), lights at any
+  other gain are rejected with the quality-gate rejects, and bias, darks and
+  flats at another gain are dropped (`stacker.match_calibration`), loudly,
+  with the stack running without a term it cannot match rather than with
+  the wrong one. A frame with no GAIN header (the 2024 archive) matches
+  anything. This exists because narrowband is moving to gain 26 (the
+  sensor's high-conversion-gain mode) while broadband may stay at 0:
+  `cfg["nina"]["gain"]` is `{filter: [gain, offset]}` and the sequence
+  generator writes it into every exposure block it names for that filter
+  (`nina_sequence_gen.apply_filter_gain`, -1/-1 for every other block,
+  verified on write). The flats run from their own sequence on the
+  observatory PC (`scripts/nina_flats.bat` -> `flat_sequence.json`, Trained
+  Flat Exposure per filter, exposure from the profile's trained table keyed
+  by filter and gain), so a gain change there means the same gain in those
+  instructions and the Flat Wizard re-trained at it.
+
   Flats live per session as `<flat_root>/<date>/FLAT` with every filter mixed
   together, so they are grouped by FITS `FILTER` header rather than by directory
   (`flats_by_filter`). They accumulate at ~1.2 GB per filter per night and are
