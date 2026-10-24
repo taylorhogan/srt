@@ -1778,14 +1778,40 @@ def flat_dirs_from_root(root: Optional[Path]) -> tuple[Optional[Path], Optional[
 
 
 _FLATS_BY_FILTER_CACHE: dict[str, dict[str, list[Path]]] = {}
+_FLATS_SIGNATURE: dict[str, tuple] = {}
+
+
+def _flat_dirs_signature(root: Path) -> tuple:
+    """(path, mtime) of every FLAT directory under *root*, sorted.
+
+    A directory's mtime changes when a file is added to or removed from it, so
+    this moves with every new session of flats and every purge, at the cost of
+    a directory walk rather than ~1000 header reads.
+    """
+    out = []
+    for dirpath, dirnames, _files in os.walk(root):
+        if Path(dirpath).name.upper() == "FLAT":
+            try:
+                out.append((dirpath, os.stat(dirpath).st_mtime_ns))
+            except OSError:
+                pass
+            dirnames[:] = []
+    return tuple(sorted(out))
 
 
 def flats_by_filter(root: Optional[Path]) -> dict[str, list[Path]]:
     """Collect every flat under *root* and group by its FITS FILTER header.
 
-    Cached per root for the life of the process: this opens a header for every
-    flat on disk (~1000 of them here), and it is called once per filter by
-    calibration_from_config. New flats appear between runs, not during one.
+    Cached per root: this opens a header for every flat on disk (~1000 of them
+    here), and it is called once per filter by calibration_from_config. The
+    cache is rebuilt when the FLAT directories change or a cached file is gone.
+    It used to live for the whole process, and the chat server runs for days:
+    on 2026-10-23 `purge go` deleted old flats while the morning analysis
+    rebuilt this cache mid-purge, so every master flat built in the chat
+    server after that named a deleted file, failed, and fell back to RAW
+    frames (end-of-night convergence, night contribution). New flats from
+    each morning were invisible to it for the same reason. Child processes
+    (`process`, `stack`) and the Spark start fresh and were not affected.
 
     flat_dirs_from_root assumes root/<FILTER>/*.fits, but N.I.N.A writes one FLAT
     directory per session with all filters mixed together
@@ -1797,8 +1823,11 @@ def flats_by_filter(root: Optional[Path]) -> dict[str, list[Path]]:
     if root is None or not root.is_dir():
         return out
     key = str(root)
-    if key in _FLATS_BY_FILTER_CACHE:
-        return _FLATS_BY_FILTER_CACHE[key]
+    sig = _flat_dirs_signature(root)
+    cached = _FLATS_BY_FILTER_CACHE.get(key)
+    if (cached is not None and _FLATS_SIGNATURE.get(key) == sig
+            and all(f.exists() for fs in cached.values() for f in fs)):
+        return cached
     for f in sorted(root.rglob("*.fit*")):
         if f.parent.name.upper() != "FLAT":
             continue
@@ -1809,6 +1838,7 @@ def flats_by_filter(root: Optional[Path]) -> dict[str, list[Path]]:
         if filt:
             out.setdefault(filt, []).append(f)
     _FLATS_BY_FILTER_CACHE[key] = out
+    _FLATS_SIGNATURE[key] = sig
     return out
 
 
