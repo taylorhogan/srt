@@ -5,10 +5,11 @@ alone holds its value in the outer half-box, so the slope survived there:
 ngc2276 on 2026-10-22 came out with one edge clipped black and the other a
 bright band. The plane goes first; the mesh handles the dome and leaves
 galaxies and nebulae alone as before."""
-import numpy as np
 import pytest
 
-from stacking import color_process as cp
+np = pytest.importorskip("numpy")
+pytest.importorskip("scipy")
+from stacking import color_process as cp  # noqa: E402
 
 
 def _field(slope=30.0, dome=12.0, sigma=4.0, seed=3):

@@ -153,7 +153,7 @@ def test_purge_bad_is_a_dry_run_until_go(tmp_path, monkeypatch):
 
 def test_flat_purge_keeps_the_newest_n_sets_per_filter(tmp_path):
     import os
-    from cmd_processing import super_user_commands as suc
+    suc = _suc()
     by_filter: dict = {}
     for i, date in enumerate(["2026-10-01", "2026-10-05", "2026-10-07", "2026-10-09"]):
         d = tmp_path / date / "FLAT"

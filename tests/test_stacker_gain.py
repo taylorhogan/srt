@@ -9,9 +9,10 @@ archive) matches anything."""
 import sys
 from pathlib import Path
 
-import numpy as np
 import pytest
-from astropy.io import fits
+
+np = pytest.importorskip("numpy")
+fits = pytest.importorskip("astropy.io.fits")
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
