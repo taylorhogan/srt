@@ -42,6 +42,33 @@ static String jpgId = "";
 static uint32_t lastOk = 0, lastPoll = 0;
 static String lastErr = "starting";
 
+// Wi-Fi on a mesh (2026-10-25): by default the ESP32 joins the FIRST access
+// point that answers and never leaves it, so in the bedroom it held a distant
+// node and stopped updating until carried outside. Connect to the strongest
+// node, and rescan when the link is weak or two polls in a row fail -- at most
+// every 2 minutes, so it cannot thrash.
+static int failsInRow = 0;
+static uint32_t lastRejoin = 0;
+static const int WEAK_RSSI = -78;               // dBm
+static const uint32_t REJOIN_MS = 120000;
+
+static void joinStrongest() {
+  WiFi.disconnect();
+  WiFi.setScanMethod(WIFI_ALL_CHANNEL_SCAN);
+  WiFi.setSortMethod(WIFI_CONNECT_AP_BY_SIGNAL);
+  WiFi.begin(WIFI_SSID, WIFI_PASS);
+  lastRejoin = millis();
+}
+
+static void checkLink() {
+  if (millis() - lastRejoin < REJOIN_MS) return;
+  bool weak = WiFi.status() == WL_CONNECTED && WiFi.RSSI() < WEAK_RSSI;
+  if (failsInRow >= 2 || weak || WiFi.status() != WL_CONNECTED) {
+    joinStrongest();
+    failsInRow = 0;
+  }
+}
+
 static uint16_t colorFor(const char* c) {
   if (!c) return TFT_DARKGREY;
   switch (c[0]) {
@@ -63,12 +90,12 @@ static void fetch() {
     JsonDocument fresh;
     DeserializationError e = deserializeJson(fresh, http.getStream());
     if (!e && fresh["ok"].as<bool>()) {
-      doc = fresh; haveData = true; lastOk = millis(); lastErr = "";
+      doc = fresh; haveData = true; lastOk = millis(); lastErr = ""; failsInRow = 0;
     } else {
-      lastErr = e ? "bad json" : "server not ok";
+      lastErr = e ? "bad json" : "server not ok"; failsInRow++;
     }
   } else {
-    lastErr = "http " + String(code);
+    lastErr = "http " + String(code); failsInRow++;
   }
   http.end();
 }
@@ -147,6 +174,7 @@ static void paintStatus() {
     d.setCursor(8, 150); d.print("IP  "); d.print(WiFi.localIP().toString());
     d.setCursor(8, 166); d.print("MAC "); d.print(WiFi.macAddress());
     d.setCursor(8, 182); d.print("URL "); d.print(DASH_URL);
+    d.setCursor(8, 198); d.printf("RSSI %d dBm", WiFi.status() == WL_CONNECTED ? (int)WiFi.RSSI() : 0);
     d.endWrite();
     return;
   }
@@ -207,7 +235,7 @@ static void paintStatus() {
     d.printf("NO UPDATE %lus", (unsigned long)((millis() - lastOk) / 1000));
     d.setTextSize(1);
     d.setCursor(8, 304);
-    d.print(lastErr);
+    d.printf("%s  wifi %d dBm", lastErr.c_str(), WiFi.status() == WL_CONNECTED ? (int)WiFi.RSSI() : 0);
   } else if (doc["alerts"].size() > 0) {
     d.setTextColor(colorFor(doc["level"]), TFT_BLACK);
     d.setCursor(8, 290);
@@ -373,7 +401,7 @@ void setup() {
   M5.Display.setBrightness(BRIGHTNESS);
   WiFi.mode(WIFI_STA);
   WiFi.setAutoReconnect(true);
-  WiFi.begin(WIFI_SSID, WIFI_PASS);
+  joinStrongest();
   paint();
 }
 
@@ -382,6 +410,7 @@ void loop() {
   bool repaint = false;
   if (lastPoll == 0 || millis() - lastPoll >= POLL_MS) {
     lastPoll = millis();
+    checkLink();
     fetch();
     fetchImage();
     repaint = (page == PG_STATUS);                // other pages refresh on their next turn
