@@ -6,7 +6,7 @@ class PublicConfig():
 
         },
         "version": {
-            "date": "2026.10.25.8"
+            "date": "2026.10.25.9"
         },
 
         "logger": {
@@ -613,6 +613,18 @@ class PublicConfig():
             "executor_cross_check": True,
             # Peers the API serves: this PC only (every caller is local).
             "allowed_networks": ["127.0.0.0/8", "::1/128"],
+        },
+
+        # The moon rule (iris_astronomy/moon_cost, 2026-10-25). An hour above
+        # the trees is held ("m") for a target when its predicted frame worth
+        # under the moon, averaged over its filter plan, is below
+        # moon_min_worth -- measured by scripts/moon_sky_cost.py: at a 95% moon
+        # 60 deg away L is worth 0.45 of a dark hour, O-III 0.81. A queue
+        # entry's "moon": "any" / "avoid" / "dark" overrides; light-curve
+        # monitors default to "any". moon_rule False turns it off.
+        "planner": {
+            "moon_rule": True,
+            "moon_min_worth": 0.6,
         },
 
         # Free space on the image drive (utils/disk_space, 2026-10-11). Raw

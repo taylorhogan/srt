@@ -1070,6 +1070,7 @@ def build_grid_html(
     BG_ABOVE_OK = "#1a4d1a"   # above horizon + good weather
     BG_ABOVE_WX = "#1a2e40"   # above horizon + bad weather
     BG_BELOW    = "#131820"   # below horizon
+    BG_MOON     = "#3a2f5b"   # above the trees but held for the moon (moon_cost)
     BG_WX_GOOD  = "#1a4d1a"
     BG_WX_BAD   = "#4d1a1a"
     BG_PRIORITY = "#3d2e00"
@@ -1155,7 +1156,7 @@ def build_grid_html(
         for i, sym in enumerate(symbols):
             above = sym == "+"
             wx_ok = weather_syms[i] == "$" if i < len(weather_syms) else False
-            bg = (BG_ABOVE_OK if wx_ok else BG_ABOVE_WX) if above else BG_BELOW
+            bg = (BG_ABOVE_OK if wx_ok else BG_ABOVE_WX) if above else (BG_MOON if sym == "m" else BG_BELOW)
             rows.append(cell(bg))
         rows.append(td(alt_str.strip(), BG_HDR))
         rows.append(td(hrs_str, BG_HDR))
@@ -1251,6 +1252,26 @@ def rank_targets_tonight(instructions_path: Path | str, verbose: bool = False):
         scale="utc"
     )
 
+    # The moon rule (iris_astronomy/moon_cost, 2026-10-25): the moon's altitude,
+    # lit fraction and position once per dark hour, so each target's hours can
+    # be judged on its own filters. An hour the rule holds is "m", which slot
+    # planning (and the good-hour count) treats like "-".
+    from iris_astronomy import moon_cost
+    pcfg = CFG.get("planner") or {}
+    moon_on = bool(pcfg.get("moon_rule", True))
+    min_worth = float(pcfg.get("moon_min_worth", 0.6))
+    moon_fit = moon_cost.load_fit()
+    try:
+        moon_alts = my_observatory.moon_altaz(hour_times).alt.deg
+        moon_ill = np.atleast_1d(my_observatory.moon_illumination(hour_times))
+        moon_pos = get_body("moon", hour_times, location)
+    except Exception as e:  # noqa: BLE001 -- no moon data means no moon rule tonight
+        import logging
+        logging.getLogger(__name__).warning("moon rule off tonight: moon position failed (%s)", e)
+        moon_on = False
+    global last_moon_notes
+    last_moon_notes = {}
+
     # Build one row per object: (name, good_hour_count, max_altitude, dso_type, start_time, horizon_symbols)
     rows: list[tuple[str, int, float, str, Optional[datetime.datetime], list[str]]] = []
     for obj in waiting:
@@ -1275,9 +1296,28 @@ def rank_targets_tonight(instructions_path: Path | str, verbose: bool = False):
         good_count = 0
         max_alt = 0.0
         start_time: Optional[datetime.datetime] = None
+        dso_type = get_dso_type(dso_name)
+        mode = moon_cost.moon_mode(obj)
+        plan = moon_cost.target_plan(obj, dso_type)
+        # The target into the moon's own (topocentric GCRS) frame first: the
+        # other way round astropy warns, and the moon is near enough for it to matter.
+        seps = moon_pos.separation(dso.coord.transform_to(moon_pos.frame)).deg if moon_on else None
+        held, worst = 0, 1.0
         for i, dt in enumerate(dark_hours):
             h_limit = get_horizon_from_azimuth(azimuth[i], az_horizon, al_horizon)
             above = altitude[i] >= h_limit
+            if above and moon_on:
+                b = moon_cost.moon_brightness(float(moon_ill[i]), float(seps[i]),
+                                              float(moon_alts[i]), float(altitude[i]))
+                w = moon_cost.plan_worth(plan, b, moon_fit)
+                if moon_cost.hour_held(mode, w, float(moon_alts[i]), min_worth):
+                    above = False
+                    held += 1
+                    worst = min(worst, w)
+                    symbols.append("m")
+                    if altitude[i] > max_alt:
+                        max_alt = float(altitude[i])
+                    continue
             symbols.append("+" if above else "-")
             if above and weather_by_hour.get(dt.hour, False):
                 good_count += 1
@@ -1286,7 +1326,9 @@ def rank_targets_tonight(instructions_path: Path | str, verbose: bool = False):
             if altitude[i] > max_alt:
                 max_alt = float(altitude[i])
         priority = obj.get("priority", 5)
-        rows.append((dso_name, good_count, max_alt, get_dso_type(dso_name), start_time, symbols, priority))
+        if held:
+            last_moon_notes[dso_name] = {"held": held, "worst": round(worst, 2), "mode": mode}
+        rows.append((dso_name, good_count, max_alt, dso_type, start_time, symbols, priority))
 
     # Sort by priority first (higher = better), then good hours, then max altitude.
     rows.sort(key=lambda x: (x[6], x[1], x[2]), reverse=True)
@@ -1297,6 +1339,19 @@ def rank_targets_tonight(instructions_path: Path | str, verbose: bool = False):
 # The slot plan computed by the last best_object_tonight() call: a list of
 # control.slot_plan.Slot in running order (empty = nothing usable).
 last_slots: list = []
+# {dso: {"held": hours, "worst": worth, "mode"}} from the last ranking: the
+# hours the moon rule held, for the `tonight` report.
+last_moon_notes: dict = {}
+
+
+def moon_note_lines(notes: dict) -> list:
+    """`tonight` report lines for targets the moon rule held. Pure."""
+    out = []
+    for dso, n in sorted(notes.items()):
+        why = ("waits for the moon to set" if n.get("mode") == "dark"
+               else "a moonlit hour would be worth %d%% of a dark one" % round(100 * n["worst"]))
+        out.append("moon: %s held %d h (m) -- %s" % (dso, n["held"], why))
+    return out
 
 
 def _same_target(a: str, b: str) -> bool:
@@ -1388,6 +1443,8 @@ def best_object_tonight(instructions_path: Path | str) -> tuple[str, Optional[da
     for name, symbols, alt_str, hrs_str, dso_type, priority, need_str in object_lines:
         marker = "* " if priority > 5 else ""
         print(f"{marker}{name:<{label_width}}" + "".join(f"{s:>{col}s}" for s in symbols) + f"  {alt_str}  {hrs_str}  {dso_type}")
+    for line in moon_note_lines(last_moon_notes):
+        print(line)
 
     # --- PNG ---
     n_obj  = len(object_lines)
@@ -1396,6 +1453,7 @@ def best_object_tonight(instructions_path: Path | str) -> tuple[str, Optional[da
     # Colour maps for symbols
     ABOVE_COLOR   = "#1e5c1e"   # dark green   — above horizon
     BELOW_COLOR   = "#5c1e1e"   # dark red     — below horizon
+    MOON_COLOR    = "#3a2f5b"   # violet       — held for the moon
     GOOD_WEATHER  = "#1e4a1e"   # dark green   — good weather
     BAD_WEATHER   = "#4a1e1e"   # dark red     — bad weather
     HEADER_COLOR  = "#1e2a3a"   # dark blue-grey — header row
@@ -1428,7 +1486,7 @@ def best_object_tonight(instructions_path: Path | str) -> tuple[str, Optional[da
         cell_text.append([display_name] + symbols + [alt_str.strip(), hrs_str, dso_type])
         cell_colors.append(
             [name_color]
-            + [ABOVE_COLOR if s == "+" else BELOW_COLOR for s in symbols]
+            + [ABOVE_COLOR if s == "+" else (MOON_COLOR if s == "m" else BELOW_COLOR) for s in symbols]
             + [HEADER_COLOR, HEADER_COLOR, HEADER_COLOR]
         )
 
@@ -1458,6 +1516,12 @@ def best_object_tonight(instructions_path: Path | str) -> tuple[str, Optional[da
     print(f"Grid saved to {png_path}")
 
     grid_html = build_grid_html(object_lines, hour_header, weather_syms)
+    notes = moon_note_lines(last_moon_notes)
+    if notes:
+        # The grid shows the held hours in violet; this says why.
+        import html as _html
+        grid_html += ('<div style="color:#b9a8e8;font-size:12px;margin-top:6px;">'
+                      + "<br>".join(_html.escape(n) for n in notes) + "</div>")
 
     if not rows:
         return "", None, 0, ""
