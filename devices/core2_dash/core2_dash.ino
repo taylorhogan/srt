@@ -22,7 +22,7 @@ static const uint32_t STALE_MS = 180000;
 static const uint8_t BRIGHTNESS = 90;          // 0-255
 // Portrait: 0 or 2. If the picture is upside down for the way the unit
 // stands (USB-C at the bottom), switch to the other one.
-static const uint8_t ROTATION = 0;
+static const uint8_t ROTATION = 2;
 
 static JsonDocument doc;
 static bool haveData = false;
