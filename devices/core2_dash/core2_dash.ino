@@ -101,6 +101,12 @@ static void paint() {
     row(60, "STATUS", "NO DATA", TFT_DARKGREY);
     d.setTextSize(2); d.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
     d.setCursor(8, 110); d.print(lastErr);
+    // What the router needs for a DHCP reservation, and what the chat's
+    // allowlist will be given: shown until the first good reply.
+    d.setTextSize(1);
+    d.setCursor(8, 150); d.print("IP  "); d.print(WiFi.localIP().toString());
+    d.setCursor(8, 166); d.print("MAC "); d.print(WiFi.macAddress());
+    d.setCursor(8, 182); d.print("URL "); d.print(DASH_URL);
     d.endWrite();
     return;
   }
