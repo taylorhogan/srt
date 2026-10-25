@@ -397,6 +397,79 @@ def newest_frame(cfg: dict) -> Optional[dict]:
         return None
 
 
+# The sky camera's clarity (2026-10-25): plate-solve matches over the catalogue
+# stars in its field, as a fraction of a clear sky -- the dusk check's reading
+# (sentry/dusk_check, clear sky = 0.75), but from the newest 5-minute frame
+# only. Moonlight only ever lowers it, so a moonlit low reading is not cloud.
+SKY_LOG = ROOT / "local" / "sky_log.jsonl"
+SKY_MAX_AGE_MIN = 15
+
+
+def sky_label(row: Optional[dict], now_utc: datetime, in_field: Optional[int],
+              clear: float, moonlit: bool) -> Optional[dict]:
+    """{"v", "c", "moon"} for the status page, or None when there is nothing to say. Pure.
+
+    g at 65% of a clear sky or more, a below it, x (grey) under 20%: cloud is
+    worth a look, never an alarm. Under a bright moon the reading cannot tell
+    cloud from moonlight (10-24, a clear night, read 35-67%), so it is shown
+    in neutral w with the moon named rather than amber half of every month."""
+    if not row:
+        return None
+    try:
+        t = datetime.fromisoformat(row.get("captured") or row["generated"])
+    except (KeyError, ValueError):
+        return None
+    if t.tzinfo is None:
+        from datetime import timezone
+        t = t.replace(tzinfo=timezone.utc)
+    if (now_utc - t).total_seconds() > SKY_MAX_AGE_MIN * 60:
+        return {"v": "no sky cam", "c": "x", "moon": False}
+    if not row.get("night"):
+        return {"v": "day", "c": "x", "moon": False}
+    if row.get("solve_matches") is None or not in_field:
+        return {"v": "?", "c": "a", "moon": moonlit}
+    pct = int(round(100 * row["solve_matches"] / in_field / clear))
+    c = "w" if moonlit else ("g" if pct >= 65 else ("x" if pct < 20 else "a"))
+    return {"v": "%d%%" % pct, "c": c, "moon": moonlit}
+
+
+_sky_inputs = {"key": None, "val": (None, 0.75, False)}
+
+
+def read_sky() -> Optional[dict]:
+    """sky_label() for the newest sky-camera frame.
+
+    The catalogue count and the moon cost astropy work, so they are worked out
+    once per frame; the label (and its age check) is recomputed every call."""
+    from datetime import timezone
+    try:
+        with open(SKY_LOG, "rb") as fh:
+            fh.seek(0, 2)
+            fh.seek(max(0, fh.tell() - 4096))
+            row = json.loads(fh.read().decode("utf-8", "replace").strip().splitlines()[-1])
+    except (OSError, ValueError, IndexError):
+        return None
+    key = row.get("generated")
+    if _sky_inputs["key"] != key:
+        in_field, clear, moonlit = None, 0.75, False
+        try:
+            if row.get("night") and row.get("solve_matches") is not None:
+                from sentry import dusk_check, plate_solve
+                from scripts.sky_transparency_report import in_field as _in_field
+                st = dusk_check._settings()
+                clear = float(st["dusk_clear_transparency"])
+                t = datetime.fromisoformat(row.get("captured") or row["generated"])
+                sol = plate_solve.load()
+                in_field = _in_field(sol, t) if sol is not None else None
+                malt, mill = dusk_check.moon_at(t)
+                moonlit = bool(malt > 0 and mill >= float(st["dusk_moon_max_illum"]))
+        except Exception:  # noqa: BLE001 -- the sky line is optional
+            _logger.debug("dash sky reading failed", exc_info=True)
+        _sky_inputs.update(key=key, val=(in_field, clear, moonlit))
+    in_field, clear, moonlit = _sky_inputs["val"]
+    return sky_label(row, datetime.now(timezone.utc), in_field, clear, moonlit)
+
+
 def build(cfg: dict) -> dict:
     """Gather everything and summarize. Blocking: call it off the event loop."""
     from iris import client as conductor
@@ -422,6 +495,7 @@ def build(cfg: dict) -> dict:
     out["summary"] = night_summary(frames, night) if live is None else None
     f = newest_frame(cfg)
     out["img"] = ({k: f[k] for k in ("id", "dso", "filter", "fwhm", "at")} if f else None)
+    out["sky"] = read_sky()
     return out
 
 

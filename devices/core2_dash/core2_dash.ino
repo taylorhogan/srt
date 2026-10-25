@@ -48,6 +48,7 @@ static uint16_t colorFor(const char* c) {
     case 'g': return TFT_GREEN;
     case 'a': return TFT_ORANGE;
     case 'r': return TFT_RED;
+    case 'w': return TFT_WHITE;
     default:  return TFT_DARKGREY;
   }
 }
@@ -190,6 +191,13 @@ static void paintStatus() {
     d.setTextColor(grey(colorFor(doc["disk"]["c"])), TFT_BLACK);
     d.setCursor(8, 246);
     d.printf("disk  %d GB", (int)doc["disk"]["gb"]);
+  }
+  // The sky camera: stars seen as a share of a clear sky (white under a moon,
+  // which hides stars without any cloud).
+  if (!doc["sky"].isNull()) {
+    d.setTextColor(grey(colorFor(doc["sky"]["c"])), TFT_BLACK);
+    d.setCursor(8, 268);
+    d.printf("sky   %s%s", (const char*)(doc["sky"]["v"] | "?"), doc["sky"]["moon"] ? " moon" : "");
   }
 
   // Bottom: alerts, or how old the data is when it has gone stale.

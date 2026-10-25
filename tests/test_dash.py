@@ -130,3 +130,17 @@ def test_night_summary_counts_filters_and_names_the_sharpest_frame():
     assert s["total"] == 3 and [t["dso"] for t in s["targets"]] == ["m76", "m1"]
     assert s["targets"][0]["n"] == {"Ha": 1, "O-III": 1}
     assert s["best"] == {"fwhm": 1.45, "dso": "m76", "filter": "O-III", "at": "01:45"}
+
+
+# The sky camera line (2026-10-25).
+def test_sky_label_reads_a_clear_sky_and_admits_what_the_moon_hides():
+    from datetime import timezone, timedelta
+    now = datetime(2026, 10, 25, 6, 0, tzinfo=timezone.utc)
+    row = {"captured": "2026-10-25T05:58:00+00:00", "night": True, "solve_matches": 120}
+    assert dash.sky_label(row, now, 200, 0.75, False) == {"v": "80%", "c": "g", "moon": False}
+    assert dash.sky_label(dict(row, solve_matches=60), now, 200, 0.75, False)["c"] == "a"
+    assert dash.sky_label(dict(row, solve_matches=10), now, 200, 0.75, False)["c"] == "x"
+    assert dash.sky_label(dict(row, solve_matches=60), now, 200, 0.75, True) == {"v": "40%", "c": "w", "moon": True}
+    assert dash.sky_label(dict(row, night=False), now, 200, 0.75, False)["v"] == "day"
+    assert dash.sky_label(row, now + timedelta(minutes=30), 200, 0.75, False)["v"] == "no sky cam"
+    assert dash.sky_label(None, now, 200, 0.75, False) is None

@@ -74,6 +74,10 @@ def paint(doc, stale_s=None, err=""):
     s.text(8, 224, "close %s" % (t["closes"] or "--:--"), 2, g(LGREY))
     if doc["disk"]:
         s.text(8, 246, "disk  %d GB" % doc["disk"]["gb"], 2, g(col(doc["disk"]["c"])))
+    if doc.get("sky"):
+        sk = doc["sky"]
+        s.text(8, 268, "sky   %s%s" % (sk["v"], " moon" if sk["moon"] else ""), 2,
+               g(WHITE if sk["c"] == "w" else col(sk["c"])))
     if stale:
         s.text(8, 282, "NO UPDATE %ds" % stale_s, 2, ORANGE)
         s.text(8, 304, err, 1, ORANGE)
@@ -100,6 +104,8 @@ CASES = [
     ("2  Roof just opened", mk("2026-10-22 17:56", "OPEN", "2026-10-22 17:54", "STOPPED", "OPENING_ROOF"), None, ""),
     ("3  Imaging M76", mk("2026-10-22 23:40", "OPEN", "2026-10-22 17:54", "TRACKING", "SLOT_IMAGING",
                           {"dso": "m76", "filter": "Ha", "n": 14, "of": 25}), None, ""),
+    ("3b Imaging, sky line", dict(mk("2026-10-22 23:40", "OPEN", "2026-10-22 17:54", "TRACKING", "SLOT_IMAGING",
+                          {"dso": "m76", "filter": "Ha", "n": 14, "of": 25}), sky={"v": "53%", "c": "w", "moon": True}), None, ""),
     ("4  Long line shrinks", mk("2026-10-22 21:20", "OPEN", "2026-10-22 17:54", "TRACKING", "SLOT_IMAGING",
                                 {"dso": "hubblev1", "filter": "L", "n": 3, "of": 8}), None, ""),
     ("5  Cloudy night, no imaging", mk("2026-10-22 14:30", "SHUT", "2026-10-22 09:00", "?", "IDLE_DAY",
