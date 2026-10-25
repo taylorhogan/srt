@@ -1243,6 +1243,20 @@ def _select_by_quality(
 # the target itself and smooth moon/twilight gradients cancel. Measured: tree
 # frames 0.12-0.36; clean frames <= 0.053 across ngc2146, m33 (frame-filling)
 # and m13 (bright core).
+#
+# 2026-10-25: a raw frame is pedestal + sky x vignetting + target, and the
+# plain difference assumed every frame mixes those in the same proportion. A
+# moonlit sky three times brighter does not: on V1 -- a field inside M31's
+# disk -- every frame of the moonlit 10-22 and 10-23 nights scored 0.17-0.21
+# and the gate threw out all 30 ("NOTHING USABLE"). Each frame is now fitted
+# as a * median + c * flat + b + plane, the flat being the filter's master
+# flat at the same coarse grid (the vignetting). A median alone was tried
+# first and is not enough: once the moonlit frames were the majority, V1's
+# darkest night (10-08) failed instead. With the flat, every V1 frame on every
+# night scores <= 0.062, the 10-05 ngc2146 tree frame still scores 0.121,
+# m76/m33/ngc2276 are unchanged, and NGC 7790's moonlit dusk frames drop from
+# 19 rejections to 6 borderline ones. Without a flat the fit falls back to the
+# median alone.
 BG_STRUCTURE_MAX = 0.08
 _BG_MIN_FRAMES = 5          # the session reference needs a few frames
 
@@ -1265,23 +1279,55 @@ def _background_map(path: Path, ny: int = 8, nx: int = 12) -> np.ndarray:
     return b / level if level > 0 else b
 
 
-def background_structure_scores(maps: list[np.ndarray]) -> list[float]:
+def background_structure_scores(maps: list[np.ndarray],
+                                vignette: Optional[np.ndarray] = None) -> list[float]:
     """Score each normalised background map against the session median. Pure.
 
-    Residual = map - median(maps), minus its best-fit plane; score = 98th - 2nd
-    percentile of that residual, as a fraction of the frame's level.
+    Each map is fitted as a * median(maps) + c * vignette + b + plane (a:
+    transparency, c: sky through the optics, b: pedestal, plane: moon/twilight
+    ramp); score = 98th - 2nd percentile of what is left, as a fraction of the
+    frame's level. *vignette* is the master flat on the same grid, or None.
     """
     ref = np.median(np.stack(maps), axis=0)
     ny, nx = ref.shape
     y, x = np.mgrid[0:ny, 0:nx]
-    a = np.c_[np.ones(ref.size), ((x - nx / 2) / nx).ravel(), ((y - ny / 2) / ny).ravel()]
+    cols = [ref.ravel(), np.ones(ref.size), ((x - nx / 2) / nx).ravel(), ((y - ny / 2) / ny).ravel()]
+    if vignette is not None and vignette.shape == ref.shape and float(np.median(vignette)) > 0:
+        cols.insert(1, (vignette / float(np.median(vignette))).ravel())
+    a = np.c_[tuple(cols)]
     out = []
     for m in maps:
-        r = (m - ref).ravel()
-        coef, *_ = np.linalg.lstsq(a, r, rcond=None)
-        r = r - a @ coef
+        v = m.ravel()
+        coef, *_ = np.linalg.lstsq(a, v, rcond=None)
+        r = (v - a @ coef) / max(float(np.median(v)), 1e-6)
         out.append(float(np.percentile(r, 98) - np.percentile(r, 2)))
     return out
+
+
+_VIGNETTE_CACHE: dict = {}
+
+
+def _vignette_map(paths: list[Path], ny: int = 8, nx: int = 12) -> Optional[np.ndarray]:
+    """The master flat of these frames' filter on the gate's coarse grid, or None.
+
+    Sampled exactly as _background_map samples a frame (every 16th pixel, block
+    medians), so the two line up cell for cell. Cached per master flat."""
+    try:
+        filt = str(fits.getheader(paths[0]).get("FILTER", "")).strip()
+        cal = calibration_from_config(filt or None, like=paths[0])
+        if cal is None or cal.flat_npy is None:
+            return None
+        key = str(cal.flat_npy)
+        if key not in _VIGNETTE_CACHE:
+            d = np.asarray(np.load(cal.flat_npy, mmap_mode="r")[::16, ::16], dtype=np.float32)
+            h, w = d.shape
+            d = d[: h // ny * ny, : w // nx * nx]
+            blocks = d.reshape(ny, h // ny, nx, w // nx).transpose(0, 2, 1, 3).reshape(ny, nx, -1)
+            _VIGNETTE_CACHE[key] = np.median(blocks, axis=2)
+        return _VIGNETTE_CACHE[key]
+    except Exception:  # noqa: BLE001 -- no flat means the median-only fit
+        _logger.debug("background gate: no vignette map", exc_info=True)
+        return None
 
 
 def _background_gate(
@@ -1296,7 +1342,8 @@ def _background_gate(
     if len(paths) < _BG_MIN_FRAMES:
         return list(paths), []
     try:
-        scores = background_structure_scores([_background_map(p) for p in paths])
+        scores = background_structure_scores([_background_map(p) for p in paths],
+                                             vignette=_vignette_map(paths))
     except Exception:
         _logger.exception("background gate: could not score frames; keeping all")
         return list(paths), []
