@@ -596,16 +596,32 @@ _dash_lock = asyncio.Lock()
 
 
 @app.get("/api/dash")
-async def api_dash():
+async def api_dash(part: Optional[str] = None):
     """A very short status for the Core2 desk display (cmd_processing/dash.py).
 
     Read-only: file reads, the conductor's state and plan, PWI4's status.
     Served to this PC and the tailnet, and to web_chat.dash_clients (the
     Core2 on the house LAN) for this path alone. One build serves every
     caller for _DASH_TTL_S, so however often it is asked, iris-pc does the
-    ~4.5 s of work at most once per window."""
+    ~4.5 s of work at most once per window.
+
+    ?part=image is the newest frame as a 240 x 160 JPEG (page 3 of the
+    display). Same path, same GET, so the same allowlist exception covers it;
+    it is rendered once per new frame (dash.thumbnail)."""
     import time as _time
     global _dash_cache
+    if part == "image":
+        from fastapi.responses import Response
+        try:
+            from configs import config
+            from cmd_processing import dash
+            jpeg = await asyncio.to_thread(dash.image, config.data())
+        except Exception:
+            _logger.exception("api_dash image error")
+            jpeg = None
+        if not jpeg:
+            return Response(status_code=404, headers={"Cache-Control": "no-store"})
+        return Response(content=jpeg, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
     now = _time.monotonic()
     if _dash_cache is not None and now - _dash_cache[0] < _DASH_TTL_S:
         payload = _dash_cache[1]

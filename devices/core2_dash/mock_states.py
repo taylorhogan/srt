@@ -133,3 +133,100 @@ for i, (title, doc, stale, err) in enumerate(CASES):
 out = os.path.join(os.path.dirname(os.path.abspath(__file__)), "states.png")
 sheet.save(out)
 print(out, sheet.size)
+
+
+# ------------------------------------------------------------ pages 2-4 (2026-10-25)
+# Painted from the LIVE payload (dash.build), so run on iris-pc. Writes pages.png.
+
+FCOL = {"L": WHITE, "R": RED, "Ha": RED, "G": GREEN, "B": (74, 146, 255), "O-III": CYAN, "S-II": ORANGE}
+
+
+def band(s, doc, title):
+    s.d.rectangle((0, 0, W - 1, 29), fill=col(doc["level"]))
+    s.text(8, 8, title, 2, BLACK)
+    s.text(W - 12 * 5 - 8, 8, doc["t"], 2, BLACK)
+
+
+def page_fwhm(doc):
+    s = Screen(); f = doc["fwhm"]
+    band(s, doc, "FWHM")
+    s.text(8, 38, "tonight" if doc["summary"] is None else "last night", 2, LGREY)
+    X0, X1, Y0, Y1 = 30, 234, 76, 250
+    span, lo = f["span"], 1.5
+    hi = max(3.5, max(p[1] for p in f["p"]) / 100 + 0.1)
+    X = lambda m: X0 + (X1 - X0) * m // max(span, 1)
+    Y = lambda v: int(Y1 - (Y1 - Y0) * (min(max(v, lo), hi) - lo) / (hi - lo))
+    v = lo
+    while v <= hi + 0.01:
+        s.d.line((X0, Y(v), X1, Y(v)), fill=(40, 40, 40)); s.text(2, Y(v) - 3, "%.1f" % v, 1, LGREY); v += 0.5
+    sm = int(f["start"][:2]) * 60 + int(f["start"][3:])
+    m = 60 - sm % 60
+    while m <= span:
+        s.d.line((X(m), Y1, X(m), Y1 + 3), fill=LGREY); s.text(X(m) - 5, Y1 + 6, "%02d" % (((sm + m) // 60) % 24), 1, LGREY); m += 60
+    last_end, row = -99, 0
+    for t, name in f["slots"]:
+        x = X(t); name = name[:8]
+        if t > 0:
+            s.d.line((x - 2, Y0, x - 2, Y1), fill=(90, 90, 90))
+        row = 1 - row if x < last_end + 2 else 0
+        s.text(x, Y0 - 14 + 9 * row, name, 1, LGREY); last_end = x + 6 * len(name)
+    for x in range(X0, X1, 6):
+        s.d.line((x, Y(f["med"] / 100), x + 3, Y(f["med"] / 100)), fill=DGREY)
+    for t, fw, fi in f["p"]:
+        x, y = X(t), Y(fw / 100); s.d.ellipse((x - 2, y - 2, x + 2, y + 2), fill=FCOL.get(f["f"][fi], LGREY))
+    s.text(8, 270, '%.2f" %s' % (f["last"][0] / 100, f["last"][1]), 2, FCOL.get(f["last"][1], WHITE))
+    s.text(8, 294, 'med %.2f" n=%d' % (f["med"] / 100, len(f["p"])), 2, LGREY)
+    return s.im
+
+
+def page_image(doc, jpeg):
+    import io
+    s = Screen(); i = doc["img"]
+    band(s, doc, "LAST")
+    s.text(8, 40, "%s %s" % (i["dso"], i["filter"]), 2, FCOL.get(i["filter"], WHITE))
+    s.im.paste(Image.open(io.BytesIO(jpeg)).convert("RGB"), (0, 72))
+    if i.get("fwhm"):
+        s.text(8, 246, 'FWHM %.2f"' % i["fwhm"], 2, LGREY)
+    s.text(8, 270, "at %s" % i["at"], 2, LGREY)
+    return s.im
+
+
+def page_summary(doc):
+    s = Screen(); m = doc["summary"]
+    band(s, doc, "NIGHT")
+    s.text(8, 38, m["night"][5:], 2, LGREY); s.text(W - 12 * 6 - 8, 38, "%3d fr" % m["total"], 2, LGREY)
+    y = 66
+    for t in m["targets"]:
+        s.text(8, y, t["dso"], 2, WHITE); s.text(W - 12 * 4 - 8, y, "%.2f" % t["fwhm"], 2, LGREY)
+        x = 8
+        for k, n in t["n"].items():
+            txt = "%s %d  " % (k, n); s.text(x, y + 18, txt, 1, FCOL.get(k, LGREY)); x += 6 * len(txt)
+        y += 36
+    s.text(8, 262, 'best %.2f"' % m["best"]["fwhm"], 2, GREEN)
+    s.text(8, 286, "%s %s at %s" % (m["best"]["dso"], m["best"]["filter"], m["best"]["at"]), 1, LGREY)
+    return s.im
+
+
+if __name__ == "__main__":
+    from configs import config
+    cfg = config.data()
+    doc = dash.build(cfg)
+    jpeg = dash.image(cfg)
+    shots = [("Status", paint(doc))]
+    if doc.get("fwhm"):
+        shots.append(("FWHM (10 s)", page_fwhm(doc)))
+    if jpeg and doc.get("img"):
+        shots.append(("Newest frame (10 s)", page_image(doc, jpeg)))
+    if doc.get("summary"):
+        shots.append(("Last night (10 s)", page_summary(doc)))
+    PW, PH = W * 2, H * 2
+    sheet2 = Image.new("RGB", (len(shots) * (PW + 24) + 24, PH + 88), (32, 32, 36))
+    sd2 = ImageDraw.Draw(sheet2)
+    for i, (title, im) in enumerate(shots):
+        x = 24 + i * (PW + 24)
+        sd2.text((x, 24), title, font=cap, fill=(230, 230, 230))
+        sd2.rectangle((x - 3, 61, x + PW + 2, 64 + PH + 2), fill=(70, 70, 75))
+        sheet2.paste(im.resize((PW, PH), Image.NEAREST), (x, 64))
+    out2 = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pages.png")
+    sheet2.save(out2)
+    print(out2, sheet2.size)

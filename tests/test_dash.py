@@ -89,3 +89,44 @@ def test_after_the_last_slot_starts_there_is_no_next():
 
 def test_unknown_roof_is_amber():
     assert _sum(roof=None)["roof"] == {"v": "?", "age": None, "c": "a"}
+
+
+# Pages 2-4 (2026-10-25): the night's FWHM, the newest picture, last night's summary.
+def _row(dso, night, stamp, filt, fw, stars=400):
+    return {"path": "C:/T/%s/cdk17/%s/LIGHT/%s_%s_1_300.00s_0001.fits" % (dso, night, stamp, filt),
+            "filter": filt, "fwhm_arcsec": fw, "star_count": stars}
+
+
+ROWS = {"m76": [_row("m76", "2026-10-24", "2026-10-24_22-05-00", "Ha", 1.80),
+                _row("m76", "2026-10-24", "2026-10-25_01-45-00", "O-III", 1.45),
+                _row("m76", "2026-10-23", "2026-10-23_23-00-00", "Ha", 1.90),    # the night before
+                "not a dict", {"path": "x", "fwhm_arcsec": None}],
+        "m1": [_row("m1", "2026-10-24", "2026-10-25_04-10-00", "S-II", 2.10)]}
+
+
+def test_night_frames_keeps_the_nights_own_frames_in_time_order():
+    f = dash.night_frames(ROWS, "2026-10-24")
+    assert [(x[0].strftime("%d %H:%M"), x[1], x[2]) for x in f] == [
+        ("24 22:05", "m76", "Ha"), ("25 01:45", "m76", "O-III"), ("25 04:10", "m1", "S-II")]
+
+
+def test_fwhm_series_is_compact_and_marks_the_slots():
+    s = dash.fwhm_series(dash.night_frames(ROWS, "2026-10-24"))
+    assert s["start"] == "22:05" and s["f"] == ["Ha", "O-III", "S-II"]
+    assert s["p"] == [[0, 180, 0], [220, 145, 1], [365, 210, 2]]
+    assert s["slots"] == [[0, "m76"], [365, "m1"]] and s["med"] == 180 and s["last"] == [210, "S-II"]
+    assert dash.fwhm_series([]) is None
+
+
+def test_fwhm_series_thins_a_long_night():
+    from datetime import timedelta
+    t0 = datetime(2026, 10, 24, 20, 0)
+    frames = [(t0 + timedelta(minutes=5 * i), "m76", "Ha", 2.0, 300) for i in range(400)]
+    assert len(dash.fwhm_series(frames)["p"]) <= dash.MAX_POINTS
+
+
+def test_night_summary_counts_filters_and_names_the_sharpest_frame():
+    s = dash.night_summary(dash.night_frames(ROWS, "2026-10-24"), "2026-10-24")
+    assert s["total"] == 3 and [t["dso"] for t in s["targets"]] == ["m76", "m1"]
+    assert s["targets"][0]["n"] == {"Ha": 1, "O-III": 1}
+    assert s["best"] == {"fwhm": 1.45, "dso": "m76", "filter": "O-III", "at": "01:45"}

@@ -230,13 +230,180 @@ def read_live(cfg: dict) -> Optional[dict]:
         return None
 
 
+# ----------------------------------------------------- the night's frames (2026-10-25)
+#
+# Pages 2-4 of the display: tonight's FWHM chart, the newest frame as a small
+# picture, and last night's summary. All read frame_stats.json, which the
+# frame watcher already keeps per target; nothing is measured here.
+
+_STAMP = re.compile(r"(\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2})_")
+FILTER_ORDER = ["L", "R", "G", "B", "Ha", "O-III", "S-II"]
+MAX_POINTS = 150
+
+
+def night_frames(rows_by_dso: dict, night: str) -> list:
+    """[(local datetime, dso, filter, fwhm, stars)] of *night*'s frames, oldest first. Pure.
+
+    *rows_by_dso* is {dso: frame_stats rows}. A frame belongs to the night of
+    the session folder N.I.N.A wrote it to (.../<rig>/<night>/LIGHT/x.fits);
+    its local time comes from the file name, which N.I.N.A stamps in local
+    time (the rows' own "time" is UTC)."""
+    out = []
+    for dso, rows in rows_by_dso.items():
+        for r in rows:
+            if not isinstance(r, dict) or not r.get("fwhm_arcsec"):
+                continue
+            p = Path(str(r.get("path", "")))
+            if p.parent.parent.name != night:
+                continue
+            m = _STAMP.search(p.name)
+            if m:
+                out.append((datetime.strptime(m.group(1), "%Y-%m-%d_%H-%M-%S"), dso,
+                            r.get("filter") or "?", float(r["fwhm_arcsec"]), int(r.get("star_count") or 0)))
+    return sorted(out)
+
+
+def fwhm_series(frames: list) -> Optional[dict]:
+    """The chart's data, compact for the ESP32. Pure.
+
+    {"start": "HH:MM", "span": minutes, "f": [filters], "p": [[minute, fwhm x100,
+    filter index], ...], "slots": [[minute, dso], ...], "med": x100,
+    "last": [fwhm x100, filter]} -- at most MAX_POINTS points, thinned evenly."""
+    if not frames:
+        return None
+    t0 = frames[0][0]
+    filters = [f for f in FILTER_ORDER if any(x[2] == f for x in frames)]
+    filters += sorted({x[2] for x in frames} - set(filters))
+    step = max(1, -(-len(frames) // MAX_POINTS))
+    pts = [[int((t - t0).total_seconds() // 60), int(round(fw * 100)), filters.index(f)]
+           for t, _d, f, fw, _n in frames[::step]]
+    slots, prev = [], None
+    for t, d, *_ in frames:
+        if d != prev:
+            slots.append([int((t - t0).total_seconds() // 60), d])
+            prev = d
+    fws = sorted(x[3] for x in frames)
+    return {"start": t0.strftime("%H:%M"),
+            "span": max(60, int((frames[-1][0] - t0).total_seconds() // 60) + 1),
+            "f": filters, "p": pts, "slots": slots,
+            "med": int(round(fws[len(fws) // 2] * 100)),
+            "last": [int(round(frames[-1][3] * 100)), frames[-1][2]]}
+
+
+def night_summary(frames: list, night: str) -> Optional[dict]:
+    """Per target: frames per filter and median FWHM; plus the night's sharpest frame. Pure."""
+    if not frames:
+        return None
+    targets = []
+    for dso in dict.fromkeys(x[1] for x in frames):             # running order
+        mine = [x for x in frames if x[1] == dso]
+        counts = {}
+        for x in mine:
+            counts[x[2]] = counts.get(x[2], 0) + 1
+        fws = sorted(x[3] for x in mine)
+        targets.append({"dso": dso, "n": counts, "fwhm": round(fws[len(fws) // 2], 2)})
+    best = min(frames, key=lambda x: x[3])
+    return {"night": night, "total": len(frames), "targets": targets[:5],
+            "best": {"fwhm": round(best[3], 2), "dso": best[1], "filter": best[2],
+                     "at": best[0].strftime("%H:%M")}}
+
+
+_stats_cache: dict = {}
+
+
+def _rows(stats: Path) -> list:
+    """frame_stats.json rows, cached on the file's mtime."""
+    try:
+        mtime = stats.stat().st_mtime
+    except OSError:
+        return []
+    hit = _stats_cache.get(stats)
+    if hit and hit[0] == mtime:
+        return hit[1]
+    try:
+        d = json.loads(stats.read_text())
+        rows = list(d.values()) if isinstance(d, dict) else list(d)
+    except (OSError, ValueError):
+        rows = []
+    _stats_cache[stats] = (mtime, rows)
+    return rows
+
+
+def read_night(cfg: dict, now: datetime):
+    """(night, frames) for the night under way, or the last night that has frames."""
+    root = Path(cfg["nina"]["image_dir"])
+    for back in (0, 1, 2):
+        night = (now - timedelta(hours=12) - timedelta(days=back)).strftime("%Y-%m-%d")
+        dsos = {p.parent.parent.parent.name for p in root.glob("*/*/%s/LIGHT" % night)}
+        if dsos:
+            frames = night_frames({d: _rows(root / d / "frame_stats.json") for d in dsos}, night)
+            if frames:
+                return night, frames
+    return None, []
+
+
+# The newest frame as a 240 x 160 picture: the centre third of the field
+# (targets are centred), stretched on its own sky. Baseline JPEG, which is
+# what the ESP32's decoder reads. Rendered once per new frame.
+THUMB_W, THUMB_H = 240, 160
+_thumb = {"path": None, "jpeg": None}
+
+
+def thumbnail(fits_path: Path) -> Optional[bytes]:
+    if _thumb["path"] == fits_path:
+        return _thumb["jpeg"]
+    try:
+        import io
+        import numpy as np
+        from astropy.io import fits
+        from PIL import Image
+        with fits.open(fits_path, memmap=True, do_not_scale_image_data=True) as h:
+            hdr, data = h[0].header, h[0].data
+            ny, nx = data.shape
+            cw, ch = nx // 3, ny // 3
+            x0, y0 = (nx - cw) // 2, (ny - ch) // 2
+            step = max(1, cw // (THUMB_W * 2))
+            a = (np.asarray(data[y0:y0 + ch:step, x0:x0 + cw:step], np.float32)
+                 * float(hdr.get("BSCALE", 1.0)) + float(hdr.get("BZERO", 0.0)))
+        med = float(np.median(a))
+        sig = 1.4826 * float(np.median(np.abs(a - med))) or 1.0
+        v = np.clip((a - (med - 1.5 * sig)) / (40.0 * sig), 0, 1)
+        v = np.arcsinh(v * 12.0) / np.arcsinh(12.0)
+        im = Image.fromarray((v * 255).astype(np.uint8)).resize((THUMB_W, THUMB_H), Image.LANCZOS)
+        buf = io.BytesIO()
+        im.convert("RGB").save(buf, "JPEG", quality=80, progressive=False)
+        _thumb.update(path=fits_path, jpeg=buf.getvalue())
+        return _thumb["jpeg"]
+    except Exception:  # noqa: BLE001 -- no picture is a normal answer
+        _logger.debug("dash thumbnail failed for %s", fits_path, exc_info=True)
+        return None
+
+
+def newest_frame(cfg: dict) -> Optional[dict]:
+    """{"path", "dso", "filter", "fwhm", "id"} of the newest LIGHT frame, or None."""
+    try:
+        root = Path(cfg["nina"]["image_dir"])
+        last = json.loads((root / "frame_ticker.json").read_text()).get("last_frame") or {}
+        p = Path(last["path"])
+        if not p.exists():
+            return None
+        dso = p.relative_to(root).parts[0].lower()
+        m = _STAMP.search(p.name)
+        return {"path": p, "dso": dso, "filter": last.get("filter") or "?",
+                "fwhm": last.get("fwhm_arcsec"),
+                "at": m.group(1)[11:16].replace("-", ":") if m else "",
+                "id": p.stem[-24:]}
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def build(cfg: dict) -> dict:
     """Gather everything and summarize. Blocking: call it off the event loop."""
     from iris import client as conductor
     try:
-        night_summary = json.loads(NIGHT_STATUS.read_text()).get("summary", "")
+        plan_text = json.loads(NIGHT_STATUS.read_text()).get("summary", "")
     except (OSError, ValueError):
-        night_summary = ""
+        plan_text = ""
     try:
         drive = Path(cfg["nina"]["image_dir"]).drive or "C:"
         disk_gb = shutil.disk_usage(drive + "\\").free / 1024 ** 3
@@ -246,5 +413,20 @@ def build(cfg: dict) -> dict:
     # The night's date is yesterday before noon, as get_scheduler_state reads it,
     # so at 02:00 the display still shows the plan that started the night.
     night_of = (now - timedelta(hours=12)).strftime("%Y-%m-%d")
-    return summarize(now, read_roof(), read_scope(), conductor.state(2.0),
-                     conductor.get_plan(night_of, 3.0), night_summary, read_live(cfg), disk_gb)
+    live = read_live(cfg)
+    out = summarize(now, read_roof(), read_scope(), conductor.state(2.0),
+                    conductor.get_plan(night_of, 3.0), plan_text, live, disk_gb)
+    night, frames = read_night(cfg, now)
+    out["fwhm"] = fwhm_series(frames)
+    # The summary is for the morning after: shown while nothing is imaging.
+    out["summary"] = night_summary(frames, night) if live is None else None
+    f = newest_frame(cfg)
+    out["img"] = ({k: f[k] for k in ("id", "dso", "filter", "fwhm", "at")} if f else None)
+    return out
+
+
+
+def image(cfg: dict) -> Optional[bytes]:
+    """The newest frame's thumbnail JPEG (GET /api/dash?part=image)."""
+    f = newest_frame(cfg)
+    return thumbnail(f["path"]) if f else None
