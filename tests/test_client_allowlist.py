@@ -76,3 +76,52 @@ def test_the_conductor_app_is_wired():
 def test_the_chat_app_is_wired():
     ws = pytest.importorskip("cmd_processing.web_server")
     assert any(m.cls is ClientAllowlist for m in ws.app.user_middleware)
+
+
+# The Core2 desk display (owner-approved 2026-10-25): one exact path, GET only.
+CORE2 = "192.168.87.54"
+
+
+def _drive_dash(scope):
+    called, sent = [], []
+
+    async def inner(scope, receive, send):
+        called.append(scope["type"])
+
+    async def receive():
+        return {"type": "http.request"}
+
+    async def send(msg):
+        sent.append(msg)
+    mw = ClientAllowlist(inner, LOOPBACK + TAILNET, name="test",
+                         path_networks={"/api/dash": [CORE2 + "/32"]})
+    asyncio.run(mw(scope, receive, send))
+    return called, sent
+
+
+def test_the_core2_may_get_the_dashboard():
+    called, _ = _drive_dash({"type": "http", "method": "GET", "client": (CORE2, 1), "path": "/api/dash"})
+    assert called == ["http"]
+
+
+@pytest.mark.parametrize("scope", [
+    {"type": "http", "method": "GET", "client": (CORE2, 1), "path": "/api/post"},
+    {"type": "http", "method": "GET", "client": (CORE2, 1), "path": "/"},
+    {"type": "http", "method": "GET", "client": (CORE2, 1), "path": "/api/dash/"},
+    {"type": "http", "method": "GET", "client": (CORE2, 1), "path": "/api/dashx"},
+    {"type": "http", "method": "POST", "client": (CORE2, 1), "path": "/api/dash"},
+    {"type": "http", "client": (CORE2, 1), "path": "/api/dash"},                    # no method
+    {"type": "websocket", "client": (CORE2, 1), "path": "/api/dash"},
+    {"type": "websocket", "client": (CORE2, 1), "path": "/ws"},
+    {"type": "http", "method": "GET", "client": ("192.168.87.55", 1), "path": "/api/dash"},
+    {"type": "http", "method": "GET", "client": ("192.168.87.78", 1), "path": "/api/dash"},
+])
+def test_everything_else_from_the_lan_is_still_refused(scope):
+    called, sent = _drive_dash(scope)
+    assert called == []
+    assert sent[0].get("status") == 403 or sent[0] == {"type": "websocket.close", "code": 1008}
+
+
+def test_without_path_networks_the_dashboard_is_refused_to_the_lan():
+    called, sent = _drive({"type": "http", "method": "GET", "client": (CORE2, 1), "path": "/api/dash"})
+    assert called == [] and sent[0]["status"] == 403

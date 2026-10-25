@@ -6,7 +6,7 @@ class PublicConfig():
 
         },
         "version": {
-            "date": "2026.10.25.1"
+            "date": "2026.10.25.2"
         },
 
         "logger": {
@@ -468,6 +468,10 @@ class PublicConfig():
             # this PC and the tailnet. The house LAN is refused (HTTP 403 /
             # websocket 1008) whatever the Windows firewall allows.
             "allowed_networks": ["127.0.0.0/8", "::1/128", "100.64.0.0/10", "fd7a:115c:a1e0::/48"],
+            # Served GET /api/dash ONLY, nothing else (owner-approved 2026-10-25):
+            # the Core2 desk display, DHCP-pinned in the router. It cannot join
+            # the tailnet. utils/client_allowlist path_networks.
+            "dash_clients": ["192.168.87.54/32"],
         },
 
         "sync": {

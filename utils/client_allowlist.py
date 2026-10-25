@@ -16,6 +16,12 @@ shadowed-8095 incident), and start_srt / service_check reason about ports.
     chat       loopback (scheduler, NINA scripts, live_skymap ...) + the tailnet
                (the phone, the Spark posting to /api/post)
     conductor  loopback only: every caller is on this PC
+
+One narrow exception (owner-approved 2026-10-25): *path_networks* serves a
+single exact path, GET only, to extra addresses -- the read-only /api/dash for
+the Core2 desk display (192.168.87.54, DHCP-pinned), which cannot join the
+tailnet. Never a websocket, never another method, never another path: from
+those addresses everything else is refused exactly as before.
 """
 import ipaddress
 import logging
@@ -59,17 +65,24 @@ def describe(nets) -> str:
 class ClientAllowlist:
     """ASGI middleware: refuse HTTP and websocket peers outside *networks*."""
 
-    def __init__(self, app, networks, name: str = "server"):
+    def __init__(self, app, networks, name: str = "server", path_networks=None):
         self.app = app
         self.nets = parse(networks)
         self.name = name
         self.serves = describe(self.nets)
+        self.path_nets = {path: parse(nets) for path, nets in (path_networks or {}).items() if nets}
         self._logged = {}
+
+    def _path_allows(self, host, scope) -> bool:
+        """True only for an HTTP GET of an exact *path_networks* path from one of its addresses."""
+        nets = self.path_nets.get(scope.get("path"))
+        return (bool(nets) and scope.get("type") == "http"
+                and scope.get("method") == "GET" and allowed(host, nets))
 
     async def __call__(self, scope, receive, send):
         if scope.get("type") in ("http", "websocket"):
             host = (scope.get("client") or (None, None))[0]
-            if not allowed(host, self.nets):
+            if not allowed(host, self.nets) and not self._path_allows(host, scope):
                 self._log(host, scope)
                 if scope["type"] == "http":
                     await send({"type": "http.response.start", "status": 403,

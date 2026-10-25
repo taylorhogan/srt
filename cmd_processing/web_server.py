@@ -40,8 +40,19 @@ def _allowed_networks():
 # No login (every connection is the first Super User), so the peer address is
 # the gate: loopback and the tailnet only, whatever the firewall allows
 # (utils/client_allowlist, 2026-10-12).
+def _dash_clients():
+    """Extra addresses served /api/dash only (web_chat.dash_clients; the Core2, 2026-10-25)."""
+    try:
+        from configs import config
+        return list(config.data().get("web_chat", {}).get("dash_clients") or [])
+    except Exception:
+        _logger.exception("web_chat.dash_clients unreadable; no extra dashboard clients")
+        return []
+
+
 from utils.client_allowlist import ClientAllowlist  # noqa: E402
-app.add_middleware(ClientAllowlist, networks=_allowed_networks(), name="web chat")
+app.add_middleware(ClientAllowlist, networks=_allowed_networks(), name="web chat",
+                   path_networks={"/api/dash": _dash_clients()})
 
 _static_dir = os.path.join(os.path.dirname(__file__), "static")
 app.mount("/static", StaticFiles(directory=_static_dir), name="static")
@@ -579,19 +590,38 @@ async def api_ticker():
     return JSONResponse(content=payload, headers={"Cache-Control": "no-store"})
 
 
+_DASH_TTL_S = 15.0
+_dash_cache = None            # (monotonic time, payload)
+_dash_lock = asyncio.Lock()
+
+
 @app.get("/api/dash")
 async def api_dash():
     """A very short status for the Core2 desk display (cmd_processing/dash.py).
 
     Read-only: file reads, the conductor's state and plan, PWI4's status.
-    Served like every other route (this PC and the tailnet)."""
-    try:
-        from configs import config
-        from cmd_processing import dash
-        payload = await asyncio.to_thread(dash.build, config.data())
-    except Exception:
-        _logger.exception("api_dash error")
-        payload = {"ok": False}
+    Served to this PC and the tailnet, and to web_chat.dash_clients (the
+    Core2 on the house LAN) for this path alone. One build serves every
+    caller for _DASH_TTL_S, so however often it is asked, iris-pc does the
+    ~4.5 s of work at most once per window."""
+    import time as _time
+    global _dash_cache
+    now = _time.monotonic()
+    if _dash_cache is not None and now - _dash_cache[0] < _DASH_TTL_S:
+        payload = _dash_cache[1]
+    else:
+        async with _dash_lock:
+            if _dash_cache is not None and _time.monotonic() - _dash_cache[0] < _DASH_TTL_S:
+                payload = _dash_cache[1]
+            else:
+                try:
+                    from configs import config
+                    from cmd_processing import dash
+                    payload = await asyncio.to_thread(dash.build, config.data())
+                except Exception:
+                    _logger.exception("api_dash error")
+                    payload = {"ok": False}
+                _dash_cache = (_time.monotonic(), payload)
     return JSONResponse(content=payload, headers={"Cache-Control": "no-store"})
 
 
