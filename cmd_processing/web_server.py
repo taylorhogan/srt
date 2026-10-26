@@ -596,7 +596,7 @@ _dash_lock = asyncio.Lock()
 
 
 @app.get("/api/dash")
-async def api_dash(part: Optional[str] = None):
+async def api_dash(part: Optional[str] = None, fw: Optional[str] = None):
     """A very short status for the Core2 desk display (cmd_processing/dash.py).
 
     Read-only: file reads, the conductor's state and plan, PWI4's status.
@@ -610,6 +610,10 @@ async def api_dash(part: Optional[str] = None):
     it is rendered once per new frame (dash.thumbnail)."""
     import time as _time
     global _dash_cache
+    if fw:
+        # The display says which build it runs (?fw=...), for `core2 status`.
+        from cmd_processing import dash
+        dash.note_running(fw)
     if part == "firmware":
         # The Core2's over-the-air update (scripts/core2_publish.py): signed,
         # checked on the device before it is booted. Same path and method.

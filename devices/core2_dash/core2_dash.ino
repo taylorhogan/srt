@@ -108,7 +108,10 @@ static void fetch() {
   if (WiFi.status() != WL_CONNECTED) { lastErr = "no wifi"; return; }
   HTTPClient http;
   http.setTimeout(15000);                      // first call after idle can take ~5 s
-  if (!http.begin(DASH_URL)) { lastErr = "bad url"; return; }
+  // Say which build this is (core2 status shows it); '+' would read as a space.
+  String fwq = String(FW_VERSION);
+  fwq.replace("+", "%2B");
+  if (!http.begin(String(DASH_URL) + "?fw=" + fwq)) { lastErr = "bad url"; return; }
   int code = http.GET();
   if (code == 200) {
     JsonDocument fresh;

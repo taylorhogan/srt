@@ -4608,11 +4608,10 @@ def core2_cmd(words: list[str], account: str) -> None:
     the signature does not match. core2 status shows what is published."""
     sub = words[2].lower() if len(words) > 2 else "status"
     if sub == "status":
+        from datetime import datetime
         from cmd_processing import dash
-        fw = dash.firmware_info()
         social_server.post_social_message(
-            "core2: published %s (%d bytes)" % (fw["v"], fw["size"]) if fw
-            else "core2: nothing published yet -- `core2 publish`")
+            dash.firmware_status(dash.firmware_info(), dash.RUNNING, datetime.now()))
         return
     if sub != "publish":
         social_server.post_social_message("Usage: core2 publish | core2 status")

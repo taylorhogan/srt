@@ -41,3 +41,20 @@ def test_the_reply_advertises_what_is_published(tmp_path):
     assert dash.firmware(b) is None
     b.write_bytes(b"\x01\x02")
     assert dash.firmware(b) == b"\x01\x02"
+
+
+def test_core2_status_compares_published_and_running():
+    from datetime import datetime, timedelta
+    now = datetime(2026, 10, 26, 12, 30)
+    pub = {"v": "39000b5-1026T1153", "size": 1, "hmac": "x"}
+    assert dash.firmware_status(pub, {"v": None, "at": None}, now).endswith("unknown")
+    s = dash.firmware_status(pub, {"v": "39000b5-1026T1153", "at": now - timedelta(minutes=3)}, now)
+    assert "running 39000b5-1026T1153 (heard 3 min ago)" in s and s.endswith("up to date")
+    assert dash.firmware_status(pub, {"v": "b84d118-1026T0905", "at": now}, now).endswith("update pending")
+
+
+def test_a_reported_version_is_sanitised():
+    dash.note_running("39000b5-1026T1153<script>")
+    assert dash.RUNNING["v"] == "39000b5-1026T1153script"
+    dash.note_running("a+dirty-1026")
+    assert dash.RUNNING["v"] == "a+dirty-1026"

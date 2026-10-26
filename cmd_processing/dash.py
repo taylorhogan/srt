@@ -547,6 +547,33 @@ def firmware_info(manifest: Path = FW_MANIFEST) -> Optional[dict]:
         return None
 
 
+# The build the Core2 last said it runs (it adds ?fw=<version> to every poll).
+RUNNING = {"v": None, "at": None}
+
+
+def note_running(version: str, now: Optional[datetime] = None) -> None:
+    """Remember the display's reported build; anything odd is cut short, not trusted."""
+    import re
+    v = re.sub(r"[^A-Za-z0-9._+-]", "", str(version))[:48]
+    if v:
+        RUNNING.update(v=v, at=now or datetime.now())
+
+
+def firmware_status(published: Optional[dict], running: dict, now: datetime) -> str:
+    """The `core2 status` line: published vs running, and how long since it was heard. Pure."""
+    pub = published["v"] if published else None
+    run, at = running.get("v"), running.get("at")
+    if run is None:
+        heard = "not heard from since the chat server started"
+    else:
+        mins = int((now - at).total_seconds() // 60)
+        heard = "running %s (heard %s)" % (run, "just now" if mins < 1 else "%d min ago" % mins)
+    if pub is None:
+        return "core2: nothing published; %s" % heard
+    state = ("up to date" if run == pub else "update pending" if run else "unknown")
+    return "core2: published %s; %s -- %s" % (pub, heard, state)
+
+
 def firmware(binary: Path = FW_BINARY) -> Optional[bytes]:
     try:
         return binary.read_bytes()
