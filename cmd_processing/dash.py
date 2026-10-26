@@ -496,8 +496,32 @@ def build(cfg: dict) -> dict:
     f = newest_frame(cfg)
     out["img"] = ({k: f[k] for k in ("id", "dso", "filter", "fwhm", "at")} if f else None)
     out["sky"] = read_sky()
+    out["fw"] = firmware_info()
     return out
 
+
+
+# Over-the-air firmware (2026-10-26): scripts/core2_publish.py compiles and
+# signs it; the Core2 compares "fw"["v"] with its own build and fetches
+# ?part=firmware when they differ, booting it only if the HMAC matches.
+FW_MANIFEST = ROOT / "local" / "core2_fw" / "manifest.json"
+FW_BINARY = ROOT / "local" / "core2_fw" / "firmware.bin"
+
+
+def firmware_info(manifest: Path = FW_MANIFEST) -> Optional[dict]:
+    """{"v", "size", "hmac"} of the published firmware, or None when nothing is published."""
+    try:
+        m = json.loads(manifest.read_text())
+        return {k: m[k] for k in ("v", "size", "hmac")}
+    except (OSError, ValueError, KeyError):
+        return None
+
+
+def firmware(binary: Path = FW_BINARY) -> Optional[bytes]:
+    try:
+        return binary.read_bytes()
+    except OSError:
+        return None
 
 
 def image(cfg: dict) -> Optional[bytes]:

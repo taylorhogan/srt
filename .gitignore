@@ -78,3 +78,5 @@ sentry/roof_frames_kasa/
 
 # Core2 desk display Wi-Fi credentials
 devices/core2_dash/secrets.h
+devices/core2_dash/ota_key.h
+devices/core2_dash/fw_version.h

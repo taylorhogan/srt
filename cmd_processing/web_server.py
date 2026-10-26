@@ -610,6 +610,16 @@ async def api_dash(part: Optional[str] = None):
     it is rendered once per new frame (dash.thumbnail)."""
     import time as _time
     global _dash_cache
+    if part == "firmware":
+        # The Core2's over-the-air update (scripts/core2_publish.py): signed,
+        # checked on the device before it is booted. Same path and method.
+        from fastapi.responses import Response
+        from cmd_processing import dash
+        blob = await asyncio.to_thread(dash.firmware)
+        if not blob:
+            return Response(status_code=404, headers={"Cache-Control": "no-store"})
+        return Response(content=blob, media_type="application/octet-stream",
+                        headers={"Cache-Control": "no-store"})
     if part == "image":
         from fastapi.responses import Response
         try:

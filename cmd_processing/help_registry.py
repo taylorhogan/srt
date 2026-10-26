@@ -168,6 +168,14 @@ HELP: dict[str, dict] = {
         "usage": ["sequence <dso>"],
         "examples": ["sequence m 31"],
     },
+    "core2": {
+        "category": "super",
+        "summary": "Build the Core2 desk display's firmware and update it over the air.",
+        "usage": ["core2 publish", "core2 status"],
+        "notes": ["Compiles devices/core2_dash on this PC and publishes a signed image; the Core2 "
+                  "updates itself within a few minutes and keeps its current firmware if the "
+                  "signature does not match (scripts/core2_publish.py)."],
+    },
     "replan": {
         "category": "super",
         "summary": "Make tonight's noon decision again, after a priority, filter or queue change.",

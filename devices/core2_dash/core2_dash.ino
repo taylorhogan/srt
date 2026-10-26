@@ -19,6 +19,23 @@
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
 #include "secrets.h"   // WIFI_SSID, WIFI_PASS, DASH_URL
+#include <Update.h>
+#include "mbedtls/md.h"
+#include "esp_ota_ops.h"
+// Over-the-air update (2026-10-26). Both headers are written by
+// scripts/core2_publish.py and gitignored; a build without them still runs,
+// it just never updates itself.
+#if __has_include("fw_version.h")
+#include "fw_version.h"
+#else
+#define FW_VERSION "usb"
+#endif
+#if __has_include("ota_key.h")
+#include "ota_key.h"
+#define HAVE_OTA 1
+#else
+#define HAVE_OTA 0
+#endif
 
 static const uint32_t POLL_MS = 30000;
 static const uint32_t STALE_MS = 180000;
@@ -47,6 +64,8 @@ static String lastErr = "starting";
 // node and stopped updating until carried outside. Connect to the strongest
 // node, and rescan when the link is weak or two polls in a row fail -- at most
 // every 2 minutes, so it cannot thrash.
+static String failedFw = "";      // a version that failed its check: not tried again
+static bool markedValid = false;
 static int failsInRow = 0;
 static uint32_t lastRejoin = 0;
 static const int WEAK_RSSI = -78;               // dBm
@@ -91,6 +110,7 @@ static void fetch() {
     DeserializationError e = deserializeJson(fresh, http.getStream());
     if (!e && fresh["ok"].as<bool>()) {
       doc = fresh; haveData = true; lastOk = millis(); lastErr = ""; failsInRow = 0;
+      if (!markedValid) { esp_ota_mark_app_valid_cancel_rollback(); markedValid = true; }
     } else {
       lastErr = e ? "bad json" : "server not ok"; failsInRow++;
     }
@@ -98,6 +118,81 @@ static void fetch() {
     lastErr = "http " + String(code); failsInRow++;
   }
   http.end();
+}
+
+
+// Over-the-air update. The server advertises "fw": {"v", "size", "hmac"}.
+// When v differs from this build, the image is streamed into the spare app
+// slot while HMAC-SHA256 (key in ota_key.h) is computed over it, and the
+// boot slot is switched ONLY if the HMAC matches -- so a corrupted or
+// tampered download is discarded and this firmware keeps running.
+static void otaScreen(const char* msg, int pct) {
+  auto& d = M5.Display;
+  d.startWrite();
+  d.fillScreen(TFT_BLACK);
+  d.fillRect(0, 0, 240, 30, TFT_DARKGREY);
+  d.setTextColor(TFT_BLACK, TFT_DARKGREY);
+  d.setTextSize(2); d.setCursor(8, 8); d.print("IRIS");
+  d.setTextColor(TFT_WHITE, TFT_BLACK);
+  d.setCursor(8, 120); d.print(msg);
+  if (pct >= 0) {
+    d.drawRect(8, 150, 224, 16, TFT_LIGHTGREY);
+    d.fillRect(10, 152, 220 * pct / 100, 12, TFT_CYAN);
+  }
+  d.endWrite();
+}
+
+static void checkFirmware() {
+#if HAVE_OTA
+  if (!haveData || doc["fw"].isNull() || WiFi.status() != WL_CONNECTED) return;
+  String v = doc["fw"]["v"] | "";
+  String want = doc["fw"]["hmac"] | "";
+  int size = doc["fw"]["size"] | 0;
+  if (v.length() == 0 || v == FW_VERSION || v == failedFw) return;
+  if (size <= 0 || want.length() != 64) return;
+  HTTPClient http;
+  http.setTimeout(20000);
+  if (!http.begin(String(DASH_URL) + "?part=firmware")) return;
+  if (http.GET() != 200 || http.getSize() != size) { http.end(); return; }
+  if (!Update.begin(size)) { http.end(); failedFw = v; return; }
+  otaScreen("updating", 0);
+  mbedtls_md_context_t ctx;
+  mbedtls_md_init(&ctx);
+  mbedtls_md_setup(&ctx, mbedtls_md_info_from_type(MBEDTLS_MD_SHA256), 1);
+  mbedtls_md_hmac_starts(&ctx, OTA_KEY, sizeof(OTA_KEY));
+  WiFiClient* st = http.getStreamPtr();
+  static uint8_t buf[2048];
+  size_t got = 0;
+  int lastPct = -1;
+  bool writeOk = true;
+  uint32_t t0 = millis();
+  while (got < (size_t)size && millis() - t0 < 180000) {
+    size_t want_n = (size_t)size - got;
+    if (want_n > sizeof(buf)) want_n = sizeof(buf);
+    int n = st->readBytes(buf, want_n);
+    if (n <= 0) { delay(5); continue; }
+    mbedtls_md_hmac_update(&ctx, buf, n);
+    if (Update.write(buf, n) != (size_t)n) { writeOk = false; break; }
+    got += n;
+    int pct = (int)(100.0 * got / size);
+    if (pct / 5 != lastPct / 5) { otaScreen("updating", pct); lastPct = pct; }
+  }
+  uint8_t mac[32];
+  mbedtls_md_hmac_finish(&ctx, mac);
+  mbedtls_md_free(&ctx);
+  http.end();
+  char hex[65];
+  for (int i = 0; i < 32; i++) snprintf(hex + 2 * i, 3, "%02x", mac[i]);
+  if (writeOk && got == (size_t)size && want.equalsIgnoreCase(hex) && Update.end(true)) {
+    otaScreen("restarting", 100);
+    delay(800);
+    ESP.restart();
+  }
+  Update.abort();
+  failedFw = v;                                   // keep running this build
+  otaScreen("update refused", -1);
+  delay(3000);
+#endif
 }
 
 // The thumbnail, only when the newest frame has changed since the last one.
@@ -175,6 +270,7 @@ static void paintStatus() {
     d.setCursor(8, 166); d.print("MAC "); d.print(WiFi.macAddress());
     d.setCursor(8, 182); d.print("URL "); d.print(DASH_URL);
     d.setCursor(8, 198); d.printf("RSSI %d dBm", WiFi.status() == WL_CONNECTED ? (int)WiFi.RSSI() : 0);
+    d.setCursor(8, 214); d.print("FW  "); d.print(FW_VERSION);
     d.endWrite();
     return;
   }
@@ -412,6 +508,7 @@ void loop() {
     lastPoll = millis();
     checkLink();
     fetch();
+    checkFirmware();                           // before anything else uses the reply
     fetchImage();
     repaint = (page == PG_STATUS);                // other pages refresh on their next turn
   }

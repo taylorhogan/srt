@@ -3843,6 +3843,7 @@ def get_super_user_commands() -> dict[str, Callable]:
         "night": night_cmd,
         "lightcurve": lightcurve_cmd,
         "replan": replan_cmd,
+        "core2": core2_cmd,
         "rehome": rehome_cmd,
         "transit": transit_cmd,
         "transient": transient_cmd,
@@ -4596,6 +4597,35 @@ def replan_reply_text(reply, state: str = "") -> str:
                 "lands (about a minute) the scheduler rewrites tonight's sequence and posts it.")
     return ("Replan refused: the conductor is in %s (%s)."
             % (reply.get("state") or state or "?", reply.get("guard") or "no replan from there"))
+
+
+def core2_cmd(words: list[str], account: str) -> None:
+    """core2 publish -- build the desk display's firmware and publish it over the air.
+
+    Compiles devices/core2_dash on this PC (scripts/core2_publish.py) and
+    publishes the signed image; the Core2 sees the new version in /api/dash
+    and updates itself within a few minutes, keeping its current firmware if
+    the signature does not match. core2 status shows what is published."""
+    sub = words[2].lower() if len(words) > 2 else "status"
+    if sub == "status":
+        from cmd_processing import dash
+        fw = dash.firmware_info()
+        social_server.post_social_message(
+            "core2: published %s (%d bytes)" % (fw["v"], fw["size"]) if fw
+            else "core2: nothing published yet -- `core2 publish`")
+        return
+    if sub != "publish":
+        social_server.post_social_message("Usage: core2 publish | core2 status")
+        return
+
+    def _run():
+        from scripts import core2_publish
+        try:
+            core2_publish.publish(log=social_server.post_social_message)
+        except Exception as e:  # noqa: BLE001
+            _logger.exception("core2 publish failed")
+            social_server.post_social_message("core2 publish FAILED: %s" % e)
+    jobs.spawn(_run)
 
 
 def replan_cmd(words: list[str], account: str) -> None:
