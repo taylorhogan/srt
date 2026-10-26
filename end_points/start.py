@@ -51,7 +51,7 @@ if __name__ == "__main__":
     elif reason:
         logger.warning('Start sequence: %s (mount power proceeding)', reason)
 
-    results = asyncio.run(ku.kasa_do(dev_map, instructions))
+    results = asyncio.run(ku.kasa_do(dev_map, instructions, ku.RETRY_ROUTINE))
     failed = [n for n, ok in results.items() if not ok]
     if failed:
         logger.error('Start sequence: %d of %d switches FAILED: %s',

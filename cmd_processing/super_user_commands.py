@@ -55,14 +55,14 @@ def is_inside_light_on(dev_map: dict) -> bool:
 def turn_inside_light_on(dev_map: dict) -> None:
     """Turn on the observatory inside light and wait for the relay to settle."""
     inst = {"Iris inside light": 'on'}
-    asyncio.run(ku.kasa_do(dev_map, inst))
+    asyncio.run(ku.kasa_do(dev_map, inst, ku.RETRY_SHORT))
     time.sleep(2)
 
 
 def turn_inside_light_off(dev_map: dict) -> None:
     """Turn off the observatory inside light and wait for the relay to settle."""
     inst = {"Iris inside light": 'off'}
-    asyncio.run(ku.kasa_do(dev_map, inst))
+    asyncio.run(ku.kasa_do(dev_map, inst, ku.RETRY_SHORT))
     time.sleep(2)
 
 
@@ -90,7 +90,7 @@ def _roof_stall_abort(dev_map: dict, direction: Optional[str],
     """
     power_cut = True
     try:
-        asyncio.run(ku.kasa_do(dev_map, {"Roof motor": 'off'}))
+        asyncio.run(ku.kasa_do(dev_map, {"Roof motor": 'off'}, ku.RETRY_URGENT))
     except Exception:  # noqa: BLE001
         power_cut = False
         _logger.exception("roof stall: FAILED to cut roof motor power")
@@ -1681,8 +1681,8 @@ def _emergency_stop_body() -> None:
             try:
                 if dev_map is None:
                     dev_map = asyncio.run(ku.make_discovery_map())
-                if asyncio.run(ku.kasa_do(dev_map,
-                                          {"Telescope mount": 'off'})).get("Telescope mount"):
+                if asyncio.run(ku.kasa_do(dev_map, {"Telescope mount": 'off'},
+                                          ku.RETRY_URGENT)).get("Telescope mount"):
                     _logger.info("emergency: mount power confirmed off")
                 else:
                     # "confirmed" was previously logged whether or not anything
@@ -1726,7 +1726,7 @@ def _emergency_stop_body() -> None:
                         "Telescope mount": 'off',
                         "Roof motor": 'off',
                         "Iris inside light": 'off',
-                    }))
+                    }, ku.RETRY_URGENT))
             except Exception:
                 _logger.exception("emergency: lightweight shutdown failed")
             _power_down_after_close()
@@ -4370,7 +4370,8 @@ def do_flats() -> bool:
     # of what the End Sequence left it at (a failed shutdown step can leave it on
     # and contaminate the flats).
     try:
-        if asyncio.run(ku.kasa_do(dev_map, {"Iris inside light": 'off'})).get("Iris inside light"):
+        if asyncio.run(ku.kasa_do(dev_map, {"Iris inside light": 'off'},
+                                  ku.RETRY_ROUTINE)).get("Iris inside light"):
             _logger.info("Inside light forced off before flats")
         else:
             _logger.error("Inside light NOT confirmed off -- flats may be contaminated")
@@ -4399,7 +4400,8 @@ def do_flats() -> bool:
     if not _ask_mount("MOUNT_POWER_REQUESTED", "power on for flats",
                       _roof_evidence(parked, closed, is_open), {"why": "flats"}):
         return False
-    if asyncio.run(ku.kasa_do(dev_map, {"Telescope mount": 'on'})).get("Telescope mount"):
+    if asyncio.run(ku.kasa_do(dev_map, {"Telescope mount": 'on'},
+                              ku.RETRY_ROUTINE)).get("Telescope mount"):
         _logger.info("Mount powered on (verified)")
     else:
         _logger.error("Mount power-on FAILED -- flats will run with no mount power")
@@ -4449,7 +4451,8 @@ def do_flats() -> bool:
     # useful: the mount stayed powered for the rest of the night. Now it is
     # checked and said out loud, because a mount left on is the thing that then
     # blocks close_roof.
-    if asyncio.run(ku.kasa_do(dev_map, {"Telescope mount": 'off'})).get("Telescope mount"):
+    if asyncio.run(ku.kasa_do(dev_map, {"Telescope mount": 'off'},
+                              ku.RETRY_ROUTINE)).get("Telescope mount"):
         _logger.info("Mount powered off (verified)")
     else:
         _logger.error("Mount power-off FAILED after flats -- mount is still powered")

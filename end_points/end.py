@@ -479,7 +479,8 @@ def _dawn_attempt() -> str:
     _p, read_closed, _o = LAST_VISION
     if not closed_now:
         try:
-            asyncio.run(ku.kasa_do(dev_map, {"Iris inside light": 'off', "Roof motor": 'off'}))
+            asyncio.run(ku.kasa_do(dev_map, {"Iris inside light": 'off', "Roof motor": 'off'},
+                                   ku.RETRY_ROUTINE))
         except Exception:
             logger.exception("dawn retry: could not switch light / roof motor off")
     if closed_now:
@@ -667,7 +668,7 @@ def _close_if_parked(dev_map, require_open: bool = False) -> tuple:
                 }
             ))
             logger.info("step 5")
-            r5 = asyncio.run(ku.kasa_do(dev_map, instructions))
+            r5 = asyncio.run(ku.kasa_do(dev_map, instructions, ku.RETRY_ROUTINE))
             bad5 = [n for n, ok in r5.items() if not ok]
             if bad5:
                 logger.error("step 6: FAILED: %s", ", ".join(bad5))
@@ -758,7 +759,8 @@ def do_main():
                     # check every DAWN_RETRY_S until the close happens.
                     try:
                         asyncio.run(ku.kasa_do(dev_map, {"Iris inside light": 'off',
-                                                         "Roof motor": 'off'}))
+                                                         "Roof motor": 'off'},
+                                               ku.RETRY_ROUTINE))
                     except Exception:
                         logger.exception("Failed to turn off inside light / roof motor (scope-not-parked path)")
                     _spawn_dawn_retry()
@@ -774,7 +776,7 @@ def do_main():
                     }
                 ))
                 logger.info("step 7")
-                r7 = asyncio.run(ku.kasa_do(dev_map, instructions))
+                r7 = asyncio.run(ku.kasa_do(dev_map, instructions, ku.RETRY_ROUTINE))
                 bad7 = [n for n, ok in r7.items() if not ok]
                 if bad7:
                     logger.error("step 8: FAILED: %s -- mount/roof power not "

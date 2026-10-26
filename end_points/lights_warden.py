@@ -126,7 +126,7 @@ def run(post_cb=None, still_imaging=None, sleep=time.sleep) -> dict:
     if left > 0:
         sleep(left)
     dev_map = asyncio.run(ku.make_discovery_map())
-    results = asyncio.run(ku.kasa_do(dev_map, {n: "off" for n in LIGHTS}))
+    results = asyncio.run(ku.kasa_do(dev_map, {n: "off" for n in LIGHTS}, ku.RETRY_ROUTINE))
     text = result_text(results)
     (_logger.warning if "could not" in text else _logger.info)("lights warden: %s", text)
     if post_cb:

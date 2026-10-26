@@ -67,3 +67,73 @@ def test_kasa_do_still_refuses_when_rediscovery_fails(monkeypatch):
     monkeypatch.setattr(ku, "legacy_relay", lambda *a, **k: pytest.fail("must not switch"))
     out = asyncio.run(ku.kasa_do({}, {"Telescope mount": "off"}))
     assert out == {"Telescope mount": False}
+
+
+# kasa_do retries (2026-10-26): the mount plug missed one 10-second window
+# after flats and stayed on; it answered in 0.1 s minutes later.
+def _fake_plug(monkeypatch, answers):
+    """legacy_relay answers from *answers* in turn (None = no reply); no real sleeps."""
+    calls, slept = [], []
+
+    def relay(ip, state=None, timeout=2.0, retries=1):
+        calls.append((ip, state))
+        a = answers[min(len(calls) - 1, len(answers) - 1)]
+        return a if a is None else state
+
+    async def nap(s):
+        slept.append(s)
+
+    async def no_lib(ip):
+        raise TimeoutError("no discovery response")
+
+    async def same_map(expect=(), passes=2):
+        return {"Telescope mount": "1.2"}
+    monkeypatch.setattr(ku, "legacy_relay", relay)
+    monkeypatch.setattr(ku.asyncio, "sleep", nap)
+    monkeypatch.setattr(ku.Discover, "discover_single", no_lib)
+    monkeypatch.setattr(ku, "make_discovery_map", same_map)
+    return calls, slept
+
+
+def test_one_attempt_by_default(monkeypatch):
+    calls, slept = _fake_plug(monkeypatch, [None, 0])
+    r = asyncio.run(ku.kasa_do({"Telescope mount": "1.2"}, {"Telescope mount": "off"}))
+    assert r == {"Telescope mount": False} and len(calls) == 1 and slept == []
+
+
+def test_a_missed_window_is_retried_until_it_answers(monkeypatch):
+    calls, slept = _fake_plug(monkeypatch, [None, None, 0])
+    r = asyncio.run(ku.kasa_do({"Telescope mount": "1.2"}, {"Telescope mount": "off"}, ku.RETRY_ROUTINE))
+    assert r == {"Telescope mount": True}
+    assert slept == [15, 45] and len(calls) == 3                  # stops as soon as it is confirmed
+
+
+def test_only_the_failed_plug_is_tried_again(monkeypatch):
+    seen = []
+
+    def relay(ip, state=None, timeout=2.0, retries=1):
+        seen.append(ip)
+        return None if ip == "1.2" and seen.count("1.2") == 1 else state
+
+    async def nap(s):
+        pass
+
+    async def same_map(expect=(), passes=2):
+        return {"Telescope mount": "1.2", "Dehumidifier": "1.3"}
+
+    async def no_lib(ip):
+        raise TimeoutError("no discovery response")
+    monkeypatch.setattr(ku, "legacy_relay", relay)
+    monkeypatch.setattr(ku.asyncio, "sleep", nap)
+    monkeypatch.setattr(ku, "make_discovery_map", same_map)
+    monkeypatch.setattr(ku.Discover, "discover_single", no_lib)
+    cfg = {"Telescope mount": "1.2", "Dehumidifier": "1.3"}
+    r = asyncio.run(ku.kasa_do(cfg, {"Telescope mount": "off", "Dehumidifier": "on"}, ku.RETRY_URGENT))
+    assert r == {"Telescope mount": True, "Dehumidifier": True}
+    assert seen == ["1.2", "1.3", "1.2"]
+
+
+def test_giving_up_reports_false_after_the_whole_budget(monkeypatch):
+    calls, slept = _fake_plug(monkeypatch, [None])
+    r = asyncio.run(ku.kasa_do({"Telescope mount": "1.2"}, {"Telescope mount": "off"}, ku.RETRY_URGENT))
+    assert r == {"Telescope mount": False} and slept == list(ku.RETRY_URGENT) and len(calls) == 4

@@ -296,7 +296,46 @@ def set_strip_outlet(strip_ip, child_id, outlet_alias, on):
     return strip_outlet_state(strip_ip, child_id)
 
 
-async def kasa_do(cfg, instructions):
+# Retry budgets for kasa_do (2026-10-26). At 07:09 that morning the mount plug
+# missed one 10-second window -- no answer on 9999, discovery timed out -- and
+# the mount stayed powered after flats; it answered in 0.1 s minutes later.
+# Switching a plug on or off is idempotent and read back, so trying again is
+# safe; how long to keep trying depends on the caller.
+RETRY_ROUTINE = (15, 45, 90)     # after flats, end of night, lights: nothing waits on it
+RETRY_URGENT = (3, 8, 15)        # stop! power-down, the stall watchdog's power cut
+RETRY_SHORT = (2, 5)             # the inside light around a vision read
+# NOT for the roof relay (a Shelly TOGGLE: a pulse that worked but was not
+# confirmed would reverse the roof on a retry) -- it never comes through here.
+
+
+async def kasa_do(cfg, instructions, retry_waits=()):
+    """Switch named devices, retrying the ones that fail after each wait in
+    *retry_waits* (seconds); the default () is a single attempt, as before.
+    Each retry re-discovers the failed plugs first (their address may have
+    moved). Returns {name: True/False}, True only if VERIFIED."""
+    results = await _kasa_do_once(cfg, instructions)
+    for n, wait in enumerate(retry_waits, 1):
+        failed = {k: v for k, v in instructions.items() if not results.get(k)}
+        if not failed:
+            break
+        _logger.warning("kasa_do: %s not confirmed -- retry %d of %d in %ss",
+                        ", ".join(failed), n, len(retry_waits), wait)
+        await asyncio.sleep(wait)
+        try:
+            fresh = await make_discovery_map(expect=tuple(failed))
+            if isinstance(cfg, dict):
+                cfg.update(fresh)
+        except Exception:  # noqa: BLE001 -- the old address may still answer
+            _logger.debug("kasa_do: re-discovery before retry failed", exc_info=True)
+        again = await _kasa_do_once(cfg, failed)
+        for k, ok in again.items():
+            if ok:
+                _logger.info("kasa_do: %r switched %s on retry %d", k, failed[k], n)
+        results.update(again)
+    return results
+
+
+async def _kasa_do_once(cfg, instructions):
     """Switch named devices. Returns {name: True/False}, True only if VERIFIED.
 
     The old version caught KeyError, printed, and returned nothing, so a device
