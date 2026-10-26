@@ -290,6 +290,24 @@ def fwhm_series(frames: list) -> Optional[dict]:
             "last": [int(round(frames[-1][3] * 100)), frames[-1][2]]}
 
 
+def imaging_filters(frames: list, dso: str) -> list:
+    """[{"f", "n", "med", "last"}] for *dso*'s frames tonight, in filter order. Pure.
+
+    The big-type imaging pages (2026-10-26, owner: "simpler information while
+    imaging"): page 2 is the counts, page 3 the median and last FWHM."""
+    mine = [x for x in frames if x[1] == dso]
+    by = {}
+    for t, _d, f, fw, _n in mine:
+        by.setdefault(f, []).append((t, fw))
+    order = [f for f in FILTER_ORDER if f in by] + sorted(set(by) - set(FILTER_ORDER))
+    out = []
+    for f in order:
+        fws = sorted(fw for _t, fw in by[f])
+        out.append({"f": f, "n": len(by[f]), "med": round(fws[len(fws) // 2], 2),
+                    "last": round(max(by[f])[1], 2)})
+    return out
+
+
 def night_summary(frames: list, night: str) -> Optional[dict]:
     """Per target: frames per filter and median FWHM; plus the night's sharpest frame. Pure."""
     if not frames:
@@ -491,6 +509,18 @@ def build(cfg: dict) -> dict:
                     conductor.get_plan(night_of, 3.0), plan_text, live, disk_gb)
     night, frames = read_night(cfg, now)
     out["fwhm"] = fwhm_series(frames)
+    # While imaging, the display switches to three big-type pages: the time
+    # and temperature, then the target's counts per filter, then its median
+    # and last FWHM per filter (owner, 2026-10-26). "sec" lets the display
+    # tick its own clock between polls.
+    out["sec"] = now.hour * 3600 + now.minute * 60 + now.second
+    out["im"] = ({"dso": live["dso"], "filters": imaging_filters(frames, live["dso"])}
+                 if live else None)
+    try:
+        from cmd_processing.web_server import _read_outside_temp_f
+        out["temp_f"] = _read_outside_temp_f()
+    except Exception:  # noqa: BLE001 -- no temperature is a normal answer
+        out["temp_f"] = None
     # The summary is for the morning after: shown while nothing is imaging.
     out["summary"] = night_summary(frames, night) if live is None else None
     f = newest_frame(cfg)

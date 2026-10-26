@@ -47,8 +47,13 @@ static const uint8_t ROTATION = 2;
 static JsonDocument doc;
 static bool haveData = false;
 
-enum Page { PG_STATUS, PG_FWHM, PG_IMAGE, PG_SUMMARY, PG_NPAGES };
-static const uint32_t PAGE_MS[PG_NPAGES] = {20000, 10000, 10000, 10000};
+// While imaging (doc["im"] set) only the three big-type pages rotate: time and
+// temperature, the target's counts per filter, its median/last FWHM per filter
+// (owner 2026-10-26: "simpler information while imaging"). Otherwise the
+// status / FWHM / picture / summary pages as before.
+enum Page { PG_STATUS, PG_FWHM, PG_IMAGE, PG_SUMMARY, PG_BIG_TIME, PG_BIG_COUNT, PG_BIG_FWHM, PG_NPAGES };
+static const uint32_t PAGE_MS[PG_NPAGES] = {20000, 10000, 10000, 10000, 10000, 7000, 7000};
+static long serverSec = -1;                    // seconds since local midnight at the last good reply
 static int page = PG_STATUS;
 static uint32_t pageStart = 0;
 
@@ -110,6 +115,7 @@ static void fetch() {
     DeserializationError e = deserializeJson(fresh, http.getStream());
     if (!e && fresh["ok"].as<bool>()) {
       doc = fresh; haveData = true; lastOk = millis(); lastErr = ""; failsInRow = 0;
+      serverSec = doc["sec"].isNull() ? -1 : (long)doc["sec"];
       if (!markedValid) { esp_ota_mark_app_valid_cancel_rollback(); markedValid = true; }
     } else {
       lastErr = e ? "bad json" : "server not ok"; failsInRow++;
@@ -467,7 +473,91 @@ static void paintSummary() {
            (const char*)s["best"]["at"]);
 }
 
+
+// ---- big-type imaging pages ------------------------------------------------
+// Text is scaled to fill its box (M5GFX scales any font), so the numbers are
+// as large as the 240 x 320 screen allows.
+static void fitText(const String& txt, int cx, int cy, int maxW, int maxH,
+                    const lgfx::IFont* font, uint16_t color) {
+  auto& d = M5.Display;
+  d.setFont(font);
+  d.setTextSize(1);
+  float w = d.textWidth(txt), h = d.fontHeight();
+  if (w < 1 || h < 1) return;
+  float k = min((float)maxW / w, (float)maxH / h);
+  d.setTextSize(k);
+  d.setTextDatum(middle_center);
+  d.setTextColor(color, TFT_BLACK);
+  d.drawString(txt, cx, cy);
+}
+
+static void plainFont() {
+  auto& d = M5.Display;
+  d.setFont(&fonts::Font0);
+  d.setTextSize(1);
+  d.setTextDatum(top_left);
+}
+
+static String clockNow() {
+  if (serverSec < 0) return String(doc["t"] | "--:--");
+  long sec = (serverSec + (long)((millis() - lastOk) / 1000)) % 86400;
+  char b[6];
+  snprintf(b, sizeof(b), "%02ld:%02ld", sec / 3600, (sec / 60) % 60);
+  return String(b);
+}
+
+// Page A: the time and the outside temperature, each half the screen.
+static void paintBigTime() {
+  auto& d = M5.Display;
+  d.fillRect(0, 0, 240, 6, colorFor(doc["level"]));          // the level, as a thin bar
+  fitText(clockNow(), 120, 85, 228, 140, &fonts::Font7, TFT_WHITE);
+  String temp = doc["temp_f"].isNull() ? String("--") : String((int)round(doc["temp_f"].as<float>()));
+  fitText(temp + "F", 120, 238, 228, 140, &fonts::FreeSansBold24pt7b, TFT_CYAN);
+  plainFont();
+}
+
+// Page B: the target, then one line per filter: "Ha: 12".
+static void paintBigCount() {
+  JsonObject im = doc["im"];
+  JsonArray fs = im["filters"];
+  int n = max(1, (int)fs.size());
+  fitText(String((const char*)(im["dso"] | "?")), 120, 30, 228, 52, &fonts::FreeSansBold24pt7b, TFT_WHITE);
+  int top = 64, rowH = min(64, (320 - top) / n);
+  int i = 0;
+  for (JsonObject f : fs) {
+    String line = String((const char*)f["f"]) + ": " + String((int)f["n"]);
+    fitText(line, 120, top + rowH * i + rowH / 2, 228, rowH - 6, &fonts::FreeSansBold24pt7b,
+            filterColor(f["f"] | "?"));
+    i++;
+  }
+  plainFont();
+}
+
+// Page C: the same filters, median and last FWHM: "Ha 1.84 1.79".
+static void paintBigFwhm() {
+  JsonObject im = doc["im"];
+  JsonArray fs = im["filters"];
+  int n = max(1, (int)fs.size());
+  fitText("FWHM med last", 120, 30, 228, 40, &fonts::FreeSansBold24pt7b, TFT_LIGHTGREY);
+  int top = 64, rowH = min(64, (320 - top) / n);
+  int i = 0;
+  for (JsonObject f : fs) {
+    char b[32];
+    snprintf(b, sizeof(b), "%s %.2f %.2f", (const char*)f["f"], f["med"].as<float>(), f["last"].as<float>());
+    fitText(String(b), 120, top + rowH * i + rowH / 2, 228, rowH - 6, &fonts::FreeSansBold24pt7b,
+            filterColor(f["f"] | "?"));
+    i++;
+  }
+  plainFont();
+}
+
+static bool imaging() { return haveData && !doc["im"].isNull(); }
+
 static bool pageHasData(int p) {
+  bool im = imaging();
+  if (p == PG_BIG_TIME) return im;
+  if (p == PG_BIG_COUNT || p == PG_BIG_FWHM) return im && doc["im"]["filters"].size() > 0;
+  if (im) return false;                         // imaging: only the big pages
   switch (p) {
     case PG_STATUS:  return true;
     case PG_FWHM:    return !doc["fwhm"].isNull();
@@ -480,13 +570,17 @@ static bool pageHasData(int p) {
 // Stale data, or none yet, holds the status page: it is the one that says so.
 static void paint() {
   bool stale = !haveData || millis() - lastOk > STALE_MS;
-  if (stale || !pageHasData(page)) page = PG_STATUS;
+  if (stale) page = PG_STATUS;
+  else if (!pageHasData(page)) page = imaging() ? PG_BIG_TIME : PG_STATUS;
   if (page == PG_STATUS) { paintStatus(); return; }
   M5.Display.startWrite();
   M5.Display.fillScreen(TFT_BLACK);
   if (page == PG_FWHM) paintFwhm();
   else if (page == PG_IMAGE) paintImage();
-  else paintSummary();
+  else if (page == PG_SUMMARY) paintSummary();
+  else if (page == PG_BIG_TIME) paintBigTime();
+  else if (page == PG_BIG_COUNT) paintBigCount();
+  else paintBigFwhm();
   M5.Display.endWrite();
 }
 
@@ -514,11 +608,17 @@ void loop() {
   }
   if (millis() - pageStart >= PAGE_MS[page]) {
     int next = page;
-    do { next = (next + 1) % PG_NPAGES; } while (next != PG_STATUS && !pageHasData(next));
+    for (int k = 0; k < PG_NPAGES; k++) {        // the next page that has something to show
+      next = (next + 1) % PG_NPAGES;
+      if (pageHasData(next)) break;
+    }
     page = next;
     pageStart = millis();
     repaint = true;
   }
+  // The big clock follows the minute between polls.
+  static String shownClock = "";
+  if (page == PG_BIG_TIME && clockNow() != shownClock) { shownClock = clockNow(); repaint = true; }
   if (repaint) paint();
   delay(200);
 }

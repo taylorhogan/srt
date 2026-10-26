@@ -144,3 +144,16 @@ def test_sky_label_reads_a_clear_sky_and_admits_what_the_moon_hides():
     assert dash.sky_label(dict(row, night=False), now, 200, 0.75, False)["v"] == "day"
     assert dash.sky_label(row, now + timedelta(minutes=30), 200, 0.75, False)["v"] == "no sky cam"
     assert dash.sky_label(None, now, 200, 0.75, False) is None
+
+
+# The big-type imaging pages (2026-10-26).
+def test_imaging_filters_count_and_judge_the_running_target_only():
+    rows = {"m1": [_row("m1", "2026-10-25", "2026-10-26_02-10-00", "S-II", 1.90),
+                   _row("m1", "2026-10-25", "2026-10-26_02-20-00", "Ha", 1.80),
+                   _row("m1", "2026-10-25", "2026-10-26_02-30-00", "Ha", 1.60),
+                   _row("m1", "2026-10-25", "2026-10-26_02-40-00", "Ha", 1.70)],
+            "melotte15": [_row("melotte15", "2026-10-25", "2026-10-25_23-10-00", "Ha", 2.0)]}
+    f = dash.imaging_filters(dash.night_frames(rows, "2026-10-25"), "m1")
+    assert f == [{"f": "Ha", "n": 3, "med": 1.7, "last": 1.7},
+                 {"f": "S-II", "n": 1, "med": 1.9, "last": 1.9}]
+    assert dash.imaging_filters([], "m1") == []
