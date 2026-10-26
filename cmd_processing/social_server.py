@@ -63,7 +63,12 @@ def image_cmd(words: list[str], index: int, m: Mastodon, account: str) -> None:
     if dso_name is not None:
         object = astro_dso_visibility.is_a_dso_object(dso_name)
         if object is not None:
-            if instructions.add_dso_object_instruction(dso_name, "", account):
+            # Store the position just resolved, so planning never needs a name
+            # lookup for it again (SIMBAD outage 2026-10-26: `tonight` took 5.5 min).
+            if instructions.add_dso_object_instruction(
+                    dso_name, "", account,
+                    ra_deg=round(float(object.coord.ra.deg), 5),
+                    dec_deg=round(float(object.coord.dec.deg), 5)):
                 post_social_message(dso_name + " Added to list of objects to image\n")
             else:
                 post_social_message(dso_name + " Already in the queue\n")
