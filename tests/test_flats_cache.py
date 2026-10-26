@@ -50,3 +50,23 @@ def test_an_unchanged_disk_is_served_from_the_cache(tmp_path, monkeypatch):
     first = stacker.flats_by_filter(tmp_path)
     monkeypatch.setattr(stacker.fits, "getheader", lambda *_a, **_k: pytest.fail("re-read headers"))
     assert stacker.flats_by_filter(tmp_path) is first
+
+
+def test_a_master_uses_only_the_newest_sessions():
+    # 2026-10-26: the Spark's sync never deletes, so its masters averaged every
+    # flat set ever taken.
+    from pathlib import Path
+    paths = [Path("/f/%s/FLAT/L_%d.fits" % (d, i)) for d in ("2026-10-19", "2026-10-25", "2026-10-22",
+                                                              "2026-10-24", "2026-07-14") for i in range(2)]
+    got = stacker.newest_flat_sets(paths, 3)
+    assert sorted({p.parent.parent.name for p in got}) == ["2026-10-22", "2026-10-24", "2026-10-25"]
+    assert len(got) == 6
+    assert stacker.newest_flat_sets(paths, 0) == paths            # 0 = no limit
+    assert stacker.newest_flat_sets([], 3) == []
+
+
+def test_the_purge_still_sees_every_set(tmp_path):
+    # flats_by_filter itself is never trimmed: `purge` reads it to find OLD sets.
+    for d in ("2026-10-19", "2026-10-22", "2026-10-23", "2026-10-24"):
+        _flat(tmp_path / d / "FLAT" / "a.fits", "L")
+    assert len(stacker.flats_by_filter(tmp_path)["L"]) == 4

@@ -6,7 +6,7 @@ class PublicConfig():
 
         },
         "version": {
-            "date": "2026.10.26.2"
+            "date": "2026.10.26.3"
         },
 
         "logger": {
@@ -521,6 +521,11 @@ class PublicConfig():
             # root/<FILTER>/ directory convention. Masters agreed to 0.2-0.3% RMS
             # between 07-14 and 07-31, so combining nights is safe.
             "flat_root": "C:/Users/iriso/Documents/N.I.N.A/Targets/cdk17",
+            # A master flat is built from the newest this-many sessions per
+            # filter (stacker.newest_flat_sets, 2026-10-26) -- on the Spark,
+            # whose sync keeps every flat ever taken, too: a disturbed optical
+            # train ages out of the masters in this many nights.
+            "flat_sets": 3,
         },
 
         # Percentages of SKY SIGNAL, and only meaningful with calibration

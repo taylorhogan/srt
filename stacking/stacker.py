@@ -442,7 +442,8 @@ def calibration_paths_from_config(
     dark = _collect_fits(Path(cal["dark_dir"])) if cal.get("dark_dir") else []
     flat: list[Path] = []
     if filter_name and cal.get("flat_root"):
-        flat = flats_by_filter(Path(cal["flat_root"])).get(filter_name, [])
+        flat = newest_flat_sets(flats_by_filter(Path(cal["flat_root"])).get(filter_name, []),
+                                int(cal.get("flat_sets", 3)))
     if like is not None:
         bias, dark, flat, _note = match_calibration(camera_gain(Path(like)), bias, dark, flat)
     return bias, dark, flat
@@ -1946,6 +1947,27 @@ def flat_dirs_from_root(root: Optional[Path]) -> tuple[Optional[Path], Optional[
     if subdirs:
         return None, subdirs
     return root, None
+
+
+def newest_flat_sets(paths: list[Path], n: int) -> list[Path]:
+    """The flats of the newest *n* sessions among *paths*, for building a master. Pure.
+
+    A session is one <date>/FLAT directory; newest by the session folder's
+    name (YYYY-MM-DD), which survives a copy where file times may not. On
+    iris-pc `purge` keeps the newest sets on disk anyway, but the Spark's sync
+    never deletes (sync_nina_targets_to_spark.bsh), so its masters averaged
+    every flat set ever taken -- fine while the optics hold still (masters
+    weeks apart agree to 0.2-0.3%), wrong for weeks after they are disturbed.
+    Same n as the purge keeps (calibration.flat_sets). Never applied to
+    flats_by_filter itself: `purge` reads that to find the OLD sets.
+    """
+    if n < 1:
+        return list(paths)
+    sessions: dict[Path, list[Path]] = {}
+    for p in paths:
+        sessions.setdefault(Path(p).parent, []).append(p)
+    newest = sorted(sessions, key=lambda d: (d.parent.name, str(d)), reverse=True)[:n]
+    return sorted(p for d in newest for p in sessions[d])
 
 
 _FLATS_BY_FILTER_CACHE: dict[str, dict[str, list[Path]]] = {}
