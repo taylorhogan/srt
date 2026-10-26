@@ -849,6 +849,49 @@ def _set_hard_end(container: Any, end, next_id: list) -> None:
             _set_hard_end(v, end, next_id)
 
 
+TIME_SPAN_TYPE = "NINA.Sequencer.Conditions.TimeSpanCondition, NINA.Sequencer"
+
+
+def _add_cap_span(container: Any, seconds: float, next_id: list) -> bool:
+    """Beside the slot's TimeCondition, add a TimeSpanCondition of *seconds*.
+
+    A capped target (max_hours) used to end only at a clock time, start + cap.
+    The first slot does not wait for its planned start -- it begins when the
+    sequence does -- so on 2026-10-25 ngc7790, planned 21:00 with a 30-min
+    cap, imaged 19:43-21:28: five passes, nine autofocus runs. N.I.N.A's
+    TimeSpanCondition ("loop for a time span", NINA.Sequencer.dll) counts from
+    when the container starts, and a loop runs only while every condition
+    holds, so the slot now ends at whichever comes first: cap after its real
+    start, or the clock end. Same Hours/Minutes/Seconds fields as
+    TimeCondition. Returns False when there was no TimeCondition to sit by.
+    """
+    found = []
+
+    def walk(o):
+        if isinstance(o, dict):
+            conds = o.get("Conditions")
+            if isinstance(conds, dict) and any(_short_type(x) == "TimeCondition"
+                                               for x in conds.get("$values", [])):
+                found.append(o)
+            for v in o.values():
+                walk(v)
+        elif isinstance(o, list):
+            for v in o:
+                walk(v)
+    walk(container)
+    if not found:
+        return False
+    total = int(round(seconds))
+    for loop in found:
+        vals = loop["Conditions"]["$values"]
+        vals[:] = [x for x in vals if _short_type(x) != "TimeSpanCondition"]
+        vals.append({"$id": str(next_id[0]), "$type": TIME_SPAN_TYPE,
+                     "Hours": total // 3600, "Minutes": (total % 3600) // 60, "Seconds": total % 60,
+                     "Parent": {"$ref": loop.get("$id")}})
+        next_id[0] += 1
+    return True
+
+
 def _find_first(node: Any, short_type: str) -> Optional[dict]:
     if isinstance(node, dict):
         if _short_type(node) == short_type:
@@ -1410,6 +1453,9 @@ def generate_slots_sequence(template_path: Path, slots: list, output_path: Path,
                 k + 1, slot["name"], end.strftime("%H:%M"), slot["end"].strftime("%H:%M"))
         ends.append(end)
         _set_hard_end(c, end, next_id)
+        if cap:
+            # ...and also the cap counted from the slot's REAL start (_add_cap_span).
+            _add_cap_span(c, cap, next_id)
         plans.append(_plan_for(c, slot["name"], slot.get("seconds")))
         seed_focus(c, focus_model, next_id, ids=_index_ids(sequence))
         apply_filter_gain(c, ids=_index_ids(sequence))

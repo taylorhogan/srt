@@ -55,6 +55,10 @@ GENERATOR_TYPES = {
     "NINA.Core.Model.Equipment.FlatWizardFilterSettings, NINA.Core",
     "NINA.Sequencer.Conditions.TimeCondition, NINA.Sequencer",
     "NINA.Sequencer.Utility.DateTimeProvider.TimeProvider, NINA.Sequencer",
+    # A capped slot's cap from its real start (_add_cap_span, 2026-10-25).
+    # Never in a template before: the class and its Hours/Minutes/Seconds were
+    # confirmed in the installed NINA.Sequencer.dll; first night watched.
+    "NINA.Sequencer.Conditions.TimeSpanCondition, NINA.Sequencer",
     # Park / unpark across a long gap between slots (park_across_gap).
     "NINA.Sequencer.SequenceItem.Telescope.ParkScope, NINA.Sequencer",
     "NINA.Sequencer.SequenceItem.Telescope.UnparkScope, NINA.Sequencer",

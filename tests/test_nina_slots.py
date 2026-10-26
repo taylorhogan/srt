@@ -672,3 +672,36 @@ def test_a_cap_longer_than_the_slot_changes_nothing(tmp_path, monkeypatch):
             if g._short_type(it) == "DeepSkyObjectContainer"]
     tc = g._find_first(dsos[0], "TimeCondition")
     assert (tc["Hours"], tc["Minutes"]) == (2, 15)
+
+
+def test_a_capped_slot_also_stops_its_cap_after_it_really_starts(tmp_path, monkeypatch):
+    """2026-10-25: the first slot does not wait for its planned start, so
+    ngc7790 (planned 21:00, 30-min cap) imaged 19:43-21:28 -- five passes,
+    nine autofocus runs. A TimeSpanCondition of the cap now sits beside the
+    clock end on the slot's own loop container; uncapped slots get none."""
+    monkeypatch.setattr(g, "_max_seconds_for", lambda d: 1800.0 if d == "squid" else None)
+    seq, _ = _gen(tmp_path, SLOTS)
+    dsos = [it for it in g._items_of(g._find_target_area(seq))
+            if g._short_type(it) == "DeepSkyObjectContainer"]
+    span = g._find_first(dsos[0], "TimeSpanCondition")
+    assert span is not None and span["$type"] == g.TIME_SPAN_TYPE
+    assert (span["Hours"], span["Minutes"], span["Seconds"]) == (0, 30, 0)
+    loops = []
+
+    def find(o):
+        if isinstance(o, dict):
+            vals = (o.get("Conditions") or {}).get("$values", []) if isinstance(o.get("Conditions"), dict) else []
+            if any(g._short_type(x) == "TimeCondition" for x in vals):
+                loops.append([g._short_type(x) for x in vals])
+            for v in o.values():
+                find(v)
+        elif isinstance(o, list):
+            for v in o:
+                find(v)
+    find(dsos[0])
+    assert loops and all("TimeSpanCondition" in types for types in loops)   # beside the clock end
+    assert span["Parent"]["$ref"] is not None
+    assert g._find_first(dsos[1], "TimeSpanCondition") is None      # uncapped
+    ids, refs = [], []
+    _ids_refs(seq, ids, refs)
+    assert len(ids) == len(set(ids)) and set(refs) <= set(ids)
