@@ -20,6 +20,7 @@
 #include <ArduinoJson.h>
 #include "secrets.h"   // WIFI_SSID, WIFI_PASS, DASH_URL
 #include <Update.h>
+#include <Preferences.h>
 #include "mbedtls/md.h"
 #include "esp_ota_ops.h"
 // Over-the-air update (2026-10-26). Both headers are written by
@@ -39,10 +40,23 @@
 
 static const uint32_t POLL_MS = 30000;
 static const uint32_t STALE_MS = 180000;
-static const uint8_t BRIGHTNESS = 90;          // 0-255
+static const uint8_t BRIGHTNESS = 90;          // 0-255 (the medium level below)
 // While imaging the big pages are dimmed (it is night, next to the bed); a red
 // level brings full brightness back so an alert is still seen (2026-10-26).
 static const uint8_t BRIGHTNESS_IMAGING = 25;
+
+// The three touch buttons (owner 2026-10-27). They only change what this
+// screen shows; nothing is ever sent to the observatory.
+//   tap:  A screen off (any button or a red level wakes it)
+//         B info page for 10 s (IP, Wi-Fi, firmware)
+//         C brightness low / medium / high, kept across restarts
+//   hold: A previous page, B pause / resume rotation, C next page
+static const uint8_t LEVEL_NORMAL[3]  = {40, 90, 160};
+static const uint8_t LEVEL_IMAGING[3] = {10, 25, 60};
+static uint8_t brightLevel = 1;
+static bool screenOff = false, paused = false;
+static uint32_t infoUntil = 0;
+static Preferences prefs;
 // Portrait: 0 or 2. If the picture is upside down for the way the unit
 // stands (USB-C at the bottom), switch to the other one.
 static const uint8_t ROTATION = 2;
@@ -594,14 +608,72 @@ static bool pageHasData(int p) {
   return false;
 }
 
+// Button B: who and where this display is.
+static void paintInfo() {
+  auto& d = M5.Display;
+  d.startWrite();
+  d.fillScreen(TFT_BLACK);
+  plainFont();
+  d.setTextColor(TFT_WHITE, TFT_BLACK);
+  d.setTextSize(2);
+  d.setCursor(8, 10);  d.print("INFO");
+  d.setTextSize(1);
+  d.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
+  int y = 44;
+  auto line = [&](const String& a) { d.setCursor(8, y); d.print(a); y += 18; };
+  line("FW   " + String(FW_VERSION));
+  line("IP   " + WiFi.localIP().toString());
+  line("WiFi " + String(WiFi.status() == WL_CONNECTED ? (int)WiFi.RSSI() : 0) + " dBm  " + WiFi.SSID());
+  line("MAC  " + WiFi.macAddress());
+  line("last reply " + String(haveData ? (millis() - lastOk) / 1000 : 0) + " s ago");
+  line("brightness " + String(brightLevel == 0 ? "low" : brightLevel == 1 ? "medium" : "high"));
+  line(String("rotation ") + (paused ? "paused" : "running"));
+  d.endWrite();
+}
+
+static int stepPage(int dir) {
+  int p = page;
+  for (int k = 0; k < PG_NPAGES; k++) {
+    p = (p + dir + PG_NPAGES) % PG_NPAGES;
+    if (pageHasData(p)) return p;
+  }
+  return page;
+}
+
+// Returns true when something on screen should change.
+static bool handleButtons() {
+  bool any = M5.BtnA.wasClicked() || M5.BtnB.wasClicked() || M5.BtnC.wasClicked()
+             || M5.BtnA.wasHold() || M5.BtnB.wasHold() || M5.BtnC.wasHold();
+  if (!any) return false;
+  if (screenOff) { screenOff = false; return true; }           // any button wakes it
+  if (M5.BtnA.wasClicked()) { screenOff = true; return true; }
+  if (M5.BtnB.wasClicked()) { infoUntil = millis() + 10000; return true; }
+  if (M5.BtnC.wasClicked()) {
+    brightLevel = (brightLevel + 1) % 3;
+    prefs.putUChar("bright", brightLevel);
+    return true;
+  }
+  if (M5.BtnA.wasHold()) { page = stepPage(-1); pageStart = millis(); infoUntil = 0; return true; }
+  if (M5.BtnC.wasHold()) { page = stepPage(+1); pageStart = millis(); infoUntil = 0; return true; }
+  if (M5.BtnB.wasHold()) { paused = !paused; pageStart = millis(); return true; }
+  return false;
+}
+
 // Stale data, or none yet, holds the status page: it is the one that says so.
 static void paint() {
   bool stale = !haveData || millis() - lastOk > STALE_MS;
   if (stale) page = PG_STATUS;
   else if (!pageHasData(page)) page = imaging() ? PG_BIG_TIME : PG_STATUS;
   bool red = haveData && String(doc["level"] | "g") == "r";
-  M5.Display.setBrightness(imaging() && !stale && !red ? BRIGHTNESS_IMAGING : BRIGHTNESS);
-  if (page == PG_STATUS) { paintStatus(); return; }
+  if (red) screenOff = false;                    // an alert always wakes the screen
+  if (screenOff) { M5.Display.setBrightness(0); return; }
+  M5.Display.setBrightness(imaging() && !stale && !red ? LEVEL_IMAGING[brightLevel]
+                                                       : LEVEL_NORMAL[brightLevel]);
+  if (millis() < infoUntil) { paintInfo(); return; }
+  if (page == PG_STATUS) { paintStatus(); }
+  else {
+  M5.Display.startWrite();
+  M5.Display.fillScreen(TFT_BLACK);
   M5.Display.startWrite();
   M5.Display.fillScreen(TFT_BLACK);
   if (page == PG_FWHM) paintFwhm();
@@ -612,13 +684,21 @@ static void paint() {
   else if (page == PG_BIG_SKY) paintBigSky();
   else paintBigFwhm();
   M5.Display.endWrite();
+  }
+  if (paused) {                                  // a small marker so a frozen page is not a mystery
+    M5.Display.fillRect(222, 304, 14, 12, TFT_BLACK);
+    M5.Display.fillRect(224, 305, 4, 10, TFT_YELLOW);
+    M5.Display.fillRect(231, 305, 4, 10, TFT_YELLOW);
+  }
 }
 
 void setup() {
   auto cfg = M5.config();
   M5.begin(cfg);
   M5.Display.setRotation(ROTATION);
-  M5.Display.setBrightness(BRIGHTNESS);
+  prefs.begin("dash", false);
+  brightLevel = prefs.getUChar("bright", 1) % 3;
+  M5.Display.setBrightness(LEVEL_NORMAL[brightLevel]);
   WiFi.mode(WIFI_STA);
   WiFi.setAutoReconnect(true);
   joinStrongest();
@@ -626,8 +706,8 @@ void setup() {
 }
 
 void loop() {
-  M5.update();                                 // battery/power housekeeping only
-  bool repaint = false;
+  M5.update();                                 // power housekeeping and the touch buttons
+  bool repaint = handleButtons();
   if (lastPoll == 0 || millis() - lastPoll >= POLL_MS) {
     lastPoll = millis();
     checkLink();
@@ -636,7 +716,10 @@ void loop() {
     fetchImage();
     repaint = (page == PG_STATUS);                // other pages refresh on their next turn
   }
-  if (millis() - pageStart >= PAGE_MS[page]) {
+  static bool infoShown = false;               // repaint once when the info page times out
+  if (infoShown && millis() >= infoUntil) { infoShown = false; repaint = true; }
+  if (millis() < infoUntil) infoShown = true;
+  if (!paused && millis() - pageStart >= PAGE_MS[page]) {
     int next = page;
     for (int k = 0; k < PG_NPAGES; k++) {        // the next page that has something to show
       next = (next + 1) % PG_NPAGES;
@@ -650,5 +733,5 @@ void loop() {
   static String shownClock = "";
   if (page == PG_BIG_TIME && clockNow() != shownClock) { shownClock = clockNow(); repaint = true; }
   if (repaint) paint();
-  delay(200);
+  delay(30);                                   // short, so a tap is seen
 }
