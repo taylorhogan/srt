@@ -40,6 +40,9 @@
 static const uint32_t POLL_MS = 30000;
 static const uint32_t STALE_MS = 180000;
 static const uint8_t BRIGHTNESS = 90;          // 0-255
+// While imaging the big pages are dimmed (it is night, next to the bed); a red
+// level brings full brightness back so an alert is still seen (2026-10-26).
+static const uint8_t BRIGHTNESS_IMAGING = 12;
 // Portrait: 0 or 2. If the picture is upside down for the way the unit
 // stands (USB-C at the bottom), switch to the other one.
 static const uint8_t ROTATION = 2;
@@ -575,6 +578,8 @@ static void paint() {
   bool stale = !haveData || millis() - lastOk > STALE_MS;
   if (stale) page = PG_STATUS;
   else if (!pageHasData(page)) page = imaging() ? PG_BIG_TIME : PG_STATUS;
+  bool red = haveData && String(doc["level"] | "g") == "r";
+  M5.Display.setBrightness(imaging() && !stale && !red ? BRIGHTNESS_IMAGING : BRIGHTNESS);
   if (page == PG_STATUS) { paintStatus(); return; }
   M5.Display.startWrite();
   M5.Display.fillScreen(TFT_BLACK);
