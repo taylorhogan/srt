@@ -164,6 +164,16 @@ Since 2026-09-25 the conductor decides both invariants (ADR 0014): every roof fi
   39 frames, worse than a single frame, and it got worse with more frames — so
   it hides in any small test.
 
+  **The sky-anchored black is one offset for every channel (since 2026-10-25).**
+  The morning render and the movie put black at each channel's sky median
+  minus `--black-sigma` (0.5) times the LARGEST channel's noise sigma
+  (`color_process.sky_anchored_blacks`), so the sky lands at one grey level in
+  every channel. With each channel offset by its own sigma the shallowest
+  channel's sky sat highest: m1 SHO on 5 S-II subs against 10 Ha and 10 O-III
+  put the S-II sky 1.33 ADU above black against 1.03 and 0.95, and the 2.5x
+  saturation turned that into a brown sky (RGB 54/32/25). A balanced set is
+  unchanged.
+
   **Calibration matches the lights' camera gain (since 2026-10-24).** The
   QHY600M writes GAIN and OFFSET into every frame; the lights' majority
   (GAIN, OFFSET) is the stack's gain (`stacker.select_gain`), lights at any

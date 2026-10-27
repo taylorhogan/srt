@@ -150,3 +150,18 @@ def test_n2n_render_picks_the_model_per_filter():
     import n2n_lrgb_render as n
     assert n.domain_for("Ha") == "narrowband"
     assert all(n.domain_for(f) == "broadband" for f in ("L", "R", "G", "B"))
+
+
+def test_sky_anchored_black_uses_one_offset_for_every_channel():
+    """m1 SHO, 2026-10-25: 5 S-II subs against 10 Ha/O-III put the S-II sky
+    higher above black than the others and the saturation boost made the sky
+    brown. The offset below sky is the same for every channel now."""
+    pytest.importorskip("sep")
+    rng = np.random.default_rng(0)
+    quiet = rng.normal(10.0, 1.0, (256, 256)).astype(np.float32)
+    noisy = rng.normal(20.0, 4.0, (256, 256)).astype(np.float32)
+    blacks = cp.sky_anchored_blacks({"R": noisy, "G": quiet, "B": quiet}, black_sigma=0.5)
+    above = {c: float(np.median(a) - blacks[c]) for c, a in
+             {"R": noisy, "G": quiet, "B": quiet}.items()}
+    assert abs(above["R"] - above["G"]) < 0.05 and abs(above["G"] - above["B"]) < 0.05
+    assert 1.5 < above["R"] < 2.5          # half the LARGEST sigma (4), not the quiet one

@@ -1277,26 +1277,39 @@ def sky_anchored_blacks(subbed: dict[str, np.ndarray], black_sigma: float,
     amount in every frame of a series, which is what keeps them comparable.
     sigma comes from sep.Background, which sigma-clips, so nebulosity does not
     inflate it. black_sigma <= 0 restores the percentile rule.
+
+    ONE offset for every channel (since 2026-10-25): black_sigma times the
+    LARGEST channel's sigma, below each channel's own sky. With each channel
+    offset by its own sigma the sky landed at a different output level per
+    channel, and the shallowest channel's sky sat highest: m1 SHO on 5 S-II
+    subs against 10 Ha and 10 O-III put the S-II sky 1.33 ADU above black
+    against 1.03 and 0.95, which the saturation boost turned into a brown
+    sky (RGB 54/32/25). The sky is the same grey in every channel now, and
+    the noisier channel just scatters more about it; on a balanced set the
+    offsets were already nearly equal and nothing changes.
     """
     if black_sigma is None or black_sigma <= 0:
         return blacks_from(subbed, black_pct)
     import sep
+    stats: dict[str, tuple[float, float]] = {}
     out = {}
     for c, arr in subbed.items():
         if c in DERIVED_PLANES:
             continue
         a = np.ascontiguousarray(arr.astype(np.float32))
         try:
-            sig = float(sep.Background(a).globalrms)
-            med = float(np.nanmedian(a))
+            stats[c] = (float(np.nanmedian(a)), float(sep.Background(a).globalrms))
         except Exception:
             out[c] = float(np.nanpercentile(arr, black_pct))
-            continue
-        out[c] = med - black_sigma * sig
+    offset = black_sigma * max((sig for _, sig in stats.values()), default=0.0)
+    for c, (med, sig) in stats.items():
+        out[c] = med - offset
         if log:
-            pct = float(np.mean(a <= out[c]) * 100.0)
+            a = subbed[c]
+            pct = float(np.nanmean(a <= out[c]) * 100.0)
             log(f"    {c}: sky {med:+.3f} sigma {sig:.3f} -> black {out[c]:+.3f} ADU "
-                f"({pct:.0f}% of pixels, vs {black_pct:.0f}% under the old rule)")
+                f"(shared offset {offset:.3f}; {pct:.0f}% of pixels, vs {black_pct:.0f}% "
+                f"under the old rule)")
     return out
 
 
