@@ -54,8 +54,9 @@ static bool haveData = false;
 // temperature, the target's counts per filter, its median/last FWHM per filter
 // (owner 2026-10-26: "simpler information while imaging"). Otherwise the
 // status / FWHM / picture / summary pages as before.
-enum Page { PG_STATUS, PG_FWHM, PG_IMAGE, PG_SUMMARY, PG_BIG_TIME, PG_BIG_COUNT, PG_BIG_FWHM, PG_NPAGES };
-static const uint32_t PAGE_MS[PG_NPAGES] = {20000, 10000, 10000, 10000, 10000, 7000, 7000};
+enum Page { PG_STATUS, PG_FWHM, PG_IMAGE, PG_SUMMARY, PG_BIG_TIME, PG_BIG_COUNT, PG_BIG_FWHM,
+            PG_BIG_SKY, PG_NPAGES };
+static const uint32_t PAGE_MS[PG_NPAGES] = {20000, 10000, 10000, 10000, 10000, 7000, 7000, 7000};
 static long serverSec = -1;                    // seconds since local midnight at the last good reply
 static int page = PG_STATUS;
 static uint32_t pageStart = 0;
@@ -557,12 +558,32 @@ static void paintBigFwhm() {
   plainFont();
 }
 
+// Page D: the sky camera's stars as a share of a clear sky, tonight's median
+// and the newest reading (owner 2026-10-27). White under a bright moon, which
+// lowers it without any cloud; otherwise green / amber / grey as on the status page.
+static uint16_t skyColor(int pct, bool moon) {
+  if (moon) return TFT_WHITE;
+  return pct >= 65 ? TFT_GREEN : (pct < 20 ? TFT_DARKGREY : TFT_ORANGE);
+}
+
+static void paintBigSky() {
+  JsonObject k = doc["im"]["sky"];
+  bool moon = k["moon"] | false;
+  fitText("SKY % clear", 120, 30, 228, 40, &fonts::FreeSansBold24pt7b, TFT_LIGHTGREY);
+  int med = k["med"] | 0, last = k["last"] | 0;
+  fitText("med " + String(med) + "%", 120, 125, 228, 95, &fonts::FreeSansBold24pt7b, skyColor(med, moon));
+  fitText("last " + String(last) + "%", 120, 230, 228, 95, &fonts::FreeSansBold24pt7b, skyColor(last, moon));
+  if (moon) fitText("moon up", 120, 300, 160, 26, &fonts::FreeSansBold24pt7b, TFT_LIGHTGREY);
+  plainFont();
+}
+
 static bool imaging() { return haveData && !doc["im"].isNull(); }
 
 static bool pageHasData(int p) {
   bool im = imaging();
   if (p == PG_BIG_TIME) return im;
   if (p == PG_BIG_COUNT || p == PG_BIG_FWHM) return im && doc["im"]["filters"].size() > 0;
+  if (p == PG_BIG_SKY) return im && !doc["im"]["sky"].isNull();
   if (im) return false;                         // imaging: only the big pages
   switch (p) {
     case PG_STATUS:  return true;
@@ -588,6 +609,7 @@ static void paint() {
   else if (page == PG_SUMMARY) paintSummary();
   else if (page == PG_BIG_TIME) paintBigTime();
   else if (page == PG_BIG_COUNT) paintBigCount();
+  else if (page == PG_BIG_SKY) paintBigSky();
   else paintBigFwhm();
   M5.Display.endWrite();
 }

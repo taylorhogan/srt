@@ -508,6 +508,52 @@ def read_sky() -> Optional[dict]:
     return sky_label(row, datetime.now(timezone.utc), in_field, clear, moonlit)
 
 
+_sky_pct_cache: dict = {}      # {sky_log "generated": percent of a clear sky}
+
+
+def sky_night_summary(pcts: list, moon_now: bool) -> Optional[dict]:
+    """{"med", "last", "n", "moon"} from tonight's readings (oldest first). Pure.
+
+    The fourth imaging page (owner 2026-10-27): the sky camera's stars as a
+    share of a clear sky, tonight's median and the newest reading."""
+    if not pcts:
+        return None
+    s = sorted(pcts)
+    return {"med": s[len(s) // 2], "last": pcts[-1], "n": len(pcts), "moon": bool(moon_now)}
+
+
+def read_sky_night(now: datetime) -> Optional[dict]:
+    """sky_night_summary() over tonight's sky-camera frames (dusk_check's evening window).
+
+    Each frame's percent costs a catalogue count, so it is worked out once and
+    cached on the frame's "generated" stamp; a poll only adds the new ones."""
+    try:
+        from datetime import date as _date
+        from sentry import dusk_check, plate_solve
+        from scripts.sky_transparency_report import in_field
+        evening = (now - timedelta(hours=12)).date()
+        frames = dusk_check.evening_frames(_date(evening.year, evening.month, evening.day))
+        sol = None
+        clear = float(dusk_check._settings()["dusk_clear_transparency"])
+        pcts = []
+        for t, r in frames:
+            key = r.get("generated")
+            if key not in _sky_pct_cache:
+                if sol is None:
+                    sol = plate_solve.load()
+                    if sol is None:
+                        return None
+                n = in_field(sol, t)
+                _sky_pct_cache[key] = int(round(100 * r["solve_matches"] / n / clear)) if n else None
+            if _sky_pct_cache[key] is not None:
+                pcts.append(_sky_pct_cache[key])
+        last = read_sky() or {}
+        return sky_night_summary(pcts, bool(last.get("moon")))
+    except Exception:  # noqa: BLE001 -- the page is optional
+        _logger.debug("dash sky night failed", exc_info=True)
+        return None
+
+
 def build(cfg: dict) -> dict:
     """Gather everything and summarize. Blocking: call it off the event loop."""
     from iris import client as conductor
@@ -534,7 +580,8 @@ def build(cfg: dict) -> dict:
     # and last FWHM per filter (owner, 2026-10-26). "sec" lets the display
     # tick its own clock between polls.
     out["sec"] = now.hour * 3600 + now.minute * 60 + now.second
-    out["im"] = ({"dso": live["dso"], "filters": imaging_filters(frames, live["dso"])}
+    out["im"] = ({"dso": live["dso"], "filters": imaging_filters(frames, live["dso"]),
+                  "sky": read_sky_night(now)}
                  if live else None)
     try:
         from cmd_processing.web_server import _read_outside_temp_f

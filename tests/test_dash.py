@@ -168,3 +168,8 @@ def test_flats_and_stale_frames_are_not_imaging():
     assert dash.frames_coming_in("IN_MAIN", now - timedelta(minutes=4), now)
     assert dash.frames_coming_in("DONE_MAIN", now - timedelta(minutes=10), now)      # slot hand-over
     assert not dash.frames_coming_in("IN_MAIN", None, now)
+
+
+def test_sky_night_summary_gives_the_median_and_the_newest():
+    assert dash.sky_night_summary([], False) is None
+    assert dash.sky_night_summary([40, 55, 61, 52, 48], True) == {"med": 52, "last": 48, "n": 5, "moon": True}
