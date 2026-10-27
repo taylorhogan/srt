@@ -157,3 +157,14 @@ def test_imaging_filters_count_and_judge_the_running_target_only():
     assert f == [{"f": "Ha", "n": 3, "med": 1.7, "last": 1.7},
                  {"f": "S-II", "n": 1, "med": 1.9, "last": 1.9}]
     assert dash.imaging_filters([], "m1") == []
+
+
+def test_flats_and_stale_frames_are_not_imaging():
+    # 2026-10-27 06:43: IN_FLATS, watcher still beating, newest light 69 min old.
+    from datetime import timedelta
+    now = datetime(2026, 10, 27, 10, 43)
+    assert not dash.frames_coming_in("IN_FLATS", now - timedelta(minutes=69), now)
+    assert not dash.frames_coming_in("IN_MAIN", now - timedelta(minutes=45), now)     # nothing for 45 min
+    assert dash.frames_coming_in("IN_MAIN", now - timedelta(minutes=4), now)
+    assert dash.frames_coming_in("DONE_MAIN", now - timedelta(minutes=10), now)      # slot hand-over
+    assert not dash.frames_coming_in("IN_MAIN", None, now)

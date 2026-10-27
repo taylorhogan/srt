@@ -208,6 +208,21 @@ def _planned(seq_path: Path) -> dict:
     return {(name.lower(), f): n for name, counts, _e in _plan_cache["rows"] for f, n in counts.items()}
 
 
+LIVE_STATES = ("IN_MAIN", "DONE_MAIN", "ACTIVE")    # DONE_MAIN: the slot hand-over
+LIVE_MAX_AGE_MIN = 30          # a frame per ~5 min; an autofocus retry under cloud took 25
+
+
+def frames_coming_in(imaging_state: str, frame_time_utc: Optional[datetime], now_utc: datetime) -> bool:
+    """True only while the night's main phase runs AND its newest light frame is recent. Pure.
+
+    2026-10-27 06:43: flats were running (IN_FLATS), the frame watcher still
+    beat, and its newest frame was M1's last light from 05:34 -- so the
+    display showed the imaging pages through the flats."""
+    if imaging_state not in LIVE_STATES or frame_time_utc is None:
+        return False
+    return (now_utc - frame_time_utc).total_seconds() <= LIVE_MAX_AGE_MIN * 60
+
+
 def read_live(cfg: dict) -> Optional[dict]:
     """{"dso", "filter", "n", "of"} while frames are coming in, else None.
 
@@ -220,6 +235,11 @@ def read_live(cfg: dict) -> Optional[dict]:
         ticker = json.loads((root / "frame_ticker.json").read_text())
         dso = _live_imaging_target(ticker)
         if not dso:
+            return None
+        from cmd_processing.super_user_commands import get_imaging_state
+        t = (ticker.get("last_frame") or {}).get("time")
+        ft = datetime.fromisoformat(t) if t else None          # UTC, naive
+        if not frames_coming_in(get_imaging_state().value, ft, datetime.utcnow()):
             return None
         last = Path(ticker["last_frame"]["path"])
         filt = ticker["last_frame"].get("filter") or "?"
