@@ -67,6 +67,24 @@ def frame_pointing(dso: str):
     return target_coord(d) if d.is_dir() else None
 
 
+def simbad_coord(name: str):
+    """SIMBAD's position via its TAP service (astroquery.Simbad), not the Sesame
+    name resolver: on 2026-10-27 Sesame hung while SIMBAD's TAP answered."""
+    from astropy.coordinates import SkyCoord
+    import astropy.units as u
+    from astroquery.simbad import Simbad
+    try:
+        t = Simbad.query_object(name)
+        if t is None or not len(t):
+            return None
+        cols = {c.lower(): c for c in t.colnames}
+        if "ra" in cols and "dec" in cols:
+            return SkyCoord(float(t[cols["ra"]][0]) * u.deg, float(t[cols["dec"]][0]) * u.deg)
+    except Exception:  # noqa: BLE001
+        return None
+    return None
+
+
 def ned_coord(name: str):
     from astropy.coordinates import SkyCoord
     import astropy.units as u
@@ -80,18 +98,17 @@ def ned_coord(name: str):
     return None
 
 
-def run(write: bool, log=print) -> dict:
+def run(write: bool, log=print, statuses=("waiting",)) -> dict:
     from configs import config
     from iris_astronomy import astro_dso_visibility as v
     path = config.data()["location"]["instructions"]
     q = json.load(open(path))
-    todo = [x for x in q if x.get("status") == "waiting" and x.get("ra_deg") is None]
-    log("%d waiting entries without coordinates" % len(todo))
+    todo = [x for x in q if x.get("status") in statuses and x.get("ra_deg") is None]
+    log("%d %s entries without coordinates" % (len(todo), "/".join(statuses)))
     results = {"written": [], "skipped": []}
     for x in todo:
         name = x["dso"]
-        tgt = v.is_a_dso_object(name)
-        sc = tgt.coord if tgt is not None else None
+        sc = simbad_coord(name)
         ned = ned_coord(name) if sc is not None else None
         fp = frame_pointing(name) if sc is not None else None
         d_ned = sc.separation(ned).arcmin if (sc is not None and ned is not None) else None
@@ -120,6 +137,7 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--write", action="store_true")
     ap.add_argument("--wait", action="store_true", help="wait for SIMBAD, then write")
+    ap.add_argument("--all", action="store_true", help="completed entries too (the queue refresh resolves them)")
     a = ap.parse_args(argv)
     if a.wait:
         for i in range(72):                      # 12 h at 10 min
@@ -134,7 +152,7 @@ def main(argv=None) -> int:
     elif not simbad_up():
         print("SIMBAD is down; try --wait")
         return 1
-    r = run(a.write)
+    r = run(a.write, statuses=("waiting", "completed") if a.all else ("waiting",))
     print("written %d, left for review %d" % (len(r["written"]), len(r["skipped"])))
     for n, why in r["skipped"]:
         print("  review: %s -- %s" % (n, why))

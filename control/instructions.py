@@ -112,6 +112,12 @@ def calc_and_store_hours_above_horizon(force=False):
         instructions = json.load(f)
     for instruction in instructions:
         dso = text = instruction["dso"]
+        # Completed entries are never planned, so their horizon hours are not
+        # needed -- and on 2026-10-27 resolving the names of 36 of them, with
+        # CDS's Sesame resolver hanging, ran the noon replan past its 600 s
+        # limit three times. Skipped; their old values stay as they were.
+        if instruction.get("status") == "completed" and not force:
+            continue
         # Stored RA/Dec wins over a name lookup (positional targets have no
         # resolvable name); falls back to Simbad for named DSOs.
         obj = astro_dso_visibility.resolve_target(instruction)
