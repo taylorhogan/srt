@@ -55,6 +55,10 @@ static const uint8_t LEVEL_NORMAL[3]  = {40, 90, 160};
 static const uint8_t LEVEL_IMAGING[3] = {10, 25, 60};
 static uint8_t brightLevel = 1;
 static bool screenOff = false, paused = false;
+static uint32_t pausedAt = 0;
+// An accidental hold of B paused rotation all night on 2026-10-28; a pause now
+// lasts at most PAUSE_MAX_MS and says so in plain words while it does.
+static const uint32_t PAUSE_MAX_MS = 10UL * 60 * 1000;
 static uint32_t infoUntil = 0;
 static Preferences prefs;
 // Portrait: 0 or 2. If the picture is upside down for the way the unit
@@ -655,7 +659,7 @@ static bool handleButtons() {
   }
   if (M5.BtnA.wasHold()) { page = stepPage(-1); pageStart = millis(); infoUntil = 0; return true; }
   if (M5.BtnC.wasHold()) { page = stepPage(+1); pageStart = millis(); infoUntil = 0; return true; }
-  if (M5.BtnB.wasHold()) { paused = !paused; pageStart = millis(); return true; }
+  if (M5.BtnB.wasHold()) { paused = !paused; pausedAt = millis(); pageStart = millis(); return true; }
   return false;
 }
 
@@ -685,10 +689,15 @@ static void paint() {
   else paintBigFwhm();
   M5.Display.endWrite();
   }
-  if (paused) {                                  // a small marker so a frozen page is not a mystery
-    M5.Display.fillRect(222, 304, 14, 12, TFT_BLACK);
-    M5.Display.fillRect(224, 305, 4, 10, TFT_YELLOW);
-    M5.Display.fillRect(231, 305, 4, 10, TFT_YELLOW);
+  if (paused) {                                  // say so plainly, with the minutes left
+    auto& d = M5.Display;
+    int left = (int)((PAUSE_MAX_MS - min(PAUSE_MAX_MS, millis() - pausedAt)) / 60000) + 1;
+    plainFont();
+    d.fillRect(0, 300, 240, 20, TFT_YELLOW);
+    d.setTextColor(TFT_BLACK, TFT_YELLOW);
+    d.setTextSize(2);
+    d.setCursor(6, 303);
+    d.printf("PAUSED %dm  hold B", left);
   }
 }
 
@@ -719,6 +728,9 @@ void loop() {
   static bool infoShown = false;               // repaint once when the info page times out
   if (infoShown && millis() >= infoUntil) { infoShown = false; repaint = true; }
   if (millis() < infoUntil) infoShown = true;
+  if (paused && millis() - pausedAt >= PAUSE_MAX_MS) { paused = false; pageStart = 0; repaint = true; }
+  static uint32_t lastPausedPaint = 0;           // keep the minutes-left label current
+  if (paused && millis() - lastPausedPaint >= 60000) { lastPausedPaint = millis(); repaint = true; }
   if (!paused && millis() - pageStart >= PAGE_MS[page]) {
     int next = page;
     for (int k = 0; k < PG_NPAGES; k++) {        // the next page that has something to show
