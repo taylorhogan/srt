@@ -342,6 +342,23 @@ def _add_photometry(status, frame, res):
         v = plate_solve.verify(sol, frame, when, res["_stars"])
         status["solve_matches"] = v["matches"]
         status["solve_residual_px"] = v["residual_px"]
+        # The share of a clear sky's catalogue stars seen (2026-10-28): matches
+        # over the catalogue stars in the field, divided by a clear sky (the
+        # dusk check's 0.75) -- the Core2's "sky %". A noise blob cannot land on
+        # a catalogue position, so unlike the raw count this holds up under a
+        # moon and haze, where the site otherwise said only "unreliable".
+        try:
+            from scripts.sky_transparency_report import in_field
+            from sentry import dusk_check
+            st = dusk_check._settings()
+            n_cat = in_field(sol, when)
+            if n_cat:
+                status["clear_pct"] = int(round(100 * v["matches"] / n_cat
+                                                / float(st["dusk_clear_transparency"])))
+                malt, mill = dusk_check.moon_at(when)
+                status["moon_up_bright"] = bool(malt > 0 and mill >= float(st["dusk_moon_max_illum"]))
+        except Exception:  # noqa: BLE001 -- the percentage is extra, never a reason to fail
+            pass
         # A knocked or refocused camera shows up here first: the stored geometry
         # stops landing on the stars. Say so rather than publish a magnitude
         # derived from a solution that no longer describes this camera.
