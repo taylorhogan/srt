@@ -72,9 +72,11 @@ static bool haveData = false;
 // temperature, the target's counts per filter, its median/last FWHM per filter
 // (owner 2026-10-26: "simpler information while imaging"). Otherwise the
 // status / FWHM / picture / summary pages as before.
+// The FWHM is two pages, median then last, each "Ha 2.02" alone on its line so
+// the digits are as large as the counts page's (owner 2026-10-28: too small).
 enum Page { PG_STATUS, PG_FWHM, PG_IMAGE, PG_SUMMARY, PG_BIG_TIME, PG_BIG_COUNT, PG_BIG_FWHM,
-            PG_BIG_SKY, PG_NPAGES };
-static const uint32_t PAGE_MS[PG_NPAGES] = {20000, 10000, 10000, 10000, 10000, 7000, 7000, 7000};
+            PG_BIG_LAST, PG_BIG_SKY, PG_NPAGES };
+static const uint32_t PAGE_MS[PG_NPAGES] = {20000, 10000, 10000, 10000, 10000, 7000, 7000, 7000, 7000};
 static long serverSec = -1;                    // seconds since local midnight at the last good reply
 static int page = PG_STATUS;
 static uint32_t pageStart = 0;
@@ -558,17 +560,18 @@ static void paintBigCount() {
   plainFont();
 }
 
-// Page C: the same filters, median and last FWHM: "Ha 1.84 1.79".
-static void paintBigFwhm() {
+// Pages C and D: the same filters' FWHM, one value per line -- median on one
+// page, the newest frame's on the next.
+static void paintBigFwhm(bool last) {
   JsonObject im = doc["im"];
   JsonArray fs = im["filters"];
   int n = max(1, (int)fs.size());
-  fitText("FWHM med last", 120, 30, 228, 40, &fonts::FreeSansBold24pt7b, TFT_LIGHTGREY);
-  int top = 64, rowH = min(64, (320 - top) / n);
+  fitText(last ? "FWHM last" : "FWHM median", 120, 30, 228, 40, &fonts::FreeSansBold24pt7b, TFT_LIGHTGREY);
+  int top = 64, rowH = min(80, (320 - top) / n);
   int i = 0;
   for (JsonObject f : fs) {
-    char b[32];
-    snprintf(b, sizeof(b), "%s %.2f %.2f", (const char*)f["f"], f["med"].as<float>(), f["last"].as<float>());
+    char b[24];
+    snprintf(b, sizeof(b), "%s %.2f", (const char*)f["f"], (last ? f["last"] : f["med"]).as<float>());
     fitText(String(b), 120, top + rowH * i + rowH / 2, 228, rowH - 6, &fonts::FreeSansBold24pt7b,
             filterColor(f["f"] | "?"));
     i++;
@@ -600,7 +603,7 @@ static bool imaging() { return haveData && !doc["im"].isNull(); }
 static bool pageHasData(int p) {
   bool im = imaging();
   if (p == PG_BIG_TIME) return im;
-  if (p == PG_BIG_COUNT || p == PG_BIG_FWHM) return im && doc["im"]["filters"].size() > 0;
+  if (p == PG_BIG_COUNT || p == PG_BIG_FWHM || p == PG_BIG_LAST) return im && doc["im"]["filters"].size() > 0;
   if (p == PG_BIG_SKY) return im && !doc["im"]["sky"].isNull();
   if (im) return false;                         // imaging: only the big pages
   switch (p) {
@@ -686,7 +689,8 @@ static void paint() {
   else if (page == PG_BIG_TIME) paintBigTime();
   else if (page == PG_BIG_COUNT) paintBigCount();
   else if (page == PG_BIG_SKY) paintBigSky();
-  else paintBigFwhm();
+  else if (page == PG_BIG_LAST) paintBigFwhm(true);
+  else paintBigFwhm(false);
   M5.Display.endWrite();
   }
   if (paused) {                                  // say so plainly, with the minutes left
