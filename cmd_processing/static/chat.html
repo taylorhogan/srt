@@ -764,12 +764,30 @@
     };
   }
 
+  // `!!` alone in the box puts the last command back, ready to edit (owner,
+  // 2026-10-28). Only the whole box: image!! and roof!! are commands. Kept in
+  // this browser so it survives a reload; storage can be missing or blocked.
+  const LAST_KEY = 'iris.lastCommand';
+  let lastCommand = '';
+  try { lastCommand = localStorage.getItem(LAST_KEY) || ''; } catch (e) { /* no storage */ }
+
+  function recallLast() {
+    if (input.value.trim() !== '!!' || !lastCommand) return false;
+    input.value = lastCommand;
+    input.setSelectionRange(lastCommand.length, lastCommand.length);
+    return true;
+  }
+  input.addEventListener('input', recallLast);
+
   function sendCommand() {
     const text = input.value.trim();
     if (!text) return;
     if (pendingRename) return submitRename(text);
+    if (text === '!!') { recallLast(); return; }   // never sent as a command
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
     ws.send(JSON.stringify({ type: 'command', command: text }));
+    lastCommand = text;
+    try { localStorage.setItem(LAST_KEY, text); } catch (e) { /* no storage */ }
     input.value = '';
   }
   sendBtn.addEventListener('click', sendCommand);
