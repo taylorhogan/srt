@@ -414,3 +414,11 @@ def test_end_of_night_snr_names_its_target_where_the_parser_reads_it():
         words = suc.eon_snr_words(dso)
         assert " ".join(words[2:]).strip() == dso          # what _snr_run_locked reads
     assert " ".join(suc.eon_snr_words(None)[2:]).strip() == ""
+
+
+def test_light_curve_monitors_are_not_given_snr(monkeypatch):
+    """A Cepheid monitor gets its light curve, not a convergence curve (owner 2026-10-28)."""
+    import cmd_processing.super_user_commands as suc
+    queue = {"hubblev1": {"dso": "hubblev1", "lightcurve": True}, "ic410": {"dso": "ic410"}}
+    monkeypatch.setattr(suc.instructions, "get_instruction_by_dso", lambda d: queue.get(d))
+    assert suc.eon_lightcurve_targets(["melotte15", "hubblev1", "ic410"]) == ["hubblev1"]

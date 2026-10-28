@@ -4297,7 +4297,14 @@ def doit_cmd(words: list[str], account: str) -> None:
                 instr = instructions.get_dso_object_tonight()
                 one = instr.get("dso") if instr else None
             eon_dsos = [one] if one else [None]
+        # A monitored star (queue entry "lightcurve": true) is measured by its
+        # light curve below; a convergence curve and a per-filter contribution
+        # say nothing about a Cepheid's brightness (owner, 2026-10-28).
+        eon_monitors = set(eon_lightcurve_targets([d for d in eon_dsos if d]))
         for eon_dso in eon_dsos:
+            if eon_dso in eon_monitors:
+                _logger.info("End of night: %s is a light-curve monitor, no SNR", eon_dso)
+                continue
             eon_words = eon_snr_words(eon_dso)
             social_server.post_social_message(
                 f"End of night: SNR analysis for {eon_dso or 'most recent DSO'}…"
@@ -4311,9 +4318,10 @@ def doit_cmd(words: list[str], account: str) -> None:
         # filter, and a second heavy pass alongside the convergence run is what
         # the single-flight SNR lock exists to prevent.
         eon_named = [d for d in eon_dsos if d]
-        if eon_named:
+        eon_contrib = [d for d in eon_named if d not in eon_monitors]
+        if eon_contrib:
             try:
-                _night_run(["", "night"] + eon_named)
+                _night_run(["", "night"] + eon_contrib)
             except Exception:
                 _logger.exception("End-of-night night contribution failed")
         # Monitored stars (2026-10-09): a brightness for tonight, appended to
