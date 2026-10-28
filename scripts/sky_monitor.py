@@ -377,16 +377,23 @@ def _add_photometry(status, frame, res):
         # share -- which trips any share test and would send someone chasing a
         # camera fault during a storm. An untrustworthy frame says nothing
         # about where the camera points, so it gets no verdict either way.
+        #
+        # It still gets the table (owner, 2026-10-28). The table counts only
+        # detections that land on a catalogue star, and noise rarely does:
+        # matched against the catalogue, the false detections themselves gave
+        # 2 chance matches of 22 on a moonlit frame (purity 0.68) and 5 of 16
+        # under cloud (0.20). That chance count is published beside the table,
+        # so a junk-filled frame says how much of its table is luck.
         if not res["trustworthy"]:
             status["note_solve"] = ("sky too poor to check the plate solution "
                                     "on this frame")
-            return
-        share = v["matches"] / max(res["stars"], 1)
-        if v["matches"] < 6 or share < 0.08:
-            status["note_solve"] = (
-                "plate solution no longer fits (%d matches, %.0f%% of "
-                "detections); re-solve" % (v["matches"], 100 * share))
-            return
+        else:
+            share = v["matches"] / max(res["stars"], 1)
+            if v["matches"] < 6 or share < 0.08:
+                status["note_solve"] = (
+                    "plate solution no longer fits (%d matches, %.0f%% of "
+                    "detections); re-solve" % (v["matches"], 100 * share))
+                return
         # Integer magnitude bins: the card shows this as a table, and half
         # magnitudes make it twice as long without telling anyone more.
         lm = plate_solve.limiting_magnitude(sol, frame, when, res["_stars"],
@@ -399,7 +406,11 @@ def _add_photometry(status, frame, res):
         # beside it were measured in.
         status["measured_radius_px"] = lm["measured_radius_px"]
         status["completeness"] = lm["completeness"]
-    except Exception as exc:            # never let photometry sink the capture
+        if not res["trustworthy"] and res.get("_false"):
+            fake = plate_solve.limiting_magnitude(sol, frame, when, res["_false"],
+                                                  res["_mask"], step=1.0)
+            status["chance_matched"] = int(sum(r["found"] for r in fake["completeness"]))
+    except Exception as exc:           # never let photometry sink the capture
         status["note_solve"] = "photometry failed: %s" % type(exc).__name__
 
 

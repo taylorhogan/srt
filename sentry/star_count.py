@@ -226,7 +226,8 @@ def count_stars(image, threshold=None, fwhm_range=None, max_elong=None,
     stars = _detect(resid, mask, threshold, fwhm_range, max_elong, min_px)
     # Same detector on the negated residual: every hit there is a false
     # positive, so this is a live purity measurement rather than an assumption.
-    false_pos = len(_detect(-resid, mask, threshold, fwhm_range, max_elong, min_px))
+    false_det = _detect(-resid, mask, threshold, fwhm_range, max_elong, min_px)
+    false_pos = len(false_det)
 
     # Purity is the whole reason the negative control is computed every frame
     # rather than once at tuning time. On a clear frame it sits at ~99%. On the
@@ -268,6 +269,9 @@ def count_stars(image, threshold=None, fwhm_range=None, max_elong=None,
     # this dict strip them. The mask is handed back so the plate solver can
     # reuse it instead of paying for a second median filter over 3.7 Mpx.
     out["_stars"] = stars
+    # The false detections too: matched against the catalogue they say how
+    # many of the real matches could be chance (sky_monitor's table).
+    out["_false"] = false_det
     out["_mask"] = mask
     return out
 
