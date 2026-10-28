@@ -442,11 +442,43 @@ def calibration_paths_from_config(
     dark = _collect_fits(Path(cal["dark_dir"])) if cal.get("dark_dir") else []
     flat: list[Path] = []
     if filter_name and cal.get("flat_root"):
-        flat = newest_flat_sets(flats_by_filter(Path(cal["flat_root"])).get(filter_name, []),
-                                int(cal.get("flat_sets", 3)))
-    if like is not None:
-        bias, dark, flat, _note = match_calibration(camera_gain(Path(like)), bias, dark, flat)
-    return bias, dark, flat
+        flat = flats_by_filter(Path(cal["flat_root"])).get(filter_name, [])
+    n_sets = int(cal.get("flat_sets", 3))
+    if like is None:
+        return bias, dark, newest_flat_sets(flat, n_sets)
+    # With the lights' gain known, every session's BIAS and DARK under the
+    # calibration root are candidates too (2026-10-28): narrowband moves to
+    # gain 26 while broadband stays at 0, and N.I.N.A writes each new set to
+    # cdk17/<date>/BIAS|DARK, where a single configured folder never looks.
+    # match_calibration then keeps only the lights' gain. Flats are matched
+    # BEFORE the newest-sets cut, so older sets at another gain cannot crowd
+    # the matching ones out of it.
+    root = cal.get("calib_root") or cal.get("flat_root")
+    if root:
+        bias = _dedupe(bias + session_frames(Path(root), "BIAS"))
+        dark = _dedupe(dark + session_frames(Path(root), "DARK"))
+    bias, dark, flat, _note = match_calibration(camera_gain(Path(like)), bias, dark, flat)
+    return bias, dark, newest_flat_sets(flat, n_sets)
+
+
+def session_frames(root: Path, kind: str) -> list[Path]:
+    """Every frame in root/<session>/<KIND>/ (BIAS or DARK), sorted."""
+    out: list[Path] = []
+    if root.is_dir():
+        for d in sorted(root.glob("*/%s" % kind)):
+            if d.is_dir():
+                out += _collect_fits(d)
+    return out
+
+
+def _dedupe(paths: list[Path]) -> list[Path]:
+    seen, out = set(), []
+    for p in paths:
+        k = str(Path(p).resolve()).lower()
+        if k not in seen:
+            seen.add(k)
+            out.append(Path(p))
+    return out
 
 
 def calibration_from_config(filter_name: Optional[str] = None,

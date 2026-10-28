@@ -84,3 +84,37 @@ def test_config_calibration_is_matched_to_the_light_it_is_asked_for(tmp_path, mo
     assert [p.name for p in b] == ["b26.fits"] and [p.name for p in d] == ["d26.fits"] and [p.name for p in f] == ["f26.fits"]
     b, d, f = stacker.calibration_paths_from_config("Ha")            # no light named: everything, as before
     assert len(b) == 2 and len(d) == 2 and len(f) == 2
+
+
+def test_new_session_bias_and_darks_are_found_and_matched_by_gain(tmp_path, monkeypatch):
+    # 2026-10-28: gain-26 bias/darks land in cdk17/<date>/BIAS|DARK, which a
+    # single configured folder never looked in; they would have been missed
+    # and the narrowband stacked uncalibrated.
+    root = tmp_path / "cdk17"
+    for sess, g, o in (("2026-07-25", 0, 10), ("2026-10-28", 26, 30)):
+        for kind in ("BIAS", "DARK"):
+            (root / sess / kind).mkdir(parents=True)
+            _fits(root / sess / kind / ("%s_%d.fits" % (kind.lower(), g)), g, o, imagetyp=kind)
+    from configs import config
+    monkeypatch.setattr(config, "data", lambda: {"calibration": {
+        "bias_dir": str(root / "2026-07-25" / "BIAS"), "dark_dir": str(root / "2026-07-25" / "DARK"),
+        "flat_root": str(root)}})
+    stacker._FLATS_BY_FILTER_CACHE.pop(str(root), None)
+    nb = _fits(tmp_path / "ha.fits", 26, 30, filt="Ha")
+    b, d, _f = stacker.calibration_paths_from_config("Ha", like=nb)
+    assert [p.name for p in b] == ["bias_26.fits"] and [p.name for p in d] == ["dark_26.fits"]
+    bb = _fits(tmp_path / "l.fits", 0, 10, filt="L")
+    b, d, _f = stacker.calibration_paths_from_config("L", like=bb)
+    assert [p.name for p in b] == ["bias_0.fits"] and [p.name for p in d] == ["dark_0.fits"]   # no duplicates
+
+
+def test_flats_are_gain_matched_before_the_newest_sets_cut(tmp_path, monkeypatch):
+    root = tmp_path / "cdk17"
+    for sess, g, o in (("2026-10-20", 26, 30), ("2026-10-25", 0, 10), ("2026-10-26", 0, 10), ("2026-10-27", 0, 10)):
+        (root / sess / "FLAT").mkdir(parents=True)
+        _fits(root / sess / "FLAT" / "f.fits", g, o, filt="Ha", imagetyp="FLAT")
+    from configs import config
+    monkeypatch.setattr(config, "data", lambda: {"calibration": {"flat_root": str(root), "flat_sets": 3}})
+    stacker._FLATS_BY_FILTER_CACHE.pop(str(root), None)
+    _b, _d, f = stacker.calibration_paths_from_config("Ha", like=_fits(tmp_path / "ha.fits", 26, 30, filt="Ha"))
+    assert [p.parent.parent.name for p in f] == ["2026-10-20"]       # the only gain-26 set, not cut away
