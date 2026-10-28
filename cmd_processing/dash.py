@@ -522,6 +522,40 @@ def sky_night_summary(pcts: list, moon_now: bool) -> Optional[dict]:
     return {"med": s[len(s) // 2], "last": pcts[-1], "n": len(pcts), "moon": bool(moon_now)}
 
 
+def in_night(local: datetime, evening) -> bool:
+    """True for a local time between noon on *evening* and noon the next day. Pure.
+
+    2026-10-28: the night's sky readings were chosen by dusk_check's
+    evening_frames, which keeps only readings DATED that evening -- right for
+    dusk, wrong for a whole night: after midnight nothing new qualified and the
+    page sat at 22% / 25% while the camera read 36%."""
+    from datetime import time as _time
+    start = datetime.combine(evening, _time(12, 0))
+    return start <= local.replace(tzinfo=None) < start + timedelta(days=1)
+
+
+def night_sky_frames(evening) -> list:
+    """[(utc time, row)] of the sky camera's night readings with a solve, for the whole night."""
+    from datetime import timezone
+    from sentry import dusk_check
+    tz = dusk_check._tz()
+    out = []
+    with open(SKY_LOG, encoding="utf-8") as fh:
+        for line in fh:
+            try:
+                r = json.loads(line)
+            except ValueError:
+                continue
+            if not r.get("night") or r.get("solve_matches") is None:
+                continue
+            t = datetime.fromisoformat(r.get("captured") or r["generated"])
+            if t.tzinfo is None:
+                t = t.replace(tzinfo=timezone.utc)
+            if in_night(t.astimezone(tz), evening):
+                out.append((t.astimezone(timezone.utc), r))
+    return sorted(out, key=lambda p: p[0])
+
+
 def read_sky_night(now: datetime) -> Optional[dict]:
     """sky_night_summary() over tonight's sky-camera frames (dusk_check's evening window).
 
@@ -532,7 +566,7 @@ def read_sky_night(now: datetime) -> Optional[dict]:
         from sentry import dusk_check, plate_solve
         from scripts.sky_transparency_report import in_field
         evening = (now - timedelta(hours=12)).date()
-        frames = dusk_check.evening_frames(_date(evening.year, evening.month, evening.day))
+        frames = night_sky_frames(_date(evening.year, evening.month, evening.day))
         sol = None
         clear = float(dusk_check._settings()["dusk_clear_transparency"])
         pcts = []

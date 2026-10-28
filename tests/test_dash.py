@@ -173,3 +173,13 @@ def test_flats_and_stale_frames_are_not_imaging():
 def test_sky_night_summary_gives_the_median_and_the_newest():
     assert dash.sky_night_summary([], False) is None
     assert dash.sky_night_summary([40, 55, 61, 52, 48], True) == {"med": 52, "last": 48, "n": 5, "moon": True}
+
+
+def test_the_night_runs_from_noon_to_noon():
+    # 2026-10-28: readings after midnight were dropped; the page froze at 22/25%.
+    from datetime import date
+    ev = date(2026, 10, 27)
+    assert dash.in_night(datetime(2026, 10, 27, 21, 0), ev)
+    assert dash.in_night(datetime(2026, 10, 28, 3, 15), ev)            # after midnight: still tonight
+    assert not dash.in_night(datetime(2026, 10, 28, 12, 0), ev)
+    assert not dash.in_night(datetime(2026, 10, 27, 11, 59), ev)
