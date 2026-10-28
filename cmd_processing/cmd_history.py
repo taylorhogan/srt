@@ -54,6 +54,12 @@ def get_nth(n: int) -> Optional[str]:
     return None
 
 
+def last() -> Optional[str]:
+    """The most recent command, or None. Backs `!!` in the web chat box."""
+    entries = _load()
+    return entries[-1]["cmd"] if entries else None
+
+
 def format_history(last_n: int = _DEFAULT_SHOW) -> str:
     entries = _load()
     if not entries:

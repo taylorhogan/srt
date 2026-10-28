@@ -765,11 +765,21 @@
   }
 
   // `!!` alone in the box puts the last command back, ready to edit (owner,
-  // 2026-10-28). Only the whole box: image!! and roof!! are commands. Kept in
-  // this browser so it survives a reload; storage can be missing or blocked.
+  // 2026-10-28). Only the whole box: image!! and roof!! are commands. The
+  // server's history is the source (any device, survives a reload); this
+  // browser's own copy covers a server too old to answer, and storage can be
+  // missing or blocked.
   const LAST_KEY = 'iris.lastCommand';
   let lastCommand = '';
   try { lastCommand = localStorage.getItem(LAST_KEY) || ''; } catch (e) { /* no storage */ }
+  function fetchLast() {
+    fetch('/api/last_command', { cache: 'no-store' })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => { if (d && d.cmd) lastCommand = d.cmd; })
+      .catch(() => { /* keep the local copy */ });
+  }
+  fetchLast();
+  input.addEventListener('focus', fetchLast);   // a command sent from another device
 
   function recallLast() {
     if (input.value.trim() !== '!!' || !lastCommand) return false;

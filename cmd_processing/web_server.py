@@ -54,8 +54,22 @@ from utils.client_allowlist import ClientAllowlist  # noqa: E402
 app.add_middleware(ClientAllowlist, networks=_allowed_networks(), name="web chat",
                    path_networks={"/api/dash": _dash_clients()})
 
+class _RevalidatedStatic(StaticFiles):
+    """The chat page and its kin must be revalidated on every load. With only
+    ETag/Last-Modified a browser may reuse a cached chat.html by heuristic
+    freshness, and on 2026-10-28 an old page sent `!!` to the server after the
+    new one (which recalls it in the box) was live. no-cache still lets an
+    unchanged file come back as a cheap 304."""
+
+    async def get_response(self, path, scope):
+        resp = await super().get_response(path, scope)
+        if path.endswith((".html", ".js", ".css", ".json")):
+            resp.headers["Cache-Control"] = "no-cache"
+        return resp
+
+
 _static_dir = os.path.join(os.path.dirname(__file__), "static")
-app.mount("/static", StaticFiles(directory=_static_dir), name="static")
+app.mount("/static", _RevalidatedStatic(directory=_static_dir), name="static")
 
 
 @app.on_event("startup")
@@ -326,6 +340,14 @@ def _dispatch_command(cmd_text: str):
         super_users = cfg.get("Super Users", {})
         account = next(iter(super_users), "web_user")
 
+        # `!!` is handled in the page: it puts the last command back in the
+        # box. Arriving here means the page is an old copy.
+        if cmd_text == "!!":
+            message_bus.post_message("!! puts your last command back in the box for editing. "
+                                     "This page is an old copy: reload it.")
+            jobs.finalize(job_id, jobs.DONE)
+            return
+
         # !n — expand to the nth history entry and re-run it
         if cmd_text.startswith("!"):
             raw = cmd_text[1:]
@@ -415,6 +437,13 @@ async def api_history():
 async def api_jobs():
     """Return the current jobs snapshot (rehydration / debugging)."""
     return {"jobs": jobs.snapshot()}
+
+
+@app.get("/api/last_command")
+async def api_last_command():
+    """The most recent command from any device, for `!!` in the chat box."""
+    from cmd_processing import cmd_history
+    return JSONResponse(content={"cmd": cmd_history.last()}, headers={"Cache-Control": "no-store"})
 
 
 # Cancelling an imaging run is not cooperative — nothing in doit_cmd checks the
