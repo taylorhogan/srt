@@ -5839,6 +5839,12 @@ def process_cmd(words: list[str], account: str) -> None:
         mesh=4      background mesh boxes across the short axis; higher removes
                     gradients harder but eats large nebulosity
         scnr=0      average-neutral green removal, g = min(g, (r+b)/2), 0..1.
+        gain=       palettes only (HOO/SHO/HSO). `gain=hubble` scales every
+                    filter so its nebula level matches the strongest: the
+                    classic Hubble palette, each channel on its own range,
+                    which on an HII region tones Ha down 3-5x and turns the
+                    true-ratio green into gold and blue. `gain=Ha:0.4` (or
+                    Ha:0.4/O-III:1.5) is an explicit factor per filter.
         deblur=40   deconvolution; 0 turns it off. With the default method
                     the number only switches it on: the luminance goes
                     through the learned deconvolver (nn/deblur_model, a
@@ -5958,7 +5964,8 @@ def _process_run(words: list[str]) -> None:
              "scnr": ("scnr", float), "scale": ("scale", int),
              "ha": ("ha_gain", float), "wb": ("white_balance", str),
              "stars": ("star_source", str), "deblur": ("deblur", int),
-             "dering": ("dering", str), "method": ("method", str)}
+             "dering": ("dering", str), "method": ("method", str),
+             "gain": ("palette_gain", str)}
     opts = {"use_flats": True, "reuse": False}
     rest = []
     bad = []

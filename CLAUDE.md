@@ -153,7 +153,10 @@ Since 2026-09-25 the conductor decides both invariants (ADR 0014): every roof fi
   learned deconvolver, `--learned-planes L`; checkpoint
   `local/deconv/models/learned_default.pt`); the starless `deblurred` one is
   an optional extra (`--deblur N`) — on one stretch pinned
-  to the raw set; a field a deconvolution refuses still gets the others. Known weak case: a bright star on a smooth galaxy's envelope
+  to the raw set; a field a deconvolution refuses still gets the others.
+  Only ONE of them is pushed (since 2026-10-28, owner's choice): the learned
+  composite, or the next class down when a field refused the deconvolution
+  (`PUSH_TAGS`); `--push-all` sends the triple again. Known weak case: a bright star on a smooth galaxy's envelope
   (coloured rings where the per-channel masks meet the fill, NGC 7317).
 
   Frames are **levelled to a common sky before combining** and the level is
@@ -163,6 +166,41 @@ Since 2026-09-25 the conductor decides both invariants (ADR 0014): every roof fi
   frames sit at different levels. Measured on ngc5907 G: 8x the photon limit at
   39 frames, worse than a single frame, and it got worse with more frames — so
   it hides in any small test.
+
+  **A palette can be toned on purpose: `gain=` (since 2026-10-28).** The
+  shared scale makes a true-ratio SHO of an HII region green, because Ha is
+  3-5x S-II and O-III (IC 410: S-II 0.2-0.3 of Ha, O-III 0.3-0.5). `gain=hubble`
+  on `process` (`--gain hubble` on the morning render) scales every palette
+  filter so its nebula level matches the strongest's, which is the classic
+  each-channel-on-its-own-range Hubble palette; `gain=Ha:0.4/O-III:1.5` is
+  explicit. The level is the 90th percentile of 32 px block medians
+  (`nebula_level`): a pixel percentile is the stars, which are the same in
+  every narrowband filter (first try on IC 410 measured 1.00/1.02/1.04 and
+  changed nothing), and the top half percent of blocks is the brightest
+  knot, not the nebula (IC 410: S-II x2.4 and green tadpoles at p99.5,
+  x3.6 and gold at p90). Factors are capped at 6. Applied in `_prepare` on
+  the subtracted planes; the shared white is taken BEFORE the gain, because
+  the white is the stars and a scaled-up filter would carry it up and darken
+  the picture (white 124 -> 266 ADU on IC 410), and the sky-anchored black
+  offset is sized by the PRE-gain sigmas (`sky_anchored_blacks(gains=)`),
+  because a filter scaled up carries its noise up and the offset sized to
+  that put the sky at 30 % grey (offset 1.3 -> 4.8 ADU). Measured on the raw set and
+  pinned on the denoised and learned composites (`info["palette_gain"]`,
+  `shared_from_raw`), printed in the options line. HOO/SHO/HSO only: on
+  LRGB/HALRGB it refuses. The stars do not take the gain and come out
+  NEUTRAL (`PALETTE_STAR_MODE`): scaling R and B made every star magenta,
+  and putting each plane's own star light back kept them magenta, because
+  a star is fainter through the Ha filter (its own absorption line) than
+  through S-II and O-III and Ha is SHO's green. So the stars are found once
+  on the raw set (`star_mask` on the planes' sum, 3 sigma, a peak/flux
+  compactness cut so a knot is never a star, discs sized by the star's peak
+  so a star on nebula does not inherit the knot's isophote) and the discs
+  pinned on the denoised and learned sets (a bright star found again on the
+  quiet denoised plane outgrew the size limit, fell out of the mask, and
+  the gain painted its halo magenta); inside a disc the fill under the
+  star (`smooth_fill`, block medians with the mask excluded, interpolated
+  from the neighbours) takes the gain and the star's light above it,
+  averaged over the planes, goes back the same in every channel.
 
   **The sky-anchored black is one offset for every channel (since 2026-10-25).**
   The morning render and the movie put black at each channel's sky median

@@ -19,6 +19,12 @@ Two things here are not obvious and were both learned the hard way on sh2-92:
    its own range destroys exactly that. Normalising by each channel's *noise* is
    the same mistake in a subtler form — on sh2-92 it handed O-III a 1.6x boost
    (its noise is 0.68 ADU against Ha's 1.10) and turned every continuum star cyan.
+
+   The one deliberate exception is the palette gain (`gain=`, since
+   2026-10-28): an explicit, logged scaling of a palette's filters, asked for
+   by name, because the "classic" Hubble palette IS each channel stretched to
+   its own range and a true-ratio SHO of an HII region is simply green (Ha is
+   3-5x S-II and O-III). See PALETTE_GAIN.
 """
 
 import logging
@@ -178,6 +184,320 @@ STAR_WB_EDGE_PX = 40
 HA_GAIN = 1.0
 HA_CONTINUUM_TOP_PCT = 98.0   # R pixels above this percentile define the ratio
 HA_CONTINUUM_MIN_PIX = 500    # fewer than this and the top slice is widened
+
+# --- palette gain: toning a narrowband filter up or down, on purpose ---------
+#
+# compose holds one brightness scale across the channels so a palette shows
+# the real ratio between the lines. On an HII region that ratio is Ha >> S-II,
+# O-III (IC 410, 2026-10-28: S-II 0.2-0.3 of Ha, O-III 0.3-0.5), so a
+# true-ratio SHO is green with a little blue, and the gold-and-blue "Hubble"
+# look people expect is only reachable by scaling Ha down. `gain=` does that
+# and nothing else, on the background-subtracted planes before the shared
+# white point is found, so the per-channel exports show the scaled planes:
+#   gain=Ha:0.4            Ha at 0.4x; several as Ha:0.4/O-III:1.5 (`/`, since
+#                          `,` is the sweep separator on the process command)
+#   gain=hubble            every palette filter scaled so its nebula level
+#                          matches the strongest filter's: the classic
+#                          palette, each channel on its own range. The level
+#                          is PALETTE_LEVEL_PCT (90) of the plane's block
+#                          medians (PALETTE_LEVEL_BLOCK px squares), NOT of
+#                          the pixels: a high pixel percentile is the stars,
+#                          which are continuum and the same in every
+#                          narrowband filter, and equalising them does
+#                          nothing (IC 410, first try: 1.00/1.02/1.04). A
+#                          32 px block median is blind to a 4-8 px star. And
+#                          p90 of the blocks, not p99.5: the top half percent
+#                          is the brightest knot, which on IC 410 is the
+#                          O-III-strong rim, so O-III was lifted to match Ha
+#                          there (x1.75) and S-II only x2.4, and the tadpoles
+#                          stayed green; p90 is the body of the nebula
+#                          (S-II x3.6, O-III x1.7: tadpoles gold, rim
+#                          cyan-white, the look this palette is asked for).
+#                          A factor is capped at PALETTE_GAIN_MAX so a filter
+#                          with no nebula in it (level at the noise) cannot
+#                          be scaled to noise. The factors are measured on
+#                          the raw set, logged, and pinned on the denoised
+#                          and learned composites (_prepare's info). The
+#                          shared white is taken before the gain (see
+#                          _prepare), so the gain never darkens the picture.
+# Palettes only (HOO/SHO/HSO): LRGB and HALRGB are colour, and a per-filter
+# gain there is a white balance done wrong. The stars do NOT take the gain
+# (since the afternoon of 2026-10-28): they are continuum, the same in every
+# filter, and scaling R and B lifted every one of IC 410's stars to magenta.
+# Each scaled plane's stars are lifted off a smooth fill (star_mask discs
+# over the block-median background, PALETTE_FILL_BLOCK) before the gain and
+# put back as imaged, so a star keeps the colour the plain palette gives it
+# and the nebula under its disc takes the gain with the rest.
+PALETTE_GAIN = None
+PALETTE_FILL_BLOCK = 16
+PALETTE_PROTECT_STARS = True
+# What a star gets under the gain. "neutral" (default since the afternoon
+# of 2026-10-28): its light above the fill averaged over the planes and put
+# back the same in every channel, so it is white at the palette's
+# brightness. "imaged" puts each plane's own star light back: in SHO that
+# is magenta even without a gain, because a star is FAINTER through the Ha
+# filter (its own Ha absorption line sits in the band) than through S-II
+# and O-III, and Ha is the green channel; the owner's "stars remain
+# magenta" after the first fix was this. "none" lets the stars take the gain.
+PALETTE_STAR_MODE = "neutral"
+# The gain's star mask is wider and deeper than stars=rgb's: a 300 s
+# narrowband star's halo reaches ~20 px (IC 410, Ha: 34 ADU above the fill
+# at 10 px, gone by 20-30) and the faint stars sit at 3-5 sigma, and every
+# one left outside the mask comes out magenta. 3 sigma, 5x the isophotal
+# size, 90 px at most.
+PALETTE_STAR_THRESH_SIGMA = 3.0
+PALETTE_STAR_RADIUS_A = 5.0
+PALETTE_STAR_MAX_RADIUS_PX = 90.0
+PALETTE_STAR_MAX_NPIX = 20000
+PALETTE_STAR_MIN_PEAK_FLUX = 0.008   # compactness: a point, not a knot (see star_mask); stars 0.011+
+# The stars are found ONCE, on the raw set, and the same discs are pinned on
+# the denoised and learned sets (info["palette_stars"]): found again on a
+# denoised plane, whose noise is a fraction of the raw's, a bright star's
+# 3-sigma isophote outgrew the size limit, the star fell out of the mask,
+# the fill under it was its own halo, and the gain painted a magenta blob
+# the size of the halo (IC 410, 2026-10-28). Same rule as the factors and
+# the white balance: a series shares one measurement.
+PALETTE_LEVEL_PCT = 90.0
+PALETTE_LEVEL_BLOCK = 32
+PALETTE_GAIN_MAX = 6.0
+
+
+def nebula_level(plane: np.ndarray, pct: float = PALETTE_LEVEL_PCT,
+                 block: int = PALETTE_LEVEL_BLOCK) -> float:
+    """A bright-nebula level of a subtracted plane that the stars cannot set:
+    *pct* of the medians of block x block squares."""
+    a = np.asarray(plane, dtype=np.float32)
+    h, w = a.shape[0] // block * block, a.shape[1] // block * block
+    if h == 0 or w == 0:
+        return float(np.nanpercentile(a, pct))
+    blocks = a[:h, :w].reshape(h // block, block, w // block, block)
+    med = np.nanmedian(blocks, axis=(1, 3))
+    return float(np.nanpercentile(med, pct))
+_FILTER_NAMES = {"ha": "Ha", "h-alpha": "Ha", "o-iii": "O-III", "oiii": "O-III",
+                 "o3": "O-III", "s-ii": "S-II", "sii": "S-II", "s2": "S-II"}
+
+
+def parse_palette_gain(spec) -> Optional[object]:
+    """`gain=` as typed -> None, "hubble" or {filter: factor}.
+
+    Filters by their FITS names, case-insensitive (ha, o-iii/oiii/o3,
+    s-ii/sii/s2); pairs separated by `/`. A dict or "hubble" passes through.
+    """
+    if spec is None or spec == "" or spec is False:
+        return None
+    if isinstance(spec, dict):
+        return {_FILTER_NAMES.get(str(k).lower(), k): float(v) for k, v in spec.items()}
+    text = str(spec).strip()
+    if text.lower() in ("hubble", "classic"):
+        return "hubble"
+    out: dict[str, float] = {}
+    for part in text.split("/"):
+        part = part.strip()
+        if not part:
+            continue
+        key, sep, val = part.partition(":")
+        if not sep:
+            key, sep, val = part.partition("=")
+        name = _FILTER_NAMES.get(key.strip().lower())
+        if name is None or not sep:
+            raise ValueError(f"gain: expected hubble or Ha:0.4/O-III:1.5, got {spec!r}")
+        try:
+            f = float(val)
+        except ValueError:
+            raise ValueError(f"gain: {part!r} is not filter:number") from None
+        if not f > 0:
+            raise ValueError(f"gain: {name} must be > 0, got {f:g}")
+        out[name] = f
+    return out or None
+
+
+def palette_gain_roles(recipe: str, gain) -> Optional[object]:
+    """The parsed gain keyed by the recipe's ROLES (R/G/B), for _prepare.
+
+    HOO points G and B at one filter, so a gain on O-III scales both. A
+    recipe with a luminance (LRGB/HALRGB) refuses: it is colour, not a palette.
+    """
+    gain = parse_palette_gain(gain)
+    if gain is None:
+        return None
+    mapping = RECIPES.get(str(recipe).upper())
+    if mapping is None:
+        raise ValueError(f"gain: unknown recipe {recipe!r}")
+    if "L" in mapping:
+        raise ValueError(f"gain: {recipe} is colour, not a palette; gain= is for HOO/SHO/HSO")
+    if gain == "hubble":
+        return "hubble"
+    roles: dict[str, float] = {}
+    for filt, f in gain.items():
+        hit = [role for role in ("R", "G", "B") if mapping.get(role) == filt]
+        if not hit:
+            raise ValueError(f"gain: {recipe} has no {filt} channel")
+        for role in hit:
+            roles[role] = f
+    return roles
+
+
+def _block_median(a: np.ndarray, block: int) -> np.ndarray:
+    h, w = a.shape
+    ph, pw = (-h) % block, (-w) % block
+    if ph or pw:
+        a = np.pad(a, ((0, ph), (0, pw)), mode="edge")
+    with np.errstate(all="ignore"):
+        import warnings
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", RuntimeWarning)       # all-NaN blocks
+            return np.nanmedian(a.reshape(a.shape[0] // block, block, a.shape[1] // block, block),
+                                axis=(1, 3)).astype(np.float32)
+
+
+def smooth_fill(plane: np.ndarray, block: int = PALETTE_FILL_BLOCK,
+                mask: Optional[np.ndarray] = None) -> np.ndarray:
+    """The plane without its stars: block medians, bilinearly back to size.
+
+    A block median is blind to a star smaller than the block; what it keeps
+    is the nebula and the sky at block resolution. With *mask* (0..1, the
+    stars) the masked pixels are left out of the medians, because a bright
+    star's halo fills a 16 px block and pulled the fill under it up (IC 410:
+    the Ha profile went 5 ADU NEGATIVE against the fill at 20 px). A block
+    the mask covers entirely is interpolated from its unmasked neighbours
+    by normalised Gaussian smoothing at block resolution, narrow first
+    (half a block) and wider only where nothing narrower reaches: a 4x
+    block median pasted in instead carried the halo it was meant to
+    exclude and showed as a red square around every bright star.
+    """
+    from scipy.ndimage import zoom, gaussian_filter
+    a = np.asarray(plane, dtype=np.float32)
+    h, w = a.shape
+    if mask is not None:
+        a = np.where(np.asarray(mask) > 0.5, np.nan, a).astype(np.float32)
+    med = _block_median(a, block)
+    good = np.isfinite(med)
+    if not good.all():
+        filled = np.where(good, med, 0.0).astype(np.float32)
+        wgt = good.astype(np.float32)
+        out = med.copy()
+        need = ~good
+        for sigma in (0.5, 1.0, 2.0, 4.0, 8.0):
+            if not need.any():
+                break
+            num = gaussian_filter(filled, sigma, mode="nearest")
+            den = gaussian_filter(wgt, sigma, mode="nearest")
+            ok = need & (den > 0.05)
+            out[ok] = num[ok] / den[ok]
+            need &= ~ok
+        if need.any():
+            rest = float(np.nanmedian(a)) if np.isfinite(a).any() else 0.0
+            out[need] = np.float32(rest)
+        med = out
+    up = zoom(med, block, order=1, mode="nearest", grid_mode=True)
+    return np.ascontiguousarray(up[:h, :w])
+
+
+def apply_palette_gain(subbed: dict[str, np.ndarray], gain,
+                       level_pct: float = PALETTE_LEVEL_PCT,
+                       protect_stars: bool = PALETTE_PROTECT_STARS,
+                       star_discs=None, info: Optional[dict] = None,
+                       star_mode: str = PALETTE_STAR_MODE
+                       ) -> tuple[dict[str, np.ndarray], Optional[dict[str, float]]]:
+    """Scale the palette planes; returns (channels, {role: factor} used).
+
+    *gain* is {role: factor} (applied as given, which is how a series pins
+    one measurement) or "hubble" (measured here: each of R/G/B scaled so its
+    nebula_level matches the highest). None leaves everything alone.
+
+    With *protect_stars* a plane is P*g + M*(S - (P - F)*g): outside the
+    star mask M the plane is simply scaled; inside, the smooth fill F under
+    the star takes the gain and the star light S goes back on top. S is the
+    star's own light above the fill (P - F) with star_mode "imaged", or
+    with "neutral" (PALETTE_STAR_MODE) that light averaged over the
+    distinct planes, the same in every channel, so the star is white at the
+    palette's brightness; "none" is protect_stars=False. One mask for every
+    plane, found on their sum, so a star is treated the same in each.
+    *star_discs* (x, y, r) pins the stars a previous call found (returned
+    in *info*["star_discs"]) instead of finding them again; see
+    PALETTE_STAR_MAX_NPIX for why a series must.
+    """
+    if star_mode == "none":
+        protect_stars = False
+    if gain is None:
+        return subbed, None
+    roles = [c for c in ("R", "G", "B") if c in subbed]
+    if gain == "hubble":
+        levels = {c: nebula_level(subbed[c], level_pct) for c in roles}
+        top = max(levels.values(), default=0.0)
+        factors = {}
+        for c, lv in levels.items():
+            f = top / lv if lv > 0 and top > 0 else 1.0
+            if f > PALETTE_GAIN_MAX:
+                _logger.warning("Palette gain: %s level %.3g is noise against %.3g; "
+                                "capped at x%g", c, lv, top, PALETTE_GAIN_MAX)
+                f = PALETTE_GAIN_MAX
+            factors[c] = f
+    else:
+        factors = {c: float(f) for c, f in dict(gain).items() if c in roles}
+    out = dict(subbed)
+    scaled = [c for c, f in factors.items() if f != 1.0]
+    mask = None
+    if scaled and protect_stars:
+        touched = roles if star_mode == "neutral" else scaled
+        shape = np.asarray(subbed[roles[0]]).shape
+        if star_discs is not None:
+            discs = list(star_discs)
+            mask = mask_from_discs(shape, discs) if discs else None
+        else:
+            distinct = {id(subbed[c]): subbed[c] for c in roles}
+            total = np.sum([np.nan_to_num(np.asarray(p, dtype=np.float32))
+                            for p in distinct.values()], axis=0)
+            mask, minfo = star_mask(total, thresh_sigma=PALETTE_STAR_THRESH_SIGMA,
+                                    max_npix=PALETTE_STAR_MAX_NPIX,
+                                    radius_a=PALETTE_STAR_RADIUS_A,
+                                    max_radius=PALETTE_STAR_MAX_RADIUS_PX,
+                                    min_peak_flux=PALETTE_STAR_MIN_PEAK_FLUX,
+                                    radius_from="peak")
+            discs = minfo.get("discs", [])
+            _logger.info("Palette gain: %d stars %s (%.2f%% of the field)", len(discs),
+                         "made neutral" if star_mode == "neutral" else "kept as imaged",
+                         100.0 * minfo.get("coverage", 0.0))
+            if not discs:
+                mask = None
+        if info is not None:
+            info["star_discs"] = discs
+    fills: dict[int, np.ndarray] = {}
+    def fill_of(c):
+        k = id(subbed[c])
+        if k not in fills:
+            fills[k] = smooth_fill(np.asarray(subbed[c], dtype=np.float32), mask=mask)
+        return fills[k]
+    star_common = None
+    if mask is not None and star_mode == "neutral":
+        # The star light above the fill, averaged over the distinct planes.
+        planes = {id(subbed[c]): c for c in roles}
+        star_common = np.mean([np.asarray(subbed[c], dtype=np.float32) - fill_of(c)
+                               for c in planes.values()], axis=0).astype(np.float32)
+    done: dict[tuple, np.ndarray] = {}          # HOO: G and B are one plane, scale it once
+    for c in (touched if mask is not None else scaled):
+        f = factors.get(c, 1.0)
+        key = (id(subbed[c]), f)
+        if key in done:
+            out[c] = done[key]
+            continue
+        p = np.asarray(subbed[c], dtype=np.float32)
+        res = p * np.float32(f)
+        if mask is not None:
+            fill = fill_of(c)
+            star = star_common if star_common is not None else (p - fill)
+            res += mask * (star - (p - fill) * np.float32(f))
+        done[key] = res
+        out[c] = res
+    return out, factors
+
+
+def describe_palette_gain(gain) -> str:
+    if gain is None:
+        return ""
+    if isinstance(gain, str):
+        return gain
+    return "/".join(f"{k}:{float(v):g}" for k, v in gain.items())
 # The difference map Ha - ratio*R is noise almost everywhere, and clipping it
 # at zero keeps the positive half of that noise: measured on m33 channels
 # with a 1 ADU Ha noise, the "excess" was non-zero on 49% of the field and
@@ -565,17 +885,33 @@ STAR_MASK_RADIUS_A = 3.0        # disc radius in units of sep's semi-major axis 
 STAR_MASK_MIN_RADIUS_PX = 3.0
 STAR_MASK_MAX_RADIUS_PX = 60.0
 STAR_MASK_FEATHER = 0.6         # skirt sigma as a fraction of the disc radius
+STAR_PEAK_R0 = 5.0              # radius_from="peak": px at the detection threshold ...
+STAR_PEAK_R_PER_DEX = 12.0      # ... plus this per decade of peak above it
 STAR_CHROMA_FLOOR = 0.04        # RGB luminance (0..1) below which the palette keeps its colour
 
 
 def star_mask(chan: np.ndarray, thresh_sigma: float = STAR_MASK_THRESH_SIGMA,
-              max_npix: int = STAR_MASK_MAX_NPIX) -> tuple[np.ndarray, dict]:
+              max_npix: int = STAR_MASK_MAX_NPIX,
+              radius_a: float = STAR_MASK_RADIUS_A,
+              max_radius: float = STAR_MASK_MAX_RADIUS_PX,
+              feather: float = STAR_MASK_FEATHER,
+              min_peak_flux: float = 0.0,
+              radius_from: str = "isophote") -> tuple[np.ndarray, dict]:
     """(mask 0..1, info) — feathered discs on the stars of *chan*.
 
     *chan* is a linear stack (background-subtracted or not; sep models the
     background itself). Sources are kept if round, not too large and not on
     the edge; the disc radius follows sep's isophotal size, so a bright star
-    with a wide profile gets a wider disc than a faint one.
+    with a wide profile gets a wider disc than a faint one. *min_peak_flux*
+    is a compactness cut, peak over isophotal flux: a star is a point, so
+    its peak is a large share of its flux (IC 410 at 3 sigma: 0.011 for the
+    brightest, halo included, 0.018 median), an HII knot or a nebula blob
+    is not (0.0004-0.002). 0 turns it off. *radius_from* "peak" sizes the
+    disc from the star's peak instead of its isophote: STAR_PEAK_R0 px at
+    the detection threshold plus STAR_PEAK_R_PER_DEX per decade above it
+    (IC 410: a 1756 ADU star's halo reaches 30-45 px, 5 + 12 * 2.5 = 35), so
+    a star on bright nebula, whose isophote is the nebula's, gets the disc
+    its brightness earns and not one the size of the knot it sits on.
     """
     import sep
     a = np.ascontiguousarray(np.nan_to_num(chan), dtype=np.float32)
@@ -590,15 +926,32 @@ def star_mask(chan: np.ndarray, thresh_sigma: float = STAR_MASK_THRESH_SIGMA,
         return mask, {"stars": 0, "why": "star detection failed: %s" % exc}
     keep = (objs["b"] / np.maximum(objs["a"], 1e-6)) >= STAR_MASK_MIN_AXIS_RATIO
     keep &= objs["npix"] <= max_npix
+    if min_peak_flux > 0:
+        keep &= (objs["peak"] / np.maximum(objs["flux"], 1e-6)) >= min_peak_flux
     objs = objs[keep]
-    yy_full, xx_full = None, None
+    if radius_from == "peak":
+        floor = max(thresh_sigma * rms, 1e-6)
+        discs = [(float(o["x"]), float(o["y"]),
+                  float(np.clip(STAR_PEAK_R0 + STAR_PEAK_R_PER_DEX
+                                * np.log10(max(float(o["peak"]) / floor, 1.0)),
+                                STAR_MASK_MIN_RADIUS_PX, max_radius)))
+                 for o in objs]
+    else:
+        discs = [(float(o["x"]), float(o["y"]),
+                  float(np.clip(radius_a * float(o["a"]), STAR_MASK_MIN_RADIUS_PX, max_radius)))
+                 for o in objs]
+    n = paint_discs(mask, discs, feather)
+    return mask, {"stars": n, "detected": int(len(keep)), "kept": int(keep.sum()),
+                  "coverage": float(mask.mean()), "discs": discs}
+
+
+def paint_discs(mask: np.ndarray, discs, feather: float = STAR_MASK_FEATHER) -> int:
+    """Feathered discs (x, y, r) painted into *mask* in place; the count."""
+    h, w = mask.shape
     n = 0
-    for o in objs:
-        r = float(np.clip(STAR_MASK_RADIUS_A * float(o["a"]),
-                          STAR_MASK_MIN_RADIUS_PX, STAR_MASK_MAX_RADIUS_PX))
-        sig = STAR_MASK_FEATHER * r
+    for cx, cy, r in discs:
+        sig = feather * r
         reach = int(np.ceil(r + 3.0 * sig))
-        cx, cy = float(o["x"]), float(o["y"])
         x0, x1 = max(0, int(cx) - reach), min(w, int(cx) + reach + 1)
         y0, y1 = max(0, int(cy) - reach), min(h, int(cy) + reach + 1)
         if x1 <= x0 or y1 <= y0:
@@ -608,8 +961,14 @@ def star_mask(chan: np.ndarray, thresh_sigma: float = STAR_MASK_THRESH_SIGMA,
         disc = np.where(d <= r, 1.0, np.exp(-0.5 * ((d - r) / sig) ** 2)).astype(np.float32)
         np.maximum(mask[y0:y1, x0:x1], disc, out=mask[y0:y1, x0:x1])
         n += 1
-    return mask, {"stars": n, "detected": int(len(keep)), "kept": int(keep.sum()),
-                  "coverage": float(mask.mean())}
+    return n
+
+
+def mask_from_discs(shape, discs, feather: float = STAR_MASK_FEATHER) -> np.ndarray:
+    """The star mask a list of (x, y, r) discs describes, on a grid of *shape*."""
+    mask = np.zeros(shape, np.float32)
+    paint_discs(mask, discs, feather)
+    return mask
 
 
 def rgb_stars(palette: np.ndarray, stars: np.ndarray, mask: np.ndarray) -> np.ndarray:
@@ -675,7 +1034,8 @@ def _prepare(channels: dict[str, np.ndarray], subtract_background: bool,
              white_balance: str = WHITE_BALANCE,
              wb_factors: Optional[dict] = None,
              ha_ratio: Optional[float] = None,
-             info: Optional[dict] = None) -> tuple[dict, float]:
+             info: Optional[dict] = None,
+             palette_gain=PALETTE_GAIN, palette_stars=None) -> tuple[dict, float]:
     """Background-subtract every channel and find the shared white point.
 
     Factored out of compose() because the per-channel exports have to be the
@@ -684,8 +1044,10 @@ def _prepare(channels: dict[str, np.ndarray], subtract_background: bool,
     composite, which defeats the point of being able to inspect it.
 
     *info*, if given, receives what was measured here: "wb" (the white-balance
-    info, factors included) and "ha_ratio". A raw/denoised pair passes the raw
-    set's back in as wb_factors / ha_ratio so both share one balance and blend.
+    info, factors included), "ha_ratio" and "palette_gain" (the {role: factor}
+    applied, measured when gain=hubble). A raw/denoised pair passes the raw
+    set's back in as wb_factors / ha_ratio / palette_gain so both share one
+    balance, blend and gain.
     """
     if subtract_background:
         subbed = {k: _remove_gradient(v, mesh) for k, v in channels.items()}
@@ -715,6 +1077,19 @@ def _prepare(channels: dict[str, np.ndarray], subtract_background: bool,
     # its raw counterpart got R 1.176 / B 1.403. Same class of error the black
     # point comment above describes, one layer up.
     subbed, wb_info = apply_white_balance(subbed, white_balance, wb_factors)
+    # Palette gain (PALETTE_GAIN): after the balance, which it never shares a
+    # recipe with. The white point is taken BEFORE the gain: the p99.95 white
+    # is the stars, and a filter scaled up carries its stars up with it, so a
+    # white taken after would rise with the gain and darken the whole picture
+    # (IC 410 at gain=hubble: white 124 -> 266 ADU, the nebula at half its
+    # brightness). The gain is a tone, not an exposure; stars in a scaled-up
+    # plane clip harder, which they did anyway.
+    white_before = shared_white(subbed, white_pct)
+    gain_info: dict = {}
+    subbed, gain_used = apply_palette_gain(subbed, palette_gain, star_discs=palette_stars,
+                                           info=gain_info)
+    if gain_used:
+        _logger.info("Palette gain: %s", describe_palette_gain(gain_used))
     # HALRGB: the blend happens here, on subtracted linear data, so the
     # shared white point and every per-channel export see the blended R.
     # ha_gain=None leaves it to the caller (the movie pins one ratio for
@@ -723,8 +1098,9 @@ def _prepare(channels: dict[str, np.ndarray], subtract_background: bool,
     if ha_gain is not None:
         subbed, ratio = apply_ha_blend(subbed, ha_gain, ha_ratio)
     if info is not None:
-        info.update({"wb": wb_info, "ha_ratio": ratio})
-    return subbed, shared_white(subbed, white_pct)
+        info.update({"wb": wb_info, "ha_ratio": ratio, "palette_gain": gain_used,
+                     "palette_stars": gain_info.get("star_discs")})
+    return subbed, (white_before if gain_used else shared_white(subbed, white_pct))
 
 
 
@@ -1097,7 +1473,8 @@ def effective_options(**overrides) -> dict:
             "softening": SOFTENING, "mesh": BG_MESH_FRACTION,
             "subtract_background": SUBTRACT_BACKGROUND, "scnr": SCNR_AMOUNT,
             "ha_gain": HA_GAIN, "white_balance": WHITE_BALANCE,
-            "deblur": DEBLUR_ITERS, "dering": DEBLUR_DERING, "method": DEBLUR_METHOD}
+            "deblur": DEBLUR_ITERS, "dering": DEBLUR_DERING, "method": DEBLUR_METHOD,
+            "palette_gain": PALETTE_GAIN}
     opts.update({k: v for k, v in overrides.items() if k in opts})
     return opts
 
@@ -1116,6 +1493,8 @@ def describe_options(opts: dict, scale: int = 1) -> str:
         parts.append(f"scnr={opts['scnr']:g}")
     if opts.get("ha_gain", HA_GAIN) != HA_GAIN:
         parts.append(f"ha={opts['ha_gain']:g}")
+    if opts.get("palette_gain"):
+        parts.append(f"gain={describe_palette_gain(opts['palette_gain'])}")
     if opts.get("deblur"):
         parts.append(f"deblur={int(opts['deblur'])}")
         if str(opts.get("dering", DEBLUR_DERING)).lower() != DEBLUR_DERING:
@@ -1211,7 +1590,8 @@ def compose(channels: dict[str, np.ndarray], black_pct: float = BLACK_PCT,
             white_balance: str = WHITE_BALANCE,
             deblur: int = DEBLUR_ITERS,
             dering: str = DEBLUR_DERING,
-            method: str = DEBLUR_METHOD) -> np.ndarray:
+            method: str = DEBLUR_METHOD,
+            palette_gain=PALETTE_GAIN) -> np.ndarray:
     """Combine channel stacks into an RGB image in 0..1.
 
     channels holds any of R/G/B plus an optional L, and for HALRGB an HA plane
@@ -1228,7 +1608,7 @@ def compose(channels: dict[str, np.ndarray], black_pct: float = BLACK_PCT,
     """
     channels = _deblurred(channels, deblur, dering, method)
     subbed, white = _prepare(channels, subtract_background, mesh, white_pct, ha_gain,
-                             white_balance)
+                             white_balance, palette_gain=palette_gain)
     _logger.info("Compose: shared white point %.2f ADU (p%.1f)", white, white_pct)
 
     rgb = np.dstack([_stretch(subbed[c], black_pct, white, softening, label=c)
@@ -1265,7 +1645,8 @@ def compose(channels: dict[str, np.ndarray], black_pct: float = BLACK_PCT,
 
 
 def sky_anchored_blacks(subbed: dict[str, np.ndarray], black_sigma: float,
-                        black_pct: float = BLACK_PCT, log=None) -> dict[str, float]:
+                        black_pct: float = BLACK_PCT, log=None,
+                        gains: Optional[dict] = None) -> dict[str, float]:
     """Black point per channel, anchored to the sky rather than a percentile.
 
     A percentile is a *relative* rule, and anything that changes the pixel
@@ -1287,6 +1668,15 @@ def sky_anchored_blacks(subbed: dict[str, np.ndarray], black_sigma: float,
     sky (RGB 54/32/25). The sky is the same grey in every channel now, and
     the noisier channel just scatters more about it; on a balanced set the
     offsets were already nearly equal and nothing changes.
+
+    *gains* is the palette gain each channel carries ({role: factor}, from
+    _prepare's info): the offset is sized by the sigma each channel had
+    BEFORE its gain. A channel scaled up carries its noise up, and an offset
+    sized to that put IC 410's sky at 30 % grey instead of 9 (S-II x3.9:
+    offset 1.3 -> 4.8 ADU, 2026-10-28). The gain is a tone; the sky stays
+    where it was, and the scaled-up channel's raw noise clips harder below
+    it, which the denoised and learned composites pinned to this black do
+    not show.
     """
     if black_sigma is None or black_sigma <= 0:
         return blacks_from(subbed, black_pct)
@@ -1301,7 +1691,9 @@ def sky_anchored_blacks(subbed: dict[str, np.ndarray], black_sigma: float,
             stats[c] = (float(np.nanmedian(a)), float(sep.Background(a).globalrms))
         except Exception:
             out[c] = float(np.nanpercentile(arr, black_pct))
-    offset = black_sigma * max((sig for _, sig in stats.values()), default=0.0)
+    gains = gains or {}
+    offset = black_sigma * max((sig / (float(gains.get(c, 1.0)) or 1.0)
+                                for c, (_, sig) in stats.items()), default=0.0)
     for c, (med, sig) in stats.items():
         out[c] = med - offset
         if log:
@@ -1451,6 +1843,9 @@ def process_dso(
 
     recipe = recipe.upper()
     tag = cache_tag(recipe, use_flats)
+    if compose_kw.get("palette_gain") is not None:
+        # Typed by filter name; compose wants it by role, which needs the recipe.
+        compose_kw["palette_gain"] = palette_gain_roles(recipe, compose_kw["palette_gain"])
     if reuse and cache_dir is not None:
         cached = load_cached_channels(cache_dir, dso_dir.name, tag)
         if cached is not None:
@@ -1840,7 +2235,8 @@ def save_channel_jpgs(channels: dict[str, np.ndarray], out_dir: Path, dso: str,
                       white_balance: str = WHITE_BALANCE,
                       deblur: int = DEBLUR_ITERS,
                       dering: str = DEBLUR_DERING,
-                      method: str = DEBLUR_METHOD) -> list[Path]:
+                      method: str = DEBLUR_METHOD,
+                      palette_gain=PALETTE_GAIN) -> list[Path]:
     """Write one mono JPEG per channel, on the composite's shared scale.
 
     Deliberately not per-channel autostretch: these are meant to explain the
@@ -1857,7 +2253,7 @@ def save_channel_jpgs(channels: dict[str, np.ndarray], out_dir: Path, dso: str,
     from stacking import stacker
     channels = _deblurred(channels, deblur, dering, method)
     subbed, white = _prepare(channels, subtract_background, mesh, white_pct, ha_gain,
-                             white_balance)
+                             white_balance, palette_gain=palette_gain)
     out_dir.mkdir(parents=True, exist_ok=True)
     written = []
     # For HALRGB, R and L here are the BLENDED planes (what the composite

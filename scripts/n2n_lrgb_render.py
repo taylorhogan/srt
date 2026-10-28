@@ -73,6 +73,11 @@ TAGS = ("raw", "denoised", "learned")
 # Optional extras, written and pushed only when asked for (--deblur N adds
 # the starless composite back for comparison).
 EXTRA_TAGS = ("deblurred",)
+# What the morning push sends, best first: ONE picture (owner, 2026-10-28:
+# "you only need to send a picture of the learned, not all 3"), the learned
+# composite, or the next class down when a field refused the deconvolution.
+# --push-all restores the triple. Extras asked for are still sent.
+PUSH_TAGS = ("learned", "denoised", "raw")
 
 
 def suffix(args) -> str:
@@ -250,10 +255,11 @@ def build(args) -> int:
 
 
 def sky_anchored_blacks(subbed: dict, black_sigma: float, black_pct: float,
-                        log=print) -> dict:
+                        log=print, gains=None) -> dict:
     """Lives in color_process now; kept here as the name every caller uses."""
     from stacking import color_process
-    return color_process.sky_anchored_blacks(subbed, black_sigma, black_pct, log=log)
+    return color_process.sky_anchored_blacks(subbed, black_sigma, black_pct, log=log,
+                                             gains=gains)
 
 
 def shared_from_raw(raw_info: dict) -> dict:
@@ -265,10 +271,26 @@ def shared_from_raw(raw_info: dict) -> dict:
     the identity too: the pair stays consistent either way.
     """
     wb = (raw_info.get("wb") or {}).get("factors") or None
-    return {"white_balance": "none", "wb_factors": wb, "ha_ratio": raw_info.get("ha_ratio")}
+    return {"white_balance": "none", "wb_factors": wb, "ha_ratio": raw_info.get("ha_ratio"),
+            "palette_gain": raw_info.get("palette_gain"),
+            "palette_stars": raw_info.get("palette_stars")}
+
+
+def palette_gain_opt(args):
+    """--gain as the recipe's {role: factor} or "hubble"; None when not asked."""
+    spec = getattr(args, "gain", "") or ""
+    if not spec:
+        return None
+    from stacking import color_process
+    return color_process.palette_gain_roles(args.recipe, spec)
 
 
 def log_shared_measurements(raw_info: dict, log) -> None:
+    from stacking import color_process
+    pg = raw_info.get("palette_gain")
+    if pg:
+        log("    palette gain: " + "  ".join(f"{c} x{f:.3f}" for c, f in sorted(pg.items()))
+            + f"; {len(raw_info.get('palette_stars') or [])} stars found, kept out of the gain ({color_process.PALETTE_STAR_MODE})")
     wb = raw_info.get("wb") or {}
     if wb.get("mode") == "stars":
         f = wb.get("factors") or {}
@@ -317,10 +339,12 @@ def compose(args) -> int:
                   if ch in mapping and mapping[ch] in raw_ch}
         opts = color_process.effective_options(
             white_pct=args.white_pct, black_pct=args.black_pct,
+            palette_gain=palette_gain_opt(args),
         **({"softening": args.soft} if args.soft is not None else {}))
         log(f"compose: {color_process.describe_options(opts)}")
         subbed, white = color_process._prepare(
-            raw_ch, opts["subtract_background"], opts["mesh"], opts["white_pct"])
+            raw_ch, opts["subtract_background"], opts["mesh"], opts["white_pct"],
+            palette_gain=opts["palette_gain"])
         blacks = {c: float(np.nanpercentile(subbed[c], opts["black_pct"]))
                   for c in subbed}
         log(f"stretch: white {white:.2f} ADU, blacks "
@@ -387,6 +411,7 @@ def compose(args) -> int:
     # stretch, not the model.
     opts = color_process.effective_options(
         white_pct=args.white_pct, black_pct=args.black_pct, white_balance=args.wb,
+        palette_gain=palette_gain_opt(args),
         **({"softening": args.soft} if args.soft is not None else {}))
     log(f"compose: {color_process.describe_options(opts)}")
 
@@ -409,7 +434,8 @@ def compose(args) -> int:
     raw_info = {}
     subbed_raw, white = color_process._prepare(
         raw_ch, opts["subtract_background"], opts["mesh"], opts["white_pct"],
-        white_balance=opts["white_balance"], info=raw_info)
+        white_balance=opts["white_balance"], info=raw_info,
+        palette_gain=opts["palette_gain"])
     log_shared_measurements(raw_info, log)
     subbed_den, _ = color_process._prepare(
         den_ch, opts["subtract_background"], opts["mesh"], opts["white_pct"],
@@ -520,17 +546,16 @@ def _fit_for_push(src: Path, work: Path) -> Path:
 
 
 def push_render(args, out_dir: Path, written: list, meta: dict, log=print) -> bool:
-    """Pushover the raw, denoised and learned composites (TAGS), plus any
-    extra one that was written. Never raises -- a render must not fail
-    because a notification did.
+    """Pushover the composite(s): by default the one best picture (the first
+    of PUSH_TAGS that was written), with --push-all every class in TAGS,
+    plus any extra one that was written. Never raises -- a render must not
+    fail because a notification did.
 
-    A PAIR since 2026-09-08, a triple since 2026-10-19. Whether the denoised
-    version is the better image depends on surface brightness, not object
-    class (module docstring: NGC 6888 yes, ic1396 no), and the deblurred one
-    is newer still, so that call needs an eye on all of them. Pushover takes
-    one attachment per message, so each is its own message, raw first so
-    they read top-down in the order the pipeline made them. Returns True if
-    at least one was accepted.
+    A PAIR since 2026-09-08, a triple since 2026-10-19 while the two
+    deconvolutions were being judged against the denoised set on every
+    morning target; one picture since 2026-10-28, the learned composite
+    being the default product. Pushover takes one attachment per message,
+    so each is its own message. Returns True if at least one was accepted.
     """
     try:
         from utils import pushover
@@ -543,7 +568,15 @@ def push_render(args, out_dir: Path, written: list, meta: dict, log=print) -> bo
         sent = 0
         extras = tuple(t for t in EXTRA_TAGS
                        if any(p.name == f"{args.dso}_{args.recipe}_{t}.jpg" for p in written))
-        for tag in TAGS + extras:
+        if getattr(args, "push_all", False):
+            tags = TAGS + extras
+        else:
+            best = [t for t in PUSH_TAGS
+                    if any(p.name == f"{args.dso}_{args.recipe}_{t}.jpg" for p in written)]
+            tags = tuple(best[:1]) + extras
+            if not best:
+                log("  push: no composite to send")
+        for tag in tags:
             pick = [p for p in written if p.name == f"{args.dso}_{args.recipe}_{tag}.jpg"]
             if not pick:
                 log(f"  push: no {tag} composite to send")
@@ -732,6 +765,7 @@ def routine(args) -> int:
 
     opts = color_process.effective_options(
         white_pct=args.white_pct, black_pct=args.black_pct, white_balance=args.wb,
+        palette_gain=palette_gain_opt(args),
         **({"softening": args.soft} if args.soft is not None else {}))
     log(f"compose: {color_process.describe_options(opts)}")
 
@@ -743,14 +777,16 @@ def routine(args) -> int:
     raw_info = {}
     subbed_raw, white = color_process._prepare(
         to_channels(raw), opts["subtract_background"], opts["mesh"], opts["white_pct"],
-        white_balance=opts["white_balance"], info=raw_info)
+        white_balance=opts["white_balance"], info=raw_info,
+        palette_gain=opts["palette_gain"])
     log_shared_measurements(raw_info, log)
     if args.auto_stretch:
         log("auto stretch:")
         auto = color_process.auto_stretch(subbed_raw, white, lum="L", log=log)
         blacks, soft = auto["blacks"], auto["softening"]
     else:
-        blacks = sky_anchored_blacks(subbed_raw, args.black_sigma, opts["black_pct"], log)
+        blacks = sky_anchored_blacks(subbed_raw, args.black_sigma, opts["black_pct"], log,
+                                     gains=raw_info.get("palette_gain"))
         soft = opts["softening"]
     log(f"stretch from raw: white {white:.2f} ADU, blacks "
         + ", ".join(f"{c} {v:.2f}" for c, v in sorted(blacks.items())))
@@ -922,6 +958,12 @@ def main() -> int:
                     help="white balance as the process command's wb=: `stars` "
                          "scales R and B so the field's median star is neutral. "
                          "LRGB/HALRGB only; the palettes are not colours")
+    ap.add_argument("--gain", default="",
+                    help="palette gain as the process command's gain=: `hubble` "
+                         "(every filter's nebula level equalised, the classic "
+                         "independently-stretched look) or `Ha:0.4/O-III:1.5`; "
+                         "measured on the raw set and pinned on the denoised and "
+                         "learned composites. HOO/SHO/HSO only")
     ap.add_argument("--auto-stretch", action="store_true",
                     help="black points and softening from the data "
                          "(color_process.auto_stretch) instead of the fixed "
@@ -965,6 +1007,9 @@ def main() -> int:
                     help="Pushover the composites when the render finishes")
     ap.add_argument("--no-push", dest="push", action="store_false")
     ap.set_defaults(push=True)
+    ap.add_argument("--push-all", action="store_true",
+                    help="push every composite class (raw, denoised, learned) "
+                         "instead of the one best picture")
     args = ap.parse_args()
     if args.learned_model is None:
         from nn import deblur_model
