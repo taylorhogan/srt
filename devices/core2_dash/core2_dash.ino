@@ -4,9 +4,11 @@
 // only: the buttons change only this screen, and the payload carries no command.
 // One set of big-type pages, day and night (owner 2026-10-29: "no need for the
 // 2 modes"): time and temperature, the sky camera's newest frame (GET
-// /api/dash?part=view, fetched only when the frame changes), and while imaging
-// the target's counts, FWHM median and last, and the sky as % of clear -- each
-// only when there is data. The status page is the fallback: shown when the
+// /api/dash?part=view, fetched only when the frame changes), the target's
+// counts, FWHM median and last, and the sky as % of clear -- each only when
+// there is data. No difference between imaging and other hours (owner
+// 2026-10-29): outside imaging the server sends the last night's last target.
+// The screen dims when the server says it is dark (sun below the horizon). The status page is the fallback: shown when the
 // data is stale or missing, and in the rotation while the level is red.
 // The colors are decided by the server (cmd_processing/dash.py): g fine,
 // a look at it, r act now, x no data. If no good reply has arrived for
@@ -43,10 +45,9 @@
 
 static const uint32_t POLL_MS = 30000;
 static const uint32_t STALE_MS = 180000;
-static const uint8_t BRIGHTNESS = 90;          // 0-255 (the medium level below)
-// While imaging the big pages are dimmed (it is night, next to the bed); a red
-// level brings full brightness back so an alert is still seen (2026-10-26).
-static const uint8_t BRIGHTNESS_IMAGING = 25;
+// After dark the screen is dimmed (it is next to the bed; since 2026-10-29 by
+// the sun, not by imaging); a red level brings the normal level back so an
+// alert is still seen (2026-10-26).
 
 // The three touch buttons (owner 2026-10-27). They only change what this
 // screen shows; nothing is ever sent to the observatory.
@@ -55,7 +56,7 @@ static const uint8_t BRIGHTNESS_IMAGING = 25;
 //         C brightness low / medium / high, kept across restarts
 //   hold: A previous page, B pause / resume rotation, C next page
 static const uint8_t LEVEL_NORMAL[3]  = {40, 90, 160};
-static const uint8_t LEVEL_IMAGING[3] = {10, 25, 60};
+static const uint8_t LEVEL_DARK[3]    = {10, 25, 60};
 static uint8_t brightLevel = 1;
 static bool screenOff = false, paused = false;
 static uint32_t pausedAt = 0;
@@ -495,10 +496,10 @@ static void paintBigView() {
   plainFont();
 }
 
-static bool imaging() { return haveData && !doc["im"].isNull(); }
+static bool dark() { return haveData && (doc["dark"] | false); }
 
 static bool pageHasData(int p) {
-  bool im = imaging();
+  bool im = haveData && !doc["im"].isNull();
   switch (p) {
     case PG_STATUS:    return haveData && String(doc["level"] | "g") == "r";   // alerts in words
     case PG_BIG_TIME:  return haveData;
@@ -570,8 +571,8 @@ static void paint() {
   bool red = haveData && String(doc["level"] | "g") == "r";
   if (red) screenOff = false;                    // an alert always wakes the screen
   if (screenOff) { M5.Display.setBrightness(0); return; }
-  M5.Display.setBrightness(imaging() && !stale && !red ? LEVEL_IMAGING[brightLevel]
-                                                       : LEVEL_NORMAL[brightLevel]);
+  M5.Display.setBrightness(dark() && !stale && !red ? LEVEL_DARK[brightLevel]
+                                                    : LEVEL_NORMAL[brightLevel]);
   if (millis() < infoUntil) { paintInfo(); return; }
   if (page == PG_STATUS) { paintStatus(); }
   else {

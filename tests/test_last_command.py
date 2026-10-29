@@ -1,6 +1,5 @@
 """`!!` in the web chat: the server's last command, and a chat page that is revalidated."""
-from fastapi import FastAPI
-from fastapi.testclient import TestClient
+import pytest
 
 from cmd_processing import cmd_history
 
@@ -14,6 +13,11 @@ def test_last_is_the_newest_entry(tmp_path, monkeypatch):
 
 
 def test_chat_page_is_revalidated_not_reused(tmp_path):
+    # The web stack is not on the CI runner (pytest only): skip there.
+    pytest.importorskip("fastapi")
+    pytest.importorskip("httpx")
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
     from cmd_processing.web_server import _RevalidatedStatic
     (tmp_path / "chat.html").write_text("<p>hi</p>")
     (tmp_path / "icon.svg").write_text("<svg/>")

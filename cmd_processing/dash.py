@@ -328,6 +328,14 @@ def imaging_filters(frames: list, dso: str) -> list:
     return out
 
 
+def page_target(live: Optional[dict], frames: list) -> Optional[str]:
+    """The target the counts and FWHM pages describe: the one being imaged, else
+    the last one imaged in the most recent night with frames. Pure."""
+    if live:
+        return live["dso"]
+    return max(frames)[1] if frames else None
+
+
 def night_summary(frames: list, night: str) -> Optional[dict]:
     """Per target: frames per filter and median FWHM; plus the night's sharpest frame. Pure."""
     if not frames:
@@ -614,9 +622,18 @@ def build(cfg: dict) -> dict:
     # and last FWHM per filter (owner, 2026-10-26). "sec" lets the display
     # tick its own clock between polls.
     out["sec"] = now.hour * 3600 + now.minute * 60 + now.second
-    out["im"] = ({"dso": live["dso"], "filters": imaging_filters(frames, live["dso"]),
-                  "sky": read_sky_night(now)}
-                 if live else None)
+    # Since 2026-10-29 the same pages day and night (owner: "no difference
+    # between imaging and non imaging hours"): outside imaging they show the
+    # last target of the most recent night. "live" says which it is.
+    dso = page_target(live, frames)
+    out["im"] = {"dso": dso or "", "filters": imaging_filters(frames, dso) if dso else [],
+                 "sky": read_sky_night(now), "live": live is not None}
+    # Dimming follows the dark, not imaging, now that the pages do not change.
+    try:
+        from iris_astronomy import sun
+        out["dark"] = sun.get_sun_angle() < 0
+    except Exception:  # noqa: BLE001 -- unknown: the display keeps its normal level
+        out["dark"] = None
     try:
         from cmd_processing.web_server import _read_outside_temp_f
         out["temp_f"] = _read_outside_temp_f()

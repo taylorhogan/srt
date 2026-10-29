@@ -202,8 +202,9 @@ def test_sky_view_picks_the_newest_frame_in_either_folder(tmp_path):
 
 def test_sky_view_jpeg_is_square_and_stretched(tmp_path):
     import io
-    import numpy as np
-    from PIL import Image
+    import pytest
+    np = pytest.importorskip("numpy")
+    Image = pytest.importorskip("PIL.Image")
     from cmd_processing import dash
     a = np.full((1440, 2560, 3), 20, np.uint8)
     a[700:720, 1270:1290] = 60                          # a faint blob on a dark sky
@@ -212,3 +213,13 @@ def test_sky_view_jpeg_is_square_and_stretched(tmp_path):
     im = Image.open(io.BytesIO(dash.view_jpeg(p)))
     assert im.size == (240, 240)
     assert np.asarray(im).max() > 200                    # stretched: the blob comes up bright
+
+
+def test_pages_show_the_last_target_when_not_imaging():
+    """Same pages day and night (owner 2026-10-29): outside imaging, the last
+    target of the most recent night; while imaging, the live one."""
+    t = datetime(2026, 10, 29, 1, 0)
+    frames = [(t, "melotte15", "Ha", 2.1, 300), (t.replace(hour=3), "ic410", "Ha", 2.3, 900)]
+    assert dash.page_target(None, frames) == "ic410"
+    assert dash.page_target({"dso": "hubblev1"}, frames) == "hubblev1"
+    assert dash.page_target(None, []) is None
