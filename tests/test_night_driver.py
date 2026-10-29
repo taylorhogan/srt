@@ -287,3 +287,26 @@ def test_a_restart_inside_planning_finishes_the_plan(tmp_path):
     d = Day(tmp_path, state="PLANNING")
     d.tick(12, 3)
     assert d.recs()["noon"]["trigger"] == "recovery" and d.c.state == "ARMED"
+
+
+# --------------------------------------------------------------- a hold (docs/AUTOMATION_PLAN.md B2)
+
+def test_a_held_machine_gets_one_reminder_a_day_and_no_plan(tmp_path):
+    from iris.conductor.alerts import Alerter
+    d = Day(tmp_path, state="FAULT_ROOF_UNKNOWN")
+    rings = []
+    bell = Alerter(tmp_path, push=lambda m, i, p: rings.append((p, m)) or True,
+                   picture_fn=lambda day: None, now_fn=lambda: d.now, worker=False)
+    d.driver = C.NightDriver(d.c, d.journal, Path("."), runner=d.runner,
+                             now_fn=lambda: d.now,
+                             sunset_fn=lambda dd: datetime(dd.year, dd.month, dd.day, 18, 10, tzinfo=TZ),
+                             push=lambda m: d.pushes.append(m) or True, retry_after_s=0,
+                             alerts=bell)
+    d.tick(12, 0)
+    assert d.calls == [] and d.recs()["noon"]["outcome"] == "skipped"
+    assert len(rings) == 1 and rings[0][0] == 1 and "still in FAULT_ROOF_UNKNOWN" in rings[0][1]
+    d.tick(12, 5)                                                # same day: quiet
+    assert len(rings) == 1
+    d.now = at(12, 0, d=date(2026, 10, 17))
+    d.tick()
+    assert len(rings) == 2 and d.pushes == []                   # the old push path is untouched

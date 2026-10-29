@@ -20,6 +20,13 @@ _MACHINE_OVERRIDES = {
     "bias_dir": ("calibration", "bias_dir"),
     "dark_dir": ("calibration", "dark_dir"),
     "flat_root": ("calibration", "flat_root"),
+    # Free-space floors differ per drive (docs/AUTOMATION_PLAN.md B6): the
+    # Spark's 3.7 TB holds every synced frame and the stack caches, the PC's
+    # 930 GB C: the live frames. Overlaid into cfg["disk"] so
+    # utils.disk_space.thresholds(cfg) is host-aware like image_dir is.
+    "disk_warn_free_gb": ("disk", "warn_free_gb"),
+    "disk_refuse_free_gb": ("disk", "refuse_free_gb"),
+    "stack_keep_days": ("disk", "stack_keep_days"),
 }
 
 

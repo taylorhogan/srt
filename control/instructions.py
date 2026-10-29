@@ -20,7 +20,11 @@ _INSTRUCTIONS_PATH = os.path.join(_PROJECT_ROOT, config.data()["location"]["inst
 # "held" (2026-10-15: a queued target the scheduler must not take yet, e.g.
 # ngc7790) sorts below waiting and above completed. Unknown, it ranked 0 and
 # landed under every completed row, where nobody could find it.
-status_dict = {"in process": 3, "waiting": 2, "held": 1.5, "completed": 1}
+# "converged" (2026-10-29, control/auto_stop): the machine's verdict that a
+# target is finished, kept apart from "completed", which is the owner's word
+# (`dbc`). The ranking takes only "waiting", so both are out of the night;
+# `reopen <dso>` puts a converged one back.
+status_dict = {"in process": 3, "waiting": 2, "held": 1.5, "converged": 1.2, "completed": 1}
 
 
 def delete_instruction_db(hash_value):
@@ -223,6 +227,7 @@ _STATUS_STYLE = {
     "in process": ("#3fb950", "rgba(63,185,80,0.15)"),
     "waiting":    ("#58a6ff", "rgba(88,166,255,0.15)"),
     "held":       ("#d29922", "rgba(210,153,34,0.15)"),
+    "converged":  ("#a371f7", "rgba(163,113,247,0.15)"),
     "completed":  ("#f778ba", "rgba(247,120,182,0.14)"),
 }
 
@@ -322,6 +327,38 @@ def set_priority_instruction_db(dso_name: str, priority: int) -> bool:
     for instruction in instructions:
         if instruction["dso"].lower().replace(" ", "") == dso_name.lower().replace(" ", "") and instruction["status"] == "waiting":
             instruction["priority"] = priority
+            matched = True
+            break
+    if matched:
+        with open(_INSTRUCTIONS_PATH, 'w') as f:
+            f.writelines(json.dumps(instructions, indent=4))
+    return matched
+
+
+def set_status_db(dso_name: str, status: str, why: str = None, who: str = None) -> bool:
+    """Set the status of the first non-completed row matching dso_name and
+    append to its status_history. Returns True when a row changed.
+
+    The one writer for machine-made status changes (auto-stop -> "converged",
+    `reopen` -> "waiting", `hold` -> "held"); `dbc` keeps its own path to
+    "completed", which stays the owner's word.
+    """
+    if status not in status_dict:
+        raise ValueError("unknown status %r" % status)
+    key = dso_name.lower().replace(" ", "")
+    with open(_INSTRUCTIONS_PATH, 'r') as f:
+        instructions = json.load(f)
+    matched = False
+    for instruction in instructions:
+        if (instruction["dso"].lower().replace(" ", "") == key
+                and instruction.get("status") != "completed"):
+            if instruction.get("status") == status:
+                return False
+            hist = instruction.setdefault("status_history", [])
+            hist.append({"from": instruction.get("status"), "to": status,
+                         "at": datetime.now().isoformat(timespec="minutes"),
+                         "by": who or "", "why": why or ""})
+            instruction["status"] = status
             matched = True
             break
     if matched:

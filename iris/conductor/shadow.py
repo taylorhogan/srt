@@ -250,9 +250,13 @@ class ShadowConductor:
 
     def __init__(self, repo_root: Path, journal: Journal, sun_probe=None,
                  roof_authority=None, mount_authority=None, planner=None,
-                 drives_checks=None):
+                 drives_checks=None, alerter=None):
         self.root = Path(repo_root)
         self.journal = journal
+        # docs/AUTOMATION_PLAN.md B1: the bell. Told after every journaled
+        # transition; a hold entered or a blocking failure reaches the phone.
+        # None (tests, or alerts.enabled False) = silent, as before 2026-10-29.
+        self.alerter = alerter
         # ADR 0015: with the conductor driving the checks (iris/conductor/
         # clock.NightDriver) the scheduler's state file no longer stands for
         # the day's decisions, so its check transitions are not translated
@@ -963,10 +967,16 @@ class ShadowConductor:
                 e = self.journal.append("transition", event, source,
                                         from_state=self.state, to_state=out.state,
                                         data=payload)
-                self.state = out.state
+                prev, self.state = self.state, out.state
                 self._state_since = time.time()
                 if self.state in ("IDLE_DAY", "ARMED"):
                     self._unplanned = False
+                if self.alerter is not None:
+                    # Enqueues only; the push runs on the alerter's thread.
+                    try:
+                        self.alerter.on_transition(event, prev, self.state, payload)
+                    except Exception:  # noqa: BLE001
+                        _logger.exception("alerter failed on %s", event)
                 return Verdict("transition", self.state, would_refuse=would, seq=e.seq)
             if out.kind == "rejected":
                 e = self.journal.append("rejected", event, source,

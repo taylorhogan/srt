@@ -103,3 +103,19 @@ def test_the_end_sequence_itself_is_unchanged(world, monkeypatch):
     _vision(monkeypatch, parked=True, closed=False, is_open=False)
     assert end._close_if_parked({}) == (True, True)
     assert world == [{"capture_direction": "close"}]
+
+
+def test_giving_up_is_an_emergency_and_the_hourly_notes_are_not():
+    c, notes = Clock(), []
+    end.dawn_retry_loop(lambda: "waiting", c.sleep, c.now,
+                        lambda m, phone: notes.append(phone),
+                        interval_s=600, max_s=2 * 3600, notify_every_s=3600)
+    assert notes[-1] == "emergency" and all(p is True for p in notes[:-1])
+
+
+def test_the_unconfirmed_close_push_is_an_emergency():
+    import re
+    from pathlib import Path
+    src = Path(end.__file__).read_text(encoding="utf-8")
+    m = re.search(r'ROOF NOT CONFIRMED CLOSED after the end sequence[^\n]*\n\s*inside_view, priority=(\d)', src)
+    assert m and m.group(1) == "2"

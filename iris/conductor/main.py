@@ -62,7 +62,17 @@ def main() -> int:
         # Phase 3 step 1: each scheduler decision re-planned in shadow.
         from iris.conductor.planner import ShadowPlanner
         planner = ShadowPlanner(REPO_ROOT, journal)
-    conductor = ShadowConductor(REPO_ROOT, journal, planner=planner, drives_checks=drives)
+    # docs/AUTOMATION_PLAN.md B1: holds and blocking failures ring the phone
+    # (iris/conductor/alerts). cfg["alerts"]["enabled"] False silences it.
+    try:
+        from configs import config as _config
+        from iris.conductor.alerts import Alerter
+        alerter = Alerter.from_config(_config.data(), REPO_ROOT)
+    except Exception:  # noqa: BLE001
+        logging.getLogger(__name__).exception("alerter not built; conductor runs silent")
+        alerter = None
+    conductor = ShadowConductor(REPO_ROOT, journal, planner=planner, drives_checks=drives,
+                                alerter=alerter)
     journal.append("note", "CONDUCTOR_STARTED", "conductor",
                    data={"mode": "shadow", "state": conductor.state,
                          "drives_checks": drives})
@@ -73,7 +83,7 @@ def main() -> int:
     if drives:
         # Phase 3 step 2 (ADR 0015): the noon and sunset checks on our clock.
         from iris.conductor.clock import NightDriver
-        driver = NightDriver(conductor, journal, REPO_ROOT)
+        driver = NightDriver(conductor, journal, REPO_ROOT, alerts=alerter)
         threading.Thread(target=driver.run_forever, daemon=True,
                          name="night-driver").start()
 

@@ -57,6 +57,17 @@ def usage(path) -> dict:
             "total_gb": round(u.total / _GB, 1)}
 
 
+def band(u, warn_gb: float, refuse_gb: float) -> str:
+    """"ok" | "warn" | "refuse" | "unknown" for a usage() reading. Pure.
+
+    The one word every caller (the noon plan, the Spark's morning trigger and
+    render, the morning check) decides on (docs/AUTOMATION_PLAN.md B5/B6)."""
+    if u is None:
+        return "unknown"
+    free = float(u["free_gb"])
+    return "refuse" if free < refuse_gb else "warn" if free < warn_gb else "ok"
+
+
 def morning_status(u, warn_gb: float, refuse_gb: float) -> tuple:
     """(problem, warning) for the morning check, either None. Pure."""
     if u is None:

@@ -21,6 +21,13 @@ Two things must hold by 12:30:
                     Entering NOON_CHECK is not enough -- that is where it hung.
   web chat answers  an HTTP request to the chat server returns within
                     CHAT_TIMEOUT_S, any status.
+  not a hold skip   the noon plan was not SKIPPED because the conductor sits
+                    in a hold (SAFE_HOLD / FAULT_ROOF_UNKNOWN / ESTOP). That
+                    skip logs "Skipping tonight" like a cloudy day and so
+                    counted as a finished noon, and a held observatory stayed
+                    down in silence (docs/AUTOMATION_PLAN.md B3, 2026-10-29).
+                    The conductor's own reminder covers the same case from
+                    inside the process; this one is the outside witness.
 
 Either failing is pushed. A push names what the log last said, so the operator
 can tell a hang in the noon check from a scheduler that never woke up.
@@ -46,6 +53,7 @@ TAIL_BYTES = 4 * 1024 * 1024   # a day of iris.log is well under this
 CHAT_PORT = 8095
 CHAT_TIMEOUT_S = 15
 NOON_DONE = ("State: WAITING_FOR_PRE_SUNSET", "Skipping tonight")
+HOLD_SKIP = "conductor's noon plan: skipped"     # scheduler_server._skip_noon's exact words
 NOON_START = "State: NOON_CHECK"
 SCHED_ERROR = "Unhandled exception in scheduler loop"
 LOG_DATE_FMT = "%m/%d/%Y"      # iris.log lines start "10/15/2026 12:00:07 PM ..."
@@ -70,6 +78,9 @@ def evaluate(lines, today, chat_ok, chat_why=""):
                             % (started[0][11:22].strip(), last))
         else:
             problems.append("noon check never started today (scheduler not waking at noon?)")
+    elif any(HOLD_SKIP in ln for ln in today_lines):
+        problems.append("noon plan SKIPPED: the conductor is in a hold (stop!, a roof fault "
+                        "or UNSAFE); nothing images until `resolve!` / `safe!`")
     if any(SCHED_ERROR in ln for ln in today_lines):
         problems.append("scheduler logged an unhandled exception today")
     if not chat_ok:

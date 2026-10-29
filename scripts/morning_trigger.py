@@ -33,6 +33,18 @@ morning render. The sentry sync is here rather than on its own 06:00 entry
 because the roof closes at 06:01-06:02 and that entry missed the morning's
 roof-close signature every day.
 
+Disk (docs/AUTOMATION_PLAN.md B6, 2026-10-29): before the sync the Spark's
+own drive is read (utils/disk_space; floors from the machine block,
+cfg["disk"]). In the refuse band nothing is pulled or rendered -- a sync into
+a full disk is how a morning dies half-way -- and the phone rings (priority
+2) once a day until it is dealt with; in the warn band it warns once a day
+and scripts/spark_prune.py reports what it could clear. Raw lights are never
+pruned.
+
+Every run writes local/spark_render/last_run.json (date, sync, render rc,
+disk) for scripts/morning_watch.py, the 10:00 outside witness; a render that
+exits non-zero is pushed from here as well.
+
 Cron (replaces the Targets sync, the sentry sync and the morning render):
 
     30 6 * * * /home/taylor/Documents/srt/scripts/morning_trigger.py
@@ -40,6 +52,7 @@ Cron (replaces the Targets sync, the sentry sync and the morning render):
 import argparse
 import base64
 import datetime as dt
+import json
 import os
 import subprocess
 import sys
@@ -51,6 +64,9 @@ if _root not in sys.path:
     sys.path.insert(0, _root)
 
 PC = "iriso@100.95.7.19"
+STATE_DIR = Path(_root) / "local" / "spark_render"
+DISK_ALERT = STATE_DIR / "disk_alert.json"
+LAST_RUN = STATE_DIR / "last_run.json"
 SRT = r"C:\Users\iriso\Documents\development\srt"
 TARGETS = r"C:\Users\iriso\Documents\N.I.N.A\Targets"
 ROOT = Path(_root)
@@ -114,16 +130,92 @@ def flats_done_in_journal() -> bool:
         return False
 
 
-def warn_operator(message: str) -> None:
+def warn_operator(message: str, priority: int = 1) -> None:
     """A Pushover warning; never lets a notification failure stop the run."""
     try:
         if str(ROOT) not in sys.path:
             sys.path.insert(0, str(ROOT))
         from utils import pushover
-        pushover.push_message(message, priority=1)
-        log("  operator warned by Pushover")
+        pushover.push_message(message, priority=priority)
+        log(f"  operator warned by Pushover (priority {priority})")
     except Exception as e:                      # noqa: BLE001
         log(f"  Pushover warning failed: {e}")
+
+
+def once_today(path: Path, key: str, today: str) -> bool:
+    """True the first time *key* is asked for on *today*; remembered in *path*."""
+    try:
+        state = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001
+        state = {}
+    if state.get(key) == today:
+        return False
+    state[key] = today
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(state, indent=1), encoding="utf-8")
+    except OSError as e:
+        log(f"  could not record {key}: {e}")
+    return True
+
+
+def disk_verdict(u, warn_gb: float, refuse_gb: float) -> tuple:
+    """(band, message) for the Spark's drive. Pure."""
+    from utils import disk_space
+    b = disk_space.band(u, warn_gb, refuse_gb)
+    if b == "refuse":
+        return b, ("Iris Spark disk nearly FULL: %.0f GB free of %.0f GB. The morning sync and "
+                   "render are SKIPPED below %.0f GB; last night's frames stay on iris-pc. "
+                   "Free space (scripts/spark_prune.py reports what can go), then run "
+                   "scripts/morning_trigger.py by hand." % (u["free_gb"], u["total_gb"], refuse_gb))
+    if b == "warn":
+        return b, ("Iris Spark disk getting full: %.0f GB free of %.0f GB (warns below %.0f GB, "
+                   "the morning run stops below %.0f GB). scripts/spark_prune.py lists the "
+                   "stale stack caches." % (u["free_gb"], u["total_gb"], warn_gb, refuse_gb))
+    if b == "unknown":
+        return b, "Iris Spark: the image drive's free space could not be read"
+    return b, "disk ok: %.0f GB free of %.0f GB" % (u["free_gb"], u["total_gb"])
+
+
+def check_disk(today: str) -> str:
+    """Read the drive, log it, ring once a day in the warn and refuse bands. -> band."""
+    try:
+        from configs import config
+        from utils import disk_space
+        cfg = config.data()
+        warn_gb, refuse_gb = disk_space.thresholds(cfg)
+        u = disk_space.usage(disk_space.data_path(cfg))
+    except Exception as e:  # noqa: BLE001
+        log(f"  disk check failed: {e}")
+        return "unknown"
+    band, msg = disk_verdict(u, warn_gb, refuse_gb)
+    log(f"  {msg}")
+    if band in ("warn", "refuse") and once_today(DISK_ALERT, "disk:" + band, today):
+        warn_operator(msg, priority=2 if band == "refuse" else 1)
+    if band == "warn":
+        run_py("spark_prune.py", "spark_prune report")
+    return band
+
+
+def write_last_run(**fields) -> None:
+    try:
+        STATE_DIR.mkdir(parents=True, exist_ok=True)
+        LAST_RUN.write_text(json.dumps(dict(fields, written=dt.datetime.now().isoformat(
+            timespec="seconds")), indent=1), encoding="utf-8")
+    except OSError as e:
+        log(f"  could not write {LAST_RUN}: {e}")
+
+
+def run_py(script: str, label: str) -> int:
+    """A repo script under the venv's python; -> its return code (logged)."""
+    log(f"running {label}")
+    r = subprocess.run([str(ROOT / ".venv" / "bin" / "python"), str(ROOT / "scripts" / script)],
+                       capture_output=True, text=True)
+    for line in (r.stdout or "").splitlines()[-12:]:
+        log(f"  | {line}")
+    if r.returncode != 0:
+        log(f"  {label} rc={r.returncode}: {(r.stderr or '')[-400:]}")
+    return r.returncode
 
 
 def run(script: str, label: str) -> bool:
@@ -174,9 +266,17 @@ def main() -> int:
         time.sleep(args.every * 60)
 
     log(f"flats settled ({reason}); starting the morning run")
+    today = dt.date.today().isoformat()
+    band = check_disk(today)
+    if band == "refuse":
+        log("disk in the refuse band -- not syncing, not rendering")
+        write_last_run(date=today, disk=band, sync_ok=None, render_rc=None,
+                       skipped="disk nearly full")
+        return 2
     if args.dry_run:
         log("dry run: not syncing, not rendering")
         return 0
+    sync_ok = True
     if not run("sync_nina_targets_to_spark.bsh", "Targets sync"):
         # The script already retried four times over ~5 min. One more go a
         # quarter hour later covers a longer wobble on the link; after that
@@ -186,6 +286,7 @@ def main() -> int:
         log("sync failed -- retrying once in 15 min")
         time.sleep(15 * 60)
         if not run("sync_nina_targets_to_spark.bsh", "Targets sync (retry)"):
+            sync_ok = False
             log("sync failed twice -- continuing against whatever is on disk")
             warn_operator("Iris morning sync failed twice; last night's frames are still on "
                           "iris-pc and the morning render will report nothing new. "
@@ -197,9 +298,15 @@ def main() -> int:
     # ~10 kB and --ignore-existing, so a failure costs nothing and never
     # blocks the render.
     run("sync_sentry_library_to_spark.bsh", "sentry library sync")
-    run("spark_morning_render.bsh", "morning render")
+    render_ok = run("spark_morning_render.bsh", "morning render")
+    if not render_ok:
+        # Until 2026-10-29 a failed render was a line in this log and nothing
+        # else; the owner found out when no picture came (docs/AUTOMATION_PLAN.md B8).
+        warn_operator("Iris morning render FAILED (non-zero exit). No pictures this morning; "
+                      "see local/spark_render/morning.log on the Spark.")
+    write_last_run(date=today, disk=band, sync_ok=sync_ok, render_rc=0 if render_ok else 1)
     log("=== done")
-    return 0
+    return 0 if render_ok else 1
 
 
 if __name__ == "__main__":

@@ -93,35 +93,67 @@ if __name__ == "__main__":
     from sentry.internet_classify import run_speed_test
     threading.Thread(target=run_speed_test, daemon=True).start()
 
-    # Crash-loop guard: relaunch the social server after an unexpected exit, but
-    # give up if it dies too many times in a short window (a persistent crash).
-    CRASH_WINDOW_SECS = 600     # 10 minutes
-    MAX_CRASHES = 5             # within the window before giving up
-    crash_times: list[float] = []
+    # Supervision (end_points/supervise, docs/AUTOMATION_PLAN.md B7). Until
+    # 2026-10-29 this loop joined the social server alone: a scheduler or a
+    # conductor that died by itself was never relaunched and nobody was told,
+    # and with the conductor holding roof and mount authority that is a
+    # refused night in silence. Now every child is watched; the social
+    # server's exit keeps its meanings (update / stop / crash -> everything
+    # relaunches), a dead sibling relaunches alone with a push, and each
+    # child has its own crash-loop guard.
+    from end_points import supervise
 
+    def _push(msg, priority=0):
+        print(msg)
+        try:
+            from utils import pushover
+            pushover.push_message(msg, priority=priority)
+        except Exception as exc:  # noqa: BLE001
+            print(f"pushover alert failed: {exc}")
+
+    def _launch(name):
+        if name == supervise.SOCIAL:
+            p = Process(target=social_server.main)
+        elif name == "scheduler":
+            p = Process(target=scheduler_server.main)
+        else:
+            p = Process(target=_conductor_target) if _conductor_enabled() else None
+        if p is not None:
+            p.start()
+        return p
+
+    crash_times = {name: [] for name in supervise.CHILDREN}
+    given_up = set()
+    relaunch_all = True
+    procs = {}
     while True:
-        _evict_loopback_squatters()
-        p1 = Process(target=social_server.main)
-        p2 = Process(target=scheduler_server.main)
-        p3 = Process(target=_conductor_target) if _conductor_enabled() else None
+        if relaunch_all:
+            _evict_loopback_squatters()
+            procs = {name: _launch(name) for name in supervise.CHILDREN}
+            relaunch_all = False
 
-        p1.start()
-        p2.start()
-        if p3:
-            p3.start()
+        time.sleep(5)
+        alive = {name: (p is not None and p.is_alive()) for name, p in procs.items()
+                 if p is not None and name not in given_up}
+        dead = supervise.dead_children(alive)
+        if not dead:
+            continue
 
-        p1.join()  # wait for social server to exit
-        exit_code = p1.exitcode
-
-        # Capture imaging state before the scheduler relaunch can clear it.
+        name = dead[0]
+        exit_code = procs[name].exitcode
         imaging_state = _imaging_state_at_crash()
+        verdict = supervise.decide(name, exit_code, crash_times[name], time.time(),
+                                   restart_exit_code=RESTART_EXIT_CODE)
+        if verdict["push"]:
+            _push(verdict["push"] + f" Imaging state: {imaging_state}.", verdict["priority"])
 
-        # Always clean up the siblings when the social server exits -- whole
-        # trees, so a Prefect server under the scheduler goes with it.
-        _kill_tree(p2)
-        _kill_tree(p3)
-
-        if exit_code == RESTART_EXIT_CODE:
+        if verdict["action"] in ("restart_all", "stop", "relaunch_all"):
+            # The social server decides for everyone, as it always did: whole
+            # trees, so a Prefect server under the scheduler goes with it.
+            for other in supervise.CHILDREN:
+                if other != name:
+                    _kill_tree(procs.get(other))
+        if verdict["action"] == "restart_all":
             # Deliberate restart (the `update` command): deploy the last GREEN
             # commit, then relaunch. `release` is fast-forwarded by CI only
             # when the tests pass, so a red main never reaches a running
@@ -130,7 +162,6 @@ if __name__ == "__main__":
             # main is ahead of release (work in progress, or CI still
             # running), the merge refuses and we relaunch on the local code
             # rather than tangling the working copy.
-            crash_times.clear()
             fetch = subprocess.run(
                 ["git", "-C", project_root, "fetch", "origin", "release"],
                 capture_output=True, text=True,
@@ -145,39 +176,17 @@ if __name__ == "__main__":
             if result.returncode != 0:
                 print("release not fast-forwardable (local work ahead, or CI "
                       f"pending) — relaunching on local code:\n{result.stderr}")
-            continue  # relaunch both processes
-        elif exit_code == 0:
-            break  # clean exit — stop
-        else:
-            # Unexpected exit (crash). Relaunch so web chat self-heals, but bail
-            # out of a tight crash loop. Do NOT git-pull on a crash relaunch.
-            now = time.time()
-            crash_times.append(now)
-            crash_times[:] = [t for t in crash_times if now - t <= CRASH_WINDOW_SECS]
-            if len(crash_times) >= MAX_CRASHES:
-                msg = (
-                    f"Iris: social server crashed {len(crash_times)} times within "
-                    f"{CRASH_WINDOW_SECS}s (exit {exit_code}) — giving up. "
-                    f"Imaging state at crash: {imaging_state}. Manual check needed."
-                )
-                print(msg)
-                try:
-                    from utils import pushover
-                    pushover.push_message(msg)
-                except Exception as exc:
-                    print(f"pushover alert failed: {exc}")
+            given_up.clear()
+            relaunch_all = True
+        elif verdict["action"] == "stop":
+            break                       # clean exit — stop
+        elif verdict["action"] == "relaunch_all":
+            time.sleep(verdict["backoff_s"])
+            relaunch_all = True         # do NOT git-pull on a crash relaunch
+        elif verdict["action"] == "relaunch":
+            time.sleep(verdict["backoff_s"])
+            procs[name] = _launch(name)
+        else:                           # give_up on this child alone
+            given_up.add(name)
+            if name == supervise.SOCIAL:
                 break
-            backoff = min(30, 5 * len(crash_times))
-            msg = (
-                f"Iris: social server exited unexpectedly (exit {exit_code}); "
-                f"relaunching in {backoff}s (crash {len(crash_times)}/{MAX_CRASHES}). "
-                f"Imaging state at crash: {imaging_state}."
-            )
-            print(msg)
-            try:
-                from utils import pushover
-                pushover.push_message(msg)
-            except Exception as exc:
-                print(f"pushover alert failed: {exc}")
-            time.sleep(backoff)
-            continue  # relaunch both processes

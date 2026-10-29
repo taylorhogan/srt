@@ -6,7 +6,7 @@ class PublicConfig():
 
         },
         "version": {
-            "date": "2026.10.29.6"
+            "date": "2026.10.29.7"
         },
 
         "logger": {
@@ -620,6 +620,19 @@ class PublicConfig():
             "allowed_networks": ["127.0.0.0/8", "::1/128"],
         },
 
+        # The bell (iris/conductor/alerts, docs/AUTOMATION_PLAN.md B,
+        # 2026-10-29). A transition into a hold (SAFE_HOLD, FAULT_ROOF_UNKNOWN,
+        # ESTOP) or a blocking failure (CHECKS_FAILED, PLAN_FAILED,
+        # CAPTURE_LOST, the disk calling the night off) is one Pushover at
+        # hold_priority (2 = emergency, repeats until acknowledged) with the
+        # north camera's deciding frame; a machine still held at noon gets one
+        # priority-1 reminder a day. enabled False = the conductor is silent,
+        # as before; the actuators' own pushes are unaffected.
+        "alerts": {
+            "enabled": True,
+            "hold_priority": 2,
+        },
+
         # The moon rule (iris_astronomy/moon_cost, 2026-10-25). An hour above
         # the trees is held ("m") for a target when its predicted frame worth
         # under the moon, averaged over its filter plan, is below
@@ -630,6 +643,16 @@ class PublicConfig():
         "planner": {
             "moon_rule": True,
             "moon_min_worth": 0.6,
+            # Auto-stop (control/auto_stop, docs/AUTOMATION_PLAN.md A,
+            # 2026-10-29): a waiting target whose convergence record says
+            # done, or whose frame goals the filter advisor says are all
+            # met, is finished. "shadow" lists the candidates in the noon
+            # plan record and the chat and changes nothing; "live" sets
+            # their queue status to "converged", which the ranking no
+            # longer sees (`reopen <dso>` undoes one); "off" evaluates
+            # nothing. Flip to live after a week of shadow lists the owner
+            # agrees with.
+            "auto_stop": "shadow",
         },
 
         # Free space on the image drive (utils/disk_space, 2026-10-11). Raw
@@ -777,6 +800,18 @@ class PublicConfig():
                 "bias_dir": "/home/taylor/Desktop/Targets/cdk17/2026-07-25/BIAS",
                 "dark_dir": "/home/taylor/Desktop/Targets/cdk17/2026-07-25/DARK",
                 "flat_root": "/home/taylor/Desktop/Targets/cdk17",
+                # The Spark's free-space floors (docs/AUTOMATION_PLAN.md B6,
+                # 2026-10-29; 2.5 TB free of 3.7 TB that day, Targets 655 GB,
+                # stacks 14 GB). Below refuse the morning trigger skips the
+                # sync and the render and rings (priority 2) once a day; in
+                # the warn band it warns once a day and scripts/spark_prune.py
+                # reports what it could clear. Raw lights are never pruned.
+                "disk_warn_free_gb": 400,
+                "disk_refuse_free_gb": 200,
+                # spark_prune: a cached stack (local/n2n_lrgb_render/*_raw.npy)
+                # whose sidecar `built` is older than this is a rebuildable
+                # cache of a target nobody is imaging.
+                "stack_keep_days": 45,
             },
         },
 

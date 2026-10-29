@@ -214,3 +214,10 @@ def test_a_move_outside_the_golden_range_is_reported_once():
     w = roof_move_warnings(entries, SINCE)
     assert w == ["roof close at 03:32: motor current outside the healthy (golden) range "
                  "(peak_w 520.0 vs golden 354.9±14.8)"]
+
+
+def test_a_full_disk_is_an_emergency_push_and_the_rest_are_routine():
+    from scripts.morning_check import push_priority
+    assert push_priority(["disk nearly full: 20 GB free on the image drive -- image!! refuses"]) == 2
+    assert push_priority(["roof NOT confirmed closed", "telescope mount is powered ON"]) == 0
+    assert push_priority([]) == 0

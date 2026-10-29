@@ -279,3 +279,25 @@ def test_slots_from_record_gives_back_the_same_windows():
     assert [(s.name, s.start, s.end, s.good_hours) for s in back] == \
         [(s.name, s.start, s.end, s.good_hours) for s in SLOTS]
     assert NP.slots_from_record(None) == []
+
+
+# --------------------------------------------------------------- disk (docs/AUTOMATION_PLAN.md B5)
+
+def test_disk_band_from_free_space():
+    assert NP.disk_band({"free_gb": 20.0, "total_gb": 930.0}, 100, 25)["band"] == "refuse"
+    assert NP.disk_band({"free_gb": 80.0, "total_gb": 930.0}, 100, 25)["band"] == "warn"
+    assert NP.disk_band({"free_gb": 400.0, "total_gb": 930.0}, 100, 25)["band"] == "ok"
+    assert NP.disk_band(None, 100, 25)["band"] == "unknown"
+
+
+def test_a_refuse_band_calls_the_night_off_with_the_reason():
+    on = NP.decide([_row("ngc7320", 3)], SLOTS)
+    off = NP.apply_disk(on, NP.disk_band({"free_gb": 20.0, "total_gb": 930.0}, 100, 25))
+    assert off["will_image"] is False and off["slots"] == []
+    assert off["why"].startswith("disk: 20 GB free")
+    assert off["disk"]["band"] == "refuse"
+    # a night already off, or a healthy drive, is untouched
+    still_on = NP.apply_disk(on, NP.disk_band({"free_gb": 80.0, "total_gb": 930.0}, 100, 25))
+    assert still_on["will_image"] is True and still_on["disk"]["band"] == "warn"
+    unknown = NP.apply_disk(on, NP.disk_band(None, 100, 25))
+    assert unknown["will_image"] is True and "why" not in unknown

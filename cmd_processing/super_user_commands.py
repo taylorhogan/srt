@@ -3992,7 +3992,9 @@ def image_cmd(words: list[str], account: str) -> bool:
             social_server.post_social_message(msg)
         except Exception:
             _logger.exception("could not post the refusal to the feed")
-        pushover.push_message(msg)
+        # A full disk refuses every night until someone frees space, so it
+        # rings until acknowledged (docs/AUTOMATION_PLAN.md B5, 2026-10-29).
+        pushover.push_message(msg, priority=2 if disk_why and not busy else 0)
         return False
     else:
         from fits_processing import frame_watcher

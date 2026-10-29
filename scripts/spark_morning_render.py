@@ -254,6 +254,21 @@ def main() -> int:
         return 1
     subs = Path(machine["subs_dir"])
 
+    # docs/AUTOMATION_PLAN.md B6: a stack written into a full disk dies
+    # half-way and leaves a truncated cache; refuse before the first one.
+    try:
+        from utils import disk_space
+        warn_gb, refuse_gb = disk_space.thresholds(cfg)
+        u = disk_space.usage(disk_space.data_path(cfg))
+        band = disk_space.band(u, warn_gb, refuse_gb)
+        if u:
+            log(f"disk: {u['free_gb']:.0f} GB free of {u['total_gb']:.0f} GB ({band})")
+        if band == "refuse":
+            log(f"disk in the refuse band (below {refuse_gb:.0f} GB) — not rendering")
+            return 2
+    except Exception as exc:  # noqa: BLE001
+        log(f"disk check failed ({exc}); rendering anyway")
+
     fresh = recent_targets(subs, args.since_hours, args.exptime)
     if not fresh:
         log(f"no LIGHT frames newer than {args.since_hours:g} h — nothing to render")

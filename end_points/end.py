@@ -450,9 +450,11 @@ def dawn_retry_loop(attempt, sleep, now, notify, interval_s=DAWN_RETRY_S,
         if r in ("closed", "stop"):
             return r
         if now() - t0 >= max_s:
+            # "emergency": the retry has spent its whole budget with the roof
+            # still open; the phone must keep ringing (priority 2, 2026-10-29).
             notify("Dawn close retry gave up after %d tries over %.0f h: the roof is still not "
                    "confirmed closed. Close it by hand (roof!! close force at the observatory)."
-                   % (tries, (now() - t0) / 3600.0), True)
+                   % (tries, (now() - t0) / 3600.0), "emergency")
             return "gave_up"
         if now() - last_note >= notify_every_s:
             last_note = now()
@@ -509,7 +511,7 @@ def retry_dawn_close() -> str:
     def notify(msg, phone):
         social_server.post_social_message(msg)
         if phone:
-            pushover.push_message(msg, priority=1)
+            pushover.push_message(msg, priority=2 if phone == "emergency" else 1)
     try:
         r = dawn_retry_loop(_dawn_attempt, time.sleep, time.time, notify)
         logger.info("dawn close retry finished: %s", r)
@@ -651,10 +653,12 @@ def _close_if_parked(dev_map, require_open: bool = False) -> tuple:
         else:
             social_server.post_social_message("Vision Safety says roof is NOT closed")
             # An unclosed roof at end of night is the one thing here
-            # that needs a human tonight, not in the morning log.
+            # that needs a human tonight, not in the morning log. Priority 2
+            # (2026-10-29): it repeats on the phone until acknowledged; at
+            # priority 0 it was one chime among the night's routine pushes.
             pushover.push_message(
                 "ROOF NOT CONFIRMED CLOSED after the end sequence — check the observatory",
-                inside_view)
+                inside_view, priority=2)
         logger.info("step 4")
         # Turn off the inside light + roof motor FIRST so a later
         # failure (e.g. an unreachable dehumidifier relay) can never

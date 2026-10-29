@@ -133,7 +133,7 @@ class NightDriver:
                  now_fn: Callable[[], datetime] = None,
                  sunset_fn: Callable[[date], datetime] = None,
                  push: Callable[[str], bool] = None,
-                 retry_after_s: float = RETRY_AFTER_S):
+                 retry_after_s: float = RETRY_AFTER_S, alerts=None):
         self.c = conductor
         self.journal = journal
         self.root = Path(repo_root)
@@ -142,6 +142,9 @@ class NightDriver:
         self.sunset_fn = sunset_fn or local_sunset
         self.push = push or _default_push
         self.retry_after_s = retry_after_s
+        # docs/AUTOMATION_PLAN.md B2: the daily reminder while the machine is
+        # held (iris/conductor/alerts.Alerter). None = silent.
+        self.alerts = alerts
         self._busy = threading.Lock()
         self._worker = None
         self._retry_at = 0.0
@@ -208,6 +211,15 @@ class NightDriver:
         if state in HOLD_STATES:
             self._record(day, "noon", SKIPPED, trigger="clock",
                          why="the machine is in %s; no plan until an operator resolves" % state)
+            if self.alerts is not None:
+                # A held observatory used to go silent here every day
+                # (2026-10-29): one priority-1 line a day until resolved.
+                try:
+                    since = getattr(self.c, "_state_since", None)
+                    self.alerts.noon_reminder(
+                        state, datetime.fromtimestamp(since) if since else None)
+                except Exception:  # noqa: BLE001
+                    _logger.exception("hold reminder failed")
             return None
         if (state not in ("IDLE_DAY", "PLANNING") and state not in MANUAL_STATES
                 and not self._capture_active()):

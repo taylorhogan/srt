@@ -126,10 +126,13 @@ def test_image_cmd_refuses_on_a_full_disk(monkeypatch):
     monkeypatch.setattr(suc, "is_nina_running", lambda: False)
     monkeypatch.setattr(D, "check_image_run", lambda cfg: "only 10 GB free on the image drive")
     monkeypatch.setattr(suc.social_server, "post_social_message", lambda m: posted.append(m))
-    monkeypatch.setattr(suc.pushover, "push_message", lambda m: pushed.append(m))
+    monkeypatch.setattr(suc.pushover, "push_message",
+                        lambda m, priority=0: pushed.append((m, priority)))
     monkeypatch.setattr(suc.jobs, "spawn", lambda fn: pytest.fail("must not launch"))
     assert suc.image_cmd(["", "image!!", "1"], "iris") is False
     assert "REFUSED" in posted[0] and "10 GB free" in posted[0] and pushed
+    # a full disk refuses every night until someone acts: an emergency (ADR 0016)
+    assert pushed[0][1] == 2
 
 
 def test_purge_bad_is_a_dry_run_until_go(tmp_path, monkeypatch):

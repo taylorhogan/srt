@@ -249,6 +249,16 @@ def evaluate(vision, kasa, pegasus, speed=NOT_MEASURED, speed_history=(),
     return problems, warnings
 
 
+def push_priority(problems) -> int:
+    """2 (emergency, repeats until acknowledged) when a problem means no
+    night can run until someone acts -- today the disk in the refuse band
+    (docs/AUTOMATION_PLAN.md B5) -- else 0. Pure."""
+    for p in problems or ():
+        if str(p).startswith("disk nearly full"):
+            return 2
+    return 0
+
+
 def read_disk():
     """The image drive's free space and the configured floors."""
     from configs import config
@@ -725,7 +735,7 @@ def main():
     if not vision.get("parked") or not vision.get("closed") or warnings:
         view = config.data().get("camera safety", {}).get("scope_view")
         image = view if view and os.path.exists(view) and vision.get("camera") else None
-    if not pushover.push_message(msg, image=image):
+    if not pushover.push_message(msg, image=image, priority=push_priority(problems)):
         _logger.error("morning check: Pushover did not accept the alert")
         return 2
     return 1 if problems else 0

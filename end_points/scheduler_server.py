@@ -976,7 +976,14 @@ def _skip_noon(rec: Optional[dict], why_none: str = "") -> None:
     plan = (rec or {}).get("plan") or {}
     best, hours = plan.get("best") or "", int(plan.get("good_hours") or 0)
     set_state(State.NOON_CHECK, best or None, False)
-    if outcome == "bad":
+    if outcome == "bad" and (plan.get("disk") or {}).get("band") == "refuse":
+        # The planner called the night off for the disk, not the sky
+        # (control/night_plan.apply_disk): say so, and in the calendar too.
+        why = plan.get("why") or "the image drive is nearly full"
+        social_server.post_social_message(f"No imaging tonight: {why}. Free space before tonight.")
+        _publish_skip_to_site("no imaging tonight: %s" % why)
+        obs_calendar.set_today_stat('disk', best)
+    elif outcome == "bad":
         social_server.post_social_message(
             f"Not enough good imaging hours tonight ({hours}h), skipping")
         _publish_skip_to_site("not enough clear hours tonight: %dh forecast, %d needed"
@@ -988,6 +995,7 @@ def _skip_noon(rec: Optional[dict], why_none: str = "") -> None:
             f"No imaging tonight: the conductor's noon plan is {outcome} ({why})")
         _publish_skip_to_site("no plan for tonight: %s" % why)
     social_server._post_station_passes()
+    _post_plan_extras(plan)
     LOGGER.info("Skipping tonight — conductor's noon plan: %s", outcome)
 
 
@@ -1014,7 +1022,32 @@ def _carry_out_noon(rec: dict, resumed: bool):
     set_state(State.NOON_CHECK, best, True, slots=slots)
     _run(generate_sequence_task, best, hours, slots=slots)
     _filter_advice_shadow(slots)
+    _post_plan_extras(plan)
     return slots
+
+
+def _post_plan_extras(plan: dict) -> None:
+    """The parts of the conductor's plan that are not the ranking (docs/
+    AUTOMATION_PLAN.md): the auto-stop candidates and a filling disk. One
+    chat line each; the record itself is already journaled as NIGHT_PLAN."""
+    try:
+        from control import auto_stop
+        found = (plan or {}).get("auto_stop") or []
+        live = auto_stop.mode(CFG) == "live"
+        text = auto_stop.describe(found, live)
+        if text:
+            social_server.post_social_message(text)
+    except Exception:
+        LOGGER.exception("auto-stop chat line failed")
+    try:
+        disk = (plan or {}).get("disk") or {}
+        if disk.get("band") == "warn":
+            social_server.post_social_message(
+                "Disk: %.0f GB free of %.0f GB on the image drive (warns below %.0f GB, "
+                "the night is called off below %.0f GB)."
+                % (disk["free_gb"], disk.get("total_gb") or 0, disk["warn_gb"], disk["refuse_gb"]))
+    except Exception:
+        LOGGER.exception("disk chat line failed")
 
 
 def _filter_advice_shadow(slots) -> None:

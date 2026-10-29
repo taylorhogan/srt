@@ -8,6 +8,7 @@ inverts: the registry becomes authoritative and those files retire.
 Derivation rules (deliberately simple, and shadow_report checks them against
 the legacy answers):
     status == completed                -> RETIRED
+    status == converged (auto-stop)    -> CONVERGED
     convergence says done              -> CONVERGED     (the auto-stop fact)
     frames cached for the dso          -> ACQUIRING
     coordinates resolved / plan set    -> QUEUED
@@ -72,7 +73,10 @@ def derive_registry() -> dict:
         resolved = row.get("ra_deg") is not None or ah not in ("", "0", "None")
         if status == "completed":
             state = "RETIRED"
-        elif is_done(dso):
+        elif status == "converged" or is_done(dso):
+            # "converged" is the auto-stop's own write (control/auto_stop,
+            # 2026-10-29); the verdict may also have come from the filter
+            # advisor's frame goals, which is_done does not see.
             state = "CONVERGED"
         elif _has_frames(dso):
             state = "ACQUIRING"

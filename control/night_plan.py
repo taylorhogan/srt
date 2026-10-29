@@ -17,6 +17,14 @@ copies that drift:
     python -m control.night_plan            # tonight's plan as JSON (the conductor runs this)
     python -m control.night_plan --refresh  # the noon form: refresh the queue's hours first
 
+The record also carries two things that are not the ranking (docs/
+AUTOMATION_PLAN.md, 2026-10-29): "auto_stop", the waiting targets the
+convergence and frame-goal verdicts say are finished (control/auto_stop;
+shadow lists them, live retires them), and "disk", the image drive's free
+space band (utils/disk_space). A drive in the refuse band calls the night
+off here, with the reason in "why", so the decision is in the plan the
+conductor journals rather than in a refusal at 20:30.
+
 The CLI is what the conductor calls, in its own process: the planner hits
 the network (forecasts, SIMBAD) and must never be able to stall or crash the
 process that answers roof and mount requests.
@@ -100,6 +108,52 @@ def decide(rows, slots, min_good_hours: int = MIN_GOOD_HOURS) -> dict:
             "will_image": will, "slots": slots_record(slots) if will else []}
 
 
+def disk_band(usage, warn_gb: float, refuse_gb: float) -> dict:
+    """{"free_gb", "total_gb", "band": ok|warn|refuse|unknown}. Pure.
+
+    Unknown (the drive could not be read) never blocks a night: free space
+    is a capacity question, the morning check reports it."""
+    if not usage:
+        return {"free_gb": None, "total_gb": None, "band": "unknown",
+                "warn_gb": warn_gb, "refuse_gb": refuse_gb}
+    from utils import disk_space
+    return {"free_gb": float(usage["free_gb"]), "total_gb": usage.get("total_gb"),
+            "band": disk_space.band(usage, warn_gb, refuse_gb),
+            "warn_gb": warn_gb, "refuse_gb": refuse_gb}
+
+
+def apply_disk(plan: dict, disk: dict) -> dict:
+    """The disk verdict on a decision: a refuse band calls the night off. Pure."""
+    out = dict(plan)
+    out["disk"] = disk
+    if disk.get("band") == "refuse" and out.get("will_image"):
+        out["will_image"] = False
+        out["slots"] = []
+        out["why"] = ("disk: %.0f GB free on the image drive, a night needs %.0f GB"
+                      % (disk["free_gb"], disk["refuse_gb"]))
+    return out
+
+
+def read_disk(cfg) -> dict:
+    from utils import disk_space
+    warn_gb, refuse_gb = disk_space.thresholds(cfg)
+    return disk_band(disk_space.usage(disk_space.data_path(cfg)), warn_gb, refuse_gb)
+
+
+def read_auto_stop(instructions_path, cfg) -> list:
+    """control.auto_stop.evaluate on the queue, [] when off or unreadable."""
+    from control import auto_stop
+    if auto_stop.mode(cfg) == "off":
+        return []
+    try:
+        with open(instructions_path, "r", encoding="utf-8") as fh:
+            rows = json.load(fh)
+    except Exception:
+        _logger.exception("auto-stop: could not read the queue")
+        return []
+    return auto_stop.evaluate(rows)
+
+
 def plan_tonight(instructions_path: Optional[str] = None) -> dict:
     """Rank the queue against tonight's sky and forecast and decide. Network."""
     from configs import config
@@ -110,7 +164,17 @@ def plan_tonight(instructions_path: Optional[str] = None) -> dict:
     rows, dark_hours, weather_by_hour = v.rank_targets_tonight(path, verbose=False)
     slots = slots_for(rows, dark_hours, weather_by_hour, read_queue_caps(path),
                       cfg.get("nina", {})) if rows and dark_hours else []
-    return decide(rows, slots)
+    plan = decide(rows, slots)
+    try:
+        plan = apply_disk(plan, read_disk(cfg))
+    except Exception:
+        _logger.exception("disk check failed; planning without it")
+    try:
+        plan["auto_stop"] = read_auto_stop(path, cfg)
+    except Exception:
+        _logger.exception("auto-stop failed; planning without it")
+        plan["auto_stop"] = []
+    return plan
 
 
 def compare(shadow: dict, scheduler: dict) -> list:
@@ -135,9 +199,26 @@ def compare(shadow: dict, scheduler: dict) -> list:
 
 def refresh_queue() -> None:
     """The noon check's queue refresh (hours above horizon, air mass, best
-    date), run before the noon decision as the scheduler always did."""
+    date), run before the noon decision as the scheduler always did.
+
+    With planner.auto_stop = "live" the finished targets are retired here
+    too (status "converged", control/auto_stop), BEFORE the ranking reads
+    the queue, so tonight's plan never names a target that is done."""
     from control import instructions
     instructions.calc_and_store_hours_above_horizon()
+    try:
+        from configs import config
+        from control import auto_stop
+        cfg = config.data()
+        if auto_stop.mode(cfg) == "live":
+            path = os.path.join(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")),
+                                cfg["location"]["instructions"])
+            for v in read_auto_stop(path, cfg):
+                if instructions.set_status_db(v["dso"], auto_stop.CONVERGED,
+                                              why="; ".join(v["why"]), who="auto_stop"):
+                    _logger.info("auto-stop: %s -> converged (%s)", v["dso"], "; ".join(v["why"]))
+    except Exception:
+        _logger.exception("auto-stop (live) failed; the queue stands")
 
 
 if __name__ == "__main__":
