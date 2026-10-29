@@ -4,11 +4,16 @@
     python scripts/spark_morning_render.py --since-hours 16
 
 Runs after the 05:00 rsync. For each DSO whose LIGHT frames changed recently it
-picks EVERY recipe the filters support and runs `n2n_lrgb_render.py routine`
+picks the recipes the filters support and runs `n2n_lrgb_render.py routine`
 once per recipe, which writes a mono JPEG per channel, a denoised set, and three
-colour composites -- raw, denoised, learned -- into `<image_dir>/Iris/<dso>/`. A three-filter narrowband
-target therefore gets HSO, SHO and HOO in one morning; the palettes disagree
-about presentation, not data, so all of them get to exist and the eye chooses.
+colour composites -- raw, denoised, learned -- into `<image_dir>/Iris/<dso>/`,
+and pushes ONE picture, the learned composite. A narrowband target gets ONE
+palette (owner, 2026-10-28: "only hoo or sho with the hubble formula"): SHO
+with `--gain hubble` when S-II has the frames, HOO otherwise. Until then a
+three-filter target got HSO, SHO and HOO in one morning, on the grounds that
+the palettes disagree about presentation, not data; three pushes of the same
+nebula was the cost, and HSO never earned its slot by eye. A galaxy still
+gets HALRGB and LRGB when it has the Ha.
 
 **Stacks are rebuilt (`--force`) only for a target's FIRST render of the run.**
 The routine path caches stacks per (dso, filter) — recipes share them — and
@@ -48,22 +53,18 @@ if _root not in sys.path:
     sys.path.insert(0, _root)
 
 # Recipes in preference order. Every rule the filters satisfy is rendered
-# (three-filter narrowband -> HSO, SHO and HOO); the order decides which
-# recipe stacks first — the rest reuse its channel stacks.
+# (pick_recipes): a narrowband target gets SHO and HOO both when S-II has
+# the frames (owner, 2026-10-29: "add the HOO to the morning renders too"),
+# HOO alone otherwise. The order decides which recipe stacks first — the
+# rest reuse its channel stacks.
 RECIPE_RULES = [
-    # HSO before SHO for a three-filter narrowband target. Both are honest —
-    # compose holds one brightness scale across channels either way — but on
-    # NGC 6888 the nebula measures Ha 4.20 ADU, S-II 2.62, O-III 0.36, so SHO
-    # puts the two strong channels on adjacent primaries (red/green, Ha
-    # dominant) and washes to yellow-green, while HSO puts them on opposing
-    # primaries and their ratio reads directly as hue: green where S-II
-    # dominates the rim, orange where Ha and S-II overlap.
-    #
-    # Caveat worth knowing when reading the output: green IS the S-II channel,
-    # and S-II is the channel the denoiser under-retains most (0.572 against
-    # Ha's 0.954, step 31). HSO therefore shows that defect plainly rather than
-    # burying it in a mixture — better to look at, less forgiving.
-    ("HSO", {"Ha", "S-II", "O-III"}),
+    # SHO, rendered with the Hubble gain (PALETTE_GAIN), when S-II has the
+    # frames; HOO beside it. HSO (2026-09 to 2026-10-28) put Ha and S-II on
+    # opposing primaries so their ratio read as hue, which was honest and
+    # also what SHO with gain=hubble now does with the classic colours: on an
+    # HII region a true-ratio SHO is green (Ha 3-5x S-II and O-III), and the
+    # gain scales each filter's nebula level to the strongest's, stars kept
+    # neutral (stacking/color_process.PALETTE_GAIN).
     ("SHO", {"S-II", "Ha", "O-III"}),
     ("HOO", {"Ha", "O-III"}),
     # HALRGB before LRGB when the target has Ha: it stacks first and LRGB
@@ -89,6 +90,8 @@ NARROWBAND = {"SHO", "HSO", "HOO"}
 # Way dust reddens the galaxy and every star in the field, and wb=stars
 # measured B x1.83 to take it out. Never for narrowband: those are palettes.
 WB_STARS_RECIPES = {"LRGB", "HALRGB"}
+# The palette gain a recipe is rendered with (n2n_lrgb_render --gain).
+PALETTE_GAIN = {"SHO": "hubble"}
 
 
 def is_galaxy(dso: str) -> bool:
@@ -176,7 +179,8 @@ def already_rendered(dso: str, recipe: str, counts: dict) -> bool:
 
 
 def pick_recipes(counts: dict) -> list[str]:
-    """Every recipe the qualifying filters support, in stack-first order.
+    """The recipes the qualifying filters earn, in stack-first order: every
+    rule satisfied (SHO and HOO both on a full narrowband set; HSO is gone).
 
     Narrowband recipes need MIN_FRAMES in every filter they use. LRGB needs
     MIN_FRAMES of L and at least two colours with MIN_COLOUR_FRAMES each (the
@@ -212,6 +216,8 @@ def render_command(dso: str, recipe: str, first: bool, exptime: int,
            "--lum", lum, "--exptime", str(exptime)]
     if galaxy and recipe in WB_STARS_RECIPES:
         cmd += ["--wb", "stars"]
+    if recipe in PALETTE_GAIN:
+        cmd += ["--gain", PALETTE_GAIN[recipe]]
     if first:
         cmd.append("--force")
     return cmd

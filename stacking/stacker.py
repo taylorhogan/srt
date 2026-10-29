@@ -1443,6 +1443,17 @@ def cleanup_stale_spill_dirs(min_age_hours: float = 2.0) -> int:
     return freed
 
 
+def coverage_box(coverage: np.ndarray, min_cov: int):
+    """(y0, y1, x0, x1) bounding the pixels at least *min_cov* frames
+    covered, or None when no pixel is."""
+    well = coverage >= min_cov
+    if not well.any():
+        return None
+    rows = np.where(well.any(axis=1))[0]
+    cols = np.where(well.any(axis=0))[0]
+    return int(rows[0]), int(rows[-1]) + 1, int(cols[0]), int(cols[-1]) + 1
+
+
 def stack(
     light_paths: list[Path],
     method: StackMethod = StackMethod.SIGMA_CLIP,
@@ -1782,17 +1793,21 @@ def stack(
     # which is exactly what a shared reference exists to prevent. On abell2151
     # it split every galaxy into separate red, green and blue blobs. The caller
     # aligning several stacks is responsible for its own common crop.
+    # The box is measured either way and reported in info["coverage_box"]
+    # (reference-grid pixels), so a caller that stacks several filters onto
+    # one reference can crop them all to the intersection (the morning
+    # render does, since 2026-10-28): outside a stack's footprint the pixels
+    # are the sky-median fill below, flat and at the GLOBAL sky level, which
+    # at a vignetted edge sits above the real sky next to it, and a palette
+    # gain painted that strip red along the top of every IC 410 render.
+    box = coverage_box(coverage, max(1, int(round(0.8 * n_frames))))
     if shared_reference is not None:
         _logger.info("Shared reference: skipping per-filter coverage crop")
         min_cov = 0
     else:
         min_cov = max(1, int(round(0.8 * n_frames)))
-    well_covered = coverage >= min_cov
-    if min_cov and well_covered.any():
-        rows = np.where(well_covered.any(axis=1))[0]
-        cols = np.where(well_covered.any(axis=0))[0]
-        y0, y1 = int(rows[0]), int(rows[-1]) + 1
-        x0, x1 = int(cols[0]), int(cols[-1]) + 1
+    if min_cov and box is not None:
+        y0, y1, x0, x1 = box
         result = result[y0:y1, x0:x1]
         _logger.info(
             # ASCII arrow: the console handler on this box is cp1252 and raises
@@ -1812,6 +1827,8 @@ def stack(
     info = {
         "n_frames": len(accepted),
         "rejected": rejected,
+        "coverage_box": list(box) if box is not None else None,
+        "cropped": bool(min_cov and box is not None),
         "method": method.name,
         "fwhm_values": {str(p): v for p, v in fwhm_values.items()},
         "gain": {"gain": gain[0], "offset": gain[1],

@@ -156,8 +156,29 @@ Since 2026-09-25 the conductor decides both invariants (ADR 0014): every roof fi
   to the raw set; a field a deconvolution refuses still gets the others.
   Only ONE of them is pushed (since 2026-10-28, owner's choice): the learned
   composite, or the next class down when a field refused the deconvolution
-  (`PUSH_TAGS`); `--push-all` sends the triple again. Known weak case: a bright star on a smooth galaxy's envelope
+  (`PUSH_TAGS`); `--push-all` sends the triple again. A narrowband target
+  gets SHO with `--gain hubble` when S-II has 12 frames and HOO beside it
+  (both since 2026-10-29, owner's choice; the day before it was one
+  palette), HOO alone otherwise; HSO is gone
+  (`spark_morning_render.RECIPE_RULES`, `PALETTE_GAIN`). Known weak case: a bright star on a smooth galaxy's envelope
   (coloured rings where the per-channel masks meet the fill, NGC 7317).
+
+  **The morning render cuts every channel to the common footprint (since
+  2026-10-28).** The stacker crops a lone stack to where 80 % of its frames
+  landed, but not one built onto a shared reference (the box differs per
+  filter); outside the footprint the stack is a flat fill at the GLOBAL sky
+  level, which at a vignetted edge sits above the real sky beside it, and a
+  palette gain made that strip a red bar along the top of every IC 410
+  render. `stacker.stack` now reports `coverage_box` either way, the render
+  records it per filter in the meta, and `crop_common` cuts every channel to
+  the intersection before anything is composed. A stack cached before this
+  has no box and is not cut on its account; `--force` rebuilds it. The
+  stack's record (box, accepted count, frame lists) is written beside the
+  npy as `<dso>_<filter>_raw.json` and read from there on a cache hit
+  (`stack_record`, since 2026-10-29), falling back to the newest entry
+  naming the file in any recipe's meta: it belongs to the stack, not the
+  recipe, and the HOO after the morning's SHO rebuild, reading only its own
+  day-old meta, rendered uncropped.
 
   Frames are **levelled to a common sky before combining** and the level is
   restored afterwards. This is not cosmetic: sky varies 3x across nights (moon,
@@ -200,7 +221,28 @@ Since 2026-09-25 the conductor decides both invariants (ADR 0014): every roof fi
   the gain painted its halo magenta); inside a disc the fill under the
   star (`smooth_fill`, block medians with the mask excluded, interpolated
   from the neighbours) takes the gain and the star's light above it,
-  averaged over the planes, goes back the same in every channel.
+  averaged over the planes, goes back the same in every channel. The
+  FAINT stars are found on the denoised planes (`join_quiet_stars`,
+  `_prepare(palette_quiet=)`, the morning render passes its denoised set):
+  at 3 sigma of the raw sum Melotte 15 gave 2614 stars and every fainter
+  one took the x4 S-II gain and came out as a red speck over the whole
+  field ("many red stars", 2026-10-28); the denoised sum, a tenth of the
+  noise, gives 7360. Joined to the raw list, not swapped for it (8-14 of
+  the raw's 60 brightest fall out of the quiet pass), and the quiet discs
+  are sized from the RAW floor (`star_mask(peak_floor=)`), or every star
+  reads a decade brighter and the discs cover 40 % of the field (10 %
+  joined). A BRIGHT star's disc grows a halo term past 2.5 dex
+  (`radius_from_dex`, 146 px at 4.2 dex, cap 160, skirt capped at 24 px):
+  the brightest star's halo reached 108 px at 1 ADU and its 56 px disc
+  left a magenta ring. Its diffraction spikes get four arms
+  (`spike_axis`, `spike_arms`, `paint_arms`): the axis is measured on the
+  field, an azimuthal profile 0.5-1.5 r around the biggest stars folded
+  modulo 90 (67 deg on Melotte 15; the spider's angle on the sensor, so
+  never a constant), the length grows with the star (40 + 100 (d-2.5)^2
+  px, cap 400), and a field whose folded profile has no peak gets none.
+  Outside the mask a spike took the gain and was red ("difraction spike
+  are red", 2026-10-28). The arms are pinned on the series with the discs
+  (`info["palette_arms"]`).
 
   **The sky-anchored black is one offset for every channel (since 2026-10-25).**
   The morning render and the movie put black at each channel's sky median

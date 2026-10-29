@@ -247,9 +247,20 @@ PALETTE_STAR_MODE = "neutral"
 # size, 90 px at most.
 PALETTE_STAR_THRESH_SIGMA = 3.0
 PALETTE_STAR_RADIUS_A = 5.0
-PALETTE_STAR_MAX_RADIUS_PX = 90.0
+PALETTE_STAR_MAX_RADIUS_PX = 160.0   # the brightest star's halo (Melotte 15: 108 px at 1 ADU)
 PALETTE_STAR_MAX_NPIX = 20000
 PALETTE_STAR_MIN_PEAK_FLUX = 0.008   # compactness: a point, not a knot (see star_mask); stars 0.011+
+# The faint stars are found on the DENOISED planes when the render has them
+# (apply_palette_gain(quiet=)): at 3 sigma of the raw sum Melotte 15 gave
+# 2614 stars and every fainter one took the x4 S-II gain and came out as a
+# red speck over the whole field ("many red stars", 2026-10-28); the
+# denoised sum, a tenth of the noise, gives 7360. The two lists are joined,
+# not swapped: 8-14 of the raw's 60 brightest fall out of the denoised pass
+# (the quiet isophote outgrows the size limit, see below), and the discs
+# of the denoised pass are sized from the RAW floor, or every star is a
+# decade brighter and the discs cover 40 % of the field (10 % joined).
+PALETTE_STAR_MATCH_PX = 4.0          # a denoised find this close to a raw find is the same star
+PALETTE_STAR_FEATHER_MAX_PX = 24.0   # the skirt is 0.6 r, which on a 145 px halo disc is 87 px
 # The stars are found ONCE, on the raw set, and the same discs are pinned on
 # the denoised and learned sets (info["palette_stars"]): found again on a
 # denoised plane, whose noise is a fraction of the raw's, a bright star's
@@ -397,7 +408,7 @@ def apply_palette_gain(subbed: dict[str, np.ndarray], gain,
                        level_pct: float = PALETTE_LEVEL_PCT,
                        protect_stars: bool = PALETTE_PROTECT_STARS,
                        star_discs=None, info: Optional[dict] = None,
-                       star_mode: str = PALETTE_STAR_MODE
+                       star_mode: str = PALETTE_STAR_MODE, quiet=None, star_arms=None
                        ) -> tuple[dict[str, np.ndarray], Optional[dict[str, float]]]:
     """Scale the palette planes; returns (channels, {role: factor} used).
 
@@ -415,7 +426,11 @@ def apply_palette_gain(subbed: dict[str, np.ndarray], gain,
     plane, found on their sum, so a star is treated the same in each.
     *star_discs* (x, y, r) pins the stars a previous call found (returned
     in *info*["star_discs"]) instead of finding them again; see
-    PALETTE_STAR_MAX_NPIX for why a series must.
+    PALETTE_STAR_MAX_NPIX for why a series must. *quiet* is the same
+    planes denoised, when the caller has them: the faint stars are found
+    there and joined to the raw's (PALETTE_STAR_MATCH_PX). The bright stars'
+    diffraction spikes get arms (spike_axis / spike_arms, returned in
+    *info*["star_arms"]); *star_arms* pins a previous call's with *star_discs*.
     """
     if star_mode == "none":
         protect_stars = False
@@ -441,9 +456,11 @@ def apply_palette_gain(subbed: dict[str, np.ndarray], gain,
     if scaled and protect_stars:
         touched = roles if star_mode == "neutral" else scaled
         shape = np.asarray(subbed[roles[0]]).shape
+        arms = list(star_arms or [])
         if star_discs is not None:
             discs = list(star_discs)
-            mask = mask_from_discs(shape, discs) if discs else None
+            mask = (mask_from_discs(shape, discs, arms=arms, feather_max=PALETTE_STAR_FEATHER_MAX_PX)
+                    if discs else None)
         else:
             distinct = {id(subbed[c]): subbed[c] for c in roles}
             total = np.sum([np.nan_to_num(np.asarray(p, dtype=np.float32))
@@ -455,13 +472,30 @@ def apply_palette_gain(subbed: dict[str, np.ndarray], gain,
                                     min_peak_flux=PALETTE_STAR_MIN_PEAK_FLUX,
                                     radius_from="peak")
             discs = minfo.get("discs", [])
-            _logger.info("Palette gain: %d stars %s (%.2f%% of the field)", len(discs),
-                         "made neutral" if star_mode == "neutral" else "kept as imaged",
-                         100.0 * minfo.get("coverage", 0.0))
+            n_raw = len(discs)
+            if quiet is not None and discs and "rms" in minfo:
+                discs = join_quiet_stars(discs, quiet, roles, minfo["rms"])
+            if discs:
+                # the spikes' axis is read off the quiet planes when there are any
+                axis_src = total
+                if quiet is not None:
+                    qd = {id(quiet[c]): quiet[c] for c in roles if c in quiet}
+                    if qd:
+                        axis_src = np.sum([np.nan_to_num(np.asarray(p, dtype=np.float32))
+                                           for p in qd.values()], axis=0)
+                axis = spike_axis(axis_src, discs)
+                arms = spike_arms(discs, axis)
+                mask = mask_from_discs(shape, discs, arms=arms, feather_max=PALETTE_STAR_FEATHER_MAX_PX)
+                _logger.info("Palette gain: spikes %s", f"on {len(arms)} stars, axis {axis:.0f} deg"
+                             if arms else "none found")
+            _logger.info("Palette gain: %d stars %s (%d on the raw planes; %.2f%% of the field)",
+                         len(discs), "made neutral" if star_mode == "neutral" else "kept as imaged",
+                         n_raw, 100.0 * float(mask.mean()))
             if not discs:
                 mask = None
         if info is not None:
             info["star_discs"] = discs
+            info["star_arms"] = arms
     fills: dict[int, np.ndarray] = {}
     def fill_of(c):
         k = id(subbed[c])
@@ -490,6 +524,36 @@ def apply_palette_gain(subbed: dict[str, np.ndarray], gain,
         done[key] = res
         out[c] = res
     return out, factors
+
+
+def join_quiet_stars(discs: list, quiet: dict, roles, raw_rms: float) -> list:
+    """*discs* (x, y, r) found on the raw planes plus the stars found on the
+    *quiet* (denoised) planes' sum that are not already among them: the
+    quiet pass sees the faint stars (PALETTE_STAR_MATCH_PX comment), and
+    its discs are sized from the raw's detection floor, not its own."""
+    distinct = {id(quiet[c]): quiet[c] for c in roles if c in quiet}
+    if not distinct:
+        return list(discs)
+    total = np.sum([np.nan_to_num(np.asarray(p, dtype=np.float32))
+                    for p in distinct.values()], axis=0)
+    _, qinfo = star_mask(total, thresh_sigma=PALETTE_STAR_THRESH_SIGMA,
+                         max_npix=PALETTE_STAR_MAX_NPIX, radius_a=PALETTE_STAR_RADIUS_A,
+                         max_radius=PALETTE_STAR_MAX_RADIUS_PX,
+                         min_peak_flux=PALETTE_STAR_MIN_PEAK_FLUX, radius_from="peak",
+                         peak_floor=PALETTE_STAR_THRESH_SIGMA * raw_rms)
+    extra = qinfo.get("discs", [])
+    if not extra:
+        if qinfo.get("why"):
+            _logger.warning("Palette gain: faint stars not found on the denoised planes: %s",
+                            qinfo["why"])
+        return list(discs)
+    from scipy.spatial import cKDTree
+    have = cKDTree(np.array([(x, y) for x, y, _ in discs]))
+    d, _ = have.query(np.array([(x, y) for x, y, _ in extra]), distance_upper_bound=PALETTE_STAR_MATCH_PX)
+    new = [disc for disc, dist in zip(extra, d) if not np.isfinite(dist)]
+    _logger.info("Palette gain: %d faint stars from the denoised planes joined to %d",
+                 len(new), len(discs))
+    return list(discs) + new
 
 
 def describe_palette_gain(gain) -> str:
@@ -886,7 +950,29 @@ STAR_MASK_MIN_RADIUS_PX = 3.0
 STAR_MASK_MAX_RADIUS_PX = 60.0
 STAR_MASK_FEATHER = 0.6         # skirt sigma as a fraction of the disc radius
 STAR_PEAK_R0 = 5.0              # radius_from="peak": px at the detection threshold ...
-STAR_PEAK_R_PER_DEX = 12.0      # ... plus this per decade of peak above it
+STAR_PEAK_R_PER_DEX = 12.0      # ... plus this per decade of peak above it ...
+# ... plus a halo term for the bright ones: the halo grows faster than the
+# log. Melotte 15 on the denoised sum (1 ADU isophote, sky and spikes out):
+# 108 px at 4.2 dex above the floor, 84-116 at 4.0, 80 at 3.8, 70 at 3.5,
+# 52-68 at 3.2; 5 + 12 d gives 56 at 4.2 and the halo outside the disc took
+# the palette gain (magenta). 30 (d - 2.5)^2 beyond 2.5 dex: 146 at 4.2,
+# 120 at 4.0, 101 at 3.8, 77 at 3.5, 58 at 3.2.
+STAR_PEAK_HALO_FROM_DEX = 2.5
+STAR_PEAK_HALO_PER_DEX2 = 30.0
+# Diffraction spikes, same stars: four arms on two axes 90 deg apart, the
+# axes' angle measured on the field (spike_axis: the spider's orientation
+# on the sensor, 67 deg on Melotte 15, could change with a camera
+# rotation), length 40 + 100 (d - 2.5)^2 px (Melotte 15 at 1 ADU: 200-400 px
+# at 4.0-4.2 dex, 150-370 at 3.8, 90-180 at 3.4, 50-100 at 3.1), half-width
+# 4 px plus a 3 px feather. Outside the mask a spike took the gain and was
+# red ("difraction spike are red", 2026-10-28).
+STAR_SPIKE_FROM_DEX = 2.5
+STAR_SPIKE_L0 = 40.0
+STAR_SPIKE_L_PER_DEX2 = 100.0
+STAR_SPIKE_MAX_LEN_PX = 400.0
+STAR_SPIKE_HALF_WIDTH_PX = 4.0
+STAR_SPIKE_FEATHER_PX = 3.0
+STAR_SPIKE_MIN_CONTRAST = 3.0   # folded azimuthal profile peak / median, or the field has no spikes
 STAR_CHROMA_FLOOR = 0.04        # RGB luminance (0..1) below which the palette keeps its colour
 
 
@@ -896,7 +982,9 @@ def star_mask(chan: np.ndarray, thresh_sigma: float = STAR_MASK_THRESH_SIGMA,
               max_radius: float = STAR_MASK_MAX_RADIUS_PX,
               feather: float = STAR_MASK_FEATHER,
               min_peak_flux: float = 0.0,
-              radius_from: str = "isophote") -> tuple[np.ndarray, dict]:
+              radius_from: str = "isophote",
+              peak_floor: Optional[float] = None,
+              feather_max: Optional[float] = None) -> tuple[np.ndarray, dict]:
     """(mask 0..1, info) — feathered discs on the stars of *chan*.
 
     *chan* is a linear stack (background-subtracted or not; sep models the
@@ -912,11 +1000,17 @@ def star_mask(chan: np.ndarray, thresh_sigma: float = STAR_MASK_THRESH_SIGMA,
     (IC 410: a 1756 ADU star's halo reaches 30-45 px, 5 + 12 * 2.5 = 35), so
     a star on bright nebula, whose isophote is the nebula's, gets the disc
     its brightness earns and not one the size of the knot it sits on.
+    *peak_floor* (ADU) is the floor those radii are counted from when it is
+    not this image's own threshold: a denoised plane's noise is a tenth of
+    the raw's, so counted from its threshold every star is a decade
+    brighter and the discs cover the field (Melotte 15: 40 %).
     """
     import sep
     a = np.ascontiguousarray(np.nan_to_num(chan), dtype=np.float32)
     h, w = a.shape
     mask = np.zeros((h, w), np.float32)
+    # sep's default 300k-pixel stack fills on a quiet (denoised) 60 Mpx frame
+    sep.set_extract_pixstack(max(300_000, h * w // 20))
     try:
         bkg = sep.Background(a)
         data = a - bkg.back()
@@ -930,27 +1024,149 @@ def star_mask(chan: np.ndarray, thresh_sigma: float = STAR_MASK_THRESH_SIGMA,
         keep &= (objs["peak"] / np.maximum(objs["flux"], 1e-6)) >= min_peak_flux
     objs = objs[keep]
     if radius_from == "peak":
-        floor = max(thresh_sigma * rms, 1e-6)
+        floor = max(peak_floor if peak_floor is not None else thresh_sigma * rms, 1e-6)
         discs = [(float(o["x"]), float(o["y"]),
-                  float(np.clip(STAR_PEAK_R0 + STAR_PEAK_R_PER_DEX
-                                * np.log10(max(float(o["peak"]) / floor, 1.0)),
+                  float(np.clip(radius_from_dex(np.log10(max(float(o["peak"]) / floor, 1.0))),
                                 STAR_MASK_MIN_RADIUS_PX, max_radius)))
                  for o in objs]
     else:
         discs = [(float(o["x"]), float(o["y"]),
                   float(np.clip(radius_a * float(o["a"]), STAR_MASK_MIN_RADIUS_PX, max_radius)))
                  for o in objs]
-    n = paint_discs(mask, discs, feather)
+    n = paint_discs(mask, discs, feather, feather_max)
     return mask, {"stars": n, "detected": int(len(keep)), "kept": int(keep.sum()),
-                  "coverage": float(mask.mean()), "discs": discs}
+                  "coverage": float(mask.mean()), "discs": discs, "rms": rms}
 
 
-def paint_discs(mask: np.ndarray, discs, feather: float = STAR_MASK_FEATHER) -> int:
-    """Feathered discs (x, y, r) painted into *mask* in place; the count."""
+def radius_from_dex(d: float) -> float:
+    """Disc radius (px, uncapped) of a star *d* decades above the detection
+    floor: STAR_PEAK_R0 + STAR_PEAK_R_PER_DEX d, plus the halo term."""
+    return (STAR_PEAK_R0 + STAR_PEAK_R_PER_DEX * d
+            + STAR_PEAK_HALO_PER_DEX2 * max(d - STAR_PEAK_HALO_FROM_DEX, 0.0) ** 2)
+
+
+def dex_from_radius(r: float) -> float:
+    """radius_from_dex inverted (it is monotonic); a capped radius reads as
+    the cap's dex, which is the brightest the formula knows."""
+    d = (r - STAR_PEAK_R0) / STAR_PEAK_R_PER_DEX
+    if d <= STAR_PEAK_HALO_FROM_DEX:
+        return max(d, 0.0)
+    lo, hi = STAR_PEAK_HALO_FROM_DEX, STAR_PEAK_HALO_FROM_DEX + 10.0
+    for _ in range(40):
+        mid = 0.5 * (lo + hi)
+        if radius_from_dex(mid) < r:
+            lo = mid
+        else:
+            hi = mid
+    return 0.5 * (lo + hi)
+
+
+def spike_axis(chan: np.ndarray, discs, n: int = 4) -> Optional[float]:
+    """The diffraction spikes' axis angle (deg, 0..90, from +x towards +y on
+    the stored grid) measured on the *n* biggest *discs* of *chan*: the
+    azimuthal median profile of an annulus 0.5-1.5 r around each, folded modulo
+    90 (four arms on two axes), summed over the stars. None when the folded
+    profile's peak is under STAR_SPIKE_MIN_CONTRAST times its median: no
+    spikes, or none the mask needs."""
+    if not discs:
+        return None
+    big = sorted(discs, key=lambda t: -t[2])[:n]
+    h, w = chan.shape
+    prof = np.zeros(180, np.float64)
+    for cx, cy, r in big:
+        # inside the halo, where the spikes stand above it; outside the disc the
+        # nebula wins (Melotte 15, 1.5-4 r: no axis; 0.5-1.5 r: 67 deg, clear)
+        r_in, r_out = 0.5 * r, max(1.5 * r, 0.5 * r + 40.0)
+        R = int(np.ceil(r_out))
+        x0, x1 = max(0, int(cx) - R), min(w, int(cx) + R + 1)
+        y0, y1 = max(0, int(cy) - R), min(h, int(cy) + R + 1)
+        if x1 - x0 < 10 or y1 - y0 < 10:
+            continue
+        sub = np.nan_to_num(np.asarray(chan[y0:y1, x0:x1], dtype=np.float32))
+        yy, xx = np.mgrid[y0:y1, x0:x1]
+        rr = np.hypot(yy - cy, xx - cx)
+        ann = (rr >= r_in) & (rr < r_out)
+        if ann.sum() < 100:
+            continue
+        sky = float(np.median(sub[ann]))
+        th = (np.degrees(np.arctan2(yy - cy, xx - cx)) % 180.0).astype(int)
+        vals = sub[ann] - sky
+        bins = th[ann]
+        p = np.zeros(180, np.float64)
+        for a in range(180):
+            v = vals[bins == a]
+            if v.size:
+                p[a] = np.median(v)
+        scale = float(np.max(np.abs(p))) or 1.0
+        prof += p / scale
+    folded = prof[:90] + prof[90:]
+    if not np.any(folded):
+        return None
+    med = float(np.median(folded))
+    pk = int(np.argmax(folded))
+    spread = float(np.std(folded)) or 1.0
+    if (folded[pk] - med) / spread < STAR_SPIKE_MIN_CONTRAST:
+        return None
+    return float(pk)
+
+
+def spike_arms(discs, axis_deg: Optional[float]) -> list:
+    """(x, y, axis_deg, length) for every disc bright enough to spike
+    (STAR_SPIKE_FROM_DEX, dex read back from the disc radius); empty with no axis."""
+    if axis_deg is None:
+        return []
+    arms = []
+    for x, y, r in discs:
+        d = dex_from_radius(r)
+        if d < STAR_SPIKE_FROM_DEX:
+            continue
+        length = min(STAR_SPIKE_L0 + STAR_SPIKE_L_PER_DEX2 * (d - STAR_SPIKE_FROM_DEX) ** 2,
+                     STAR_SPIKE_MAX_LEN_PX)
+        arms.append((float(x), float(y), float(axis_deg), float(length)))
+    return arms
+
+
+def paint_arms(mask: np.ndarray, arms, half_width: float = STAR_SPIKE_HALF_WIDTH_PX,
+               feather: float = STAR_SPIKE_FEATHER_PX) -> int:
+    """Four feathered arms per (x, y, axis_deg, length) painted into *mask*
+    in place: two full-length bars through the centre, on the axis and at
+    90 deg to it. The count painted."""
+    h, w = mask.shape
+    n = 0
+    for cx, cy, ang, length in arms:
+        reach = int(np.ceil(length + half_width + 3.0 * feather))
+        x0, x1 = max(0, int(cx) - reach), min(w, int(cx) + reach + 1)
+        y0, y1 = max(0, int(cy) - reach), min(h, int(cy) + reach + 1)
+        if x1 <= x0 or y1 <= y0:
+            continue
+        yy, xx = np.mgrid[y0:y1, x0:x1]
+        dy, dx = (yy - cy).astype(np.float32), (xx - cx).astype(np.float32)
+        a = np.radians(ang)
+        ux, uy = np.cos(a), np.sin(a)
+        bar = np.zeros((y1 - y0, x1 - x0), np.float32)
+        for ex, ey in ((ux, uy), (-uy, ux)):
+            t = dx * ex + dy * ey                       # along the bar
+            pdist = np.abs(dx * -ey + dy * ex)          # across it
+            across = np.where(pdist <= half_width, 1.0,
+                              np.exp(-0.5 * ((pdist - half_width) / feather) ** 2))
+            along = np.where(np.abs(t) <= length, 1.0,
+                             np.exp(-0.5 * ((np.abs(t) - length) / feather) ** 2))
+            np.maximum(bar, (across * along).astype(np.float32), out=bar)
+        np.maximum(mask[y0:y1, x0:x1], bar, out=mask[y0:y1, x0:x1])
+        n += 1
+    return n
+
+
+def paint_discs(mask: np.ndarray, discs, feather: float = STAR_MASK_FEATHER,
+                feather_max: Optional[float] = None) -> int:
+    """Feathered discs (x, y, r) painted into *mask* in place; the count.
+    The skirt's sigma is *feather* r, at most *feather_max* px if given."""
     h, w = mask.shape
     n = 0
     for cx, cy, r in discs:
         sig = feather * r
+        if feather_max is not None:
+            sig = min(sig, feather_max)
         reach = int(np.ceil(r + 3.0 * sig))
         x0, x1 = max(0, int(cx) - reach), min(w, int(cx) + reach + 1)
         y0, y1 = max(0, int(cy) - reach), min(h, int(cy) + reach + 1)
@@ -964,10 +1180,14 @@ def paint_discs(mask: np.ndarray, discs, feather: float = STAR_MASK_FEATHER) -> 
     return n
 
 
-def mask_from_discs(shape, discs, feather: float = STAR_MASK_FEATHER) -> np.ndarray:
-    """The star mask a list of (x, y, r) discs describes, on a grid of *shape*."""
+def mask_from_discs(shape, discs, feather: float = STAR_MASK_FEATHER, arms=None,
+                    feather_max: Optional[float] = None) -> np.ndarray:
+    """The star mask a list of (x, y, r) discs describes, on a grid of
+    *shape*, with the spike *arms* (spike_arms) if given."""
     mask = np.zeros(shape, np.float32)
-    paint_discs(mask, discs, feather)
+    paint_discs(mask, discs, feather, feather_max)
+    if arms:
+        paint_arms(mask, arms)
     return mask
 
 
@@ -1035,7 +1255,8 @@ def _prepare(channels: dict[str, np.ndarray], subtract_background: bool,
              wb_factors: Optional[dict] = None,
              ha_ratio: Optional[float] = None,
              info: Optional[dict] = None,
-             palette_gain=PALETTE_GAIN, palette_stars=None) -> tuple[dict, float]:
+             palette_gain=PALETTE_GAIN, palette_stars=None,
+             palette_quiet: Optional[dict] = None, palette_arms=None) -> tuple[dict, float]:
     """Background-subtract every channel and find the shared white point.
 
     Factored out of compose() because the per-channel exports have to be the
@@ -1047,7 +1268,8 @@ def _prepare(channels: dict[str, np.ndarray], subtract_background: bool,
     info, factors included), "ha_ratio" and "palette_gain" (the {role: factor}
     applied, measured when gain=hubble). A raw/denoised pair passes the raw
     set's back in as wb_factors / ha_ratio / palette_gain so both share one
-    balance, blend and gain.
+    balance, blend and gain. *palette_quiet* is the denoised set, when the
+    caller has it, for the gain's faint-star search (join_quiet_stars).
     """
     if subtract_background:
         subbed = {k: _remove_gradient(v, mesh) for k, v in channels.items()}
@@ -1087,7 +1309,8 @@ def _prepare(channels: dict[str, np.ndarray], subtract_background: bool,
     white_before = shared_white(subbed, white_pct)
     gain_info: dict = {}
     subbed, gain_used = apply_palette_gain(subbed, palette_gain, star_discs=palette_stars,
-                                           info=gain_info)
+                                           info=gain_info, quiet=palette_quiet,
+                                           star_arms=palette_arms)
     if gain_used:
         _logger.info("Palette gain: %s", describe_palette_gain(gain_used))
     # HALRGB: the blend happens here, on subtracted linear data, so the
@@ -1099,7 +1322,8 @@ def _prepare(channels: dict[str, np.ndarray], subtract_background: bool,
         subbed, ratio = apply_ha_blend(subbed, ha_gain, ha_ratio)
     if info is not None:
         info.update({"wb": wb_info, "ha_ratio": ratio, "palette_gain": gain_used,
-                     "palette_stars": gain_info.get("star_discs")})
+                     "palette_stars": gain_info.get("star_discs"),
+                     "palette_arms": gain_info.get("star_arms")})
     return subbed, (white_before if gain_used else shared_white(subbed, white_pct))
 
 

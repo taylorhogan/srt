@@ -14,9 +14,20 @@ import spark_morning_render as r  # noqa: E402
 
 
 def test_narrowband_needs_min_frames_in_every_filter():
-    assert r.pick_recipes({"Ha": 44, "S-II": 39, "O-III": 41}) == ["HSO", "SHO", "HOO"]
+    # SHO (Hubble gain) and HOO both when S-II has the frames (owner,
+    # 2026-10-29), HOO alone otherwise; HSO is gone since 2026-10-28.
+    assert r.pick_recipes({"Ha": 44, "S-II": 39, "O-III": 41}) == ["SHO", "HOO"]
     assert r.pick_recipes({"Ha": 44, "O-III": 41, "S-II": 5}) == ["HOO"]
     assert r.pick_recipes({"Ha": 44, "O-III": 3}) == []
+    assert "HSO" not in [n for n, _ in r.RECIPE_RULES]
+
+
+def test_sho_is_rendered_with_the_hubble_gain_and_hoo_is_not():
+    sho = r.render_command("ic410", "SHO", first=True, exptime=300, galaxy=False)
+    hoo = r.render_command("ic410", "HOO", first=True, exptime=300, galaxy=False)
+    assert sho[sho.index("--gain") + 1] == "hubble"
+    assert "--gain" not in hoo
+    assert "--gain" not in r.render_command("m33", "LRGB", first=True, exptime=300, galaxy=True)
 
 
 def test_lrgb_needs_luminance_depth_but_only_a_few_colour_frames():

@@ -162,6 +162,135 @@ def test_star_discs_are_found_once_and_pinned_on_a_series():
     assert np.allclose(m1, m2)
 
 
+def test_faint_stars_come_from_the_denoised_planes_and_join_the_raw_finds():
+    # Melotte 15 at gain=hubble: 2614 stars at 3 sigma of the raw sum and
+    # every fainter one a red speck ("many red stars"). The faint ones are
+    # found on the denoised planes, their discs sized from the RAW floor,
+    # and joined to the raw list rather than replacing it (bright stars
+    # fall out of the quiet pass).
+    pytest.importorskip("sep")
+    pytest.importorskip("scipy")
+    rng = np.random.default_rng(11)
+    sub = _planes()
+    yy, xx = np.mgrid[0:120, 0:160]
+    bright = [(20, 30), (90, 120)]
+    faint = [(12, 100), (30, 130), (100, 40)]   # off the nebula: a star ON it blends into the knot
+    clean = {c: np.full_like(v, 0.0) for c, v in sub.items()}
+    for y, x in bright:
+        for c in clean:
+            clean[c] += 300.0 * np.exp(-((yy - y) ** 2 + (xx - x) ** 2) / 3.0)
+    for y, x in faint:
+        for c in clean:
+            clean[c] += 4.0 * np.exp(-((yy - y) ** 2 + (xx - x) ** 2) / 3.0)
+    noisy = {c: sub[c] + clean[c] + rng.normal(0, 3.0, sub[c].shape) for c in sub}
+    quiet = {c: sub[c] + clean[c] + rng.normal(0, 0.05, sub[c].shape) for c in sub}
+    info_raw = {}
+    cp.apply_palette_gain(noisy, {"R": 4.0}, info=info_raw)
+    raw_discs = info_raw["star_discs"]
+    info = {}
+    out, _ = cp.apply_palette_gain(noisy, {"R": 4.0}, info=info, quiet=quiet)
+    discs = info["star_discs"]
+    assert discs[:len(raw_discs)] == raw_discs              # the raw finds first, untouched
+    assert len(discs) > len(raw_discs)                      # the faint ones joined
+    def found(pos, lst):
+        return any(np.hypot(x - pos[1], y - pos[0]) <= cp.PALETTE_STAR_MATCH_PX for x, y, _ in lst)
+    assert all(found(p, raw_discs) for p in bright)
+    assert not any(found(p, raw_discs) for p in faint)      # under 3 sigma of the raw
+    assert all(found(p, discs) for p in faint)
+    # a faint star's disc is the floor radius, not a decade's worth
+    for x, y, r in discs[len(raw_discs):]:
+        assert r <= cp.STAR_PEAK_R0 + 1.0
+    # sized from the raw floor, the joined discs add little to the mask
+    m_raw = cp.mask_from_discs(sub["R"].shape, raw_discs).mean()
+    assert cp.mask_from_discs(sub["R"].shape, discs).mean() - m_raw < 0.05   # three 5 px discs
+    # a faint star is neutral now: the same light above the fill in every channel
+    y, x = faint[0]
+    mask = cp.mask_from_discs(sub["R"].shape, discs)
+    star = {c: float(out[c][y, x] - cp.smooth_fill(noisy[c], mask=mask)[y, x] * (4.0 if c == "R" else 1.0))
+            for c in out}
+    assert star["R"] == pytest.approx(star["G"], rel=1e-3)
+
+
+def test_bright_star_discs_grow_a_halo_and_the_dex_reads_back():
+    # Melotte 15: the brightest star's halo reached 108 px at 1 ADU and the
+    # 56 px disc left a magenta ring; the halo term takes 4.2 dex to 146.
+    r = cp.radius_from_dex
+    assert r(1.0) == pytest.approx(17.0)                   # below the knee: 5 + 12 d
+    assert r(2.5) == pytest.approx(35.0)
+    assert r(4.0) == pytest.approx(5 + 48 + 30 * 1.5 ** 2)
+    assert 140 < r(4.2) < 150
+    for d in (0.0, 0.7, 2.5, 3.3, 4.2):
+        assert cp.dex_from_radius(r(d)) == pytest.approx(d, abs=1e-6)
+
+
+def _spiky(axis_deg=67.0, peak=3000.0, length=120.0):
+    # a flat field with one bright star carrying four arms on two axes
+    rng = np.random.default_rng(2)
+    yy, xx = np.mgrid[0:400, 0:400]
+    cy = cx = 200
+    dy, dx = yy - cy, xx - cx
+    img = peak * np.exp(-(dy ** 2 + dx ** 2) / 8.0) + rng.normal(0, 0.3, yy.shape)
+    a = np.radians(axis_deg)
+    for ex, ey in ((np.cos(a), np.sin(a)), (-np.sin(a), np.cos(a))):
+        t = dx * ex + dy * ey
+        pd = np.abs(dx * -ey + dy * ex)
+        img += 20.0 * np.exp(-0.5 * (pd / 1.5) ** 2) * (np.abs(t) <= length)
+    return img.astype(np.float32), (cx, cy)
+
+
+def test_spike_axis_is_measured_on_the_field_and_arms_cover_the_spikes():
+    pytest.importorskip("sep")
+    pytest.importorskip("scipy")
+    img, (cx, cy) = _spiky(axis_deg=67.0)
+    floor = 3.0 * 0.3
+    d = np.log10(3000.0 / floor)                              # ~4 dex: a spiking star
+    disc = (float(cx), float(cy), float(cp.radius_from_dex(d)))
+    axis = cp.spike_axis(img, [disc])
+    assert axis is not None and abs(axis - 67.0) <= 2.0
+    arms = cp.spike_arms([disc], axis)
+    assert len(arms) == 1 and arms[0][3] > disc[2]            # longer than the disc
+    mask = cp.mask_from_discs(img.shape, [disc], arms=arms,
+                              feather_max=cp.PALETTE_STAR_FEATHER_MAX_PX)
+    # a point on each arm beyond the disc is masked; one off the arms is not
+    a = np.radians(67.0)
+    for ex, ey in ((np.cos(a), np.sin(a)), (-np.sin(a), np.cos(a))):
+        for sgn in (1, -1):
+            t = disc[2] + 20
+            x, y = int(round(cx + sgn * t * ex)), int(round(cy + sgn * t * ey))
+            assert mask[y, x] > 0.99
+    b = np.radians(67.0 + 45.0)                               # past the 24 px skirt
+    x, y = int(round(cx + (disc[2] + 80) * np.cos(b))), int(round(cy + (disc[2] + 80) * np.sin(b)))
+    assert mask[y, x] < 0.05
+    # a faint star does not spike
+    assert cp.spike_arms([(50.0, 50.0, cp.radius_from_dex(1.0))], axis) == []
+
+
+def test_no_spikes_means_no_arms():
+    rng = np.random.default_rng(4)
+    yy, xx = np.mgrid[0:300, 0:300]
+    img = (3000.0 * np.exp(-((yy - 150) ** 2 + (xx - 150) ** 2) / 8.0)
+           + rng.normal(0, 0.3, yy.shape)).astype(np.float32)
+    disc = (150.0, 150.0, float(cp.radius_from_dex(3.5)))
+    assert cp.spike_axis(img, [disc]) is None
+    assert cp.spike_arms([disc], None) == []
+    assert cp.spike_axis(img, []) is None
+
+
+def test_the_series_pins_the_arms_with_the_discs():
+    pytest.importorskip("sep")
+    pytest.importorskip("scipy")
+    sub = _planes()
+    chans = {c: v + 100.0 for c, v in sub.items()}
+    info = {}
+    cp._prepare(chans, False, 4, 99.9, ha_gain=None, info=info, palette_gain={"R": 4.0})
+    assert "palette_arms" in info and isinstance(info["palette_arms"], list)
+    arms = [(30.0, 40.0, 67.0, 50.0)]
+    info2 = {}
+    cp._prepare(chans, False, 4, 99.9, ha_gain=None, info=info2, palette_gain={"R": 4.0},
+                palette_stars=[(30.0, 40.0, 10.0)], palette_arms=arms)
+    assert info2["palette_arms"] == arms and info2["palette_stars"] == [(30.0, 40.0, 10.0)]
+
+
 def test_a_nebula_blob_is_not_a_star():
     pytest.importorskip("sep")
     sub = _planes()                                               # one 25x40 px blob, no stars

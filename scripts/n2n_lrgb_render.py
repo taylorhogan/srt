@@ -97,6 +97,33 @@ def meta_path(args) -> Path:
     return OUT / f"meta_{args.dso}_{args.recipe}{suffix(args)}.json"
 
 
+def stack_record(dso: str, out: Path) -> dict:
+    """What the stack that wrote *out* recorded about itself (accepted
+    count, coverage box, frame lists): the sidecar beside the npy, or for a
+    stack from before the sidecar (2026-10-29), the newest entry naming the
+    file in ANY recipe's meta of the target. The record belongs to the
+    stack, not to the recipe: the morning's SHO rebuilt Melotte 15's stacks
+    with coverage boxes and the HOO after it, reading only its own meta
+    from the day before, rendered uncropped."""
+    side = out.with_suffix(".json")
+    try:
+        rec = json.loads(side.read_text())
+        if rec.get("file") == out.name:
+            return rec
+    except (OSError, ValueError):
+        pass
+    best: dict = {}
+    for mp in OUT.glob(f"meta_{dso}_*.json"):
+        try:
+            chans = json.loads(mp.read_text()).get("channels", {})
+        except (OSError, ValueError):
+            continue
+        for entry in chans.values():
+            if entry.get("file") == out.name and entry.get("built", "") >= best.get("built", ""):
+                best = entry
+    return best
+
+
 def log(m: str = "") -> None:
     print(m, flush=True)
 
@@ -209,7 +236,11 @@ def build(args) -> int:
         out = OUT / f"{args.dso}_{filt}_raw{suffix(args)}.npy"
         if out.exists() and not args.force:
             log(f"[{filt}] cached {out.name}")
-            meta["channels"][filt] = {"frames": len(paths), "file": out.name}
+            # Keep what the stack that wrote this file recorded (its frame
+            # lists, its coverage box); only the offered count is today's.
+            entry = dict(stack_record(args.dso, out))
+            entry.update({"frames": len(paths), "file": out.name})
+            meta["channels"][filt] = entry
             continue
         t0 = time.time()
         m: dict = {}
@@ -244,9 +275,11 @@ def build(args) -> int:
         meta["channels"][filt] = {"frames": len(paths),
                                   "accepted": m.get("n_frames"),
                                   "file": out.name,
+                                  "coverage": m.get("coverage_box"),
                                   "built": time.strftime("%Y-%m-%dT%H:%M"),
                                   "used": [Path(p).name for p in paths if Path(p) not in rejected],
                                   "rejected": [Path(p).name for p in sorted(rejected)]}
+        out.with_suffix(".json").write_text(json.dumps(meta["channels"][filt], indent=2))
         del img
     meta_path(args).write_text(json.dumps(meta, indent=2))
     log(f"\nwrote {meta_path(args)}")
@@ -273,7 +306,48 @@ def shared_from_raw(raw_info: dict) -> dict:
     wb = (raw_info.get("wb") or {}).get("factors") or None
     return {"white_balance": "none", "wb_factors": wb, "ha_ratio": raw_info.get("ha_ratio"),
             "palette_gain": raw_info.get("palette_gain"),
-            "palette_stars": raw_info.get("palette_stars")}
+            "palette_stars": raw_info.get("palette_stars"),
+            "palette_arms": raw_info.get("palette_arms")}
+
+
+def common_box(meta: dict, filters, shape) -> tuple:
+    """(y0, y1, x0, x1): the intersection of the filters' coverage boxes.
+
+    A stack built onto a shared reference is not cropped by the stacker
+    (its box would differ per filter); outside its footprint it is a flat
+    fill at the global sky level, which at a vignetted edge sits above the
+    real sky beside it and, through a palette gain, became a red bar along
+    the top of every IC 410 render (owner, 2026-10-28). So every channel is
+    cut to the area at least 80 % of EVERY filter's frames covered. A
+    filter whose record has no box (a stack cached before this) counts as
+    full-frame, and the stack has to be rebuilt (--force) to get one.
+    """
+    h, w = shape
+    y0, y1, x0, x1 = 0, h, 0, w
+    for f in filters:
+        box = (meta.get("channels", {}).get(f) or {}).get("coverage")
+        if not box:
+            continue
+        by0, by1, bx0, bx1 = (int(v) for v in box)
+        y0, y1, x0, x1 = max(y0, by0), min(y1, by1), max(x0, bx0), min(x1, bx1)
+    if y1 <= y0 or x1 <= x0:
+        return 0, h, 0, w
+    return y0, y1, x0, x1
+
+
+def crop_common(chans: dict, meta: dict, log) -> dict:
+    """Every channel cut to common_box; logged when anything was cut."""
+    h = min(a.shape[0] for a in chans.values())
+    w = min(a.shape[1] for a in chans.values())
+    y0, y1, x0, x1 = common_box(meta, list(chans), (h, w))
+    missing = [f for f in chans if not (meta.get("channels", {}).get(f) or {}).get("coverage")]
+    if missing:
+        log(f"common footprint: no coverage box for {', '.join(missing)} "
+            f"(stacked before 2026-10-28; --force rebuilds it) — not cut on their account")
+    if (y0, y1, x0, x1) != (0, h, 0, w):
+        log(f"common footprint: rows {y0}:{y1}, cols {x0}:{x1} of {h}x{w} "
+            f"(cut {y0} top, {h - y1} bottom, {x0} left, {w - x1} right)")
+    return {k: np.ascontiguousarray(v[y0:y1, x0:x1]) for k, v in chans.items()}
 
 
 def palette_gain_opt(args):
@@ -290,7 +364,8 @@ def log_shared_measurements(raw_info: dict, log) -> None:
     pg = raw_info.get("palette_gain")
     if pg:
         log("    palette gain: " + "  ".join(f"{c} x{f:.3f}" for c, f in sorted(pg.items()))
-            + f"; {len(raw_info.get('palette_stars') or [])} stars found, kept out of the gain ({color_process.PALETTE_STAR_MODE})")
+            + f"; {len(raw_info.get('palette_stars') or [])} stars found, kept out of the gain ({color_process.PALETTE_STAR_MODE})"
+            + f", spikes on {len(raw_info.get('palette_arms') or [])}")
     wb = raw_info.get("wb") or {}
     if wb.get("mode") == "stars":
         f = wb.get("factors") or {}
@@ -332,9 +407,7 @@ def compose(args) -> int:
         raw_ch = {}
         for f in filters:
             raw_ch[f] = np.load(OUT / meta["channels"][f]["file"]).astype(np.float32)
-        h = min(a.shape[0] for a in raw_ch.values())
-        w = min(a.shape[1] for a in raw_ch.values())
-        raw_ch = {k: v[:h, :w] for k, v in raw_ch.items()}
+        raw_ch = crop_common(raw_ch, meta, log)
         raw_ch = {ch: raw_ch[mapping[ch]] for ch in ("L", "R", "G", "B", "HA")
                   if ch in mapping and mapping[ch] in raw_ch}
         opts = color_process.effective_options(
@@ -380,9 +453,11 @@ def compose(args) -> int:
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     raw_ch, den_ch = {}, {}
+    raw_ch = crop_common({f: np.load(OUT / meta["channels"][f]["file"]).astype(np.float32)
+                          for f in filters}, meta, log)
+    h, w = next(iter(raw_ch.values())).shape          # the denoiser may pad; cut back to this
     for f in filters:
-        a = np.load(OUT / meta["channels"][f]["file"]).astype(np.float32)
-        raw_ch[f] = a
+        a = raw_ch[f]
         t0 = time.time()
         den_ch[f] = denoiser.denoise_frame(a, model, device=device)
         log(f"  denoised {f} in {time.time() - t0:.0f}s")
@@ -412,7 +487,8 @@ def compose(args) -> int:
     opts = color_process.effective_options(
         white_pct=args.white_pct, black_pct=args.black_pct, white_balance=args.wb,
         palette_gain=palette_gain_opt(args),
-        **({"softening": args.soft} if args.soft is not None else {}))
+        **({"softening": args.soft} if args.soft is not None else {}),
+        **({"scnr": args.scnr} if args.scnr is not None else {}))
     log(f"compose: {color_process.describe_options(opts)}")
 
     # ONE stretch, taken from the raw channels and applied unchanged to both.
@@ -715,11 +791,9 @@ def routine(args) -> int:
     out_dir.mkdir(parents=True, exist_ok=True)
     log(f"products -> {out_dir}")
 
-    raw = {f: np.load(OUT / meta["channels"][f]["file"]).astype(np.float32)
-           for f in filters}
-    h = min(a.shape[0] for a in raw.values())
-    w = min(a.shape[1] for a in raw.values())
-    raw = {k: v[:h, :w] for k, v in raw.items()}
+    raw = crop_common({f: np.load(OUT / meta["channels"][f]["file"]).astype(np.float32)
+                       for f in filters}, meta, log)
+    h, w = next(iter(raw.values())).shape             # the denoiser may pad; cut back to this
 
     # Star colour from RGB: mask and star image are built once from the raw
     # R, G, B stacks and applied to every composite, raw and denoised alike.
@@ -766,7 +840,8 @@ def routine(args) -> int:
     opts = color_process.effective_options(
         white_pct=args.white_pct, black_pct=args.black_pct, white_balance=args.wb,
         palette_gain=palette_gain_opt(args),
-        **({"softening": args.soft} if args.soft is not None else {}))
+        **({"softening": args.soft} if args.soft is not None else {}),
+        **({"scnr": args.scnr} if args.scnr is not None else {}))
     log(f"compose: {color_process.describe_options(opts)}")
 
     # ONE stretch, from the raw, applied to both sets — so the channel JPEGs and
@@ -778,7 +853,10 @@ def routine(args) -> int:
     subbed_raw, white = color_process._prepare(
         to_channels(raw), opts["subtract_background"], opts["mesh"], opts["white_pct"],
         white_balance=opts["white_balance"], info=raw_info,
-        palette_gain=opts["palette_gain"])
+        palette_gain=opts["palette_gain"],
+        # the gain's faint stars are found on the denoised planes (and the
+        # bright ones on the raw), pinned on every set from here
+        palette_quiet=to_channels(den) if den else None)
     log_shared_measurements(raw_info, log)
     if args.auto_stretch:
         log("auto stretch:")
@@ -958,6 +1036,10 @@ def main() -> int:
                     help="white balance as the process command's wb=: `stars` "
                          "scales R and B so the field's median star is neutral. "
                          "LRGB/HALRGB only; the palettes are not colours")
+    ap.add_argument("--scnr", type=float, default=None,
+                    help="average-neutral green removal, 0..1, as the process "
+                         "command's scnr= (compose default 0): on a gained SHO "
+                         "it takes the green cast out of the faint field")
     ap.add_argument("--gain", default="",
                     help="palette gain as the process command's gain=: `hubble` "
                          "(every filter's nebula level equalised, the classic "
