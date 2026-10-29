@@ -235,7 +235,7 @@ def test_image_cmd_refusal_is_loud_and_returns_false(monkeypatch):
     monkeypatch.setattr(suc, "is_imaging", lambda: False)
     monkeypatch.setattr(suc, "is_nina_running", lambda: True)
     monkeypatch.setattr(suc.social_server, "post_social_message", lambda m: posted.append(m))
-    monkeypatch.setattr(suc.pushover, "push_message", lambda m: pushed.append(m))
+    monkeypatch.setattr(suc.pushover, "push_message", lambda m, priority=0: pushed.append(m))
     monkeypatch.setattr(suc.jobs, "spawn", lambda fn: pytest.fail("must not launch"))
     assert suc.image_cmd(["", "image!!", "1"], "iris") is False
     assert posted and "REFUSED" in posted[0] and "N.I.N.A" in posted[0]
