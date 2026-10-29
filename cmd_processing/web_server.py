@@ -549,10 +549,15 @@ async def api_ticker():
         # Append Pegasus (inside-observatory) environment data if available
         try:
             from hardware_control.pegasus import get_temperature_humidity
+            from hardware_control.dew import dew_margin_c
             env = await asyncio.to_thread(get_temperature_humidity)
             if env:
                 metrics.append({"label": "Inside Temp", "value": f"{env['temperature_f']}°F"})
                 metrics.append({"label": "Humidity",    "value": f"{env['humidity']}%"})
+                # How far the air is above its dew point, in the ticker's °F.
+                m = dew_margin_c(env["temperature_c"], env["humidity"])
+                if m is not None:
+                    metrics.append({"label": "Dew margin", "value": f"{m * 1.8:.0f}°F"})
         except Exception:
             pass  # Unity not running or device unavailable
 
