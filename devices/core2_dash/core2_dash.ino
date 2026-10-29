@@ -75,9 +75,10 @@ static bool haveData = false;
 // The FWHM is two pages, median then last, each "Ha 2.02" alone on its line so
 // the digits are as large as the counts page's (owner 2026-10-28: too small).
 // The FWHM chart, newest-frame and night-summary pages were dropped 2026-10-29.
+// The dew page (2026-10-29): air minus dew point inside the observatory.
 enum Page { PG_STATUS, PG_BIG_TIME, PG_BIG_VIEW, PG_BIG_COUNT, PG_BIG_FWHM, PG_BIG_LAST,
-            PG_BIG_SKY, PG_NPAGES };
-static const uint32_t PAGE_MS[PG_NPAGES] = {20000, 10000, 10000, 7000, 7000, 7000, 7000};
+            PG_BIG_SKY, PG_BIG_DEW, PG_NPAGES };
+static const uint32_t PAGE_MS[PG_NPAGES] = {20000, 10000, 10000, 7000, 7000, 7000, 7000, 7000};
 static long serverSec = -1;                    // seconds since local midnight at the last good reply
 static int page = PG_STATUS;
 static uint32_t pageStart = 0;
@@ -496,6 +497,18 @@ static void paintBigView() {
   plainFont();
 }
 
+// Inside the observatory: how far the air is above its dew point, in the
+// server's color (green 3 C or more, amber 1-3 C, red under 1 C), then the
+// humidity and the temperature it was worked out from.
+static void paintBigDew() {
+  JsonObject w = doc["dew"];
+  fitText("DEW margin", 120, 30, 228, 40, &fonts::FreeSansBold24pt7b, TFT_LIGHTGREY);
+  fitText(String((int)w["m"]) + "F", 120, 145, 228, 150, &fonts::FreeSansBold24pt7b, colorFor(w["c"]));
+  fitText("RH " + String((int)w["rh"]) + "%  " + String((int)w["t"]) + "F", 120, 270, 228, 50,
+          &fonts::FreeSansBold24pt7b, TFT_LIGHTGREY);
+  plainFont();
+}
+
 static bool dark() { return haveData && (doc["dark"] | false); }
 
 static bool pageHasData(int p) {
@@ -508,6 +521,7 @@ static bool pageHasData(int p) {
     case PG_BIG_FWHM:
     case PG_BIG_LAST:  return im && doc["im"]["filters"].size() > 0;
     case PG_BIG_SKY:   return im && !doc["im"]["sky"].isNull();
+    case PG_BIG_DEW:   return haveData && !doc["dew"].isNull();
   }
   return false;
 }
@@ -580,6 +594,7 @@ static void paint() {
   M5.Display.fillScreen(TFT_BLACK);
   if (page == PG_BIG_TIME) paintBigTime();
   else if (page == PG_BIG_VIEW) paintBigView();
+  else if (page == PG_BIG_DEW) paintBigDew();
   else if (page == PG_BIG_COUNT) paintBigCount();
   else if (page == PG_BIG_SKY) paintBigSky();
   else if (page == PG_BIG_LAST) paintBigFwhm(true);

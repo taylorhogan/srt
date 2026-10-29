@@ -596,6 +596,28 @@ def read_sky_night(now: datetime) -> Optional[dict]:
         return None
 
 
+def dew_page(env: Optional[dict]) -> Optional[dict]:
+    """{"m", "rh", "t", "c"} for the dew page from a Pegasus reading, in °F. Pure."""
+    from hardware_control.dew import dew_color, dew_margin_c
+    if not env:
+        return None
+    m = dew_margin_c(env.get("temperature_c"), env.get("humidity"))
+    if m is None:
+        return None
+    return {"m": round(m * 1.8), "rh": round(env["humidity"]), "t": round(env["temperature_f"]),
+            "c": dew_color(m)}
+
+
+def read_dew() -> Optional[dict]:
+    """The observatory's dew margin from the Pegasus sensor, or None (Unity down)."""
+    try:
+        from hardware_control.pegasus import get_temperature_humidity
+        return dew_page(get_temperature_humidity())
+    except Exception:  # noqa: BLE001 -- the page is optional
+        _logger.debug("dash dew reading failed", exc_info=True)
+        return None
+
+
 def build(cfg: dict) -> dict:
     """Gather everything and summarize. Blocking: call it off the event loop."""
     from iris import client as conductor
@@ -644,6 +666,7 @@ def build(cfg: dict) -> dict:
     f = newest_frame(cfg)
     out["img"] = ({k: f[k] for k in ("id", "dso", "filter", "fwhm", "at")} if f else None)
     out["sky"] = read_sky()
+    out["dew"] = read_dew()
     # The sky camera's newest frame (?part=view); the display fetches the
     # picture only when this id changes.
     out["view"] = sky_view_info(newest_sky_frame(_capture_dir(cfg)))
