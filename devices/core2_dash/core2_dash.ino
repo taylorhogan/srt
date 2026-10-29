@@ -1,10 +1,13 @@
 // Iris desk display: M5Stack Core2 v1.3 (2026-10-22).
 //
 // Polls GET /api/dash on the chat server every 30 s and paints it. Display
-// only: touch and the buttons do nothing, and the payload carries no command.
-// Pages rotate (2026-10-25): status 20 s, then 10 s each of the night's FWHM
-// chart, the newest frame (GET /api/dash?part=image, fetched only when the
-// frame changes) and last night's summary -- each only when there is data.
+// only: the buttons change only this screen, and the payload carries no command.
+// One set of big-type pages, day and night (owner 2026-10-29: "no need for the
+// 2 modes"): time and temperature, the sky camera's newest frame (GET
+// /api/dash?part=view, fetched only when the frame changes), and while imaging
+// the target's counts, FWHM median and last, and the sky as % of clear -- each
+// only when there is data. The status page is the fallback: shown when the
+// data is stale or missing, and in the rotation while the level is red.
 // The colors are decided by the server (cmd_processing/dash.py): g fine,
 // a look at it, r act now, x no data. If no good reply has arrived for
 // STALE_MS the whole screen goes grey with the age, so an old "SHUT" is never
@@ -68,20 +71,17 @@ static const uint8_t ROTATION = 2;
 static JsonDocument doc;
 static bool haveData = false;
 
-// While imaging (doc["im"] set) only the three big-type pages rotate: time and
-// temperature, the target's counts per filter, its median/last FWHM per filter
-// (owner 2026-10-26: "simpler information while imaging"). Otherwise the
-// status / FWHM / picture / summary pages as before.
 // The FWHM is two pages, median then last, each "Ha 2.02" alone on its line so
 // the digits are as large as the counts page's (owner 2026-10-28: too small).
-enum Page { PG_STATUS, PG_FWHM, PG_IMAGE, PG_SUMMARY, PG_BIG_TIME, PG_BIG_COUNT, PG_BIG_FWHM,
-            PG_BIG_LAST, PG_BIG_SKY, PG_NPAGES };
-static const uint32_t PAGE_MS[PG_NPAGES] = {20000, 10000, 10000, 10000, 10000, 7000, 7000, 7000, 7000};
+// The FWHM chart, newest-frame and night-summary pages were dropped 2026-10-29.
+enum Page { PG_STATUS, PG_BIG_TIME, PG_BIG_VIEW, PG_BIG_COUNT, PG_BIG_FWHM, PG_BIG_LAST,
+            PG_BIG_SKY, PG_NPAGES };
+static const uint32_t PAGE_MS[PG_NPAGES] = {20000, 10000, 10000, 7000, 7000, 7000, 7000};
 static long serverSec = -1;                    // seconds since local midnight at the last good reply
 static int page = PG_STATUS;
 static uint32_t pageStart = 0;
 
-static uint8_t* jpg = nullptr;                 // newest frame thumbnail, in PSRAM
+static uint8_t* jpg = nullptr;                 // the sky camera's newest frame, in PSRAM
 static size_t jpgLen = 0;
 static const size_t JPG_MAX = 64 * 1024;
 static String jpgId = "";
@@ -228,16 +228,16 @@ static void checkFirmware() {
 #endif
 }
 
-// The thumbnail, only when the newest frame has changed since the last one.
+// The sky camera's frame, only when it has changed since the last one.
 static void fetchImage() {
-  if (!haveData || doc["img"].isNull() || WiFi.status() != WL_CONNECTED) return;
-  String id = doc["img"]["id"] | "";
+  if (!haveData || doc["view"].isNull() || WiFi.status() != WL_CONNECTED) return;
+  String id = doc["view"]["id"] | "";
   if (id == jpgId) return;
   if (!jpg) jpg = (uint8_t*)ps_malloc(JPG_MAX);
   if (!jpg) return;
   HTTPClient http;
   http.setTimeout(15000);
-  if (!http.begin(String(DASH_URL) + "?part=image")) return;
+  if (!http.begin(String(DASH_URL) + "?part=view")) return;
   if (http.GET() == 200) {
     int len = http.getSize();
     if (len > 0 && (size_t)len <= JPG_MAX) {
@@ -373,19 +373,6 @@ static void paintStatus() {
   d.endWrite();
 }
 
-// The band every page shares: overall level and the clock.
-static void band(const char* title) {
-  auto& d = M5.Display;
-  uint16_t b = colorFor(doc["level"]);
-  d.fillRect(0, 0, W, 30, b);
-  d.setTextColor(TFT_BLACK, b);
-  d.setTextSize(2);
-  d.setCursor(8, 8);
-  d.print(title);
-  d.setCursor(W - 12 * 5 - 8, 8);
-  d.print(doc["t"].as<const char*>());
-}
-
 static uint16_t filterColor(const char* f) {
   String s = f ? f : "";
   if (s == "L") return TFT_WHITE;
@@ -396,110 +383,6 @@ static uint16_t filterColor(const char* f) {
   if (s == "S-II") return TFT_ORANGE;
   return TFT_LIGHTGREY;
 }
-
-// Page 2: one dot per frame, colored by filter; thin lines where a slot
-// changes target; the dashed median; the newest value large at the bottom.
-static void paintFwhm() {
-  auto& d = M5.Display;
-  JsonObject f = doc["fwhm"];
-  band("FWHM");
-  d.setTextSize(2);
-  d.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
-  d.setCursor(8, 38);
-  d.print(doc["summary"].isNull() ? "tonight" : "last night");
-  const int X0 = 30, X1 = 234, Y0 = 76, Y1 = 250;
-  int span = f["span"] | 60;
-  float lo = 1.5, hi = 3.5;
-  for (JsonArray p : f["p"].as<JsonArray>()) hi = max(hi, (int)p[1] / 100.0f + 0.1f);
-  auto X = [&](int m) { return X0 + (X1 - X0) * m / max(span, 1); };
-  auto Y = [&](float v) { v = constrain(v, lo, hi); return (int)(Y1 - (Y1 - Y0) * (v - lo) / (hi - lo)); };
-  d.setTextSize(1);
-  for (float v = lo; v <= hi + 0.01f; v += 0.5f) {
-    d.drawFastHLine(X0, Y(v), X1 - X0, 0x2945);
-    d.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
-    d.setCursor(2, Y(v) - 3); d.printf("%.1f", v);
-  }
-  // Hour ticks from the start time.
-  const char* st = f["start"] | "00:00";
-  int sm = atoi(st) * 60 + atoi(st + 3);
-  for (int m = 60 - sm % 60; m <= span; m += 60) {
-    d.drawFastVLine(X(m), Y1, 3, TFT_LIGHTGREY);
-    d.setCursor(X(m) - 5, Y1 + 6); d.printf("%02d", ((sm + m) / 60) % 24);
-  }
-  // Slot changes, names staggered so neighbours do not overprint.
-  int lastEnd = -99, rowOff = 0;
-  for (JsonArray sl : f["slots"].as<JsonArray>()) {
-    int x = X((int)sl[0]);
-    String name = String((const char*)sl[1]).substring(0, 8);
-    if (sl[0].as<int>() > 0) d.drawFastVLine(x - 2, Y0, Y1 - Y0, 0x5ACB);
-    rowOff = (x < lastEnd + 2) ? 1 - rowOff : 0;
-    d.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
-    d.setCursor(x, Y0 - 14 + 9 * rowOff); d.print(name);
-    lastEnd = x + 6 * name.length();
-  }
-  int med = f["med"] | 0;
-  for (int x = X0; x < X1; x += 6) d.drawFastHLine(x, Y(med / 100.0f), 3, TFT_DARKGREY);
-  JsonArray fl = f["f"];
-  for (JsonArray p : f["p"].as<JsonArray>())
-    d.fillCircle(X((int)p[0]), Y((int)p[1] / 100.0f), 2, filterColor(fl[(int)p[2]] | "?"));
-  d.setTextSize(2);
-  d.setTextColor(filterColor(f["last"][1] | "?"), TFT_BLACK);
-  d.setCursor(8, 270);
-  d.printf("%.2f\" %s", (int)f["last"][0] / 100.0f, (const char*)(f["last"][1] | "?"));
-  d.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
-  d.setCursor(8, 294); d.printf("med %.2f\" n=%d", med / 100.0f, (int)f["p"].size());
-}
-
-// Page 3: the newest frame, centre third of the field, as the server
-// rendered it.
-static void paintImage() {
-  auto& d = M5.Display;
-  band("LAST");
-  d.setTextSize(2);
-  d.setTextColor(filterColor(doc["img"]["filter"] | "?"), TFT_BLACK);
-  d.setCursor(8, 40);
-  d.printf("%s %s", (const char*)(doc["img"]["dso"] | "?"), (const char*)(doc["img"]["filter"] | "?"));
-  d.drawJpg(jpg, jpgLen, 0, 72, 240, 160);
-  d.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
-  d.setCursor(8, 246);
-  if (!doc["img"]["fwhm"].isNull()) d.printf("FWHM %.2f\"", doc["img"]["fwhm"].as<float>());
-  d.setCursor(8, 270); d.printf("at %s", (const char*)(doc["img"]["at"] | ""));
-}
-
-// Page 4: what last night brought, target by target.
-static void paintSummary() {
-  auto& d = M5.Display;
-  JsonObject s = doc["summary"];
-  band("NIGHT");
-  d.setTextSize(2);
-  d.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
-  d.setCursor(8, 38); d.print(s["night"].as<const char*>() + 5);   // MM-DD
-  d.setCursor(W - 12 * 6 - 8, 38); d.printf("%3d fr", (int)s["total"]);
-  int y = 66;
-  for (JsonObject t : s["targets"].as<JsonArray>()) {
-    d.setTextSize(2);
-    d.setTextColor(TFT_WHITE, TFT_BLACK);
-    d.setCursor(8, y); d.print(t["dso"].as<const char*>());
-    d.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
-    d.setCursor(W - 12 * 4 - 8, y); d.printf("%.2f", t["fwhm"].as<float>());
-    d.setTextSize(1);
-    d.setCursor(8, y + 18);
-    for (JsonPair kv : t["n"].as<JsonObject>()) {
-      d.setTextColor(filterColor(kv.key().c_str()), TFT_BLACK);
-      d.printf("%s %d  ", kv.key().c_str(), kv.value().as<int>());
-    }
-    y += 36;
-  }
-  d.setTextSize(2);
-  d.setTextColor(TFT_GREEN, TFT_BLACK);
-  d.setCursor(8, 262); d.printf("best %.2f\"", s["best"]["fwhm"].as<float>());
-  d.setTextSize(1);
-  d.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
-  d.setCursor(8, 286);
-  d.printf("%s %s at %s", (const char*)s["best"]["dso"], (const char*)s["best"]["filter"],
-           (const char*)s["best"]["at"]);
-}
-
 
 // ---- big-type imaging pages ------------------------------------------------
 // Text is scaled to fill its box (M5GFX scales any font), so the numbers are
@@ -598,19 +481,32 @@ static void paintBigSky() {
   plainFont();
 }
 
+// The sky camera's newest frame, 240 x 240, with its time and the sky reading.
+static void paintBigView() {
+  fitText("SKY " + String((const char*)(doc["view"]["at"] | "")), 120, 20, 228, 34,
+          &fonts::FreeSansBold24pt7b, TFT_LIGHTGREY);
+  M5.Display.drawJpg(jpg, jpgLen, 0, 40, 240, 240);
+  if (!doc["sky"].isNull()) {
+    String v = String((const char*)(doc["sky"]["v"] | "?"));
+    if (v.endsWith("%")) v += " clear";
+    if (doc["sky"]["moon"] | false) v += " moon";
+    fitText(v, 120, 300, 228, 34, &fonts::FreeSansBold24pt7b, colorFor(doc["sky"]["c"]));
+  }
+  plainFont();
+}
+
 static bool imaging() { return haveData && !doc["im"].isNull(); }
 
 static bool pageHasData(int p) {
   bool im = imaging();
-  if (p == PG_BIG_TIME) return im;
-  if (p == PG_BIG_COUNT || p == PG_BIG_FWHM || p == PG_BIG_LAST) return im && doc["im"]["filters"].size() > 0;
-  if (p == PG_BIG_SKY) return im && !doc["im"]["sky"].isNull();
-  if (im) return false;                         // imaging: only the big pages
   switch (p) {
-    case PG_STATUS:  return true;
-    case PG_FWHM:    return !doc["fwhm"].isNull();
-    case PG_IMAGE:   return jpgLen > 0 && !doc["img"].isNull();
-    case PG_SUMMARY: return !doc["summary"].isNull();
+    case PG_STATUS:    return haveData && String(doc["level"] | "g") == "r";   // alerts in words
+    case PG_BIG_TIME:  return haveData;
+    case PG_BIG_VIEW:  return jpgLen > 0 && !doc["view"].isNull();
+    case PG_BIG_COUNT:
+    case PG_BIG_FWHM:
+    case PG_BIG_LAST:  return im && doc["im"]["filters"].size() > 0;
+    case PG_BIG_SKY:   return im && !doc["im"]["sky"].isNull();
   }
   return false;
 }
@@ -670,7 +566,7 @@ static bool handleButtons() {
 static void paint() {
   bool stale = !haveData || millis() - lastOk > STALE_MS;
   if (stale) page = PG_STATUS;
-  else if (!pageHasData(page)) page = imaging() ? PG_BIG_TIME : PG_STATUS;
+  else if (!pageHasData(page)) page = PG_BIG_TIME;
   bool red = haveData && String(doc["level"] | "g") == "r";
   if (red) screenOff = false;                    // an alert always wakes the screen
   if (screenOff) { M5.Display.setBrightness(0); return; }
@@ -681,12 +577,8 @@ static void paint() {
   else {
   M5.Display.startWrite();
   M5.Display.fillScreen(TFT_BLACK);
-  M5.Display.startWrite();
-  M5.Display.fillScreen(TFT_BLACK);
-  if (page == PG_FWHM) paintFwhm();
-  else if (page == PG_IMAGE) paintImage();
-  else if (page == PG_SUMMARY) paintSummary();
-  else if (page == PG_BIG_TIME) paintBigTime();
+  if (page == PG_BIG_TIME) paintBigTime();
+  else if (page == PG_BIG_VIEW) paintBigView();
   else if (page == PG_BIG_COUNT) paintBigCount();
   else if (page == PG_BIG_SKY) paintBigSky();
   else if (page == PG_BIG_LAST) paintBigFwhm(true);

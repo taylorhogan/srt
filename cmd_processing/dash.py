@@ -627,6 +627,9 @@ def build(cfg: dict) -> dict:
     f = newest_frame(cfg)
     out["img"] = ({k: f[k] for k in ("id", "dso", "filter", "fwhm", "at")} if f else None)
     out["sky"] = read_sky()
+    # The sky camera's newest frame (?part=view); the display fetches the
+    # picture only when this id changes.
+    out["view"] = sky_view_info(newest_sky_frame(_capture_dir(cfg)))
     out["fw"] = firmware_info()
     return out
 
@@ -680,6 +683,76 @@ def firmware(binary: Path = FW_BINARY) -> Optional[bytes]:
         return binary.read_bytes()
     except OSError:
         return None
+
+
+# The sky camera's newest frame as a page of its own (owner 2026-10-29). The
+# square under the burnt-in timestamp band, centred on the frame, 240 x 240,
+# each frame stretched on its own levels: the raw night frame is near black at
+# this size, and stretched it shows cloud, moon glow and the brighter stars.
+VIEW_PX = 240
+VIEW_TOP = 140                     # below the camera's timestamp band
+_view = {"path": None, "jpeg": None}
+
+
+def newest_sky_frame(capture_dir: Path) -> Optional[Path]:
+    """The newest sky-camera frame, in the capture dir or its keep/ (bursts move there)."""
+    names = []
+    for d in (capture_dir, capture_dir / "keep"):
+        try:
+            names += [(n, d) for n in os.listdir(d) if n.startswith("sky_") and n.endswith("Z.jpg")]
+        except OSError:
+            pass
+    if not names:
+        return None
+    n, d = max(names)                  # sky_YYYYmmddTHHMMSSZ sorts by time
+    return d / n
+
+
+def sky_view_info(path: Optional[Path]) -> Optional[dict]:
+    """{"id", "at"} for the payload: the frame's stamp and its local HH:MM. Pure."""
+    if path is None:
+        return None
+    m = re.match(r"sky_(\d{8}T\d{6})Z\.jpg$", path.name)
+    if not m:
+        return None
+    from datetime import timezone
+    t = datetime.strptime(m.group(1), "%Y%m%dT%H%M%S").replace(tzinfo=timezone.utc).astimezone()
+    return {"id": m.group(1), "at": t.strftime("%H:%M")}
+
+
+def view_jpeg(path: Path) -> Optional[bytes]:
+    if _view["path"] == path:
+        return _view["jpeg"]
+    try:
+        import io
+        import numpy as np
+        from PIL import Image
+        im = Image.open(path).convert("RGB")
+        w, h = im.size
+        s = h - VIEW_TOP
+        c = im.crop((w // 2 - s // 2, VIEW_TOP, w // 2 + s // 2, h)).resize((VIEW_PX, VIEW_PX),
+                                                                          Image.LANCZOS)
+        a = np.asarray(c).astype(np.float32)
+        lum = a.mean(2)
+        lo, hi = np.percentile(lum, 2), np.percentile(lum, 99.7)
+        v = np.clip((a - lo) / max(hi - lo, 1.0), 0, 1) ** 0.7
+        buf = io.BytesIO()
+        Image.fromarray((v * 255).astype(np.uint8)).save(buf, "JPEG", quality=85, progressive=False)
+        _view.update(path=path, jpeg=buf.getvalue())
+        return _view["jpeg"]
+    except Exception:  # noqa: BLE001 -- no picture is a normal answer
+        _logger.debug("dash sky view failed for %s", path, exc_info=True)
+        return None
+
+
+def _capture_dir(cfg: dict) -> Path:
+    return ROOT / cfg.get("sky camera", {}).get("capture_dir", "local/sky_frames")
+
+
+def view(cfg: dict) -> Optional[bytes]:
+    """The sky camera's newest frame as a 240 x 240 JPEG (GET /api/dash?part=view)."""
+    p = newest_sky_frame(_capture_dir(cfg))
+    return view_jpeg(p) if p else None
 
 
 def image(cfg: dict) -> Optional[bytes]:

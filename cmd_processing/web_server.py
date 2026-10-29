@@ -653,12 +653,14 @@ async def api_dash(part: Optional[str] = None, fw: Optional[str] = None):
             return Response(status_code=404, headers={"Cache-Control": "no-store"})
         return Response(content=blob, media_type="application/octet-stream",
                         headers={"Cache-Control": "no-store"})
-    if part == "image":
+    if part in ("image", "view"):
+        # image: the newest light frame; view: the sky camera's newest frame
+        # (240 x 240, the display's sky page since 2026-10-29).
         from fastapi.responses import Response
         try:
             from configs import config
             from cmd_processing import dash
-            jpeg = await asyncio.to_thread(dash.image, config.data())
+            jpeg = await asyncio.to_thread(dash.view if part == "view" else dash.image, config.data())
         except Exception:
             _logger.exception("api_dash image error")
             jpeg = None

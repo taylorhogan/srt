@@ -183,3 +183,32 @@ def test_the_night_runs_from_noon_to_noon():
     assert dash.in_night(datetime(2026, 10, 28, 3, 15), ev)            # after midnight: still tonight
     assert not dash.in_night(datetime(2026, 10, 28, 12, 0), ev)
     assert not dash.in_night(datetime(2026, 10, 27, 11, 59), ev)
+
+
+def test_sky_view_picks_the_newest_frame_in_either_folder(tmp_path):
+    """The display's sky page (2026-10-29): bursts move frames to keep/."""
+    from cmd_processing import dash
+    (tmp_path / "keep").mkdir()
+    for n in ("sky_20261028T235958Z.jpg", "note.txt"):
+        (tmp_path / n).write_bytes(b"x")
+    (tmp_path / "keep" / "sky_20261029T010458Z.jpg").write_bytes(b"x")
+    p = dash.newest_sky_frame(tmp_path)
+    assert p.name == "sky_20261029T010458Z.jpg" and p.parent.name == "keep"
+    info = dash.sky_view_info(p)
+    assert info["id"] == "20261029T010458" and len(info["at"]) == 5
+    assert dash.newest_sky_frame(tmp_path / "missing") is None
+    assert dash.sky_view_info(None) is None
+
+
+def test_sky_view_jpeg_is_square_and_stretched(tmp_path):
+    import io
+    import numpy as np
+    from PIL import Image
+    from cmd_processing import dash
+    a = np.full((1440, 2560, 3), 20, np.uint8)
+    a[700:720, 1270:1290] = 60                          # a faint blob on a dark sky
+    p = tmp_path / "sky_20261029T010458Z.jpg"
+    Image.fromarray(a).save(p)
+    im = Image.open(io.BytesIO(dash.view_jpeg(p)))
+    assert im.size == (240, 240)
+    assert np.asarray(im).max() > 200                    # stretched: the blob comes up bright
