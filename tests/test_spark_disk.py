@@ -28,16 +28,20 @@ def test_band_is_one_word():
 def test_the_spark_floors_come_from_the_machine_block(monkeypatch):
     """Pure on the overlay: CI runs with the config stubbed, so the live
     config.data() is not consulted here."""
+    import socket
+    import pytest
     from configs import config
+    if not hasattr(config, "_apply_machine_overrides"):
+        pytest.skip("CI runs with configs.config stubbed; the overlay is not there to test")
     cfg = {"disk": {"warn_free_gb": 100, "refuse_free_gb": 25},
            "machine": {"spark-3129": {"disk_warn_free_gb": 400, "disk_refuse_free_gb": 200,
                                       "stack_keep_days": 45},
                        "iris-pc": {"image_dir": "C:/x"}}}
-    monkeypatch.setattr(config.socket, "gethostname", lambda: "spark-3129")
+    monkeypatch.setattr(socket, "gethostname", lambda: "spark-3129")
     config._apply_machine_overrides(cfg)
     assert D.thresholds(cfg) == (400.0, 200.0) and cfg["disk"]["stack_keep_days"] == 45
     pc = {"disk": {"warn_free_gb": 100, "refuse_free_gb": 25}, "machine": cfg["machine"]}
-    monkeypatch.setattr(config.socket, "gethostname", lambda: "iris-pc")
+    monkeypatch.setattr(socket, "gethostname", lambda: "iris-pc")
     config._apply_machine_overrides(pc)
     assert D.thresholds(pc) == (100.0, 25.0) and "stack_keep_days" not in pc["disk"]
 
