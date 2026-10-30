@@ -64,8 +64,12 @@ Spark, `crontab -e` and add:
 
 PC: IrisMorningCheck 09:00 (`morning_check.cmd`), IrisNoonWatch 12:30
 (`noon_watch.cmd`), IrisConvergenceRefresh 09:15, IrisBackupState,
-IrisSkyMonitor and IrisAllSkyMonitor (every 5 min), IrisLiveSkymap,
-IrisForecastLog (hourly), IrisCIWatch (every 5 min), IrisSkysolveAuto.
+IrisSkyMonitor (every 5 min), IrisLiveSkymap, IrisLiveWatchdog (every
+15 min), IrisForecastLog (hourly), IrisCIWatch (every 5 min),
+IrisSkysolveAuto, IrisShadowReport, IrisMachineSnapshot (the
+`iris-machine` repo's `snapshot.bat`) and "start iris server"
+(`start_srt.bat`). There is no IrisAllSkyMonitor task, although
+`scripts/allsky_monitor.bat` exists (checked 2026-10-30).
 Spark cron: `morning_trigger.py` 06:30, `sync_state_to_spark.bsh` 11:40,
 `morning_watch.py` 10:00.
 
@@ -101,10 +105,11 @@ Each task's definition belongs in this folder so a rebuilt PC can recreate
 it. On the PC:
 
 ```
-for %t in (IrisMorningCheck IrisNoonWatch IrisConvergenceRefresh IrisBackupState IrisSkyMonitor IrisAllSkyMonitor IrisLiveSkymap IrisForecastLog IrisCIWatch IrisSkysolveAuto) do schtasks /Query /TN %t /XML > docs\tasks\%t.xml
+for %t in (IrisMorningCheck IrisNoonWatch IrisConvergenceRefresh IrisBackupState IrisSkyMonitor IrisLiveSkymap IrisLiveWatchdog IrisForecastLog IrisCIWatch IrisSkysolveAuto IrisShadowReport IrisMachineSnapshot) do schtasks /Query /TN %t /XML > docs\tasks\%t.xml
+schtasks /Query /TN "start iris server" /XML > docs\tasks\start_iris_server.xml
 ```
 
-then commit the XML files. Recreate one with
+then commit the XML files (UTF-16, as schtasks writes them). Recreate one with
 `schtasks /Create /TN IrisMorningCheck /XML docs\tasks\IrisMorningCheck.xml`.
 
 | Task | Script | When |
@@ -114,8 +119,8 @@ then commit the XML files. Recreate one with
 | IrisNoonWatch | scripts/noon_watch.cmd | 12:30 |
 | IrisBackupState | scripts/backup_state.cmd | daily |
 | IrisSkyMonitor | scripts/sky_monitor.bat | every 5 min |
-| IrisAllSkyMonitor | scripts/allsky_monitor.bat | every 5 min |
 | IrisLiveSkymap | scripts/live_skymap.bat | every few min |
+| IrisLiveWatchdog | scripts/live_watchdog.bat | every 15 min |
 | IrisForecastLog | scripts/forecast_log.bat | hourly |
 | IrisCIWatch | scripts/ci_watch.cmd | every 5 min |
 | IrisSkysolveAuto | scripts/skysolve_auto.cmd | nightly |

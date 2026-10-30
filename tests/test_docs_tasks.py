@@ -28,8 +28,12 @@ def test_pc_task_table_names_existing_scripts():
 def test_any_exported_task_xml_names_an_existing_script():
     for xml in (ROOT / "docs" / "tasks").glob("Iris*.xml"):
         text = xml.read_text(encoding="utf-16", errors="ignore") or xml.read_text(errors="ignore")
-        m = re.search(r"srt[\\/](scripts[\\/][\w.]+)", text)
-        assert m, xml.name
+        cmd = re.search(r"<Command>([^<]*)</Command>", text)
+        assert cmd, xml.name
+        # IrisMachineSnapshot runs the iris-machine repo's script, not ours
+        m = re.search(r"[\\/]srt[\\/]((?:scripts|apps)[\\/][\w.]+)", cmd.group(1))
+        if not m:
+            continue
         assert (ROOT / m.group(1).replace("\\", "/")).exists(), xml.name
 
 
