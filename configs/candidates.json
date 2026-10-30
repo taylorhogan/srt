@@ -1,0 +1,1164 @@
+{
+ "_doc": "Candidates for the queue (docs/AUTOMATION_PLAN.md E1, 2026-10-30): showpieces reachable from Boston, hand-curated so suggestions work in a SIMBAD outage. name is the queue key (`image <name>`); ra/dec J2000 degrees, size the long axis in arcminutes, kind one of nebula/snr/pn/reflection/galaxy/cluster, palette the morning render's likely recipe. Coordinates are for visibility scoring only: `image` resolves the name itself.",
+ "candidates": [
+  {
+   "name": "ngc7000",
+   "common": "North America Nebula",
+   "kind": "nebula",
+   "ra_deg": 314.7,
+   "dec_deg": 44.3,
+   "size_arcmin": 120,
+   "emission": [
+    "Ha",
+    "O-III",
+    "S-II"
+   ],
+   "palette": "SHO",
+   "note": "huge; the Cygnus Wall region fits the field"
+  },
+  {
+   "name": "ic5070",
+   "common": "Pelican Nebula",
+   "kind": "nebula",
+   "ra_deg": 313.4,
+   "dec_deg": 44.3,
+   "size_arcmin": 60,
+   "emission": [
+    "Ha",
+    "O-III",
+    "S-II"
+   ],
+   "palette": "SHO",
+   "note": "bright rims; next to NGC 7000"
+  },
+  {
+   "name": "ngc6960",
+   "common": "Western Veil (Witch's Broom)",
+   "kind": "snr",
+   "ra_deg": 312.8,
+   "dec_deg": 30.7,
+   "size_arcmin": 70,
+   "emission": [
+    "Ha",
+    "O-III"
+   ],
+   "palette": "HOO",
+   "note": "52 Cyg in the field; O-III rich"
+  },
+  {
+   "name": "ngc6992",
+   "common": "Eastern Veil",
+   "kind": "snr",
+   "ra_deg": 313.9,
+   "dec_deg": 31.7,
+   "size_arcmin": 60,
+   "emission": [
+    "Ha",
+    "O-III"
+   ],
+   "palette": "HOO",
+   "note": "the brightest arc of the Veil"
+  },
+  {
+   "name": "ic1805",
+   "common": "Heart Nebula",
+   "kind": "nebula",
+   "ra_deg": 38.2,
+   "dec_deg": 61.5,
+   "size_arcmin": 60,
+   "emission": [
+    "Ha",
+    "O-III",
+    "S-II"
+   ],
+   "palette": "SHO",
+   "note": "Melotte 15 is its core (already imaged)"
+  },
+  {
+   "name": "ic1848",
+   "common": "Soul Nebula",
+   "kind": "nebula",
+   "ra_deg": 44.0,
+   "dec_deg": 60.4,
+   "size_arcmin": 60,
+   "emission": [
+    "Ha",
+    "O-III",
+    "S-II"
+   ],
+   "palette": "SHO",
+   "note": "pairs with the Heart"
+  },
+  {
+   "name": "ic1795",
+   "common": "Fish Head Nebula",
+   "kind": "nebula",
+   "ra_deg": 38.0,
+   "dec_deg": 62.0,
+   "size_arcmin": 20,
+   "emission": [
+    "Ha",
+    "O-III",
+    "S-II"
+   ],
+   "palette": "SHO",
+   "note": "the Heart's bright tip"
+  },
+  {
+   "name": "ngc281",
+   "common": "Pacman Nebula",
+   "kind": "nebula",
+   "ra_deg": 13.2,
+   "dec_deg": 56.6,
+   "size_arcmin": 35,
+   "emission": [
+    "Ha",
+    "O-III",
+    "S-II"
+   ],
+   "palette": "SHO",
+   "note": "Bok globules; fits the field"
+  },
+  {
+   "name": "ngc7822",
+   "common": "NGC 7822 / Sh2-171",
+   "kind": "nebula",
+   "ra_deg": 1.0,
+   "dec_deg": 68.6,
+   "size_arcmin": 60,
+   "emission": [
+    "Ha",
+    "O-III",
+    "S-II"
+   ],
+   "palette": "SHO",
+   "note": "pillars and a dark lane"
+  },
+  {
+   "name": "sh2-155",
+   "common": "Cave Nebula",
+   "kind": "nebula",
+   "ra_deg": 344.3,
+   "dec_deg": 62.5,
+   "size_arcmin": 50,
+   "emission": [
+    "Ha",
+    "O-III",
+    "S-II"
+   ],
+   "palette": "SHO",
+   "note": "faint; O-III weak"
+  },
+  {
+   "name": "ngc7538",
+   "common": "NGC 7538",
+   "kind": "nebula",
+   "ra_deg": 348.6,
+   "dec_deg": 61.5,
+   "size_arcmin": 10,
+   "emission": [
+    "Ha",
+    "O-III",
+    "S-II"
+   ],
+   "palette": "SHO",
+   "note": "compact, bright; near the Bubble"
+  },
+  {
+   "name": "sh2-157",
+   "common": "Lobster Claw Nebula",
+   "kind": "nebula",
+   "ra_deg": 348.0,
+   "dec_deg": 60.3,
+   "size_arcmin": 60,
+   "emission": [
+    "Ha",
+    "O-III",
+    "S-II"
+   ],
+   "palette": "SHO",
+   "note": "beside the Bubble"
+  },
+  {
+   "name": "ngc1499",
+   "common": "California Nebula",
+   "kind": "nebula",
+   "ra_deg": 60.9,
+   "dec_deg": 36.6,
+   "size_arcmin": 160,
+   "emission": [
+    "Ha",
+    "O-III",
+    "S-II"
+   ],
+   "palette": "SHO",
+   "note": "very large; one bright edge fits"
+  },
+  {
+   "name": "ngc1491",
+   "common": "NGC 1491",
+   "kind": "nebula",
+   "ra_deg": 60.4,
+   "dec_deg": 51.3,
+   "size_arcmin": 9,
+   "emission": [
+    "Ha",
+    "O-III",
+    "S-II"
+   ],
+   "palette": "SHO",
+   "note": "small bright HII region"
+  },
+  {
+   "name": "ngc1579",
+   "common": "Northern Trifid",
+   "kind": "nebula",
+   "ra_deg": 67.8,
+   "dec_deg": 35.3,
+   "size_arcmin": 12,
+   "emission": [
+    "Ha",
+    "O-III",
+    "S-II"
+   ],
+   "palette": "HALRGB",
+   "note": "reflection and emission"
+  },
+  {
+   "name": "m42",
+   "common": "Orion Nebula",
+   "kind": "nebula",
+   "ra_deg": 83.8,
+   "dec_deg": -5.4,
+   "size_arcmin": 65,
+   "emission": [
+    "Ha",
+    "O-III",
+    "S-II"
+   ],
+   "palette": "HOO",
+   "note": "very bright core; short subs needed"
+  },
+  {
+   "name": "ngc2024",
+   "common": "Flame Nebula",
+   "kind": "nebula",
+   "ra_deg": 85.4,
+   "dec_deg": -1.9,
+   "size_arcmin": 30,
+   "emission": [
+    "Ha",
+    "O-III",
+    "S-II"
+   ],
+   "palette": "SHO",
+   "note": "beside Alnitak"
+  },
+  {
+   "name": "ic434",
+   "common": "Horsehead Nebula",
+   "kind": "nebula",
+   "ra_deg": 85.2,
+   "dec_deg": -2.4,
+   "size_arcmin": 60,
+   "emission": [
+    "Ha",
+    "O-III",
+    "S-II"
+   ],
+   "palette": "HOO",
+   "note": "Ha curtain with the dark head"
+  },
+  {
+   "name": "m78",
+   "common": "M 78",
+   "kind": "reflection",
+   "ra_deg": 86.7,
+   "dec_deg": 0.1,
+   "size_arcmin": 8,
+   "emission": [],
+   "palette": "LRGB",
+   "note": "reflection nebula; broadband"
+  },
+  {
+   "name": "ngc2264",
+   "common": "Cone / Christmas Tree",
+   "kind": "nebula",
+   "ra_deg": 100.2,
+   "dec_deg": 9.9,
+   "size_arcmin": 40,
+   "emission": [
+    "Ha",
+    "O-III",
+    "S-II"
+   ],
+   "palette": "SHO",
+   "note": "the Fox Fur is beside it"
+  },
+  {
+   "name": "ic443",
+   "common": "Jellyfish Nebula",
+   "kind": "snr",
+   "ra_deg": 94.2,
+   "dec_deg": 22.5,
+   "size_arcmin": 50,
+   "emission": [
+    "Ha",
+    "O-III"
+   ],
+   "palette": "HOO",
+   "note": "supernova remnant; O-III filaments"
+  },
+  {
+   "name": "ngc2174",
+   "common": "Monkey Head Nebula",
+   "kind": "nebula",
+   "ra_deg": 92.4,
+   "dec_deg": 20.5,
+   "size_arcmin": 40,
+   "emission": [
+    "Ha",
+    "O-III",
+    "S-II"
+   ],
+   "palette": "SHO",
+   "note": "bright HII region"
+  },
+  {
+   "name": "sh2-240",
+   "common": "Spaghetti Nebula (Simeis 147)",
+   "kind": "snr",
+   "ra_deg": 84.0,
+   "dec_deg": 27.8,
+   "size_arcmin": 200,
+   "emission": [
+    "Ha",
+    "O-III"
+   ],
+   "palette": "HOO",
+   "note": "vast and faint; a mosaic target"
+  },
+  {
+   "name": "ic2177",
+   "common": "Seagull Nebula",
+   "kind": "nebula",
+   "ra_deg": 106.9,
+   "dec_deg": -10.6,
+   "size_arcmin": 120,
+   "emission": [
+    "Ha",
+    "O-III",
+    "S-II"
+   ],
+   "palette": "SHO",
+   "note": "low; the head (vdB 93) fits"
+  },
+  {
+   "name": "ngc2359",
+   "common": "Thor's Helmet",
+   "kind": "nebula",
+   "ra_deg": 109.5,
+   "dec_deg": -13.2,
+   "size_arcmin": 8,
+   "emission": [
+    "Ha",
+    "O-III",
+    "S-II"
+   ],
+   "palette": "HOO",
+   "note": "Wolf-Rayet bubble; O-III bright; low"
+  },
+  {
+   "name": "m16",
+   "common": "Eagle Nebula",
+   "kind": "nebula",
+   "ra_deg": 274.7,
+   "dec_deg": -13.8,
+   "size_arcmin": 35,
+   "emission": [
+    "Ha",
+    "O-III",
+    "S-II"
+   ],
+   "palette": "SHO",
+   "note": "Pillars of Creation; low from Boston"
+  },
+  {
+   "name": "m17",
+   "common": "Omega / Swan Nebula",
+   "kind": "nebula",
+   "ra_deg": 275.2,
+   "dec_deg": -16.2,
+   "size_arcmin": 46,
+   "emission": [
+    "Ha",
+    "O-III",
+    "S-II"
+   ],
+   "palette": "SHO",
+   "note": "bright; low"
+  },
+  {
+   "name": "m8",
+   "common": "Lagoon Nebula",
+   "kind": "nebula",
+   "ra_deg": 270.9,
+   "dec_deg": -24.4,
+   "size_arcmin": 90,
+   "emission": [
+    "Ha",
+    "O-III",
+    "S-II"
+   ],
+   "palette": "SHO",
+   "note": "very low from Boston"
+  },
+  {
+   "name": "m27",
+   "common": "Dumbbell Nebula",
+   "kind": "pn",
+   "ra_deg": 299.9,
+   "dec_deg": 22.7,
+   "size_arcmin": 8,
+   "emission": [
+    "Ha",
+    "O-III"
+   ],
+   "palette": "HOO",
+   "note": "bright planetary; O-III shell"
+  },
+  {
+   "name": "ngc7293",
+   "common": "Helix Nebula",
+   "kind": "pn",
+   "ra_deg": 337.4,
+   "dec_deg": -20.8,
+   "size_arcmin": 25,
+   "emission": [
+    "Ha",
+    "O-III"
+   ],
+   "palette": "HOO",
+   "note": "low; O-III inner ring"
+  },
+  {
+   "name": "ngc6820",
+   "common": "NGC 6820 / Sh2-86",
+   "kind": "nebula",
+   "ra_deg": 295.8,
+   "dec_deg": 23.3,
+   "size_arcmin": 40,
+   "emission": [
+    "Ha",
+    "O-III",
+    "S-II"
+   ],
+   "palette": "SHO",
+   "note": "pillar; cluster NGC 6823"
+  },
+  {
+   "name": "m97",
+   "common": "Owl Nebula",
+   "kind": "pn",
+   "ra_deg": 168.7,
+   "dec_deg": 55.0,
+   "size_arcmin": 3.4,
+   "emission": [
+    "Ha",
+    "O-III"
+   ],
+   "palette": "HOO",
+   "note": "small; pairs with M 108 in one field"
+  },
+  {
+   "name": "abell21",
+   "common": "Medusa Nebula",
+   "kind": "pn",
+   "ra_deg": 112.4,
+   "dec_deg": 13.2,
+   "size_arcmin": 10,
+   "emission": [
+    "Ha",
+    "O-III"
+   ],
+   "palette": "HOO",
+   "note": "faint old planetary; O-III"
+  },
+  {
+   "name": "jones-emberson1",
+   "common": "Jones-Emberson 1",
+   "kind": "pn",
+   "ra_deg": 118.7,
+   "dec_deg": 53.4,
+   "size_arcmin": 6,
+   "emission": [
+    "Ha",
+    "O-III"
+   ],
+   "palette": "HOO",
+   "note": "faint planetary; O-III"
+  },
+  {
+   "name": "ic59",
+   "common": "Ghost of Cassiopeia (IC 59 / IC 63)",
+   "kind": "nebula",
+   "ra_deg": 14.9,
+   "dec_deg": 61.0,
+   "size_arcmin": 10,
+   "emission": [
+    "Ha",
+    "O-III",
+    "S-II"
+   ],
+   "palette": "HALRGB",
+   "note": "emission and reflection by gamma Cas"
+  },
+  {
+   "name": "ngc1931",
+   "common": "NGC 1931",
+   "kind": "nebula",
+   "ra_deg": 84.6,
+   "dec_deg": 34.2,
+   "size_arcmin": 3,
+   "emission": [
+    "Ha",
+    "O-III",
+    "S-II"
+   ],
+   "palette": "HALRGB",
+   "note": "small emission/reflection; near IC 410"
+  },
+  {
+   "name": "ngc7023",
+   "common": "Iris Nebula",
+   "kind": "reflection",
+   "ra_deg": 315.4,
+   "dec_deg": 68.2,
+   "size_arcmin": 18,
+   "emission": [],
+   "palette": "LRGB",
+   "note": "reflection; the observatory's namesake"
+  },
+  {
+   "name": "ngc7129",
+   "common": "NGC 7129",
+   "kind": "reflection",
+   "ra_deg": 326.1,
+   "dec_deg": 66.1,
+   "size_arcmin": 7,
+   "emission": [],
+   "palette": "LRGB",
+   "note": "reflection nebula and cluster"
+  },
+  {
+   "name": "ngc1333",
+   "common": "NGC 1333",
+   "kind": "reflection",
+   "ra_deg": 52.3,
+   "dec_deg": 31.4,
+   "size_arcmin": 6,
+   "emission": [],
+   "palette": "LRGB",
+   "note": "reflection; Herbig-Haro objects"
+  },
+  {
+   "name": "m45",
+   "common": "Pleiades",
+   "kind": "cluster",
+   "ra_deg": 56.8,
+   "dec_deg": 24.1,
+   "size_arcmin": 110,
+   "emission": [],
+   "palette": "LRGB",
+   "note": "reflection nebulosity; large"
+  },
+  {
+   "name": "ngc6914",
+   "common": "NGC 6914",
+   "kind": "reflection",
+   "ra_deg": 305.7,
+   "dec_deg": 42.3,
+   "size_arcmin": 10,
+   "emission": [],
+   "palette": "HALRGB",
+   "note": "blue reflection on Ha background"
+  },
+  {
+   "name": "sh2-132",
+   "common": "Lion Nebula",
+   "kind": "nebula",
+   "ra_deg": 335.5,
+   "dec_deg": 56.1,
+   "size_arcmin": 60,
+   "emission": [
+    "Ha",
+    "O-III",
+    "S-II"
+   ],
+   "palette": "SHO",
+   "note": "faint; S-II rich"
+  },
+  {
+   "name": "sh2-115",
+   "common": "Sh2-115",
+   "kind": "nebula",
+   "ra_deg": 314.1,
+   "dec_deg": 47.0,
+   "size_arcmin": 30,
+   "emission": [
+    "Ha",
+    "O-III",
+    "S-II"
+   ],
+   "palette": "SHO",
+   "note": "faint Cygnus HII region"
+  },
+  {
+   "name": "ngc6823",
+   "common": "NGC 6823 / Sh2-86",
+   "kind": "nebula",
+   "ra_deg": 295.8,
+   "dec_deg": 23.3,
+   "size_arcmin": 40,
+   "emission": [
+    "Ha",
+    "O-III",
+    "S-II"
+   ],
+   "palette": "SHO",
+   "note": "same field as NGC 6820"
+  },
+  {
+   "name": "ngc896",
+   "common": "NGC 896",
+   "kind": "nebula",
+   "ra_deg": 35.6,
+   "dec_deg": 62.0,
+   "size_arcmin": 20,
+   "emission": [
+    "Ha",
+    "O-III",
+    "S-II"
+   ],
+   "palette": "SHO",
+   "note": "the Heart's brightest knot"
+  },
+  {
+   "name": "vdb152",
+   "common": "vdB 152 / Barnard 175",
+   "kind": "reflection",
+   "ra_deg": 335.6,
+   "dec_deg": 70.2,
+   "size_arcmin": 10,
+   "emission": [],
+   "palette": "LRGB",
+   "note": "reflection on a dark nebula"
+  },
+  {
+   "name": "m31",
+   "common": "Andromeda Galaxy",
+   "kind": "galaxy",
+   "ra_deg": 10.7,
+   "dec_deg": 41.3,
+   "size_arcmin": 180,
+   "emission": [],
+   "palette": "HALRGB",
+   "note": "far larger than the field; core region"
+  },
+  {
+   "name": "ngc1023",
+   "common": "NGC 1023",
+   "kind": "galaxy",
+   "ra_deg": 40.1,
+   "dec_deg": 39.1,
+   "size_arcmin": 8,
+   "emission": [],
+   "palette": "LRGB",
+   "note": "barred lenticular"
+  },
+  {
+   "name": "m64",
+   "common": "Black Eye Galaxy",
+   "kind": "galaxy",
+   "ra_deg": 194.2,
+   "dec_deg": 21.7,
+   "size_arcmin": 10,
+   "emission": [],
+   "palette": "LRGB",
+   "note": "dust lane"
+  },
+  {
+   "name": "m66",
+   "common": "M 66 (Leo Triplet)",
+   "kind": "galaxy",
+   "ra_deg": 170.1,
+   "dec_deg": 13.0,
+   "size_arcmin": 9,
+   "emission": [],
+   "palette": "HALRGB",
+   "note": "with M 65 in one field"
+  },
+  {
+   "name": "m65",
+   "common": "M 65 (Leo Triplet)",
+   "kind": "galaxy",
+   "ra_deg": 169.7,
+   "dec_deg": 13.1,
+   "size_arcmin": 10,
+   "emission": [],
+   "palette": "LRGB",
+   "note": "with M 66"
+  },
+  {
+   "name": "m96",
+   "common": "M 96 (Leo I group)",
+   "kind": "galaxy",
+   "ra_deg": 161.7,
+   "dec_deg": 11.8,
+   "size_arcmin": 7,
+   "emission": [],
+   "palette": "LRGB",
+   "note": "with M 95"
+  },
+  {
+   "name": "m95",
+   "common": "M 95",
+   "kind": "galaxy",
+   "ra_deg": 161.0,
+   "dec_deg": 11.7,
+   "size_arcmin": 7,
+   "emission": [],
+   "palette": "LRGB",
+   "note": "barred spiral"
+  },
+  {
+   "name": "ngc3521",
+   "common": "NGC 3521",
+   "kind": "galaxy",
+   "ra_deg": 166.4,
+   "dec_deg": 0.0,
+   "size_arcmin": 11,
+   "emission": [],
+   "palette": "LRGB",
+   "note": "flocculent spiral with a shell"
+  },
+  {
+   "name": "ngc4631",
+   "common": "Whale Galaxy",
+   "kind": "galaxy",
+   "ra_deg": 190.5,
+   "dec_deg": 32.5,
+   "size_arcmin": 15,
+   "emission": [],
+   "palette": "HALRGB",
+   "note": "with NGC 4656 nearby"
+  },
+  {
+   "name": "ngc4656",
+   "common": "Hockey Stick Galaxy",
+   "kind": "galaxy",
+   "ra_deg": 191.0,
+   "dec_deg": 32.2,
+   "size_arcmin": 14,
+   "emission": [],
+   "palette": "LRGB",
+   "note": "with the Whale"
+  },
+  {
+   "name": "m104",
+   "common": "Sombrero Galaxy",
+   "kind": "galaxy",
+   "ra_deg": 190.0,
+   "dec_deg": -11.6,
+   "size_arcmin": 9,
+   "emission": [],
+   "palette": "LRGB",
+   "note": "low from Boston"
+  },
+  {
+   "name": "m109",
+   "common": "M 109",
+   "kind": "galaxy",
+   "ra_deg": 179.4,
+   "dec_deg": 53.4,
+   "size_arcmin": 7.6,
+   "emission": [],
+   "palette": "LRGB",
+   "note": "barred spiral"
+  },
+  {
+   "name": "m108",
+   "common": "M 108",
+   "kind": "galaxy",
+   "ra_deg": 167.9,
+   "dec_deg": 55.7,
+   "size_arcmin": 8.7,
+   "emission": [],
+   "palette": "LRGB",
+   "note": "with the Owl in one field"
+  },
+  {
+   "name": "ngc3344",
+   "common": "NGC 3344",
+   "kind": "galaxy",
+   "ra_deg": 160.9,
+   "dec_deg": 24.9,
+   "size_arcmin": 7,
+   "emission": [],
+   "palette": "HALRGB",
+   "note": "face-on spiral"
+  },
+  {
+   "name": "ngc3184",
+   "common": "NGC 3184",
+   "kind": "galaxy",
+   "ra_deg": 154.6,
+   "dec_deg": 41.4,
+   "size_arcmin": 7.4,
+   "emission": [],
+   "palette": "HALRGB",
+   "note": "face-on; HII regions"
+  },
+  {
+   "name": "ngc2683",
+   "common": "UFO Galaxy",
+   "kind": "galaxy",
+   "ra_deg": 133.2,
+   "dec_deg": 33.4,
+   "size_arcmin": 9,
+   "emission": [],
+   "palette": "LRGB",
+   "note": "edge-on"
+  },
+  {
+   "name": "ngc5866",
+   "common": "M 102 / Spindle",
+   "kind": "galaxy",
+   "ra_deg": 226.6,
+   "dec_deg": 55.8,
+   "size_arcmin": 5,
+   "emission": [],
+   "palette": "LRGB",
+   "note": "lenticular with a dust lane"
+  },
+  {
+   "name": "ngc6951",
+   "common": "NGC 6951",
+   "kind": "galaxy",
+   "ra_deg": 309.3,
+   "dec_deg": 66.1,
+   "size_arcmin": 4,
+   "emission": [],
+   "palette": "LRGB",
+   "note": "barred spiral; small"
+  },
+  {
+   "name": "ngc7479",
+   "common": "NGC 7479",
+   "kind": "galaxy",
+   "ra_deg": 346.2,
+   "dec_deg": 12.3,
+   "size_arcmin": 4,
+   "emission": [],
+   "palette": "LRGB",
+   "note": "barred spiral; small"
+  },
+  {
+   "name": "ngc7814",
+   "common": "NGC 7814",
+   "kind": "galaxy",
+   "ra_deg": 0.8,
+   "dec_deg": 16.1,
+   "size_arcmin": 5.5,
+   "emission": [],
+   "palette": "LRGB",
+   "note": "edge-on with a thin dust lane"
+  },
+  {
+   "name": "ngc660",
+   "common": "NGC 660",
+   "kind": "galaxy",
+   "ra_deg": 25.8,
+   "dec_deg": 13.6,
+   "size_arcmin": 8,
+   "emission": [],
+   "palette": "LRGB",
+   "note": "polar-ring galaxy"
+  },
+  {
+   "name": "ngc772",
+   "common": "NGC 772",
+   "kind": "galaxy",
+   "ra_deg": 29.8,
+   "dec_deg": 19.0,
+   "size_arcmin": 7,
+   "emission": [],
+   "palette": "LRGB",
+   "note": "one-armed spiral"
+  },
+  {
+   "name": "ic342",
+   "common": "IC 342",
+   "kind": "galaxy",
+   "ra_deg": 56.7,
+   "dec_deg": 68.1,
+   "size_arcmin": 21,
+   "emission": [],
+   "palette": "HALRGB",
+   "note": "face-on, behind the Milky Way dust"
+  },
+  {
+   "name": "ngc2976",
+   "common": "NGC 2976",
+   "kind": "galaxy",
+   "ra_deg": 146.8,
+   "dec_deg": 67.9,
+   "size_arcmin": 6,
+   "emission": [],
+   "palette": "LRGB",
+   "note": "M 81 group"
+  },
+  {
+   "name": "ngc4216",
+   "common": "NGC 4216",
+   "kind": "galaxy",
+   "ra_deg": 184.0,
+   "dec_deg": 13.2,
+   "size_arcmin": 8,
+   "emission": [],
+   "palette": "LRGB",
+   "note": "edge-on in Virgo"
+  },
+  {
+   "name": "ngc4559",
+   "common": "NGC 4559",
+   "kind": "galaxy",
+   "ra_deg": 189.0,
+   "dec_deg": 28.0,
+   "size_arcmin": 11,
+   "emission": [],
+   "palette": "HALRGB",
+   "note": "flocculent; HII regions"
+  },
+  {
+   "name": "ngc5248",
+   "common": "NGC 5248",
+   "kind": "galaxy",
+   "ra_deg": 204.4,
+   "dec_deg": 8.9,
+   "size_arcmin": 6,
+   "emission": [],
+   "palette": "LRGB",
+   "note": "grand design"
+  },
+  {
+   "name": "ngc4449",
+   "common": "NGC 4449",
+   "kind": "galaxy",
+   "ra_deg": 187.1,
+   "dec_deg": 44.1,
+   "size_arcmin": 6,
+   "emission": [],
+   "palette": "HALRGB",
+   "note": "irregular starburst; strong Ha"
+  },
+  {
+   "name": "ngc3310",
+   "common": "NGC 3310",
+   "kind": "galaxy",
+   "ra_deg": 159.7,
+   "dec_deg": 53.5,
+   "size_arcmin": 3,
+   "emission": [],
+   "palette": "LRGB",
+   "note": "starburst; small"
+  },
+  {
+   "name": "abell1656",
+   "common": "Coma Cluster",
+   "kind": "galaxy",
+   "ra_deg": 195.0,
+   "dec_deg": 28.0,
+   "size_arcmin": 60,
+   "emission": [],
+   "palette": "LRGB",
+   "note": "galaxy cluster; NGC 4921 is a member (queued)"
+  },
+  {
+   "name": "m87",
+   "common": "M 87",
+   "kind": "galaxy",
+   "ra_deg": 187.7,
+   "dec_deg": 12.4,
+   "size_arcmin": 8,
+   "emission": [],
+   "palette": "LRGB",
+   "note": "the jet needs short subs"
+  },
+  {
+   "name": "markarian",
+   "common": "Markarian's Chain",
+   "kind": "galaxy",
+   "ra_deg": 186.3,
+   "dec_deg": 12.9,
+   "size_arcmin": 90,
+   "emission": [],
+   "palette": "LRGB",
+   "note": "M 84, M 86 and the chain"
+  },
+  {
+   "name": "ngc5985",
+   "common": "NGC 5985 group",
+   "kind": "galaxy",
+   "ra_deg": 236.9,
+   "dec_deg": 59.3,
+   "size_arcmin": 6,
+   "emission": [],
+   "palette": "LRGB",
+   "note": "three galaxies, three types, one field"
+  },
+  {
+   "name": "ngc3077",
+   "common": "NGC 3077",
+   "kind": "galaxy",
+   "ra_deg": 150.8,
+   "dec_deg": 68.7,
+   "size_arcmin": 5,
+   "emission": [],
+   "palette": "LRGB",
+   "note": "M 81 group"
+  },
+  {
+   "name": "m5",
+   "common": "M 5",
+   "kind": "cluster",
+   "ra_deg": 229.6,
+   "dec_deg": 2.1,
+   "size_arcmin": 23,
+   "emission": [],
+   "palette": "LRGB",
+   "note": "globular"
+  },
+  {
+   "name": "m15",
+   "common": "M 15",
+   "kind": "cluster",
+   "ra_deg": 322.5,
+   "dec_deg": 12.2,
+   "size_arcmin": 18,
+   "emission": [],
+   "palette": "LRGB",
+   "note": "globular with a planetary inside"
+  },
+  {
+   "name": "m2",
+   "common": "M 2",
+   "kind": "cluster",
+   "ra_deg": 323.4,
+   "dec_deg": -0.8,
+   "size_arcmin": 16,
+   "emission": [],
+   "palette": "LRGB",
+   "note": "globular"
+  },
+  {
+   "name": "ngc7789",
+   "common": "Caroline's Rose",
+   "kind": "cluster",
+   "ra_deg": 359.3,
+   "dec_deg": 56.7,
+   "size_arcmin": 16,
+   "emission": [],
+   "palette": "LRGB",
+   "note": "rich open cluster"
+  },
+  {
+   "name": "ngc457",
+   "common": "Owl / ET Cluster",
+   "kind": "cluster",
+   "ra_deg": 19.6,
+   "dec_deg": 58.3,
+   "size_arcmin": 13,
+   "emission": [],
+   "palette": "LRGB",
+   "note": "open cluster"
+  },
+  {
+   "name": "m11",
+   "common": "Wild Duck Cluster",
+   "kind": "cluster",
+   "ra_deg": 282.8,
+   "dec_deg": -6.3,
+   "size_arcmin": 14,
+   "emission": [],
+   "palette": "LRGB",
+   "note": "rich open cluster; low"
+  },
+  {
+   "name": "m52",
+   "common": "M 52",
+   "kind": "cluster",
+   "ra_deg": 351.2,
+   "dec_deg": 61.6,
+   "size_arcmin": 13,
+   "emission": [],
+   "palette": "LRGB",
+   "note": "beside the Bubble"
+  },
+  {
+   "name": "ngc869",
+   "common": "Double Cluster",
+   "kind": "cluster",
+   "ra_deg": 34.9,
+   "dec_deg": 57.1,
+   "size_arcmin": 60,
+   "emission": [],
+   "palette": "LRGB",
+   "note": "NGC 869 and 884 in one field"
+  },
+  {
+   "name": "m35",
+   "common": "M 35",
+   "kind": "cluster",
+   "ra_deg": 92.2,
+   "dec_deg": 24.3,
+   "size_arcmin": 28,
+   "emission": [],
+   "palette": "LRGB",
+   "note": "with NGC 2158 in the field"
+  },
+  {
+   "name": "m37",
+   "common": "M 37",
+   "kind": "cluster",
+   "ra_deg": 88.1,
+   "dec_deg": 32.5,
+   "size_arcmin": 24,
+   "emission": [],
+   "palette": "LRGB",
+   "note": "rich open cluster"
+  },
+  {
+   "name": "m67",
+   "common": "M 67",
+   "kind": "cluster",
+   "ra_deg": 132.8,
+   "dec_deg": 11.8,
+   "size_arcmin": 30,
+   "emission": [],
+   "palette": "LRGB",
+   "note": "old open cluster; a colour-magnitude target"
+  },
+  {
+   "name": "ngc6939",
+   "common": "NGC 6939",
+   "kind": "cluster",
+   "ra_deg": 308.1,
+   "dec_deg": 60.7,
+   "size_arcmin": 7,
+   "emission": [],
+   "palette": "LRGB",
+   "note": "pairs with NGC 6946 (imaged) in one field"
+  }
+ ]
+}

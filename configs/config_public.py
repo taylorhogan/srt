@@ -6,7 +6,7 @@ class PublicConfig():
 
         },
         "version": {
-            "date": "2026.10.30.9"
+            "date": "2026.10.30.10"
         },
 
         "logger": {
@@ -593,6 +593,11 @@ class PublicConfig():
         #   approve/reject are recorded, the timer is not armed, nothing
         #   publishes; default) / "live" (D4 publishes on approval or timer)
         "publish": {"final_mode": "shadow", "auto_approve_days": 3, "gate": "shadow"},
+        # Queue suggestions (docs/AUTOMATION_PLAN.md E, 2026-10-30; the owner
+        # chose "suggest, owner approves"): scripts/suggest_targets.py scores
+        # configs/candidates.json over the next `nights` nights and posts the
+        # `top` on weekday 0 (Monday) at noon; `image <name>` queues one.
+        "suggest": {"top": 3, "weekday": 0, "catalogue": "configs/candidates.json", "nights": 30},
         "conductor": {
             "shadow_enabled": True,
             "port": 8096,

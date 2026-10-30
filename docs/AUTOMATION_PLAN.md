@@ -20,8 +20,11 @@ too** (`control/publish_gate`: the card through `utils/webchat_client`, the
 PC's decisions over ssh, `publish_article(replace=True)` between anchors,
 `site_push.py --yes` on the PC, `PUBLISH_DONE --retire`). The publishing
 path exists end to end, dormant until a target converges and the gate is
-live. Next: the auto-stop shadow week, then flip auto-stop live; flip the
-advisor to `default`; E1-E3; F1 shadow.
+live. **E1 built the same night** (`configs/candidates.json`, 92 showpieces;
+`control/suggest` scoring visibility x size x moon x season with the
+exclusions; `scripts/suggest_targets.py`). Next: the auto-stop shadow week,
+then flip auto-stop live; flip the advisor to `default`; E2 (the Monday
+card), E3 (the queue-field commands); F1 shadow.
 
 ## Context
 
