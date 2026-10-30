@@ -29,8 +29,12 @@ when SIMBAD cannot say). **E3 built too** (`hold`, `moon`, `maxhours`,
 / `set_status_db`, each journaled as a `QUEUE_FIELD` note). Phase E is
 complete. **F5 built too** (longest-waiting first, a 150-minute budget
 instead of the two-target cap). **F1 is on hold** (owner, 2026-10-30: no
-good luck with the NINA safety monitor). Next: the auto-stop shadow week,
-then flip auto-stop live; flip the advisor to `default`; F4.
+good luck with the NINA safety monitor). **F4 built** (docs/HANDBOOK.md,
+docs/SUCCESSION.md, docs/tasks/spark_crontab.txt, the task table and the
+export command in docs/tasks/README.md, tests/test_docs_tasks.py). The
+plan is complete apart from F1 (on hold) and F2 (the owner's decision).
+Next: the auto-stop shadow week, then flip auto-stop live; flip the
+advisor to `default`; the first converged target end to end.
 
 ## Context
 

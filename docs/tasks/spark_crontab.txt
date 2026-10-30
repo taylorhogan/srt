@@ -1,0 +1,20 @@
+# The Spark's crontab as of 2026-10-30 (docs/AUTOMATION_PLAN.md F4). Restore with: crontab docs/tasks/spark_crontab.txt
+# m h  dom mon dow   command
+
+# 2026-08-21: transit search removed from cron (run scripts/spark_transit_search.py --auto by hand).
+
+# 2026-10-09: the Targets sync and the morning render are no longer on fixed
+# times. The panel flats follow whenever imaging stops rather than the clock --
+# the sessions on record finished anywhere between 04:43 and 07:19 -- so a fixed
+# sync missed them for a whole day and the render always stacked against the
+# previous session's flats. morning_trigger.py polls until the flats have gone
+# quiet, then runs the sync and the render in order. Deadline 09:30, after
+# which it proceeds anyway and says so. Log: /tmp/morning_trigger.log
+30 6 * * * /home/taylor/Documents/srt/scripts/morning_trigger.py
+
+
+# 2026-09-25: observatory state backup — after the PC's 11:23 IrisBackupState zip.
+40 11 * * * /home/taylor/Documents/srt/scripts/sync_state_to_spark.bsh
+0 10 * * * /home/taylor/Documents/srt/scripts/morning_watch.py >> /tmp/morning_watch.log 2>&1
+*/15 8-22 * * * /home/taylor/Documents/srt/scripts/publish_poll.py >> /tmp/publish_poll.log 2>&1
+30 12 * * 1 /home/taylor/Documents/srt/scripts/suggest_targets.py --post >> /tmp/suggest.log 2>&1

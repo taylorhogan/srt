@@ -94,3 +94,32 @@ E2): the top three candidates from configs/candidates.json with reasons and
 ```
 
 The chat `suggest [N]` command answers the same on demand from the PC.
+
+## Exporting the PC's tasks (F4) -- do this after creating or changing one
+
+Each task's definition belongs in this folder so a rebuilt PC can recreate
+it. On the PC:
+
+```
+for %t in (IrisMorningCheck IrisNoonWatch IrisConvergenceRefresh IrisBackupState IrisSkyMonitor IrisAllSkyMonitor IrisLiveSkymap IrisForecastLog IrisCIWatch IrisSkysolveAuto) do schtasks /Query /TN %t /XML > docs\tasks\%t.xml
+```
+
+then commit the XML files. Recreate one with
+`schtasks /Create /TN IrisMorningCheck /XML docs\tasks\IrisMorningCheck.xml`.
+
+| Task | Script | When |
+|---|---|---|
+| IrisMorningCheck | scripts/morning_check.cmd | 09:00 |
+| IrisConvergenceRefresh | scripts/convergence_refresh.cmd | 09:15 |
+| IrisNoonWatch | scripts/noon_watch.cmd | 12:30 |
+| IrisBackupState | scripts/backup_state.cmd | daily |
+| IrisSkyMonitor | scripts/sky_monitor.bat | every 5 min |
+| IrisAllSkyMonitor | scripts/allsky_monitor.bat | every 5 min |
+| IrisLiveSkymap | scripts/live_skymap.bat | every few min |
+| IrisForecastLog | scripts/forecast_log.bat | hourly |
+| IrisCIWatch | scripts/ci_watch.cmd | every 5 min |
+| IrisSkysolveAuto | scripts/skysolve_auto.cmd | nightly |
+
+The Spark's crontab is docs/tasks/spark_crontab.txt (`crontab -l` pasted;
+restore with `crontab docs/tasks/spark_crontab.txt`). tests/test_docs_tasks.py
+checks that every script named in either exists.
