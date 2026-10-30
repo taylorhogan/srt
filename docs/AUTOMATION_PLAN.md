@@ -12,9 +12,12 @@ the PC's golden stacks). Phase C is complete. **D1 built the same evening**
 journaled through the PC; nothing published). **D2 built the same night**
 (`scripts/publish_prepare.py`: the astro_output folder, `fallback_writeup`
 when there is no API key, `draft.json` gating astro_output's own publish
-path, `local/publish_queue/<dso>.json` with the auto-publish date). Next:
-the auto-stop shadow week, then flip auto-stop live; flip the advisor to
-`default`; D3 (the card and `approve`/`reject`), D4.
+path, `local/publish_queue/<dso>.json` with the auto-publish date). **D3 built
+too** (`control/publish_gate`: the card through `utils/webchat_client`, the
+`DRAFT_READY` note through the PC, `approve`/`reject`/`drafts` writing
+`local/publish_decisions.json` by draft hash, `publish.gate = shadow`).
+Next: the auto-stop shadow week, then flip auto-stop live; flip the advisor
+to `default`; D4 (the Spark's publish poll).
 
 ## Context
 

@@ -6,7 +6,7 @@ class PublicConfig():
 
         },
         "version": {
-            "date": "2026.10.30.7"
+            "date": "2026.10.30.8"
         },
 
         "logger": {
@@ -589,7 +589,10 @@ class PublicConfig():
         #   "off"    -- no final renders
         #   auto_approve_days: a draft nobody answers publishes itself after
         #   this many days (D3; only once publish.gate is live)
-        "publish": {"final_mode": "shadow", "auto_approve_days": 3},
+        #   gate: "off" (no cards, no timer) / "shadow" (the card is posted,
+        #   approve/reject are recorded, the timer is not armed, nothing
+        #   publishes; default) / "live" (D4 publishes on approval or timer)
+        "publish": {"final_mode": "shadow", "auto_approve_days": 3, "gate": "shadow"},
         "conductor": {
             "shadow_enabled": True,
             "port": 8096,

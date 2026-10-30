@@ -555,6 +555,25 @@ HELP: dict[str, dict] = {
                   "On a waiting target the command only sets the hold. `completed` (dbc) is "
                   "not undone here; `image <dso>` queues it again."],
     },
+    "approve": {
+        "category": "super",
+        "summary": "Approve a publish draft (the card the Spark posted) for the site.",
+        "usage": ["approve <dso>"],
+        "examples": ["approve ic410"],
+        "notes": ["The approve names the draft's hash; a draft re-rendered since needs a fresh approve.",
+                  "With publish.gate = shadow the decision is recorded and nothing publishes."],
+    },
+    "reject": {
+        "category": "super",
+        "summary": "Reject a publish draft; a re-render with new frames makes a fresh one.",
+        "usage": ["reject <dso> [why]"],
+        "examples": ["reject ic410 stars too red"],
+    },
+    "drafts": {
+        "category": "super",
+        "summary": "List the publish drafts awaiting a decision and what would happen to each.",
+        "usage": ["drafts"],
+    },
     "live": {
         "category": "super",
         "summary": "Post TWO no-light sky views from the scope-top webcam (same "

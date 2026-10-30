@@ -73,6 +73,9 @@ Restricted to super users. These control observatory hardware and the imaging pi
 | `dbr` | Rehash the imaging queue and regenerate the instructions table | `dbr` |
 | `dbd <id>` | Delete an entry from the imaging queue by ID | `dbd 17` |
 | `dbc <id>` | Mark an imaging queue entry as completed | `dbc 17` |
+| `approve <dso>` | Approve the Spark's publish draft for the site (by its hash; nothing publishes while `publish.gate` is `shadow`) | `approve ic410` |
+| `reject <dso> [why]` | Reject the draft; a re-render makes a fresh one | `reject ic410 stars too red` |
+| `drafts` | The drafts awaiting a decision | `drafts` |
 | `reopen <dso> [for N]` | Undo auto-stop: a `converged` target back to `waiting`, auto-stop off it for N nights (default 7) | `reopen ngc1961 for 3` |
 | `dbb` | Rebuild the imaging queue from scratch (rehash + recreate table) | `dbb` |
 | `prioritize [dso]` | Give a DSO top scheduling priority, or reset all to equal priority | `prioritize ngc 7331` |

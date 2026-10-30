@@ -409,6 +409,14 @@ def run_finals(subs: Path, exptime: int, log=log) -> int:
             "file": (rec or {}).get("file"), "sha256": (rec or {}).get("sha256"),
             "qc_pass": bool(qc.get("pass")), "qc_reasons": qc.get("reasons") or [], "mode": mode})
         log(f"  RENDER_DONE {'journaled' if posted else 'NOT journaled (PC unreachable)'}")
+        if ok and not qc.get("pass"):
+            # D3: a card asking for a hand; no timer is armed for it.
+            try:
+                from control import publish_gate
+                from utils.webchat_client import post_to_webchat
+                post_to_webchat(publish_gate.fail_card_text(dso, recipe, qc))
+            except Exception as exc:  # noqa: BLE001
+                log(f"  fail card not posted: {exc}")
         if ok and qc.get("pass"):
             # D2: the publish inputs (folder, subs, stats, draft article, the
             # queue record). Files only; nothing is published.

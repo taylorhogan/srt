@@ -17,7 +17,9 @@ spark_morning_render's final render passes render_qc. It:
    the folder, which gates astro_output's own publish path until approved,
    and local/publish_queue/<dso>.json for the card and the poll (D3, D4):
    {dso, recipe, product, folder, image, draft_hash, article_source,
-    posted_at, auto_publish_on, status: pending | on_site}.
+    posted_at, auto_publish_on, status: pending | on_site};
+4. (D3) posts the card to the web chat (control/publish_gate.card_text) and
+   journals DRAFT_READY through the PC, so `approve <dso>` knows the hash.
 
 Nothing is published here, whatever the config says.
 """
@@ -67,7 +69,7 @@ def queue_record(dso: str, final: dict, result: dict, folder: Path, image: Path,
 
 def prepare(dso: str, final_json: Optional[Path] = None, folder: Optional[Path] = None,
             force: bool = False, days: int = DEFAULT_AUTO_DAYS, now: Optional[datetime] = None,
-            handle=None, log: Callable[[str], None] = print) -> dict:
+            handle=None, log: Callable[[str], None] = print, announce: bool = True) -> dict:
     """Steps 1-3 for one target. -> the queue record (also written)."""
     from scripts import astro_output as ao
     handle = handle or ao.handle_image
@@ -107,7 +109,64 @@ def prepare(dso: str, final_json: Optional[Path] = None, folder: Optional[Path] 
     _write_queue(rec)
     log(f"{key}: {rec['status']}" + (f" (draft {dhash[:12]}, {rec['article_source']}; auto-publishes "
                                       f"{rec['auto_publish_on']} once the gate is live)" if dhash else ""))
+    if dhash and announce:
+        announce_draft(rec, out_dir, log)
     return rec
+
+
+def card_image(image: Path, out_dir: Path, max_px: int = 1600) -> Path:
+    """A copy of the picture small enough for the chat card."""
+    from PIL import Image
+    im = Image.open(image).convert("RGB")
+    if max(im.size) > max_px:
+        r = max_px / max(im.size)
+        im = im.resize((max(1, int(im.width * r)), max(1, int(im.height * r))), Image.LANCZOS)
+    p = Path(out_dir) / f"{image.stem}_card.jpg"
+    im.save(p, quality=88, optimize=True)
+    return p
+
+
+def announce_draft(rec: dict, out_dir: Path, log: Callable[[str], None] = print) -> dict:
+    """D3: the card in the chat (utils/webchat_client, over the Tailnet) and the
+    DRAFT_READY note in the conductor's journal through the PC
+    (spark_morning_render.post_pc_event), which is how `approve` learns the
+    hash. Neither failing stops the other; the record is already on disk."""
+    out: dict = {"card": False, "note": False}
+    try:
+        from control import publish_gate
+        from configs import config
+        gate = publish_gate.gate_mode(config.data())
+    except Exception:  # noqa: BLE001
+        from control import publish_gate
+        gate = publish_gate.DEFAULT_GATE
+    if gate == "off":
+        log("  gate off: no card, no note")
+        return out
+    try:
+        art = json.loads((Path(out_dir) / "article.json").read_text())
+        facts = json.loads((Path(out_dir) / "article_request.json").read_text())
+    except (OSError, ValueError) as exc:
+        log(f"  card: cannot read the draft ({exc})")
+        return out
+    text = publish_gate.card_text(rec, art, facts, gate)
+    try:
+        from utils.webchat_client import post_to_webchat
+        pic = card_image(Path(rec["image"]), out_dir)
+        out["card"] = bool(post_to_webchat(text, pic))
+        log(f"  card: {'posted' if out['card'] else 'NOT posted'}")
+    except Exception as exc:  # noqa: BLE001
+        log(f"  card failed: {exc}")
+    try:
+        from scripts import spark_morning_render as smr
+        out["note"] = smr.post_pc_event(publish_gate.DRAFT_EVENT, {
+            "dso": rec["dso"], "recipe": rec.get("recipe"), "product": rec.get("product"),
+            "draft_hash": rec.get("draft_hash"), "article_source": rec.get("article_source"),
+            "auto_publish_on": rec.get("auto_publish_on"), "title": art.get("title"),
+            "folder": rec.get("folder"), "image": rec.get("image"), "gate": gate})
+        log(f"  DRAFT_READY {'journaled' if out['note'] else 'NOT journaled (PC unreachable)'}")
+    except Exception as exc:  # noqa: BLE001
+        log(f"  DRAFT_READY failed: {exc}")
+    return out
 
 
 def _write_queue(rec: dict) -> Path:

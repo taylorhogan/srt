@@ -1901,7 +1901,8 @@ def get_mode() -> str:
         pass
     return "manual"
 
-_SCRIPTS_DIR = os.path.join(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')), "scripts")
+_PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+_SCRIPTS_DIR = os.path.join(_PROJECT_ROOT, "scripts")
 
 
 def _kill_nina() -> None:
@@ -2063,6 +2064,73 @@ def reopen_cmd(words: list[str], account: str) -> None:
     else:
         social_server.post_social_message(
             f"{dso_name} is {status or 'waiting'}; auto-stop leaves it alone for {span}.")
+
+
+def _publish_decide(words: list[str], account: str, decision: str) -> None:
+    """approve <dso> / reject <dso> [why] (D3): record the owner's decision on
+    the draft the Spark journaled (DRAFT_READY), by its hash, and journal it."""
+    from control import publish_gate
+    args = words[2:]
+    if not args:
+        social_server.post_social_message(f"Usage: {decision} <dso>" + (" [why]" if decision == "reject" else ""))
+        return
+    root = _PROJECT_ROOT
+    drafts = publish_gate.read_journal_drafts(root)
+    # the name is the leading tokens that match a known draft, the rest is the why
+    key, why = None, ""
+    for n in range(len(args), 0, -1):
+        cand = "".join(args[:n]).lower()
+        if cand in drafts:
+            key, why = cand, " ".join(args[n:])
+            break
+    if key is None:
+        key = "".join(args[:1]).lower()
+        why = " ".join(args[1:])
+    d = drafts.get(key)
+    if d is None:
+        social_server.post_social_message(
+            f"{key}: no draft awaiting a decision (the Spark journals DRAFT_READY when one is ready; `drafts` lists them)")
+        return
+    gate = publish_gate.gate_mode(config.data())
+    entry = publish_gate.record_decision(os.path.join(root, publish_gate.DECISIONS_FILE), key, decision,
+                                         d.get("draft_hash"), account, why)
+    try:
+        from iris import client as conductor
+        conductor.post_event(publish_gate.APPROVED_EVENT if decision == "approve" else publish_gate.REJECTED_EVENT,
+                             "operator", {"dso": key, "draft_hash": d.get("draft_hash"), "by": account, "why": why},
+                             kind="note")
+    except Exception:
+        _logger.exception("%s: journal note failed", decision)
+    if decision == "approve":
+        social_server.post_social_message(
+            f"{key} approved (draft {str(d.get('draft_hash') or '')[:12]}, {d.get('recipe')} {d.get('product')}). "
+            + ("The Spark publishes it on its next poll." if gate == "live"
+               else f"Gate is {gate}: recorded, nothing publishes until publish.gate = live."))
+    else:
+        social_server.post_social_message(
+            f"{key} rejected (draft {str(d.get('draft_hash') or '')[:12]})" + (f": {why}" if why else "")
+            + ". A re-render with new frames makes a fresh draft and a fresh card.")
+
+
+def approve_cmd(words: list[str], account: str) -> None:
+    """Approve a draft for publishing. Usage: approve <dso>"""
+    _publish_decide(words, account, "approve")
+
+
+def reject_cmd(words: list[str], account: str) -> None:
+    """Reject a draft. Usage: reject <dso> [why]"""
+    _publish_decide(words, account, "reject")
+
+
+def drafts_cmd(words: list[str], account: str) -> None:
+    """The drafts awaiting a decision, with what would happen to each. Usage: drafts"""
+    from control import publish_gate
+    root = _PROJECT_ROOT
+    gate = publish_gate.gate_mode(config.data())
+    lines = publish_gate.drafts_lines(publish_gate.read_journal_drafts(root),
+                                      publish_gate.load_decisions(os.path.join(root, publish_gate.DECISIONS_FILE)),
+                                      datetime.now().date(), gate)
+    social_server.post_social_message(f"Drafts (gate: {gate}):\n" + "\n".join("  " + ln for ln in lines))
 
 
 def announce_cmd(words: list[str], account: str) -> None:
@@ -3927,6 +3995,9 @@ def get_super_user_commands() -> dict[str, Callable]:
         "dbd": dbd_cmd,
         "dbc": dbc_cmd,
         "reopen": reopen_cmd,
+        "approve": approve_cmd,
+        "reject": reject_cmd,
+        "drafts": drafts_cmd,
         "dbb": dbb_cmd,
         "image!!": image_cmd,
         "roof!!": roof_cmd,
