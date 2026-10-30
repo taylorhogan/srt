@@ -9,8 +9,12 @@ auto-stop hold; `image` stores `obj_type`; the emission level measured on
 the PC's golden stacks). Phase C is complete. **D1 built the same evening**
 (`publish.final_mode = shadow`: a converged target's final render with
 `render_qc`, `final.json`, the picture pushed with the verdict, RENDER_DONE
-journaled through the PC; nothing published). Next: the auto-stop shadow
-week, then flip auto-stop live; flip the advisor to `default`; D2.
+journaled through the PC; nothing published). **D2 built the same night**
+(`scripts/publish_prepare.py`: the astro_output folder, `fallback_writeup`
+when there is no API key, `draft.json` gating astro_output's own publish
+path, `local/publish_queue/<dso>.json` with the auto-publish date). Next:
+the auto-stop shadow week, then flip auto-stop live; flip the advisor to
+`default`; D3 (the card and `approve`/`reject`), D4.
 
 ## Context
 

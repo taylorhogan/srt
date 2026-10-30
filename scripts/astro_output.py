@@ -497,6 +497,80 @@ def article_facts(dso: str, recipe: Optional[str], image: Path, subs: dict,
 
 ARTICLE_FIELDS = ("title", "distance_ly", "distance_text", "type_text", "alt",
                   "paragraphs", "time_travel_title", "time_travel")
+DISTANCES_FILE = _ROOT / "local" / "dso_distances.json"     # {dso: light years}, hand-kept
+
+
+def known_distance(dso: str, distances: Optional[dict] = None) -> Optional[int]:
+    """A light-year distance from local/dso_distances.json (or *distances*), else None."""
+    try:
+        table = distances if distances is not None else json.loads(DISTANCES_FILE.read_text())
+        v = table.get(squash(dso)) or table.get(dso.lower())
+        return int(v) if v else None
+    except (OSError, ValueError, TypeError, AttributeError):
+        return None
+
+
+def distance_text(ly: Optional[int]) -> str:
+    """'~70 MILLION LIGHT YEARS' / '~2,300 LIGHT YEARS' / '' for none."""
+    if not ly:
+        return ""
+    if ly >= 1_000_000_000:
+        return f"~{ly / 1e9:g} BILLION LIGHT YEARS"
+    if ly >= 1_000_000:
+        return f"~{ly / 1e6:g} MILLION LIGHT YEARS"
+    return f"~{ly:,} LIGHT YEARS"
+
+
+def fallback_writeup(facts: dict, distances: Optional[dict] = None) -> dict:
+    """A complete, facts-only article when no model can write one (D2 of
+    docs/AUTOMATION_PLAN.md, 2026-10-30): every ARTICLE_FIELDS key filled from
+    the measured facts and the catalogue type, nothing invented. It reads
+    plainly, which the card says; the key, when present, replaces it with
+    prose. The distance comes from local/dso_distances.json when the owner
+    has recorded one, else the meta line says so and the light-travel box is
+    left out (build_fragment omits an empty box).
+    """
+    name = facts.get("name") or display_name(facts.get("dso", ""))
+    kind = str(facts.get("object_type") or "unknown").split(" (")[0]
+    type_text = {"galaxy": "GALAXY", "nebula": "EMISSION NEBULA", "star cluster": "STAR CLUSTER"}.get(
+        kind, "DEEP-SKY OBJECT")
+    ly = known_distance(facts.get("dso", ""), distances)
+    filters = facts.get("filters") or {}
+    parts = []
+    for f, groups in filters.items():
+        used = sum(int(g.get("used") or 0) for g in groups)
+        if used:
+            parts.append(f"{used} {f}")
+    frames_line = ", ".join(parts) if parts else "the frames on record"
+    hours, nights = facts.get("hours"), facts.get("nights") or []
+    processing = facts.get("processing") or []
+    recipe = facts.get("recipe") or ""
+    p1 = (f"{name} is a {kind if kind != 'unknown' else 'deep-sky object'} imaged by Iris, a small "
+          f"robotic observatory. The picture is built from {frames_line} exposures of "
+          f"{int(next(iter(filters.values()))[0]['exptime']) if filters and filters[next(iter(filters))] else 300} "
+          f"seconds each" + (f", {hours} hours in all over {nights_phrase(len(nights))}" if hours else "") + ".")
+    p2 = (f"The channels were combined as {recipe}" if recipe else "The channels were combined") + (
+        ", then " + " and ".join(processing) if processing else "") +         ". This entry was written from the measured facts alone; a fuller description will follow."
+    tt_title = f"On Earth: {distance_text(ly).replace('~', '~').replace(' LIGHT YEARS', ' Years Ago').title()}" if ly else ""
+    tt = (f"The light in this picture left {name} about {distance_text(ly).replace('~', '').lower()} ago."
+          if ly else "")
+    return {"title": f"{squash(facts.get('dso', '')).upper()} - {type_text.title()}",
+            "distance_ly": ly or 0, "distance_text": distance_text(ly) or "NOT ON RECORD",
+            "type_text": type_text,
+            "alt": f"{name}, imaged by Iris" + (f" in {recipe}" if recipe else ""),
+            "paragraphs": [p1, p2], "time_travel_title": tt_title, "time_travel": tt,
+            "source": "fallback"}
+
+
+def draft_hash(article: dict, image_bytes: bytes) -> str:
+    """What an approval refers to: the article as written plus the picture.
+    An edit to either makes a new draft that needs a fresh approve."""
+    import hashlib
+    h = hashlib.sha256()
+    h.update(json.dumps({k: article[k] for k in ARTICLE_FIELDS if k in article},
+                        sort_keys=True).encode("utf-8"))
+    h.update(image_bytes)
+    return h.hexdigest()
 
 
 def writeup_prompt(facts: dict, examples: list[str]) -> tuple[str, str]:
@@ -633,6 +707,13 @@ def build_fragment(art: dict, facts: dict, image_name: str, date: str) -> str:
     paras = "\n\n".join(
         f'                <p class="science-text">\n                    {md_links(e(p.strip()))}\n                </p>'
         for p in art["paragraphs"])
+    box = (f"""
+                <div class="time-travel-box">
+                    <span class="time-travel-title">{e(art['time_travel_title'])}</span>
+                    <p>
+                        {e(art['time_travel'].strip())}
+                    </p>
+                </div>""" if (art.get("time_travel") or "").strip() else "")
     return f"""        <!-- {e(facts['name'])} -->
         <article id="{aid}" class="dso-section" data-added="{date}" data-distance-ly="{int(art['distance_ly'])}">
             <div class="dso-image-container">
@@ -643,13 +724,7 @@ def build_fragment(art: dict, facts: dict, image_name: str, date: str) -> str:
                 <div class="dso-meta">{meta}</div>
 
 {paras}
-
-                <div class="time-travel-box">
-                    <span class="time-travel-title">{e(art['time_travel_title'])}</span>
-                    <p>
-                        {e(art['time_travel'].strip())}
-                    </p>
-                </div>
+{box}
             </div>
         </article>
 """
@@ -714,8 +789,14 @@ def new_images(folder: Path) -> list[Path]:
 
 
 def handle_image(image: Path, folder: Path, publish: bool = True, push: bool = True,
-                 log: Callable[[str], None] = print) -> dict:
-    """Steps 1-4 of the module doc for one new image. Returns what was made."""
+                 log: Callable[[str], None] = print, draft_only: bool = False) -> dict:
+    """Steps 1-4 of the module doc for one new image. Returns what was made.
+
+    *draft_only* (D2): write article.json -- the model's write-up, else
+    fallback_writeup -- and stop; nothing reaches the site. result["article"]
+    is "draft" and result["article_source"] says who wrote it. The folder is
+    then gated by draft.json (scripts/publish_prepare) until approved.
+    """
     dso, recipe = parse_image_name(image.name)
     out_dir = Path(folder) / dso
     out_dir.mkdir(exist_ok=True)
@@ -782,6 +863,18 @@ def handle_image(image: Path, folder: Path, publish: bool = True, push: bool = T
     facts = article_facts(dso, recipe, dest, subs, aliases, site_notes(html, dso))
     (out_dir / "article_request.json").write_text(json.dumps(facts, indent=1))
     art = generate_writeup(facts, dest, site_examples(html), log)
+    if draft_only:
+        source = "api"
+        if art is None:
+            art = fallback_writeup(facts)
+            source = "fallback"
+            log("  write-up: facts-only fallback (no model); the card will say so")
+        art = dict(art, source=source)
+        (out_dir / "article.json").write_text(json.dumps(art, indent=1))
+        result["article"], result["article_source"] = "draft", source
+        result["facts"] = facts
+        log(f"  draft written: {out_dir / 'article.json'} ({source})")
+        return result
     if art is None:
         (out_dir / "article_request.json").write_text(json.dumps(facts, indent=1))
         log(f"  article pending: write {out_dir / 'article.json'} with keys {ARTICLE_FIELDS} "
@@ -800,6 +893,17 @@ def pending_articles(folder: Path, push: bool = True, log: Callable[[str], None]
         aj, rq = d / "article.json", d / "article_request.json"
         if not aj.exists() or not rq.exists() or (d / "article_published.json").exists():
             continue
+        gate = d / "draft.json"
+        if gate.exists():
+            # A draft the pipeline made (scripts/publish_prepare): it publishes
+            # only once approved (`approve <dso>`, or the timer), by D4's poll.
+            try:
+                status = json.loads(gate.read_text()).get("status")
+            except (OSError, ValueError):
+                status = "unreadable"
+            if status != "approved":
+                log(f"{d.name}: draft {status}; awaiting `approve {d.name}` -- not published")
+                continue
         art, facts = json.loads(aj.read_text()), json.loads(rq.read_text())
         missing = [k for k in ARTICLE_FIELDS if k not in art]
         if missing:

@@ -409,6 +409,15 @@ def run_finals(subs: Path, exptime: int, log=log) -> int:
             "file": (rec or {}).get("file"), "sha256": (rec or {}).get("sha256"),
             "qc_pass": bool(qc.get("pass")), "qc_reasons": qc.get("reasons") or [], "mode": mode})
         log(f"  RENDER_DONE {'journaled' if posted else 'NOT journaled (PC unreachable)'}")
+        if ok and qc.get("pass"):
+            # D2: the publish inputs (folder, subs, stats, draft article, the
+            # queue record). Files only; nothing is published.
+            pp = subprocess.run([sys.executable, os.path.join(_root, "scripts", "publish_prepare.py"), dso],
+                                capture_output=True, text=True)
+            for line in (pp.stdout or "").splitlines()[-6:]:
+                log(f"  | {line}")
+            if pp.returncode != 0:
+                log(f"  publish_prepare rc={pp.returncode}: {(pp.stderr or '')[-300:]}")
     return failed
 
 

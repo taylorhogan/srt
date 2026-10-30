@@ -6,7 +6,7 @@ class PublicConfig():
 
         },
         "version": {
-            "date": "2026.10.30.6"
+            "date": "2026.10.30.7"
         },
 
         "logger": {
@@ -587,7 +587,9 @@ class PublicConfig():
         #               <dso>/final/final.json) and the picture is pushed with
         #               the QC verdict; nothing is published (default)
         #   "off"    -- no final renders
-        "publish": {"final_mode": "shadow"},
+        #   auto_approve_days: a draft nobody answers publishes itself after
+        #   this many days (D3; only once publish.gate is live)
+        "publish": {"final_mode": "shadow", "auto_approve_days": 3},
         "conductor": {
             "shadow_enabled": True,
             "port": 8096,
