@@ -1686,6 +1686,73 @@ def auto_stretch_v2(subbed: dict[str, np.ndarray], cls: str = "broadband",
             "why": why, "targets": t, "dominant": dom, "fm": fm}
 
 
+# ------------------------------------------------------------------ render QC (D1)
+# docs/AUTOMATION_PLAN.md D1 (2026-10-30): is this composite publishable
+# unattended, or does it need a hand? Every check is on the finished 0..1 RGB
+# and the stretch that made it; the numbers are the bands the owner's
+# hand-approved renders sat in (STRETCH_TARGETS) plus the failure classes
+# seen this autumn: a black-crushed sky (IC 1396 at black_pct 65), a lit
+# channel over the sky (the brown M1 sky, 2026-10-25), a red bar from an
+# uncropped footprint (IC 410, 2026-10-28), magenta stars under a palette gain.
+QC_SKY_RANGE = (0.01, 0.20)      # the sky's grey level, as a fraction of white
+QC_BLACK_CLIP_MAX = 0.01         # share of the field at pure black
+QC_WHITE_CLIP_MAX = 0.005        # share of the field at pure white (stars saturate; the field must not)
+QC_CHANNEL_MEDIAN_MAX = 0.5      # a channel whose median is this bright is lit over the sky
+QC_STAR_NEUTRAL_MAX = 0.15       # palettes: mean |channel difference| on the star discs
+
+
+def render_qc(rgb: np.ndarray, stretch: Optional[dict] = None, cropped: bool = True,
+              star_mask: Optional[np.ndarray] = None, cls: str = "broadband") -> dict:
+    """-> {"pass": bool, "reasons": [str], "measures": {...}}. Pure.
+
+    *rgb* is the finished composite (H, W, 3) in 0..1; *stretch* is
+    auto_stretch_v2's result (its "confident" and "why" are the first check);
+    *cropped* says the common footprint was applied (n2n_lrgb_render
+    crop_common had a coverage box for every channel); *star_mask* (bool,
+    H x W) lets a palette's stars be checked for neutrality.
+    """
+    a = np.clip(np.nan_to_num(np.asarray(rgb, dtype=np.float32)), 0.0, 1.0)
+    reasons, m = [], {}
+    if stretch is not None and not stretch.get("confident", False):
+        why = "; ".join(str(w) for w in stretch.get("why") or []) or "no reason given"
+        reasons.append("stretch not confident: " + why)
+    y = a @ np.array([0.299, 0.587, 0.114], dtype=np.float32)
+    sky = float(np.median(y))
+    m["sky_grey"] = round(sky, 4)
+    lo, hi = QC_SKY_RANGE
+    if sky < lo:
+        reasons.append("sky at %.1f%% grey: black-crushed (below %.0f%%)" % (100 * sky, 100 * lo))
+    elif sky > hi:
+        reasons.append("sky at %.1f%% grey: too bright (above %.0f%%)" % (100 * sky, 100 * hi))
+    black = float(np.mean(np.all(a <= 0.0, axis=2)))
+    white = float(np.mean(np.all(a >= 0.995, axis=2)))
+    m["black_clip"], m["white_clip"] = round(black, 5), round(white, 5)
+    if black > QC_BLACK_CLIP_MAX:
+        reasons.append("%.1f%% of the field clipped to black" % (100 * black))
+    if white > QC_WHITE_CLIP_MAX:
+        reasons.append("%.2f%% of the field saturated white" % (100 * white))
+    meds = {c: float(np.median(a[:, :, i])) for i, c in enumerate("RGB")}
+    m["channel_medians"] = {c: round(v, 4) for c, v in meds.items()}
+    lit = [c for c, v in meds.items() if v > QC_CHANNEL_MEDIAN_MAX]
+    if lit:
+        reasons.append("channel %s lit over the sky (median %s)" % (
+            ", ".join(lit), ", ".join("%.2f" % meds[c] for c in lit)))
+    if not cropped:
+        reasons.append("common footprint not applied: a stack predates the coverage box "
+                       "(--force rebuilds it)")
+    if star_mask is not None and cls == "narrowband":
+        sm = np.asarray(star_mask, dtype=bool)
+        if sm.shape == a.shape[:2] and sm.any():
+            px = a[sm]
+            diff = np.maximum.reduce([np.abs(px[:, 0] - px[:, 1]), np.abs(px[:, 1] - px[:, 2]),
+                                      np.abs(px[:, 0] - px[:, 2])])
+            tint = float(np.mean(diff))
+            m["star_tint"] = round(tint, 4)
+            if tint > QC_STAR_NEUTRAL_MAX:
+                reasons.append("stars not neutral on the palette (mean channel difference %.2f)" % tint)
+    return {"pass": not reasons, "reasons": reasons, "measures": m}
+
+
 def effective_options(**overrides) -> dict:
     """Every compose() display knob with its default filled in.
 

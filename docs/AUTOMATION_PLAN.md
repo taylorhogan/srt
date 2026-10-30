@@ -6,8 +6,11 @@ Status 2026-10-29: approved by the owner. **Built the same day:** A1, A2
 (the filters in the NIGHT_PLAN record, `nina.filter_advisor` still `shadow`;
 `filters <dso> ... for N` expires itself; `reopen <dso> [for N]` with an
 auto-stop hold; `image` stores `obj_type`; the emission level measured on
-the PC's golden stacks). Phase C is complete. Next: the auto-stop shadow
-week, then flip auto-stop live; flip the advisor to `default`; D1.
+the PC's golden stacks). Phase C is complete. **D1 built the same evening**
+(`publish.final_mode = shadow`: a converged target's final render with
+`render_qc`, `final.json`, the picture pushed with the verdict, RENDER_DONE
+journaled through the PC; nothing published). Next: the auto-stop shadow
+week, then flip auto-stop live; flip the advisor to `default`; D2.
 
 ## Context
 

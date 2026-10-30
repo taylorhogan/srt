@@ -229,13 +229,15 @@ def pick_recipes(counts: dict, emission: Optional[dict] = None,
 
 
 def render_command(dso: str, recipe: str, first: bool, exptime: int,
-                   galaxy: bool) -> list[str]:
+                   galaxy: bool, final: bool = False) -> list[str]:
     """The n2n_lrgb_render.py routine invocation for one recipe of one target.
 
     Every routine render writes the raw, denoised and learned composites. A
     galaxy's broadband recipes get --wb stars, measured on the raw set and
     pinned on the denoised one. Only the target's first recipe rebuilds the
     shared channel stacks (--force); the rest reuse them (module docstring).
+    *final* (D1) adds --final: the auto stretch, the QC verdict and
+    <dso>/final/final.json.
     """
     lum = "Ha" if recipe in NARROWBAND else "L"
     cmd = [sys.executable, os.path.join(_root, "scripts", "n2n_lrgb_render.py"),
@@ -247,7 +249,167 @@ def render_command(dso: str, recipe: str, first: bool, exptime: int,
         cmd += ["--gain", PALETTE_GAIN[recipe]]
     if first:
         cmd.append("--force")
+    if final:
+        cmd.append("--final")
     return cmd
+
+
+# ------------------------------------------------------------------ final renders (D1)
+# docs/AUTOMATION_PLAN.md D1 (2026-10-30). A target the PC has retired as
+# `converged` (control/auto_stop; the queue reaches the Spark in the 11:40
+# mirror) gets ONE final render: its preferred recipe with --final, which
+# writes <image_dir>/Iris/<dso>/final/final.json with the QC verdict. Finals
+# go first and outside --max-targets, and are redone only when the frame
+# counts have changed since the record was written. The outcome is reported
+# to the conductor's journal (RENDER_DONE, over ssh); nothing is published
+# here -- that is D2-D4 behind publish.gate.
+MIRROR_QUEUE = os.path.expanduser("~/Desktop/iris_state/live/local/my_instructions.json")
+FINAL_MODES = ("off", "shadow")
+
+
+def final_mode() -> str:
+    """cfg publish.final_mode: off / shadow (default shadow)."""
+    try:
+        from configs import config
+        m = str(((config.data().get("publish") or {}).get("final_mode") or "shadow")).lower()
+        return m if m in FINAL_MODES else "shadow"
+    except Exception:  # noqa: BLE001
+        return "shadow"
+
+
+def converged_targets(path: str = MIRROR_QUEUE) -> list[str]:
+    """The queue's `converged` rows, as the Spark sees them; [] without the mirror."""
+    try:
+        import json
+        with open(path, encoding="utf-8") as fh:
+            rows = json.load(fh)
+        return [str(r.get("dso") or "").lower().replace(" ", "")
+                for r in rows if str(r.get("status") or "").lower() == "converged" and r.get("dso")]
+    except Exception:  # noqa: BLE001
+        return []
+
+
+def final_record_path(dso: str, image_dir: Path) -> Path:
+    return Path(image_dir) / "Iris" / dso.lower().replace(" ", "") / "final" / "final.json"
+
+
+def needs_final(record: Optional[dict], recipe: str, counts: dict) -> bool:
+    """Is a final render due? Yes without a record, with another recipe, or
+    when the frame counts the record saw differ from today's. Pure."""
+    if not record or record.get("recipe") != recipe:
+        return True
+    was = {k: int((v or {}).get("frames") or 0) for k, v in (record.get("channels") or {}).items()}
+    now = {k: int(v) for k, v in counts.items() if k in was}
+    return not was or was != now
+
+
+def plan_finals(converged: list, counts_by_dso: dict, records: dict, emission_by_dso: dict) -> list:
+    """[(dso, recipe)] the finals to render, in queue order. Pure.
+
+    *counts_by_dso* {dso: {filter: n}} (count_frames), *records* {dso: final.json
+    or None}, *emission_by_dso* {dso: emission_for(dso)}. The preferred recipe
+    is pick_recipes' first (SHO over HOO, HALRGB over LRGB); a target whose
+    frames earn no recipe, or whose record is current, is skipped.
+    """
+    out = []
+    for dso in converged:
+        counts = counts_by_dso.get(dso) or {}
+        recipes = pick_recipes(counts, emission_by_dso.get(dso))
+        if not recipes:
+            continue
+        if needs_final(records.get(dso), recipes[0], counts):
+            out.append((dso, recipes[0]))
+    return out
+
+
+def count_frames(subs_dir: Path, dso: str, exptime: int) -> dict:
+    """{filter: n} LIGHT frames of one target at *exptime* (recent_targets' count, for one)."""
+    from astropy.io import fits
+
+    from stacking.color_process import canonical_filter
+    counts: dict = defaultdict(int)
+    d = subs_dir / dso
+    if not d.is_dir():
+        return {}
+    for fp in d.rglob("*.fits"):
+        if fp.parent.name.upper() != "LIGHT":
+            continue
+        try:
+            h = fits.getheader(fp)
+            if round(float(h.get("EXPTIME", 0))) != exptime:
+                continue
+            c = canonical_filter(str(h.get("FILTER", "")).strip())
+        except Exception:  # noqa: BLE001
+            continue
+        if c:
+            counts[c] += 1
+    return dict(counts)
+
+
+def post_pc_event(event: str, data: dict, kind: str = "note") -> bool:
+    """Report an outcome to the conductor's journal through the PC
+    (scripts/post_event.py over ssh, data as base64 JSON so nothing is
+    quoted through cmd.exe). False when the PC did not answer."""
+    import base64
+    import json
+    try:
+        import morning_trigger as mt
+    except Exception:  # noqa: BLE001
+        return False
+    b64 = base64.b64encode(json.dumps(data).encode("utf-8")).decode()
+    script = ("Set-Location '%s'; "
+              "$py = if (Test-Path '.venv\\Scripts\\python.exe') { '.venv\\Scripts\\python.exe' } else { 'python' }; "
+              "& $py 'scripts\\post_event.py' '%s' --source spark --kind %s --b64 '%s'"
+              % (mt.SRT, event, kind, b64))
+    out = mt._ps(script, timeout=60)
+    return out is not None
+
+
+def run_finals(subs: Path, exptime: int, log=log) -> int:
+    """Render the due finals (plan_finals) and report each to the journal.
+    -> the number that failed."""
+    mode = final_mode()
+    if mode == "off":
+        return 0
+    conv = converged_targets()
+    if not conv:
+        return 0
+    import json
+    counts = {d: count_frames(subs, d, exptime) for d in conv}
+    records = {}
+    for d in conv:
+        try:
+            records[d] = json.loads(final_record_path(d, subs).read_text())
+        except (OSError, ValueError):
+            records[d] = None
+    todo = plan_finals(conv, counts, records, {d: emission_for(d) for d in conv})
+    log(f"converged in the queue: {', '.join(conv)}; finals due: "
+        + (", ".join(f"{d} {r}" for d, r in todo) or "none"))
+    failed = 0
+    for dso, recipe in todo:
+        galaxy = is_galaxy(dso) if recipe in WB_STARS_RECIPES else False
+        cmd = render_command(dso, recipe, first=True, exptime=exptime, galaxy=galaxy, final=True)
+        log(f"FINAL {dso} {recipe}: {' '.join(cmd[2:])}")
+        t0 = time.time()
+        r = subprocess.run(cmd, capture_output=True, text=True)
+        for line in (r.stdout or "").splitlines()[-8:]:
+            log(f"  | {line}")
+        rec = None
+        try:
+            rec = json.loads(final_record_path(dso, subs).read_text())
+        except (OSError, ValueError):
+            pass
+        qc = (rec or {}).get("qc") or {}
+        ok = r.returncode == 0 and rec is not None
+        failed += not ok
+        log(f"FINAL {dso} {recipe}: rc={r.returncode} in {time.time() - t0:.0f}s -- "
+            + ("QC PASS" if qc.get("pass") else "QC FAIL: " + "; ".join(qc.get("reasons") or ["no record"])))
+        posted = post_pc_event("RENDER_DONE", {
+            "dso": dso, "recipe": recipe, "ok": ok, "product": (rec or {}).get("product"),
+            "file": (rec or {}).get("file"), "sha256": (rec or {}).get("sha256"),
+            "qc_pass": bool(qc.get("pass")), "qc_reasons": qc.get("reasons") or [], "mode": mode})
+        log(f"  RENDER_DONE {'journaled' if posted else 'NOT journaled (PC unreachable)'}")
+    return failed
 
 
 def main() -> int:
@@ -296,10 +458,18 @@ def main() -> int:
     except Exception as exc:  # noqa: BLE001
         log(f"disk check failed ({exc}); rendering anyway")
 
+    # Finals first (D1): a converged target's one publishable render, outside
+    # the cap. A failure here never stops the morning's routine renders.
+    try:
+        finals_failed = run_finals(subs, args.exptime)
+    except Exception as exc:  # noqa: BLE001
+        log(f"finals failed: {exc}")
+        finals_failed = 0
+
     fresh = recent_targets(subs, args.since_hours, args.exptime)
     if not fresh:
         log(f"no LIGHT frames newer than {args.since_hours:g} h — nothing to render")
-        return 0
+        return 1 if finals_failed else 0
 
     plan = []
     for dso, counts in fresh.items():
@@ -369,7 +539,7 @@ def main() -> int:
                     log(f"  skipping {' + '.join(recipes[1:])} — stack rebuild incomplete")
                     break
             log(f"  {dso} {recipe} finished in {time.time() - t0:.0f}s")
-    return rc
+    return rc or (1 if finals_failed else 0)
 
 
 if __name__ == "__main__":

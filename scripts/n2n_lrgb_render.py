@@ -49,6 +49,7 @@ and nothing else.
 import argparse
 import json
 import os
+from datetime import datetime, timezone
 import socket
 import sys
 import time
@@ -858,7 +859,17 @@ def routine(args) -> int:
         # bright ones on the raw), pinned on every set from here
         palette_quiet=to_channels(den) if den else None)
     log_shared_measurements(raw_info, log)
-    if args.auto_stretch:
+    final_stretch = None
+    if getattr(args, "final", False):
+        # The final product (D1): the class's targets on this field, with the
+        # stretch's own confidence as the first QC check (auto_stretch_v2).
+        cls = color_process.stretch_class(args.recipe)
+        final_stretch = color_process.auto_stretch_v2(
+            subbed_raw, cls, lum="L" if "L" in subbed_raw else None)
+        blacks, white, soft = final_stretch["blacks"], final_stretch["white"], final_stretch["softening"]
+        log(f"final stretch ({cls}): confident {final_stretch['confident']}"
+            + (" -- " + "; ".join(final_stretch["why"]) if final_stretch["why"] else ""))
+    elif args.auto_stretch:
         log("auto stretch:")
         auto = color_process.auto_stretch(subbed_raw, white, lum="L", log=log)
         blacks, soft = auto["blacks"], auto["softening"]
@@ -868,6 +879,7 @@ def routine(args) -> int:
         soft = opts["softening"]
     log(f"stretch from raw: white {white:.2f} ADU, blacks "
         + ", ".join(f"{c} {v:.2f}" for c, v in sorted(blacks.items())))
+    composites: dict = {}          # tag -> finished rgb, kept only for the final product
 
     def st(chan, black):
         y = np.clip((chan - black) / max(white - black, 1e-6), 0.0, 1.0)
@@ -928,10 +940,15 @@ def routine(args) -> int:
             rgb = y + (rgb - y) * float(args.saturation)
         if star_mask_arr is not None:
             rgb = color_process.rgb_stars(np.clip(np.nan_to_num(rgb), 0, 1), star_img, star_mask_arr)
-        pth = color_process.save_rgb(np.clip(np.nan_to_num(rgb), 0, 1),
-                                     out_dir / f"{args.dso}_{args.recipe}_{tag}.jpg",
+        rgb = np.clip(np.nan_to_num(rgb), 0, 1)
+        pth = color_process.save_rgb(rgb, out_dir / f"{args.dso}_{args.recipe}_{tag}.jpg",
                                      max_px=args.max_px)
         written.append(pth)
+        if getattr(args, "final", False) and tag in PUSH_TAGS:
+            # raw, denoised, learned are emitted in rising preference, so the
+            # latest kept is the best product (PUSH_TAGS order).
+            composites.clear()
+            composites[tag] = rgb
 
     emit(subbed_raw, "raw")
     if den:
@@ -979,9 +996,64 @@ def routine(args) -> int:
     log("")
     log(f"{len(written)} files in {out_dir}")
 
-    if args.push:
+    if getattr(args, "final", False) and composites:
+        tag, rgb = next(iter(composites.items()))
+        cropped = all((meta["channels"].get(f) or {}).get("coverage") for f in filters)
+        final_product(args, out_dir, tag, rgb, final_stretch, cropped, meta, raw_info, opts, log)
+    elif args.push:
         push_render(args, out_dir, written, meta, log)
     return 0
+
+
+def final_record(dso: str, recipe: str, tag: str, stretch: dict, qc: dict, meta: dict,
+                 raw_info: dict, opts: dict, file: Path, sha256: str) -> dict:
+    """final.json: everything a publish needs to know about the picture. Pure."""
+    from stacking import color_process
+    chans = {k: {"frames": v.get("frames"), "accepted": v.get("accepted")}
+             for k, v in (meta.get("channels") or {}).items()}
+    return {"dso": dso, "recipe": recipe, "product": tag, "file": file.name, "sha256": sha256,
+            "built": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "qc": qc,
+            "stretch": {"class": color_process.stretch_class(recipe),
+                        "blacks": {c: round(float(v), 4) for c, v in (stretch or {}).get("blacks", {}).items()},
+                        "white": round(float((stretch or {}).get("white", 0.0)), 4),
+                        "softening": (stretch or {}).get("softening"),
+                        "confident": (stretch or {}).get("confident"), "why": (stretch or {}).get("why", [])},
+            "options": color_process.describe_options(opts),
+            "palette_gain": (raw_info or {}).get("palette_gain"),
+            "channels": chans}
+
+
+def final_product(args, out_dir: Path, tag: str, rgb, stretch, cropped: bool, meta: dict,
+                  raw_info: dict, opts: dict, log=print) -> dict:
+    """Write `<out_dir>/final/<dso>_<recipe>_final.jpg` + `final.json` with the
+    QC verdict (color_process.render_qc), and push the picture with the
+    verdict. D1 of docs/AUTOMATION_PLAN.md: in shadow this publishes nothing;
+    the record is what D2's publish_prepare reads."""
+    import hashlib
+
+    from stacking import color_process
+    cls = color_process.stretch_class(args.recipe)
+    qc = color_process.render_qc(rgb, stretch, cropped=cropped, cls=cls)
+    fdir = out_dir / "final"
+    fdir.mkdir(parents=True, exist_ok=True)
+    jpg = color_process.save_rgb(rgb, fdir / f"{args.dso}_{args.recipe}_final.jpg", max_px=None)
+    sha = hashlib.sha256(jpg.read_bytes()).hexdigest()
+    rec = final_record(args.dso, args.recipe, tag, stretch or {}, qc, meta, raw_info, opts, jpg, sha)
+    (fdir / "final.json").write_text(json.dumps(rec, indent=2))
+    verdict = "QC PASS" if qc["pass"] else "QC FAIL: " + "; ".join(qc["reasons"])
+    log(f"final product: {jpg.name} ({tag}) -- {verdict}")
+    log(f"  final.json -> {fdir / 'final.json'}")
+    if args.push:
+        try:
+            from utils import pushover
+            img = _fit_for_push(jpg, fdir)
+            ok = pushover.push_message_with_picture(
+                f"FINAL {args.dso} {args.recipe} ({tag}) -- {verdict}", str(img))
+            log(f"  push final: {'sent' if ok else 'NOT ACCEPTED'}")
+        except Exception as e:  # noqa: BLE001
+            log(f"  push final failed: {e}")
+    return rec
 
 
 def main() -> int:
@@ -1089,6 +1161,10 @@ def main() -> int:
                     help="Pushover the composites when the render finishes")
     ap.add_argument("--no-push", dest="push", action="store_false")
     ap.set_defaults(push=True)
+    ap.add_argument("--final", action="store_true",
+                    help="D1: stretch with auto_stretch_v2, judge the best composite with "
+                         "render_qc, write <dso>/final/<dso>_<recipe>_final.jpg + final.json "
+                         "and push the picture with the verdict (publishes nothing)")
     ap.add_argument("--push-all", action="store_true",
                     help="push every composite class (raw, denoised, learned) "
                          "instead of the one best picture")

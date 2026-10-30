@@ -6,7 +6,7 @@ class PublicConfig():
 
         },
         "version": {
-            "date": "2026.10.30.5"
+            "date": "2026.10.30.6"
         },
 
         "logger": {
@@ -581,6 +581,13 @@ class PublicConfig():
         # synthesizes events, and builds the journal under local/journal/,
         # commanding nothing. The flag exists so it can be disabled without a
         # code change if it misbehaves during the shadow period.
+        # Publishing (docs/AUTOMATION_PLAN.md D, 2026-10-30). final_mode:
+        #   "shadow" -- a converged target gets a final render on the Spark
+        #               (n2n_lrgb_render --final: auto_stretch_v2, render_qc,
+        #               <dso>/final/final.json) and the picture is pushed with
+        #               the QC verdict; nothing is published (default)
+        #   "off"    -- no final renders
+        "publish": {"final_mode": "shadow"},
         "conductor": {
             "shadow_enabled": True,
             "port": 8096,
