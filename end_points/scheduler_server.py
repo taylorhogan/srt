@@ -1099,9 +1099,19 @@ def _post_filters(plan: dict) -> None:
                 written[name] = counts
         except Exception:
             LOGGER.exception("filters: could not read the sequence back")
+        # The chat gets the table (current sequence beside the advised ratio,
+        # owner 2026-10-30); the text form is the journal's and the log's.
+        html = night_plan.describe_filters_html(plan, written)
         text = night_plan.describe_filters(plan, written)
+        if html:
+            try:
+                social_server.post_html_message(html)
+            except Exception:
+                LOGGER.exception("filters table post failed; posting the text")
+                if text:
+                    social_server.post_social_message(text)
         if text:
-            social_server.post_social_message(text)
+            LOGGER.info(text.replace("\n", " | "))
         records = [{"dso": s["dso"], "source": s.get("filter_source"),
                     "filters": s.get("filters") or {}, "sequence": written.get(s["dso"]) or {},
                     "reasons": s.get("filter_reasons") or []} for s in slots]

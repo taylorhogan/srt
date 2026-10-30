@@ -151,3 +151,30 @@ def test_describe_filters_shadow_and_default():
 def test_read_filters_skips_a_night_that_is_off(tmp_path):
     out = NP.read_filters(_plan(will=False), tmp_path / "q.json", {"nina": {"filter_advisor": "default"}})
     assert out["filter_mode"] == "default" and "filter_source" not in out["slots"][0]
+
+
+def test_filter_rows_put_the_sequence_beside_the_advised_ratio():
+    rows = NP.filter_rows({"L": 4, "R": 1, "G": 1, "B": 1}, {"L": 20, "R": 5, "G": 5, "B": 5, "Ha": 3})
+    assert [r[0] for r in rows] == ["L", "R", "G", "B", "Ha"]
+    assert rows[0][1:] == (20, 20 / 38, 4, 4 / 7)
+    assert rows[4] == ("Ha", 3, 3 / 38, None, None)                      # in the file, not in the plan
+    assert NP.filter_rows({"Ha": 1, "O-III": 4, "S-II": 3}, None)[1] == ("O-III", None, None, 4, 0.5)
+    assert NP.filter_rows(None, None) == []
+
+
+def test_describe_filters_html_is_a_table_per_slot():
+    plan = NP.apply_filters(_plan(), ROWS, _advise, "shadow")
+    written = {"ngc1961": {"L": 20, "R": 5, "G": 5, "B": 5}}
+    html = NP.describe_filters_html(plan, written)
+    assert html.startswith('<div style="font-size:13px') and "Filter advisor (shadow, nothing changed)" in html
+    assert html.count("<table") == 2                                        # one per slot
+    assert "<th" in html and "Sequence now" in html and "Advised" in html and "Change" in html
+    assert "<td" in html and "20 (57%)" in html and "4 (57%)" in html and "same" in html
+    assert "5 (14%)" in html and "1 (14%)" in html
+    assert "hubblev1" in html and "monitor&#39;s own plan" not in html and "monitor's own plan" in html
+    assert "seeing forecast good: L x1.5" in html
+    assert "nina.filter_advisor = default" in html
+    live = NP.describe_filters_html(dict(plan, filter_mode="default"), {"ngc1961": {"L": 12, "R": 4, "G": 4, "B": 4}})
+    assert "Filters tonight" in live and "Plan" in live and "+7%" in live and "nina.filter_advisor" not in live
+    assert NP.describe_filters_html(NP.apply_filters(_plan(), ROWS, _advise, "off")) == ""
+    assert "&lt;" in NP.describe_filters_html(dict(plan, slots=[dict(plan["slots"][0], filter_reasons=["a < b"])]), None)

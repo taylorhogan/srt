@@ -329,6 +329,77 @@ def describe_filters(plan: dict, written: Optional[dict] = None) -> str:
     return "\n".join(lines)
 
 
+# The `tonight` grid's palette (control/night_timeline, astro_dso_visibility.build_grid_html).
+_BG_MAIN, _BG_HDR, _CLR_TEXT, _CLR_DIM, _CLR_ACCENT, _CLR_BORDER = (
+    "#0d1117", "#161b22", "#c9d1d9", "#8b949e", "#58a6ff", "#21262d")
+
+
+def filter_rows(filters: Optional[dict], written: Optional[dict]) -> list:
+    """[(filter, now_frames, now_share, advised_ratio, advised_share)] for one
+    slot: the sequence as written beside the plan's ratio, each as a share
+    of its own total so the two columns compare. Pure."""
+    filters = {k: int(v) for k, v in (filters or {}).items() if int(v) > 0}
+    written = {k: int(v) for k, v in (written or {}).items() if int(v) > 0}
+    tot_a, tot_w = sum(filters.values()) or 0, sum(written.values()) or 0
+    order = list(filters) + [f for f in written if f not in filters]
+    return [(f, written.get(f), (written[f] / tot_w) if f in written and tot_w else None,
+             filters.get(f), (filters[f] / tot_a) if f in filters and tot_a else None) for f in order]
+
+
+def describe_filters_html(plan: dict, written: Optional[dict] = None) -> str:
+    """The noon filter post as a table per slot: current sequence beside the
+    advised ratio (owner, 2026-10-30). '' when there is nothing to say."""
+    mode = (plan or {}).get("filter_mode", "off")
+    slots = [s for s in (plan or {}).get("slots") or [] if s.get("filter_source")]
+    if mode == "off" or not slots:
+        return ""
+    h = lambda t: str(t).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")  # noqa: E731
+    th = ('style="padding:4px 10px;border-bottom:1px solid %s;background:%s;color:%s;'
+          'font-size:11px;text-align:%%s;white-space:nowrap;"' % (_CLR_BORDER, _BG_HDR, _CLR_DIM))
+    td = ('style="padding:4px 10px;border-bottom:1px solid %s;color:%s;font-size:12px;'
+          'text-align:%%s;white-space:nowrap;"' % (_CLR_BORDER, _CLR_TEXT))
+    title = "Filters tonight" if mode == "default" else "Filter advisor (shadow, nothing changed)"
+    out = ['<div style="font-size:13px;font-weight:600;color:%s;margin-bottom:6px;">%s</div>' % (_CLR_ACCENT, h(title))]
+    for s in slots:
+        got = (written or {}).get(s["dso"]) if written is not None else None
+        src = {"explicit": "the queue's filters plan", "monitor": "monitor's own plan",
+               "advisor": "advisor", "type": "object-type split"}.get(s.get("filter_source"), s.get("filter_source"))
+        out.append('<div style="margin:8px 0 4px;color:%s;font-size:12px;"><b style="color:%s">%s</b> '
+                   '%s-%s &middot; decided by %s</div>' % (
+                       _CLR_TEXT, _CLR_ACCENT, h(s["dso"]), h(s["start"][11:16]), h(s["end"][11:16]), h(src)))
+        rows = filter_rows(s.get("filters"), got)
+        out.append('<div style="overflow-x:auto;border-radius:6px;border:1px solid %s;display:inline-block;">'
+                   '<table style="border-collapse:collapse;font-family:inherit;background:%s;">' % (_CLR_BORDER, _BG_MAIN))
+        label_now = "Sequence now" if written is not None else "Sequence"
+        out.append('<thead><tr><th %s>Filter</th><th %s>%s</th><th %s>%s</th><th %s>Change</th></tr></thead><tbody>'
+                   % (th % "left", th % "right", label_now, th % "right",
+                      "Advised" if mode != "default" else "Plan", th % "right"))
+        if not rows:
+            out.append('<tr><td %s colspan="4">no ratio (the generator decides by object type)</td></tr>' % (td % "left"))
+        for f, nw, sw, ra, sa in rows:
+            now_txt = ("%d (%.0f%%)" % (nw, 100 * sw)) if nw else "-"
+            adv_txt = ("%d (%.0f%%)" % (ra, 100 * sa)) if ra else "-"
+            if sw is not None and sa is not None:
+                d = 100 * (sa - sw)
+                chg = ("%+.0f%%" % d) if abs(d) >= 0.5 else "same"
+                colour = "#3fb950" if d >= 5 else ("#ff9e9e" if d <= -5 else _CLR_DIM)
+            elif sa is not None:
+                chg, colour = "new", "#3fb950"
+            else:
+                chg, colour = "drops", "#ff9e9e"
+            out.append('<tr><td %s>%s</td><td %s>%s</td><td %s>%s</td><td %s><span style="color:%s">%s</span></td></tr>'
+                       % (td % "left", h(f), td % "right", now_txt, td % "right", adv_txt, td % "right", colour, h(chg)))
+        out.append("</tbody></table></div>")
+        reasons = s.get("filter_reasons") or []
+        if reasons:
+            out.append('<div style="color:%s;font-size:11px;margin-top:4px;">%s</div>'
+                       % (_CLR_DIM, "<br>".join(h(r) for r in reasons)))
+    if mode != "default":
+        out.append('<div style="color:%s;font-size:11px;margin-top:6px;">cfg nina.filter_advisor = default makes '
+                   'the advised ratio the sequence&#39;s</div>' % _CLR_DIM)
+    return "\n".join(out)
+
+
 def plan_tonight(instructions_path: Optional[str] = None) -> dict:
     """Rank the queue against tonight's sky and forecast and decide. Network."""
     from configs import config
