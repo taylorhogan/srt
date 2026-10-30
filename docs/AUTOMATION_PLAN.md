@@ -24,9 +24,11 @@ live. **E1 built the same night** (`configs/candidates.json`, 92 showpieces;
 `control/suggest` scoring visibility x size x moon x season with the
 exclusions; `scripts/suggest_targets.py`). **E2 built too** (the Monday 12:30 card from
 the Spark, `--post`; chat `suggest [N]`; `image` takes the catalogue's kind
-when SIMBAD cannot say). Next: the auto-stop shadow week, then flip
-auto-stop live; flip the advisor to `default`; E3 (the queue-field
-commands); F1 shadow.
+when SIMBAD cannot say). **E3 built too** (`hold`, `moon`, `maxhours`,
+`type` through `control/queue_fields.parse` and `instructions.set_field_db`
+/ `set_status_db`, each journaled as a `QUEUE_FIELD` note). Phase E is
+complete. Next: the auto-stop shadow week, then flip auto-stop live; flip
+the advisor to `default`; F1 shadow, F4, F5.
 
 ## Context
 

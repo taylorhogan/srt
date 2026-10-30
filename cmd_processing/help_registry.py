@@ -555,6 +555,30 @@ HELP: dict[str, dict] = {
                   "On a waiting target the command only sets the hold. `completed` (dbc) is "
                   "not undone here; `image <dso>` queues it again."],
     },
+    "hold": {
+        "category": "super",
+        "summary": "Hold a queued target out of the planning (status held), or release it.",
+        "usage": ["hold <dso>", "hold <dso> off"],
+        "examples": ["hold ngc7790", "hold ngc7790 off"],
+    },
+    "moon": {
+        "category": "super",
+        "summary": "The target's moon rule: any (never held), avoid (the worth rule, default), dark (held whenever the moon is up).",
+        "usage": ["moon <dso> any|avoid|dark|clear"],
+        "examples": ["moon ic410 any", "moon ngc1961 dark"],
+    },
+    "maxhours": {
+        "category": "super",
+        "summary": "Cap a target to a short block a night (a gap-fill, never a main slot), or lift the cap.",
+        "usage": ["maxhours <dso> N", "maxhours <dso> clear"],
+        "examples": ["maxhours hubblev1 1", "maxhours hubblev1 clear"],
+    },
+    "type": {
+        "category": "super",
+        "summary": "Set the object type the filter plan and auto-stop read (galaxy: L+RGB; nebula: narrowband), or clear it.",
+        "usage": ["type <dso> galaxy|nebula|clear"],
+        "examples": ["type sh2-92 nebula"],
+    },
     "suggest": {
         "category": "super",
         "summary": "What is worth adding to the queue this month, with reasons; nothing is queued.",

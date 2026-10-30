@@ -73,6 +73,10 @@ Restricted to super users. These control observatory hardware and the imaging pi
 | `dbr` | Rehash the imaging queue and regenerate the instructions table | `dbr` |
 | `dbd <id>` | Delete an entry from the imaging queue by ID | `dbd 17` |
 | `dbc <id>` | Mark an imaging queue entry as completed | `dbc 17` |
+| `hold <dso> [off]` | Hold a target out of the planning (status `held`), or release it | `hold ngc7790` |
+| `moon <dso> any\|avoid\|dark\|clear` | The target's moon rule | `moon ic410 any` |
+| `maxhours <dso> N\|clear` | Cap a target to a short block a night | `maxhours hubblev1 1` |
+| `type <dso> galaxy\|nebula\|clear` | The object type the filter plan reads | `type sh2-92 nebula` |
 | `suggest [N]` | What is worth adding to the queue this month, with reasons (nothing is queued) | `suggest 5` |
 | `approve <dso>` | Approve the Spark's publish draft for the site (by its hash; nothing publishes while `publish.gate` is `shadow`) | `approve ic410` |
 | `reject <dso> [why]` | Reject the draft; a re-render makes a fresh one | `reject ic410 stars too red` |

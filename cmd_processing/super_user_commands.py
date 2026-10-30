@@ -2162,6 +2162,65 @@ def suggest_cmd(words: list[str], account: str) -> None:
     jobs.spawn(_run)
 
 
+def _queue_field(words: list[str], account: str, cmd: str) -> None:
+    """hold / moon / maxhours / type (E3): the queue's hand-set fields as commands."""
+    from control import queue_fields
+    p = queue_fields.parse(cmd, words[2:])
+    if p["error"]:
+        social_server.post_social_message(p["error"])
+        return
+    dso = p["dso"]
+    row = instructions.get_instruction_by_dso(dso)
+    if not row or row.get("status") == "completed":
+        social_server.post_social_message(f"{dso} is not in the queue" + (" (completed)" if row else ""))
+        return
+    if cmd == "hold":
+        status = str(row.get("status") or "")
+        if p["value"] == "held" and status not in ("waiting", "in process"):
+            social_server.post_social_message(f"{dso} is {status}, not waiting; nothing to hold")
+            return
+        if p["value"] == "waiting" and status != "held":
+            social_server.post_social_message(f"{dso} is {status}, not held")
+            return
+        ok = instructions.set_status_db(dso, p["value"], why=f"{cmd} by {account}", who=account)
+    else:
+        ok = instructions.set_field_db(dso, p["field"], p["value"])
+    if not ok:
+        social_server.post_social_message(f"{dso}: nothing changed")
+        return
+    try:
+        instructions.create_instructions_table()
+    except Exception:
+        _logger.exception("%s: table refresh failed", cmd)
+    try:
+        from iris import client as conductor
+        conductor.post_event("QUEUE_FIELD", "operator",
+                             {"dso": dso, "field": p["field"], "value": p["value"], "by": account}, kind="note")
+    except Exception:
+        _logger.exception("%s: journal note failed", cmd)
+    social_server.post_social_message(queue_fields.describe(cmd, dso, p["value"], row))
+
+
+def hold_cmd(words: list[str], account: str) -> None:
+    """Hold a target out of the planning, or release it. Usage: hold <dso> [off]"""
+    _queue_field(words, account, "hold")
+
+
+def moon_cmd(words: list[str], account: str) -> None:
+    """The target's moon rule. Usage: moon <dso> any|avoid|dark|clear"""
+    _queue_field(words, account, "moon")
+
+
+def maxhours_cmd(words: list[str], account: str) -> None:
+    """Cap a target to a short block a night. Usage: maxhours <dso> N|clear"""
+    _queue_field(words, account, "maxhours")
+
+
+def type_cmd(words: list[str], account: str) -> None:
+    """Set the object type the filter plan reads. Usage: type <dso> galaxy|nebula|clear"""
+    _queue_field(words, account, "type")
+
+
 def announce_cmd(words: list[str], account: str) -> None:
     """Say text on a Sonos speaker. Usage: announce <speaker_name> <text...>"""
     if len(words) < 4:
@@ -4028,6 +4087,10 @@ def get_super_user_commands() -> dict[str, Callable]:
         "reject": reject_cmd,
         "drafts": drafts_cmd,
         "suggest": suggest_cmd,
+        "hold": hold_cmd,
+        "moon": moon_cmd,
+        "maxhours": maxhours_cmd,
+        "type": type_cmd,
         "dbb": dbb_cmd,
         "image!!": image_cmd,
         "roof!!": roof_cmd,
