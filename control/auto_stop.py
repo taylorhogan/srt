@@ -146,6 +146,18 @@ def describe(found: list, live: bool) -> str:
 
 # ------------------------------------------------------------------ live inputs
 
+TYPE_WORDS = {"G": "galaxy", "N": "nebula"}     # the grid's letter -> the queue row's obj_type
+
+
+def type_word(letter) -> Optional[str]:
+    """The queue's obj_type for the imaging grid's one-letter class
+    (astro_dso_visibility.get_dso_type): G -> galaxy, N -> nebula, else None
+    (a star cluster plans broadband as "unknown" does; "?" is unknown). Pure.
+    C4: `image` stores this on the row so the advisor, auto-stop and the
+    generator never read SIMBAD or the type cache for a queued target."""
+    return TYPE_WORDS.get(str(letter or "").strip().upper()[:1])
+
+
 def _type_offline(row: dict, root: str) -> str:
     """galaxy / nebula / unknown without the network."""
     t = str(row.get("obj_type") or "").lower()
@@ -155,8 +167,7 @@ def _type_offline(row: dict, root: str) -> str:
         with open(os.path.join(root, "local", "dso_types.json"), encoding="utf-8") as fh:
             cache = json.load(fh)
         key = str(row.get("dso") or "").lower().replace(" ", "")
-        letter = str(cache.get(key) or cache.get(row.get("dso")) or "").upper()[:1]
-        return {"G": "galaxy", "N": "nebula"}.get(letter, "unknown")
+        return type_word(cache.get(key) or cache.get(row.get("dso"))) or "unknown"
     except Exception:                          # noqa: BLE001
         return "unknown"
 

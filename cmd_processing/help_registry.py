@@ -49,6 +49,9 @@ HELP: dict[str, dict] = {
         "summary": "Add a DSO to the imaging queue.",
         "usage": ["image <dso>"],
         "examples": ["image m 31", "image ngc 7331"],
+        "notes": ["The row stores the resolved RA/Dec and the object type (galaxy / "
+                  "nebula) from the catalogue, so planning never looks the name up again "
+                  "and a nebula is planned narrowband from its first night."],
     },
     "db": {
         "category": "general",

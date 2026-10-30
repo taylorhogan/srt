@@ -121,3 +121,12 @@ def test_a_reopened_target_is_left_alone_until_its_hold_passes():
     assert [v["dso"] for v in A.candidates(rows, lambda d: True, lambda d, r: DONE_ADVICE)] == ["ic410"]
     assert A.reopened({A.HOLD_KEY: "soon"}, date(2026, 11, 1)) is False
     assert A.reopened({}, date(2026, 11, 1)) is False
+
+
+# ------------------------------------------------------------ the queue's type word (C4)
+
+def test_type_word_maps_the_grids_letter():
+    assert A.type_word("G") == "galaxy" and A.type_word("N") == "nebula"
+    assert A.type_word("C") is None and A.type_word("?") is None
+    assert A.type_word("") is None and A.type_word(None) is None
+    assert A.type_word("g") == "galaxy"                       # a cached letter in either case

@@ -15,7 +15,7 @@ Available to all users in the Super Users list.
 | `tonight` | Show tonight's best DSO with weather and sky chart | `tonight` |
 | `best <dso>` | Report when the named DSO is best imaged (rises, air mass, hours) | `best m 13` |
 | `bestradec <ra> <dec>` | Best night for an explicit RA/Dec; with a name, queues it for imaging | `bestradec wr134 20:10:14 +36:10:35` |
-| `image <dso>` | Add a DSO to the imaging queue | `image m 31` |
+| `image <dso>` | Add a DSO to the imaging queue; the row stores its RA/Dec and object type (galaxy / nebula) | `image m 31` |
 | `db` | Display the current imaging queue | `db` |
 | `version` | Post the running SRT version string | `version` |
 | `status` | Post observatory status (roof, mount, scheduler, weather) | `status` |

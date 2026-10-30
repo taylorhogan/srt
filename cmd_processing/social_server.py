@@ -64,16 +64,44 @@ def image_cmd(words: list[str], index: int, m: Mastodon, account: str) -> None:
         object = astro_dso_visibility.is_a_dso_object(dso_name)
         if object is not None:
             # Store the position just resolved, so planning never needs a name
-            # lookup for it again (SIMBAD outage 2026-10-26: `tonight` took 5.5 min).
+            # lookup for it again (SIMBAD outage 2026-10-26: `tonight` took 5.5 min)
+            # ...and the object type (C4, 2026-10-30), so the filter advisor,
+            # auto-stop and the sequence generator read it off the row instead
+            # of SIMBAD or the type cache. The grid's own classifier decides,
+            # so this and the `tonight` table can never disagree.
+            obj_type = queued_type(dso_name)
             if instructions.add_dso_object_instruction(
                     dso_name, "", account,
                     ra_deg=round(float(object.coord.ra.deg), 5),
-                    dec_deg=round(float(object.coord.dec.deg), 5)):
-                post_social_message(dso_name + " Added to list of objects to image\n")
+                    dec_deg=round(float(object.coord.dec.deg), 5),
+                    obj_type=obj_type):
+                post_social_message(dso_name + " added to the queue " + type_note(obj_type) + "\n")
             else:
                 post_social_message(dso_name + " Already in the queue\n")
         else:
             post_social_message(dso_name + " Not a known object\n")
+
+
+def queued_type(dso_name: str) -> Optional[str]:
+    """galaxy / nebula / None for a new queue row, from the imaging grid's
+    classifier (override table, type cache, SIMBAD). None when SIMBAD does not
+    know the name, answers something outside the families, or is down: the
+    row then carries no type and the generator plans broadband, as before."""
+    try:
+        from control import auto_stop
+        return auto_stop.type_word(astro_dso_visibility.get_dso_type(dso_name))
+    except Exception:                          # noqa: BLE001 -- a lookup failure is no type
+        logging.getLogger(__name__).exception("image: type lookup failed for %s", dso_name)
+        return None
+
+
+def type_note(obj_type: Optional[str]) -> str:
+    """What the reply says about the stored type."""
+    if obj_type == "nebula":
+        return "(nebula: narrowband Ha/O-III/S-II)"
+    if obj_type == "galaxy":
+        return "(galaxy: L+RGB)"
+    return "(type unknown to the catalogue: planned broadband)"
 
 
 def best_cmd(words: list[str], index: int, m: Mastodon, account: str) -> None:
