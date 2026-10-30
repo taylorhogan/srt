@@ -2,11 +2,11 @@
 
 Status 2026-10-29: approved by the owner. **Built the same day:** A1, A2
 (shadow), A3's status and writer behind `planner.auto_stop = "live"`, B1-B8
-(B9 preflight not yet). ADR 0016 records the rules. **2026-10-30: C1 and C2 built**
+(B9 preflight not yet). ADR 0016 records the rules. **2026-10-30: C1, C2 and A4 built**
 (the filters in the NIGHT_PLAN record, `nina.filter_advisor` still `shadow`;
-`filters <dso> ... for N` expires itself; docs/FILTER_ADVISOR_PLAN.md rollout
-steps 2-3). Next: the auto-stop shadow week, then flip auto-stop live; flip
-the advisor to `default`; C4, A4.
+`filters <dso> ... for N` expires itself; `reopen <dso> [for N]` with an
+auto-stop hold). Next: the auto-stop shadow week, then flip auto-stop live;
+flip the advisor to `default`; C4, C3, D1.
 
 ## Context
 

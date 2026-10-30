@@ -41,6 +41,8 @@ _logger = logging.getLogger(__name__)
 MODES = ("off", "shadow", "live")
 DEFAULT_MODE = "shadow"
 CONVERGED = "converged"             # the queue status a live auto-stop writes
+HOLD_KEY = "auto_stop_hold_until"   # `reopen <dso> [for N]`: the last night auto-stop leaves it alone
+DEFAULT_REOPEN_NIGHTS = 7
 
 
 def mode(cfg) -> str:
@@ -68,14 +70,36 @@ def verdict(dso: str, is_done: bool, advice: Optional[dict]) -> dict:
     return {"dso": dso, "done": bool(why), "why": why}
 
 
+def reopened(row: dict, night) -> bool:
+    """Is the row under a `reopen` hold for *night* (control/filter_plan dates)?
+
+    A reopened target's convergence record still says done, so without this
+    the next live noon would retire it again the morning after the owner
+    asked for more frames (A4). The hold is the row's HOLD_KEY, the last
+    night it covers; a malformed date is no hold. *night* None = judge the
+    hold as standing.
+    """
+    raw = (row or {}).get(HOLD_KEY)
+    if not raw:
+        return False
+    if night is None:
+        return True
+    from datetime import date
+    try:
+        return date.fromisoformat(str(raw)[:10]) >= night
+    except ValueError:
+        return False
+
+
 def candidates(rows: list, is_done_fn: Callable[[str], bool],
-               advise_fn: Callable[[str, dict], Optional[dict]]) -> list:
+               advise_fn: Callable[[str, dict], Optional[dict]], night=None) -> list:
     """The waiting rows that are done, each with its reasons. Pure.
 
     *rows* is the queue; only "waiting" / "in process" rows are judged (a
     held row is the operator's, a completed or converged one is already
-    out). A row that raises in either verdict is skipped, logged, never
-    stopped: a crash must err toward imaging a target once more.
+    out, a reopened one is left alone until its hold's last night, *night*).
+    A row that raises in either verdict is skipped, logged, never stopped:
+    a crash must err toward imaging a target once more.
     """
     out = []
     for row in rows or []:
@@ -84,6 +108,10 @@ def candidates(rows: list, is_done_fn: Callable[[str], bool],
         if not dso or status not in ("waiting", "in process"):
             continue
         if row.get("lightcurve"):
+            continue
+        if reopened(row, night):
+            _logger.info("auto-stop: %s reopened by the owner until %s; not judged",
+                         dso, str(row.get(HOLD_KEY))[:10])
             continue
         try:
             done = bool(is_done_fn(dso))
@@ -147,7 +175,9 @@ def evaluate(rows: list) -> list:
     """candidates() on the live verdicts. Never raises."""
     try:
         from fits_processing.convergence import is_dso_done
-        return candidates(rows, is_dso_done, advise_offline)
+        from datetime import datetime
+        from control import filter_plan
+        return candidates(rows, is_dso_done, advise_offline, filter_plan.night_for(datetime.now()))
     except Exception:                          # noqa: BLE001
         _logger.exception("auto-stop evaluation failed")
         return []

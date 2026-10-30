@@ -542,6 +542,16 @@ HELP: dict[str, dict] = {
         "usage": ["dbc <id>"],
         "examples": ["dbc 17"],
     },
+    "reopen": {
+        "category": "super",
+        "summary": "Undo auto-stop: put a converged target back to waiting and keep auto-stop off it for N nights.",
+        "usage": ["reopen <dso>", "reopen <dso> for N"],
+        "examples": ["reopen ngc1961", "reopen ngc1961 for 3"],
+        "notes": ["Default 7 nights counting tonight. The target's convergence record still "
+                  "says done, so without the hold the next live noon would retire it again.",
+                  "On a waiting target the command only sets the hold. `completed` (dbc) is "
+                  "not undone here; `image <dso>` queues it again."],
+    },
     "live": {
         "category": "super",
         "summary": "Post TWO no-light sky views from the scope-top webcam (same "

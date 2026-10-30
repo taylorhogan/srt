@@ -368,6 +368,26 @@ def set_status_db(dso_name: str, status: str, why: str = None, who: str = None) 
     return matched
 
 
+def set_field_db(dso_name: str, field: str, value) -> bool:
+    """Set one field on the first non-completed row matching dso_name; None
+    removes it. True when a row was found. The one writer for the row's
+    machine-read flags (`reopen`'s auto-stop hold; E3's hold/moon/maxhours/type)."""
+    key = _normalize_dso(dso_name)
+    with open(_INSTRUCTIONS_PATH, 'r') as f:
+        instructions = json.load(f)
+    for instruction in instructions:
+        if (_normalize_dso(instruction["dso"]) == key
+                and instruction.get("status") != "completed"):
+            if value is None:
+                instruction.pop(field, None)
+            else:
+                instruction[field] = value
+            with open(_INSTRUCTIONS_PATH, 'w') as f:
+                f.writelines(json.dumps(instructions, indent=4))
+            return True
+    return False
+
+
 def add_dso_object_instruction(dso_name, recipe, requestor, priority=5,
                                ra_deg=None, dec_deg=None, obj_type=None):
     normalized = dso_name.lower().replace(" ", "")

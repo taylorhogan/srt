@@ -29,7 +29,10 @@ added as a stopping item the same day.
 2. **A new queue status, `converged`**, is the machine's word; `completed`
    stays the owner's (`dbc`). The ranking takes only `waiting`, so a
    converged row leaves the night with no change to the ranking.
-   `reopen <dso>` puts it back. In **shadow** the list is a chat line; in
+   `reopen <dso> [for N]` puts it back and holds auto-stop off it for N
+   nights (default 7; the row's `auto_stop_hold_until`), because its
+   convergence record still says done and the next live noon would retire
+   it again. In **shadow** the list is a chat line; in
    **live** (`planner.auto_stop`) the status is written at the noon refresh,
    before the ranking reads the queue.
 3. **One bell** (`iris/conductor/alerts`): a transition into a hold from

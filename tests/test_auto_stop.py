@@ -105,3 +105,19 @@ def test_read_auto_stop_is_quiet_when_off_or_unreadable(tmp_path, monkeypatch):
     q.write_text('[{"dso": "m1", "status": "waiting"}]')
     monkeypatch.setattr(A, "evaluate", lambda rows: [{"dso": rows[0]["dso"], "done": True, "why": ["x"]}])
     assert NP.read_auto_stop(q, {"planner": {"auto_stop": "shadow"}})[0]["dso"] == "m1"
+
+
+# ------------------------------------------------------------ reopen (A4)
+
+def test_a_reopened_target_is_left_alone_until_its_hold_passes():
+    from datetime import date
+    rows = [{"dso": "m1", "status": "waiting", A.HOLD_KEY: "2026-11-05"},
+            {"dso": "ic410", "status": "waiting"}]
+    found = A.candidates(rows, lambda d: True, lambda d, r: DONE_ADVICE, night=date(2026, 11, 5))
+    assert [v["dso"] for v in found] == ["ic410"]                 # the hold's last night still holds
+    found = A.candidates(rows, lambda d: True, lambda d, r: DONE_ADVICE, night=date(2026, 11, 6))
+    assert [v["dso"] for v in found] == ["m1", "ic410"]           # the morning after, judged again
+    # no night given: a hold stands; a malformed hold is no hold
+    assert [v["dso"] for v in A.candidates(rows, lambda d: True, lambda d, r: DONE_ADVICE)] == ["ic410"]
+    assert A.reopened({A.HOLD_KEY: "soon"}, date(2026, 11, 1)) is False
+    assert A.reopened({}, date(2026, 11, 1)) is False

@@ -2006,6 +2006,65 @@ def dbc_cmd(words: list[str], account: str) -> None:
     instructions.create_instructions_table()
 
 
+def reopen_cmd(words: list[str], account: str) -> None:
+    """Undo auto-stop's verdict: put a `converged` target back to `waiting`
+    and keep auto-stop off it for N nights (default 7). ADR 0016, A4.
+
+    Usage: reopen <dso> [for N]
+
+    A reopened target's convergence record still says done, so the row
+    gets `auto_stop_hold_until` (control/auto_stop.HOLD_KEY) and the noon
+    evaluation leaves it alone until that night has passed. On a target
+    that is already waiting the command only sets the hold. `completed`
+    (`dbc`) is the owner's word and is not undone here.
+    """
+    from control import auto_stop
+    args = words[2:]
+    toks, nights, err = filter_plan.split_for_nights(args)
+    if err:
+        social_server.post_social_message(err)
+        return
+    dso_name = " ".join(toks).strip()
+    if not dso_name:
+        social_server.post_social_message("Usage: reopen <dso> [for N]  e.g. reopen ngc1961 for 3")
+        return
+    nights = nights or auto_stop.DEFAULT_REOPEN_NIGHTS
+    row = instructions.get_instruction_by_dso(dso_name)
+    if not row:
+        social_server.post_social_message(f"{dso_name} is not in the queue")
+        return
+    status = str(row.get("status") or "")
+    if status == "completed":
+        social_server.post_social_message(
+            f"{dso_name} is completed (your `dbc`), not converged; `image {dso_name}` queues it again")
+        return
+    now = datetime.now()
+    until = filter_plan.until_for(now, nights)
+    changed = False
+    if status == auto_stop.CONVERGED:
+        changed = instructions.set_status_db(dso_name, "waiting", why="reopened by %s" % account,
+                                             who=account)
+    instructions.set_field_db(dso_name, auto_stop.HOLD_KEY, until)
+    try:
+        from iris import client as conductor
+        conductor.post_event("REOPENED", "operator",
+                             {"dso": dso_name, "from": status, "by": account, "hold_until": until},
+                             kind="note")
+    except Exception:
+        _logger.exception("reopen: journal note failed")
+    try:
+        instructions.create_instructions_table()
+    except Exception:
+        _logger.exception("reopen: table refresh failed")
+    span = "tonight only" if nights == 1 else "%d nights, through %s" % (nights, until)
+    if changed:
+        social_server.post_social_message(
+            f"{dso_name} reopened: back in the queue as waiting; auto-stop leaves it alone for {span}.")
+    else:
+        social_server.post_social_message(
+            f"{dso_name} is {status or 'waiting'}; auto-stop leaves it alone for {span}.")
+
+
 def announce_cmd(words: list[str], account: str) -> None:
     """Say text on a Sonos speaker. Usage: announce <speaker_name> <text...>"""
     if len(words) < 4:
@@ -3867,6 +3926,7 @@ def get_super_user_commands() -> dict[str, Callable]:
         "dbr": dbr_cmd,
         "dbd": dbd_cmd,
         "dbc": dbc_cmd,
+        "reopen": reopen_cmd,
         "dbb": dbb_cmd,
         "image!!": image_cmd,
         "roof!!": roof_cmd,
