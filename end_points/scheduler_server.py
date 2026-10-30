@@ -481,15 +481,25 @@ def _push_imaging_plan(dso_name: str, good_hours: float, best_start, output_path
     social_server.post_social_message("\n".join(lines))
 
 
-def _filter_plans_for(slots) -> dict:
-    """{slot name: its stored filter plan} for the plan signature. Never raises."""
+def _filter_plans_for(slots, plan_filters: bool = False) -> dict:
+    """{slot name: the filter plan its sequence is built from} for the plan
+    signature: the queue's explicit plan, else, when the noon plan's ratios
+    are live (*plan_filters*), the slot's own. Never raises."""
     out = {}
     for s in slots or []:
         try:
             out[s.name] = instructions.get_filter_plan(s.name) or {}
         except Exception:
             out[s.name] = {}
+        if not out[s.name] and plan_filters and getattr(s, "filters", None):
+            out[s.name] = dict(s.filters)
     return out
+
+
+def _plan_filters_live(plan: dict) -> bool:
+    """Does the conductor's plan say its slot ratios are to be written (C1)?
+    cfg nina.filter_advisor = default, as the planner saw it at noon."""
+    return str((plan or {}).get("filter_mode") or "").lower() == "default"
 
 
 def _second_slot_message(slots) -> str:
@@ -507,13 +517,15 @@ def _second_slot_message(slots) -> str:
         return "".join("\nThen %s" % s.name for s in slots[1:])
 
 
-def _generate_nina_slots_sequence(slots):
+def _generate_nina_slots_sequence(slots, plan_filters: bool = False):
     """Write a two-target sequence for *slots* (control.slot_plan.Slot list).
 
     Same resolution as the one-target path per slot; the template's target
     container is cloned per slot (nina_sequence_gen.generate_slots_sequence).
     Falls back to the one-target path if a slot cannot be resolved, so a bad
-    second pick costs the second slot and never the night.
+    second pick costs the second slot and never the night. With
+    *plan_filters* each slot's ratio from the noon plan is the generator's
+    preset (C1); otherwise the generator decides as it always did.
     """
     specs = []
     for s in slots:
@@ -521,10 +533,12 @@ def _generate_nina_slots_sequence(slots):
         if dso is None:
             LOGGER.error("Could not resolve coordinates for slot %s; single-slot night", s.name)
             first = slots[0]
-            return _generate_nina_sequence(first.name, first.good_hours, end=first.end)
+            return _generate_nina_sequence(first.name, first.good_hours, end=first.end,
+                                           filters=first.filters if plan_filters else None)
         specs.append({"name": s.name, "ra_hours": dso.coord.ra.hour,
                       "dec_degrees": dso.coord.dec.deg, "seconds": s.seconds,
-                      "start": s.start, "end": s.end})
+                      "start": s.start, "end": s.end,
+                      "filters": getattr(s, "filters", None) if plan_filters else None})
     template_path = Path(os.path.join(_PROJECT_ROOT, CFG["nina"]["sequence_input"]))
     output_path = Path(CFG["nina"]["sequence_output"])
     state_script = os.path.join(_PROJECT_ROOT, "scripts", "set_imaging_state.bat")
@@ -535,7 +549,7 @@ def _generate_nina_slots_sequence(slots):
     return plans, output_path
 
 
-def _generate_nina_sequence(dso_name: str, good_hours: float = 0.0, end=None):
+def _generate_nina_sequence(dso_name: str, good_hours: float = 0.0, end=None, filters=None):
     """Resolve DSO coordinates and write a N.I.N.A sequence file to disk.
 
     *end* is the planner's window end for the target (control/slot_plan.Slot
@@ -587,6 +601,7 @@ def _generate_nina_sequence(dso_name: str, good_hours: float = 0.0, end=None):
         output_path=output_path,
         above_horizon_seconds=(good_hours or 0) * 3600.0,
         end=end,
+        filters=filters,
     )
     LOGGER.info("Generated Nina sequence for %s: %s (ends %s)", dso_name, plan,
                 end.strftime("%H:%M") if end is not None else "at dawn")
@@ -731,7 +746,7 @@ def pre_sunset_check_task() -> tuple[str, int]:
 
 @task(name="generate-nina-sequence")
 def generate_sequence_task(dso_name: str, good_hours: float = 0.0, notify: bool = True,
-                           slots=None):
+                           slots=None, plan_filters: bool = False):
     """Write the N.I.N.A sequence, and say what tonight will actually be.
 
     Two slots in the plan (astro_dso_visibility.last_slots) write a
@@ -742,16 +757,19 @@ def generate_sequence_task(dso_name: str, good_hours: float = 0.0, notify: bool 
 
     *slots* None = the in-process ranking's (astro_dso_visibility.last_slots);
     the executor of the conductor's plan (ADR 0015) passes the plan's own.
+    *plan_filters*: write each slot's ratio from the plan (C1; the plan's
+    filter_mode is "default").
     """
     slots = list(astro_dso_visibility.last_slots) if slots is None else list(slots)
     try:
         if len(slots) >= 2:
-            got = _generate_nina_slots_sequence(slots)
+            got = _generate_nina_slots_sequence(slots, plan_filters=plan_filters)
             dso_name = " + ".join(s.name for s in slots)
             good_hours = float(sum(s.good_hours for s in slots))
         else:
             end = slots[0].end if slots and slots[0].name == dso_name else None
-            got = _generate_nina_sequence(dso_name, good_hours, end=end)
+            preset = slots[0].filters if (plan_filters and slots and slots[0].name == dso_name) else None
+            got = _generate_nina_sequence(dso_name, good_hours, end=end, filters=preset)
     except sequence_lint.SequenceLintError as exc:
         # The generator refused to write a sequence N.I.N.A would skip parts
         # of (2026-09-14: every exposure block). Nothing is on disk but last
@@ -763,7 +781,7 @@ def generate_sequence_task(dso_name: str, good_hours: float = 0.0, notify: bool 
         social_server.post_social_message("⛔ " + msg)
         pushover.push_message(msg)
         raise
-    _PLAN_ON_DISK["sig"] = slot_plan.signature(slots, _filter_plans_for(slots))
+    _PLAN_ON_DISK["sig"] = slot_plan.signature(slots, _filter_plans_for(slots, plan_filters))
     if got and notify:
         _plan, output_path = got
         _push_imaging_plan(dso_name, good_hours, _LAST_BEST_START.get("t"), output_path,
@@ -1013,15 +1031,16 @@ def _carry_out_noon(rec: dict, resumed: bool):
             "Scheduler restarted: carrying on with the conductor's noon plan\n"
             + slot_plan.describe(slots))
         set_state(State.NOON_CHECK, best, True, slots=slots)
-        _run(generate_sequence_task, best, hours, notify=False, slots=slots)
+        _run(generate_sequence_task, best, hours, notify=False, slots=slots,
+             plan_filters=_plan_filters_live(plan))
         return slots
     social_server.post_social_message(f"Imaging mode: {super_user_commands.get_mode()}")
     social_server.tonight_cmd(["me", "tonight", best], 2, "", "")
     social_server.post_social_message("Planning to image tonight — timeline follows")
     obs_calendar.set_today_stat('image', best)
     set_state(State.NOON_CHECK, best, True, slots=slots)
-    _run(generate_sequence_task, best, hours, slots=slots)
-    _filter_advice_shadow(slots)
+    _run(generate_sequence_task, best, hours, slots=slots, plan_filters=_plan_filters_live(plan))
+    _post_filters(plan)
     _post_plan_extras(plan)
     return slots
 
@@ -1050,44 +1069,39 @@ def _post_plan_extras(plan: dict) -> None:
         LOGGER.exception("disk chat line failed")
 
 
-def _filter_advice_shadow(slots) -> None:
-    """docs/FILTER_ADVISOR_PLAN.md step 1: say what the filter advisor would
-    plan for each slot, beside what the sequence actually holds, and change
-    nothing. A daemon thread like the cross-check: the advisor fetches the
-    seeing forecast and must never hold up the noon check.
-    Off: cfg["nina"]["filter_advisor"] = "off"."""
-    if str((CFG.get("nina") or {}).get("filter_advisor", "shadow")).lower() == "off" or not slots:
-        return
-
-    def run():
-        from fits_processing import filter_advisor
+def _post_filters(plan: dict) -> None:
+    """Say what filters tonight's sequence is built from, and why (C1,
+    docs/AUTOMATION_PLAN.md). The decision is the conductor's plan's
+    (control/night_plan apply_filters: per slot "filters", "filter_source",
+    "filter_reasons", and "filter_mode"); this reads the written sequence back
+    so the owner sees the ratio beside what N.I.N.A will shoot, posts one
+    chat message and journals a FILTER_ADVICE note. In shadow mode the
+    message says so and the sequence was built the old way; in default mode
+    the ratio IS the sequence's and the read-back is the proof. No network:
+    the advisor already ran inside the planner.
+    Off: cfg["nina"]["filter_advisor"] = "off" (the plan then carries nothing)."""
+    try:
+        from control import night_plan
         from iris import client as conductor_client
+        slots = [s for s in (plan or {}).get("slots") or [] if s.get("filter_source")]
+        if not slots or (plan or {}).get("filter_mode") == "off":
+            return
+        written = {}
         try:
-            written = {}
-            try:
-                for name, counts, _exp in nina_sequence_gen.read_back(Path(CFG["nina"]["sequence_output"])):
-                    written[name] = counts
-            except Exception:
-                LOGGER.exception("filter advice: could not read the sequence back")
-            lines, records = ["Filter advisor (shadow, nothing changed):"], []
-            for s in slots:
-                adv = filter_advisor.advise_for(s.name, s.start, s.end)
-                plan = adv.get("plan") or {}
-                actual = written.get(s.name) or {}
-                lines.append("%s %s-%s  advised %s  |  sequence %s" % (
-                    s.name, s.start.strftime("%H:%M"), s.end.strftime("%H:%M"),
-                    " ".join("%s=%s" % kv for kv in plan.items()) or "-",
-                    " ".join("%s×%s" % kv for kv in actual.items()) or "-"))
-                lines.extend("    " + r for r in adv.get("reasons") or [])
-                records.append({"dso": s.name, "action": adv.get("action"), "advised": plan,
-                                "sequence": actual, "reasons": adv.get("reasons"),
-                                "tonight": adv.get("tonight")})
-            social_server.post_social_message("\n".join(lines))
-            conductor_client.post_event("FILTER_ADVICE", "scheduler", {"slots": records}, kind="note")
+            for name, counts, _exp in nina_sequence_gen.read_back(Path(CFG["nina"]["sequence_output"])):
+                written[name] = counts
         except Exception:
-            LOGGER.exception("filter advice (shadow) failed")
-
-    threading.Thread(target=run, daemon=True, name="filter-advice").start()
+            LOGGER.exception("filters: could not read the sequence back")
+        text = night_plan.describe_filters(plan, written)
+        if text:
+            social_server.post_social_message(text)
+        records = [{"dso": s["dso"], "source": s.get("filter_source"),
+                    "filters": s.get("filters") or {}, "sequence": written.get(s["dso"]) or {},
+                    "reasons": s.get("filter_reasons") or []} for s in slots]
+        conductor_client.post_event("FILTER_ADVICE", "scheduler",
+                                    {"mode": plan.get("filter_mode"), "slots": records}, kind="note")
+    except Exception:
+        LOGGER.exception("filters post failed")
 
 
 def _carry_out_replan(rec: dict):
@@ -1100,7 +1114,9 @@ def _carry_out_replan(rec: dict):
     _LAST_BEST_START["t"] = _plan_best_start(plan)
     social_server.post_social_message("Replanned by request — new plan:\n" + slot_plan.describe(slots))
     set_state(State.WAITING_FOR_PRE_SUNSET, plan["best"], True, slots=slots)
-    _run(generate_sequence_task, plan["best"], int(plan["good_hours"]), slots=slots)
+    _run(generate_sequence_task, plan["best"], int(plan["good_hours"]), slots=slots,
+         plan_filters=_plan_filters_live(plan))
+    _post_filters(plan)
     return slots
 
 
@@ -1115,14 +1131,16 @@ def _carry_out_sunset(rec: dict, noon_name: str) -> None:
         + _second_slot_message(slots))
     social_server.post_dso_preview(best)
     set_state(State.PRE_SUNSET_CHECK, best, True, slots=slots)
-    sig = slot_plan.signature(slots, _filter_plans_for(slots))
+    live = _plan_filters_live(plan)
+    sig = slot_plan.signature(slots, _filter_plans_for(slots, live))
     if best != noon_name or sig != _PLAN_ON_DISK.get("sig"):
         LOGGER.info("Plan changed since the sequence was written (%s -> %s) — regenerating",
                     noon_name, best)
         social_server.post_social_message(
             "Plan changed since the sequence was written — regenerating:\n"
             + slot_plan.describe(slots))
-        _run(generate_sequence_task, best, hours, slots=slots)
+        _run(generate_sequence_task, best, hours, slots=slots, plan_filters=live)
+        _post_filters(plan)
     else:
         _publish_plan_to_site("imaging", restamp=True)
     _run(imaging_task)

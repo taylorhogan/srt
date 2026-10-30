@@ -57,12 +57,23 @@ stays one night.
 
 ## Rollout
 
-1. **Shadow (this build).** After the noon sequence is written, the advisor
+1. **Shadow (2026-10-18).** After the noon sequence is written, the advisor
    runs for every slot target in a background thread and posts one chat
    message: what it would plan, why, and what is actually planned. Journaled
    as a `FILTER_ADVICE` note. It changes nothing.
-2. **Default.** After a week of shadow posts the owner agrees with, the advisor
-   replaces `filter_need` for targets without an explicit plan.
+2. **Default (wired 2026-10-30, C1 of docs/AUTOMATION_PLAN.md; the flag is
+   still `shadow`).** The advisor now runs INSIDE the noon plan
+   (`control/night_plan.apply_filters`), and each slot of the `NIGHT_PLAN`
+   record carries `filters` (the ratio), `filter_source` (explicit > monitor
+   > advisor > type) and `filter_reasons`; the record's `filter_mode` is
+   `cfg["nina"]["filter_advisor"]` as the planner saw it. The scheduler reads
+   the ratio off the plan and hands it to the sequence generator as a
+   *preset* (`nina_sequence_gen._plan_for(preset=)`), which takes the same
+   ratio path as an explicit `filters` plan and is read back the same way.
+   `shadow`: recorded and posted, the generator decides as before.
+   `default`: the plan's ratio is the sequence's. Flip the key and `update`;
+   the next noon plan carries it. The clean criterion is seven noon plans
+   whose `filters` equal the sequence read-back with no hand change.
 3. **Expiring overrides.** `filters <dso> ... for N` (nights), after which the
    advisor takes over again.
 
@@ -70,6 +81,12 @@ stays one night.
 
 - `fits_processing/filter_advisor.py`: `advise()` is pure (dict inputs,
   testable on CI); `advise_for()` gathers the live inputs and never raises.
-- Shadow hook: `end_points/scheduler_server.py`, after the noon
-  `generate_sequence_task`, beside the executor cross-check.
+- The decision: `control/night_plan.slot_filters` / `apply_filters` (pure),
+  `read_filters` (live), `describe_filters` (the chat text).
+- The post: `end_points/scheduler_server._post_filters`, after every
+  `generate_sequence_task` of the driven path (noon, replan, a sunset
+  regeneration): reads the written sequence back and journals `FILTER_ADVICE`
+  with `{mode, slots: [{dso, source, filters, sequence, reasons}]}`.
+- Tests: `tests/test_night_plan_filters.py`; the preset path in
+  `tests/test_filter_plan_sizing.py` and `tests/test_nina_slots.py`.
 - Tests: `tests/test_filter_advisor.py`, one per rule above.

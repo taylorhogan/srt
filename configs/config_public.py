@@ -6,7 +6,7 @@ class PublicConfig():
 
         },
         "version": {
-            "date": "2026.10.29.12"
+            "date": "2026.10.30.1"
         },
 
         "logger": {
@@ -303,6 +303,17 @@ class PublicConfig():
             # object-type default) sizes ONE pass to hours * efficiency, and
             # the container's hard end (slot window) stops the run.
             "efficiency": 0.75,
+            # The filter advisor (fits_processing/filter_advisor, docs/
+            # FILTER_ADVISOR_PLAN.md; C1 of docs/AUTOMATION_PLAN.md): the
+            # noon plan decides each slot's filter ratio from the frames on
+            # disk, tonight's seeing and the moon, and records it in the
+            # NIGHT_PLAN record (control/night_plan apply_filters).
+            #   "shadow"  -- recorded and posted beside what the sequence
+            #                holds; the generator decides as before (default)
+            #   "default" -- the plan's ratio IS the sequence's (an explicit
+            #                `filters` plan on the queue still wins)
+            #   "off"     -- nothing recorded, no post
+            "filter_advisor": "shadow",
             # Focus seeds (fits_processing/focus_model.py): before every
             # SmartExposure block the generator writes a N.I.N.A
             # MoveFocuserByTemperature (absolute: slope * T + intercept) with

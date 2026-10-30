@@ -17,13 +17,23 @@ copies that drift:
     python -m control.night_plan            # tonight's plan as JSON (the conductor runs this)
     python -m control.night_plan --refresh  # the noon form: refresh the queue's hours first
 
-The record also carries two things that are not the ranking (docs/
+The record also carries three things that are not the ranking (docs/
 AUTOMATION_PLAN.md, 2026-10-29): "auto_stop", the waiting targets the
 convergence and frame-goal verdicts say are finished (control/auto_stop;
-shadow lists them, live retires them), and "disk", the image drive's free
-space band (utils/disk_space). A drive in the refuse band calls the night
+shadow lists them, live retires them); "disk", the image drive's free
+space band (utils/disk_space) -- a drive in the refuse band calls the night
 off here, with the reason in "why", so the decision is in the plan the
-conductor journals rather than in a refusal at 20:30.
+conductor journals rather than in a refusal at 20:30; and, per slot, the
+FILTERS (C1, 2026-10-30): "filters" is the ratio the sequence generator
+should write for that target, "filter_source" says who decided it
+(explicit: the queue's `filters` plan, which always wins; monitor: a
+light-curve target's own fixed plan; advisor: fits_processing.filter_advisor
+from the frames on disk, tonight's seeing and the moon; type: nothing
+decided here, the generator's object-type split applies) and
+"filter_reasons" is the advisor's why. "filter_mode" is cfg nina.filter_advisor
+as the planner saw it: "shadow" records the ratio and the scheduler ignores
+it, "default" makes the scheduler write it, "off" records nothing. The
+mode rides the record so the journal says what the sequence was built from.
 
 The CLI is what the conductor calls, in its own process: the planner hits
 the network (forecasts, SIMBAD) and must never be able to stall or crash the
@@ -74,9 +84,14 @@ def slots_for(rows, dark_hours, weather_by_hour, caps: dict, nina_cfg: dict) -> 
 
 def slots_record(slots) -> list:
     """The slots as plain JSON -- the shape scheduler_state.json carries."""
-    return [{"dso": s.name, "start": s.start.isoformat(timespec="minutes"),
-             "end": s.end.isoformat(timespec="minutes"), "hours": int(s.good_hours)}
-            for s in slots or []]
+    out = []
+    for s in slots or []:
+        rec = {"dso": s.name, "start": s.start.isoformat(timespec="minutes"),
+               "end": s.end.isoformat(timespec="minutes"), "hours": int(s.good_hours)}
+        if getattr(s, "filters", None):
+            rec["filters"] = dict(s.filters)
+        out.append(rec)
+    return out
 
 
 def slots_from_record(records) -> list:
@@ -91,9 +106,11 @@ def slots_from_record(records) -> list:
     from control.slot_plan import Slot
     out = []
     for r in records or []:
+        filters = r.get("filters") if isinstance(r.get("filters"), dict) else None
         out.append(Slot(name=str(r["dso"]), start=datetime.fromisoformat(r["start"]),
                         end=datetime.fromisoformat(r["end"]), good_hours=int(r["hours"]),
-                        priority=int(r.get("priority", 5))))
+                        priority=int(r.get("priority", 5)),
+                        filters={k: int(v) for k, v in filters.items()} if filters else None))
     return out
 
 
@@ -154,6 +171,141 @@ def read_auto_stop(instructions_path, cfg) -> list:
     return auto_stop.evaluate(rows)
 
 
+# ------------------------------------------------------------------ filters (C1)
+
+FILTER_MODES = ("off", "shadow", "default")
+DEFAULT_FILTER_MODE = "shadow"
+
+
+def filter_mode(cfg) -> str:
+    """cfg nina.filter_advisor: off / shadow / default. Anything else reads as shadow."""
+    m = str(((cfg or {}).get("nina") or {}).get("filter_advisor", DEFAULT_FILTER_MODE)).lower()
+    return m if m in FILTER_MODES else DEFAULT_FILTER_MODE
+
+
+def _norm(name) -> str:
+    return str(name or "").lower().replace(" ", "")
+
+
+def queue_row(rows, dso) -> Optional[dict]:
+    """The first non-completed queue row for *dso* (instructions' own match rule). Pure."""
+    key = _norm(dso)
+    for r in rows or []:
+        if _norm(r.get("dso")) == key and r.get("status") != "completed":
+            return r
+    return None
+
+
+def _ratio(plan) -> Optional[dict]:
+    if not isinstance(plan, dict):
+        return None
+    out = {}
+    for f, n in plan.items():
+        try:
+            out[str(f)] = int(n)
+        except (TypeError, ValueError):
+            continue
+    return out if any(v > 0 for v in out.values()) else None
+
+
+def slot_filters(dso, row, advice) -> dict:
+    """Who decides tonight's filters for one slot, and what. Pure.
+
+    *row* is the target's queue row (or None), *advice* the filter advisor's
+    result for the slot (or None). Explicit > monitor > advisor > type: the
+    same order the sequence generator keeps (nina_sequence_gen._plan_for),
+    so the record and the file agree by construction.
+    -> {"filters": {filter: ratio} or None, "filter_source": str, "filter_reasons": [str]}
+    """
+    row = row or {}
+    explicit = _ratio(row.get("filter_plan"))
+    if explicit:
+        src = "monitor" if row.get("lightcurve") else "explicit"
+        why = ("monitor target (lightcurve): its own fixed plan" if src == "monitor"
+               else "the queue's `filters` plan (explicit plans always win)")
+        return {"filters": explicit, "filter_source": src, "filter_reasons": [why]}
+    advice = advice or {}
+    plan = _ratio(advice.get("plan"))
+    if plan and advice.get("action") in ("plan", "done"):
+        return {"filters": plan, "filter_source": "advisor",
+                "filter_reasons": [str(r) for r in advice.get("reasons") or []]}
+    reasons = [str(r) for r in advice.get("reasons") or []]
+    reasons.append("no plan from the advisor: the generator's object-type split applies")
+    return {"filters": None, "filter_source": "type", "filter_reasons": reasons}
+
+
+def apply_filters(plan: dict, rows, advise, mode: str) -> dict:
+    """Decide the filters for every slot in *plan* and record them. Pure given
+    *advise* (dso, start, end) -> advice dict. Mode "off" records only the mode."""
+    plan = dict(plan or {})
+    plan["filter_mode"] = mode
+    if mode == "off":
+        return plan
+    from datetime import datetime
+    slots = []
+    for rec in plan.get("slots") or []:
+        rec = dict(rec)
+        row = queue_row(rows, rec.get("dso"))
+        advice = None
+        if not _ratio((row or {}).get("filter_plan")):
+            try:
+                advice = advise(rec.get("dso"), datetime.fromisoformat(rec["start"]),
+                                datetime.fromisoformat(rec["end"]))
+            except Exception as exc:  # noqa: BLE001 -- a broken advisor is a reason, not a crash
+                advice = {"plan": None, "action": "error",
+                          "reasons": ["advisor failed: %s: %s" % (type(exc).__name__, exc)]}
+        rec.update(slot_filters(rec.get("dso"), row, advice))
+        if rec.get("filters") is None:
+            rec.pop("filters", None)
+        slots.append(rec)
+    plan["slots"] = slots
+    return plan
+
+
+def read_filters(plan: dict, instructions_path, cfg) -> dict:
+    """apply_filters on the live inputs: the queue file and the advisor. Network."""
+    mode = filter_mode(cfg)
+    if mode == "off" or not plan.get("will_image"):
+        plan = dict(plan or {})
+        plan["filter_mode"] = mode
+        return plan
+    try:
+        with open(instructions_path, "r", encoding="utf-8") as fh:
+            rows = json.load(fh)
+    except Exception:
+        _logger.exception("filters: could not read the queue; the advisor alone")
+        rows = []
+    from fits_processing import filter_advisor
+    return apply_filters(plan, rows, filter_advisor.advise_for, mode)
+
+
+def describe_filters(plan: dict, written: Optional[dict] = None) -> str:
+    """The noon chat message for the plan's filters, '' when there are none.
+
+    *written* is {dso: {filter: frames}} read back from the sequence file,
+    so the owner sees the ratio beside what N.I.N.A will shoot."""
+    mode = (plan or {}).get("filter_mode", "off")
+    slots = [s for s in (plan or {}).get("slots") or [] if s.get("filter_source")]
+    if mode == "off" or not slots:
+        return ""
+    head = ("Filters tonight:" if mode == "default"
+            else "Filter advisor (shadow, nothing changed):")
+    lines = [head]
+    for s in slots:
+        ratio = " ".join("%s=%s" % kv for kv in (s.get("filters") or {}).items()) or "-"
+        seq = ""
+        if written is not None:
+            got = written.get(s["dso"]) or {}
+            seq = "  |  sequence %s" % (" ".join("%s×%s" % kv for kv in got.items()) or "-")
+        lines.append("%s %s-%s  %s %s (%s)%s" % (
+            s["dso"], s["start"][11:16], s["end"][11:16],
+            "filters" if mode == "default" else "advised", ratio, s["filter_source"], seq))
+        lines.extend("    " + r for r in s.get("filter_reasons") or [])
+    if mode != "default":
+        lines.append("  (cfg nina.filter_advisor = default makes the plan's ratio the sequence's)")
+    return "\n".join(lines)
+
+
 def plan_tonight(instructions_path: Optional[str] = None) -> dict:
     """Rank the queue against tonight's sky and forecast and decide. Network."""
     from configs import config
@@ -169,6 +321,11 @@ def plan_tonight(instructions_path: Optional[str] = None) -> dict:
         plan = apply_disk(plan, read_disk(cfg))
     except Exception:
         _logger.exception("disk check failed; planning without it")
+    try:
+        plan = read_filters(plan, path, cfg)
+    except Exception:
+        _logger.exception("filters failed; the generator decides on its own tonight")
+        plan["filter_mode"] = "shadow"
     try:
         plan["auto_stop"] = read_auto_stop(path, cfg)
     except Exception:

@@ -120,3 +120,48 @@ def test_counts_include_the_per_frame_overhead(monkeypatch):
     applied = g._apply_explicit_plan(blocks[:1], {"L": 1}, usable_seconds=1350.0,
                                      exposures={"L": 10})
     assert applied == {"L": 60}                     # 1350 / 22.4, not 1350 / 10 = 135
+
+
+# ------------------------------------------------------------ the noon plan's preset (C1)
+
+def _fake_queue(monkeypatch, explicit=None):
+    import types
+    import control
+    fake = types.SimpleNamespace(get_filter_plan=lambda d: explicit, get_exposure_plan=lambda d: None,
+                                 get_instruction_by_dso=lambda d: None)
+    monkeypatch.setattr(control, "instructions", fake, raising=False)
+    monkeypatch.setitem(sys.modules, "control.instructions", fake)
+    monkeypatch.setattr(g, "_wheel", lambda: {})
+    monkeypatch.setattr(g, "_gain_map", lambda: {})
+    monkeypatch.setattr(g, "_max_seconds_for", lambda d: None)
+    monkeypatch.setattr(g, "_efficiency", lambda: 0.75)
+    monkeypatch.setattr(g, "_classify_object_type", lambda d: pytest.fail("the preset decides, not the type"))
+    monkeypatch.setattr(g, "_need_plan", lambda *a, **k: pytest.fail("the preset decides, not the need"))
+
+
+def _container(blocks):
+    return {"Items": {"$values": blocks}}
+
+
+def test_the_plans_preset_is_sized_exactly_like_an_explicit_plan(monkeypatch):
+    _fake_queue(monkeypatch)
+    a = _blocks()
+    got = g._plan_for(_container(a), "ngc1961", 3 * 3600.0, preset={"Ha": 36, "O-III": 24, "S-II": 12})
+    _fake_queue(monkeypatch, explicit={"Ha": 36, "O-III": 24, "S-II": 12})
+    b = _blocks()
+    want = g._plan_for(_container(b), "ngc1961", 3 * 3600.0)
+    assert got == want == {"Ha": 13, "O-III": 9, "S-II": 4}
+    assert [_iters(x) for x in a] == [_iters(x) for x in b]
+
+
+def test_an_explicit_plan_beats_the_preset(monkeypatch):
+    _fake_queue(monkeypatch, explicit={"L": 1})
+    blocks = _blocks()
+    assert g._plan_for(_container(blocks), "x", 3600.0, preset={"Ha": 4, "O-III": 1}) == {"L": 9}
+
+
+def test_a_preset_needs_the_hours(monkeypatch):
+    """A preset is a share of a window; with no window there is nothing to share."""
+    _fake_queue(monkeypatch)
+    assert g._plan_for(_container(_blocks()), "x", None, preset={"Ha": 4}) == {}
+    assert g._plan_for(_container(_blocks()), "x", 0.0, preset={"Ha": 4}) == {}

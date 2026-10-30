@@ -44,7 +44,7 @@ class World:
         monkeypatch.setattr(S.time, "sleep", self.sleep)
         monkeypatch.setattr(S, "set_state", lambda st, *a, **k: self.log.append(("state", st.name)))
         monkeypatch.setattr(S, "_cross_check", lambda *a, **k: self.log.append(("cross", a[0])))
-        monkeypatch.setattr(S, "_filter_advice_shadow", lambda slots: self.log.append(("advice",)))
+        monkeypatch.setattr(S, "_post_filters", lambda plan: self.log.append(("filters", plan.get("filter_mode"))))
         monkeypatch.setattr(S, "_publish_skip_to_site", lambda r: self.log.append(("skip_site", r)))
         monkeypatch.setattr(S, "_publish_plan_to_site", lambda *a, **k: self.log.append(("restamp",)))
         monkeypatch.setattr(S.obs_calendar, "set_today_stat", lambda *a: self.log.append(("cal",) + a))
@@ -56,12 +56,13 @@ class World:
         monkeypatch.setattr(S, "_get_best_object",
                             lambda: pytest.fail("the executor must not rank to decide"))
 
-        def gen(dso, hours=0.0, notify=True, slots=None):
+        def gen(dso, hours=0.0, notify=True, slots=None, plan_filters=False):
             self.log.append(("generate", dso, notify, [s.name for s in slots]))
-            S._PLAN_ON_DISK["sig"] = S.slot_plan.signature(slots, {})
+            self.log.append(("plan_filters", plan_filters, [s.filters for s in slots]))
+            S._PLAN_ON_DISK["sig"] = S.slot_plan.signature(slots, S._filter_plans_for(slots, plan_filters))
         monkeypatch.setattr(S, "generate_sequence_task", gen)
         monkeypatch.setattr(S, "imaging_task", lambda: self.log.append(("launch",)))
-        monkeypatch.setattr(S, "_filter_plans_for", lambda slots: {})
+        monkeypatch.setattr(S.instructions, "get_filter_plan", lambda name: None)
         S._PLAN_ON_DISK.clear()
 
     def get_plan(self, day=None, timeout=8.0):
@@ -109,6 +110,43 @@ def test_a_replan_rewrites_the_sequence(monkeypatch):
     S.driven_cycle()
     assert [g[1] for g in w.kinds("generate")] == ["ngc7790", "m33"]
     assert w.kinds("launch") == [("launch",)]
+
+
+def test_the_plans_filters_are_written_only_when_its_mode_is_default(monkeypatch):
+    """C1: the NIGHT_PLAN record carries each slot's ratio; the scheduler hands
+    it to the generator when the record says filter_mode = default, and the
+    filters post follows every generation."""
+    slot = dict(PLAN["slots"][0], filters={"L": 4, "R": 1, "G": 1, "B": 1}, filter_source="advisor",
+                filter_reasons=["need (goal - have): L 30, R 4, G 4, B 4"])
+    for mode, want in (("shadow", False), ("default", True)):
+        plan = dict(PLAN, slots=[slot], filter_mode=mode)
+        w = World(monkeypatch, [reply(rec("noon", "good", 5, plan=plan)),
+                                reply(rec("noon", "good", 5, plan=plan)),
+                                reply(rec("noon", "good", 5, plan=plan)),
+                                reply(rec("noon", "good", 5, plan=plan), rec("sunset", "good", 9, plan=plan))])
+        S.driven_cycle()
+        assert w.kinds("plan_filters") == [("plan_filters", want, [{"L": 4, "R": 1, "G": 1, "B": 1}])], mode
+        assert w.kinds("filters") == [("filters", mode)]
+        assert ("restamp",) in w.log                  # the same ratio at sunset: no regeneration
+
+
+def test_a_ratio_that_changes_by_sunset_regenerates_when_live(monkeypatch):
+    noon = dict(PLAN, filter_mode="default",
+                slots=[dict(PLAN["slots"][0], filters={"L": 4, "R": 1, "G": 1, "B": 1}, filter_source="advisor")])
+    sunset = dict(noon, slots=[dict(noon["slots"][0], filters={"L": 1, "R": 1, "G": 1, "B": 1})])
+    w = World(monkeypatch, [reply(rec("noon", "good", 5, plan=noon)), reply(rec("noon", "good", 5, plan=noon)),
+                            reply(rec("noon", "good", 5, plan=noon), rec("sunset", "good", 9, plan=sunset))])
+    S.driven_cycle()
+    assert [g[2] for g in w.kinds("plan_filters")] == [[{"L": 4, "R": 1, "G": 1, "B": 1}],
+                                                        [{"L": 1, "R": 1, "G": 1, "B": 1}]]
+    assert ("restamp",) not in w.log
+    # in shadow the ratio is not the sequence's, so its change is not a reason to regenerate
+    w = World(monkeypatch, [reply(rec("noon", "good", 5, plan=dict(noon, filter_mode="shadow"))),
+                            reply(rec("noon", "good", 5, plan=dict(noon, filter_mode="shadow"))),
+                            reply(rec("noon", "good", 5, plan=dict(noon, filter_mode="shadow")),
+                                  rec("sunset", "good", 9, plan=dict(sunset, filter_mode="shadow")))])
+    S.driven_cycle()
+    assert len(w.kinds("plan_filters")) == 1 and ("restamp",) in w.log
 
 
 def test_a_bad_noon_skips_without_generating(monkeypatch):

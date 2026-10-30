@@ -572,15 +572,23 @@ def _walk_and_replace(obj: Any, dso_name: str, coords: dict) -> None:
             _walk_and_replace(item, dso_name, coords)
 
 
-def _plan_for(container: Any, dso_name: str, seconds: Optional[float]) -> dict[str, int]:
+def _plan_for(container: Any, dso_name: str, seconds: Optional[float],
+              preset: Optional[dict] = None) -> dict[str, int]:
     """Size the SmartExposure blocks under *container* for *dso_name*.
 
-    §2c resolution order: explicit `filters` plan > need-weighted split
-    (measured per-filter convergence) > object-type default split. Every
-    path sizes its counts to hours * efficiency (_efficiency). An explicit
-    plan applies even when the hours are unknown: then its counts are
-    literal, otherwise they are the ratio. *container* may be the whole
+    §2c resolution order: explicit `filters` plan > *preset* > need-weighted
+    split (measured per-filter convergence) > object-type default split.
+    Every path sizes its counts to hours * efficiency (_efficiency). An
+    explicit plan applies even when the hours are unknown: then its counts
+    are literal, otherwise they are the ratio. *container* may be the whole
     sequence or one target's container.
+
+    *preset* (C1, 2026-10-30) is the ratio the noon plan decided for this
+    target (control/night_plan apply_filters: the filter advisor's, carried
+    in the NIGHT_PLAN record as the slot's "filters"). It is read exactly as
+    an explicit plan -- the same ratio path, the same read-back -- so the
+    journal's ratio and the file's blocks agree by construction. It needs
+    the hours: a preset is a share of a window, never a literal count.
     """
     explicit = None
     try:
@@ -602,9 +610,13 @@ def _plan_for(container: Any, dso_name: str, seconds: Optional[float]) -> dict[s
             "%s: frames sized to max_hours (%.0f min), not the %.0f-min slot",
             dso_name, cap / 60.0, seconds / 60.0)
         seconds = cap
+    preset = {str(f): int(n) for f, n in (preset or {}).items() if int(n) > 0} or None
     if explicit:
         plan = _apply_filter_plan(container, seconds or 0.0, "explicit", explicit=explicit,
                                   exposures=exposures)
+    elif preset and seconds is not None and seconds > 0:
+        logging.getLogger(__name__).info("%s: the noon plan's filter ratio %s", dso_name, preset)
+        plan = _apply_filter_plan(container, seconds, "preset", explicit=preset)
     elif seconds is not None and seconds > 0:
         obj_type = _classify_object_type(dso_name)
         need = _need_plan(container, dso_name, obj_type, seconds)
@@ -1389,7 +1401,8 @@ def generate_slots_sequence(template_path: Path, slots: list, output_path: Path,
     """Write a sequence with one target container per slot.
 
     *slots* is a list of dicts: ``name, ra_hours, dec_degrees, seconds, start,
-    end`` (start/end local datetimes, may be None). The template's single
+    end`` (start/end local datetimes, may be None) and optionally ``filters``,
+    the noon plan's ratio for the target (_plan_for's preset). The template's single
     DeepSkyObjectContainer is cloned once per slot with fresh object ids, each
     clone patched for its target and sized for its hours -- the same planning
     as a one-slot night, applied per slot -- and every slot given a hard end
@@ -1456,7 +1469,7 @@ def generate_slots_sequence(template_path: Path, slots: list, output_path: Path,
         if cap:
             # ...and also the cap counted from the slot's REAL start (_add_cap_span).
             _add_cap_span(c, cap, next_id)
-        plans.append(_plan_for(c, slot["name"], slot.get("seconds")))
+        plans.append(_plan_for(c, slot["name"], slot.get("seconds"), preset=slot.get("filters")))
         seed_focus(c, focus_model, next_id, ids=_index_ids(sequence))
         apply_filter_gain(c, ids=_index_ids(sequence))
         if k > 0:
@@ -1516,6 +1529,7 @@ def generate_sequence(
     above_horizon_seconds: Optional[float] = None,
     end=None,
     lint_scripts: bool = True,
+    filters: Optional[dict] = None,
 ) -> dict[str, int]:
     """
     Generate a NINA imaging sequence from a template with a new target.
@@ -1532,6 +1546,8 @@ def generate_sequence(
                                 stop (the planner's window end: earliest of horizon, dawn and
                                 weather -- see _set_hard_end). None keeps the template's
                                 condition, astronomical dawn.
+        filters:                The noon plan's filter ratio for the target (_plan_for's
+                                preset); None lets the generator decide.
 
     Returns:
         Dict mapping filter name to iteration count (empty if above_horizon_seconds not given).
@@ -1568,7 +1584,7 @@ def generate_sequence(
             _set_hard_end(t, end, next_id)
         _dedupe_singletons(sequence)
 
-    filter_plan = _plan_for(sequence, dso_name, above_horizon_seconds)
+    filter_plan = _plan_for(sequence, dso_name, above_horizon_seconds, preset=filters)
     seed_focus(sequence, _focus_model(), [_max_id(sequence) + 1])
     apply_filter_gain(sequence, ids=_index_ids(sequence))
     _refuse_if_broken(sequence, template, output_path, lint_scripts)

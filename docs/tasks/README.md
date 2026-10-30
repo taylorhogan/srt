@@ -37,9 +37,11 @@ did its job, or lists the targets it recomputed (a few minutes per target).
 Notes:
 
 * The `git pull` matters: the `.cmd` and the script arrived in release at
-  7f157df. The web chat `update` command does the same pull plus a restart
-  of `start_srt`, which is also wanted so the conductor's alert hook and the
-  new process supervision load.
+  7f157df. The web chat `update` command does the same pull and relaunches
+  the three children (so the conductor's alert hook loads), but NOT the
+  `start_srt` parent that supervises them: the new supervision loop needs
+  one stop and start of `start_srt` by hand, or a reboot (`start_srt.bat`
+  fast-forwards to release and launches it fresh).
 * To run while nobody is logged in, add `/RU iriso /RP *` to the create
   command (it prompts for the password). Match what
   `schtasks /Query /TN IrisMorningCheck /V /FO LIST` shows under

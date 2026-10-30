@@ -510,6 +510,24 @@ def test_the_written_file_reads_back_as_the_returned_plans(tmp_path, _galaxy_def
     assert not list(tmp_path.glob("*.unverified*"))
 
 
+def test_a_slots_filters_from_the_noon_plan_are_what_its_blocks_say(tmp_path, _galaxy_default):
+    """C1: the plan record's ratio rides the spec as "filters" and the written
+    blocks are that ratio over the slot's hours, read back (the proof)."""
+    slots = [{"name": "testgal1", "ra_hours": 22.6, "dec_degrees": 33.9, "seconds": 4 * 3600.0,
+              "start": None, "end": None, "filters": {"L": 4, "R": 1, "G": 1, "B": 1}},
+             {"name": "testgal2", "ra_hours": 6.3, "dec_degrees": 78.4, "seconds": 3 * 3600.0,
+              "start": None, "end": None}]
+    tpl = tmp_path / "tpl.json"
+    tpl.write_text(json.dumps(_template4()))
+    out = tmp_path / "out.json"
+    plans = g.generate_slots_sequence(tpl, slots, out, state_script="C:\\\\x\\\\s.bat", lint_scripts=False)
+    # 4 h x 0.75 = 10800 s over 7 shares at 312.4 s a frame: 4/7 -> 19, 1/7 -> 4
+    assert plans[0] == {"L": 19, "R": 4, "G": 4, "B": 4}
+    assert plans[1] == {"L": 12, "R": 4, "G": 4, "B": 4}          # no preset: the type split
+    back = g.read_back(out)
+    assert [b[1] for b in back] == [{f: n for f, n in p.items() if n > 0} for p in plans]
+
+
 def test_a_file_that_disagrees_with_the_plan_is_refused_and_not_left_on_disk(tmp_path, monkeypatch,
                                                                              _galaxy_default):
     from nina_gen.sequence_lint import SequenceLintError

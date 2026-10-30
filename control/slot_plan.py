@@ -56,6 +56,10 @@ class Slot:
     end: datetime            # hard end (exclusive)
     good_hours: int          # good hours inside [start, end)
     priority: int = 5
+    # The filter ratio the noon plan decided for this slot (control/night_plan
+    # apply_filters, C1 2026-10-30), or None when the generator decides.
+    # Carried, never computed here: the slot planner knows nothing of filters.
+    filters: Optional[dict] = None
 
     @property
     def seconds(self) -> float:
