@@ -18,7 +18,7 @@ if __package__ is None or __package__ == "":
         sys.path.insert(0, project_root)
 
 from configs import config
-from control import instructions
+from control import filter_plan, instructions
 from hardware_control import kasa_cloud
 from hardware_control import kasa_utils as ku
 from hardware_control import sonos_utils
@@ -2088,24 +2088,30 @@ def filters_cmd(words: list[str], account: str) -> None:
     """
     Set an explicit filter plan for a DSO, used when its sequence is generated.
 
-    Usage: filters <dso> <FILTER>=<count> [<FILTER>=<count> ...]
+    Usage: filters <dso> <FILTER>=<count> [<FILTER>=<count> ...] [for N]
+           filters <dso> for N      (put a last night on the existing plan)
            filters <dso> clear      (fall back to the automatic split)
            filters <dso>            (show the current plan)
 
     e.g.   filters bubble O-III=40 Ha=10
+           filters ngc1961 L=2 R=1 G=1 B=1 for 2
 
     The counts are a RATIO (since 2026-09-10): the generator splits the
     target's good hours times cfg["nina"]["efficiency"] between the filters
     in that proportion, so one pass fits the night's window. They are only
     literal when the hours are unknown (a hand-made sequence for a target
     that is not in tonight's ranking).
+
+    `for N` (C2, 2026-10-30): the plan applies for N nights counting tonight
+    and then the advisor decides again (control/filter_plan; the noon queue
+    refresh drops it and says so). Without it the plan stands until cleared.
     """
     cfg = config.data()
     wheel = cfg.get("nina", {}).get("filter_wheel", {}) or {}
     args = words[2:]
     if not args:
         social_server.post_social_message(
-            "Usage: filters <dso> <FILTER>=<count> ...  e.g. filters bubble O-III=40 Ha=10\n"
+            "Usage: filters <dso> <FILTER>=<count> ... [for N]  e.g. filters bubble O-III=40 Ha=10 for 2\n"
             "Filters: " + ", ".join(wheel))
         return
 
@@ -2113,6 +2119,27 @@ def filters_cmd(words: list[str], account: str) -> None:
     # the name. That keeps two-word names like "m 31" working.
     name_parts = list(itertools.takewhile(lambda w: "=" not in w, args))
     rest = args[len(name_parts):]
+    now = datetime.now()
+
+    # `filters <dso> for N` with no filter tokens: a last night for the plan it has.
+    if not rest and len(name_parts) >= 3 and name_parts[-2].lower() == "for":
+        _toks, nights, err = filter_plan.split_for_nights(name_parts)
+        dso_name = " ".join(name_parts[:-2])
+        if err or not dso_name:
+            social_server.post_social_message(err or "Usage: filters <dso> for N")
+            return
+        until = filter_plan.until_for(now, nights)
+        row = instructions.get_instruction_by_dso(dso_name) or {}
+        if not instructions.set_filter_plan_until_db(dso_name, until):
+            social_server.post_social_message(
+                f"{dso_name} has no filter plan to limit (set one: filters {dso_name} <FILTER>=<count> ... for {nights})")
+            return
+        row[filter_plan.UNTIL_KEY] = until
+        social_server.post_social_message(
+            f"{dso_name} filter plan {_ratio_text(row.get('filter_plan'))}"
+            f"{filter_plan.describe_until(row, now)}; then the advisor decides.")
+        return
+
     if name_parts and name_parts[-1].lower() in ("clear", "none", "off"):
         dso_name = " ".join(name_parts[:-1])
         if not dso_name:
@@ -2130,11 +2157,24 @@ def filters_cmd(words: list[str], account: str) -> None:
         return
 
     if not rest:
+        row = instructions.get_instruction_by_dso(dso_name) or {}
         plan = instructions.get_filter_plan(dso_name)
-        social_server.post_social_message(
-            f"{dso_name} filter plan: "
-            + (", ".join(f"{k}={v}" for k, v in plan.items()) if plan
-               else "none (automatic split by object type)"))
+        if plan:
+            text = _ratio_text(plan) + filter_plan.describe_until(row, now)
+        elif row.get("filter_plan"):
+            text = _ratio_text(row["filter_plan"]) + filter_plan.describe_until(row, now) \
+                + " -- no longer applies; the advisor decides"
+        else:
+            text = "none (the advisor decides, else the split by object type)"
+        social_server.post_social_message(f"{dso_name} filter plan: {text}")
+        return
+
+    rest, nights, err = filter_plan.split_for_nights(rest)
+    if err:
+        social_server.post_social_message(err)
+        return
+    if not rest:
+        social_server.post_social_message("Usage: filters <dso> <FILTER>=<count> ... [for N]")
         return
 
     # How many filters this template can actually name. Block 0 of the sequence
@@ -2170,15 +2210,20 @@ def filters_cmd(words: list[str], account: str) -> None:
             f"{limit} blocks whose filter can be set. Got {len(plan)}.")
         return
 
-    if not instructions.set_filter_plan_db(dso_name, plan):
+    until = filter_plan.until_for(now, nights) if nights else None
+    if not instructions.set_filter_plan_db(dso_name, plan, until=until):
         social_server.post_social_message(f"{dso_name} not found in waiting instructions")
         return
 
-    total = sum(plan.values())
+    tail = (filter_plan.describe_until({filter_plan.UNTIL_KEY: until}, now) + "; then the advisor decides."
+            if until else ". Stands until `filters %s clear`." % dso_name)
     social_server.post_social_message(
-        f"{dso_name} filter plan set: "
-        + ", ".join(f"{k}={v}" for k, v in plan.items())
-        + f" ({total} exposures). Used as-is when tonight's sequence is built.")
+        f"{dso_name} filter plan set: {_ratio_text(plan)} -- a ratio over each night's hours"
+        + tail)
+
+
+def _ratio_text(plan) -> str:
+    return ", ".join(f"{k}={v}" for k, v in (plan or {}).items()) or "none"
 
 
 def sequence_cmd(words: list[str], account: str) -> None:

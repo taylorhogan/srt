@@ -13,6 +13,7 @@ from astropy.time import Time
 from iris_astronomy import astro_dso_visibility
 from cmd_processing import social_server
 from configs import config
+from control import filter_plan as _fp
 
 _PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 _INSTRUCTIONS_PATH = os.path.join(_PROJECT_ROOT, config.data()["location"]["instructions"])
@@ -402,12 +403,16 @@ def add_dso_object_instruction(dso_name, recipe, requestor, priority=5,
     return True
 
 
-def set_filter_plan_db(dso_name: str, plan) -> bool:
+def set_filter_plan_db(dso_name: str, plan, until=None) -> bool:
     """Store (or with a falsy plan, remove) an explicit filter plan on a DSO.
 
     plan is {filter_name: exposure_count}, e.g. {"O-III": 40, "Ha": 10}. The
     sequence generator prefers it over its own split. Matches the first
     non-completed instruction for the name.
+
+    *until* (C2, 2026-10-30) is the last night the plan applies, an ISO date
+    (control/filter_plan.until_for); None = no limit. Clearing the plan
+    clears the limit with it.
     """
     normalized = _normalize_dso(dso_name)
     with open(_INSTRUCTIONS_PATH, 'r') as f:
@@ -417,12 +422,60 @@ def set_filter_plan_db(dso_name: str, plan) -> bool:
                 and instruction["status"] != "completed"):
             if plan:
                 instruction["filter_plan"] = dict(plan)
+                if until:
+                    instruction[_fp.UNTIL_KEY] = str(until)[:10]
+                else:
+                    instruction.pop(_fp.UNTIL_KEY, None)
             else:
                 instruction.pop("filter_plan", None)
+                instruction.pop(_fp.UNTIL_KEY, None)
             with open(_INSTRUCTIONS_PATH, 'w') as f:
                 f.writelines(json.dumps(instructions, indent=4))
             return True
     return False
+
+
+def set_filter_plan_until_db(dso_name: str, until) -> bool:
+    """Put a last night on a DSO's EXISTING plan (`filters <dso> for N`); None lifts it.
+    False when the DSO has no plan to limit."""
+    normalized = _normalize_dso(dso_name)
+    with open(_INSTRUCTIONS_PATH, 'r') as f:
+        instructions = json.load(f)
+    for instruction in instructions:
+        if (_normalize_dso(instruction["dso"]) == normalized
+                and instruction["status"] != "completed"):
+            if not instruction.get("filter_plan"):
+                return False
+            if until:
+                instruction[_fp.UNTIL_KEY] = str(until)[:10]
+            else:
+                instruction.pop(_fp.UNTIL_KEY, None)
+            with open(_INSTRUCTIONS_PATH, 'w') as f:
+                f.writelines(json.dumps(instructions, indent=4))
+            return True
+    return False
+
+
+def expire_filter_plans(night=None) -> list:
+    """Drop every explicit plan whose last night is before *night* (default:
+    the night a sequence written now is for). -> [{dso, plan, until}] removed.
+    The noon queue refresh calls this before the ranking (control/night_plan)."""
+    night = night or _fp.night_for(datetime.now())
+    with open(_INSTRUCTIONS_PATH, 'r') as f:
+        instructions = json.load(f)
+    gone = []
+    for row, plan, until in _fp.expired_rows(instructions, night):
+        gone.append({"dso": row.get("dso"), "plan": plan, "until": until})
+        row.pop("filter_plan", None)
+        row.pop(_fp.UNTIL_KEY, None)
+        hist = row.setdefault("status_history", []) if isinstance(row.get("status_history"), list) \
+            else row.setdefault("status_history", [])
+        hist.append({"filter_plan_expired": plan, "until": until,
+                     "at": datetime.now().isoformat(timespec="minutes"), "by": "noon refresh"})
+    if gone:
+        with open(_INSTRUCTIONS_PATH, 'w') as f:
+            f.writelines(json.dumps(instructions, indent=4))
+    return gone
 
 
 def set_rotation_db(dso_name: str, degrees) -> bool:
@@ -461,13 +514,17 @@ def get_rotation(dso_name: str):
         return None
 
 
-def get_filter_plan(dso_name: str):
-    """The stored {filter: exposures} plan for a DSO, or None."""
+def get_filter_plan(dso_name: str, night=None):
+    """The stored {filter: exposures} plan for a DSO, or None.
+
+    None too once the plan's last night (`filter_plan_until`) is behind
+    *night* -- by default the night a sequence written now is for
+    (control/filter_plan.night_for) -- so an expired plan is no plan to the
+    generator, the sunset signature and the `filters` display alike."""
     record = get_instruction_by_dso(dso_name)
     if not record:
         return None
-    plan = record.get("filter_plan")
-    return dict(plan) if isinstance(plan, dict) and plan else None
+    return _fp.active_plan(record, night or _fp.night_for(datetime.now()))
 
 
 def get_exposure_plan(dso_name: str):

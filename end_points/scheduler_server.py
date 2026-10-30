@@ -1059,6 +1059,13 @@ def _post_plan_extras(plan: dict) -> None:
     except Exception:
         LOGGER.exception("auto-stop chat line failed")
     try:
+        from control import filter_plan
+        text = filter_plan.describe_expired((plan or {}).get("expired_filter_plans") or [])
+        if text:
+            social_server.post_social_message(text)
+    except Exception:
+        LOGGER.exception("expired filter plans chat line failed")
+    try:
         disk = (plan or {}).get("disk") or {}
         if disk.get("band") == "warn":
             social_server.post_social_message(

@@ -74,8 +74,17 @@ stays one night.
    `default`: the plan's ratio is the sequence's. Flip the key and `update`;
    the next noon plan carries it. The clean criterion is seven noon plans
    whose `filters` equal the sequence read-back with no hand change.
-3. **Expiring overrides.** `filters <dso> ... for N` (nights), after which the
-   advisor takes over again.
+3. **Expiring overrides (built 2026-10-30, C2).** `filters <dso> ... for N`
+   stores the last night the plan applies (`filter_plan_until`,
+   `control/filter_plan`); `instructions.get_filter_plan`, the noon plan's
+   decision and the moon judge all read the plan through
+   `filter_plan.active_plan`, so an expired plan is no plan everywhere at
+   once. The noon queue refresh drops expired plans from the file
+   (`expire_filter_plans`), the record carries them as
+   `expired_filter_plans` and the scheduler posts one line.
+   `filters <dso> for N` limits an existing plan; `filters <dso>` shows the
+   limit. A night is named after its evening; a plan set at any hour starts
+   tonight, and a sequence written before 06:00 is for the night in progress.
 
 ## Code
 

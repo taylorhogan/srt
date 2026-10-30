@@ -34,6 +34,8 @@ decided here, the generator's object-type split applies) and
 as the planner saw it: "shadow" records the ratio and the scheduler ignores
 it, "default" makes the scheduler write it, "off" records nothing. The
 mode rides the record so the journal says what the sequence was built from.
+"expired_filter_plans" (C2) lists the explicit plans the noon refresh dropped
+because their last night had passed (control/filter_plan).
 
 The CLI is what the conductor calls, in its own process: the planner hits
 the network (forecasts, SIMBAD) and must never be able to stall or crash the
@@ -208,21 +210,35 @@ def _ratio(plan) -> Optional[dict]:
     return out if any(v > 0 for v in out.values()) else None
 
 
-def slot_filters(dso, row, advice) -> dict:
+def _explicit(row, night) -> Optional[dict]:
+    """The row's `filters` plan if it applies to *night* (control/filter_plan: an
+    expired plan is no plan); *night* None = no expiry check."""
+    from control import filter_plan
+    if night is None:
+        return _ratio((row or {}).get("filter_plan"))
+    return filter_plan.active_plan(row, night)
+
+
+def slot_filters(dso, row, advice, night=None) -> dict:
     """Who decides tonight's filters for one slot, and what. Pure.
 
     *row* is the target's queue row (or None), *advice* the filter advisor's
-    result for the slot (or None). Explicit > monitor > advisor > type: the
-    same order the sequence generator keeps (nina_sequence_gen._plan_for),
-    so the record and the file agree by construction.
+    result for the slot (or None), *night* the night's date (for the plan's
+    expiry, C2). Explicit > monitor > advisor > type: the same order the
+    sequence generator keeps (nina_sequence_gen._plan_for), so the record
+    and the file agree by construction.
     -> {"filters": {filter: ratio} or None, "filter_source": str, "filter_reasons": [str]}
     """
     row = row or {}
-    explicit = _ratio(row.get("filter_plan"))
+    explicit = _explicit(row, night)
     if explicit:
+        from control import filter_plan
         src = "monitor" if row.get("lightcurve") else "explicit"
+        until = row.get(filter_plan.UNTIL_KEY)
         why = ("monitor target (lightcurve): its own fixed plan" if src == "monitor"
                else "the queue's `filters` plan (explicit plans always win)")
+        if until:
+            why += " -- last night %s" % str(until)[:10]
         return {"filters": explicit, "filter_source": src, "filter_reasons": [why]}
     advice = advice or {}
     plan = _ratio(advice.get("plan"))
@@ -234,27 +250,34 @@ def slot_filters(dso, row, advice) -> dict:
     return {"filters": None, "filter_source": "type", "filter_reasons": reasons}
 
 
-def apply_filters(plan: dict, rows, advise, mode: str) -> dict:
+def apply_filters(plan: dict, rows, advise, mode: str, night=None) -> dict:
     """Decide the filters for every slot in *plan* and record them. Pure given
-    *advise* (dso, start, end) -> advice dict. Mode "off" records only the mode."""
+    *advise* (dso, start, end) -> advice dict. Mode "off" records only the
+    mode. *night* (a date) is what an explicit plan's expiry is judged
+    against; None = the first slot's own night."""
     plan = dict(plan or {})
     plan["filter_mode"] = mode
     if mode == "off":
         return plan
     from datetime import datetime
+    if night is None:
+        try:
+            night = datetime.fromisoformat((plan.get("slots") or [{}])[0]["start"]).date()
+        except (KeyError, IndexError, TypeError, ValueError):
+            night = None
     slots = []
     for rec in plan.get("slots") or []:
         rec = dict(rec)
         row = queue_row(rows, rec.get("dso"))
         advice = None
-        if not _ratio((row or {}).get("filter_plan")):
+        if not _explicit(row, night):
             try:
                 advice = advise(rec.get("dso"), datetime.fromisoformat(rec["start"]),
                                 datetime.fromisoformat(rec["end"]))
             except Exception as exc:  # noqa: BLE001 -- a broken advisor is a reason, not a crash
                 advice = {"plan": None, "action": "error",
                           "reasons": ["advisor failed: %s: %s" % (type(exc).__name__, exc)]}
-        rec.update(slot_filters(rec.get("dso"), row, advice))
+        rec.update(slot_filters(rec.get("dso"), row, advice, night))
         if rec.get("filters") is None:
             rec.pop("filters", None)
         slots.append(rec)
@@ -331,7 +354,12 @@ def plan_tonight(instructions_path: Optional[str] = None) -> dict:
     except Exception:
         _logger.exception("auto-stop failed; planning without it")
         plan["auto_stop"] = []
+    if _EXPIRED_PLANS:
+        plan["expired_filter_plans"] = list(_EXPIRED_PLANS)
     return plan
+
+
+_EXPIRED_PLANS: list = []     # what refresh_queue dropped this run, for the record
 
 
 def compare(shadow: dict, scheduler: dict) -> list:
@@ -363,6 +391,15 @@ def refresh_queue() -> None:
     the queue, so tonight's plan never names a target that is done."""
     from control import instructions
     instructions.calc_and_store_hours_above_horizon()
+    try:
+        # Explicit `filters` plans that have run their nights (C2) go first,
+        # so the plan below sees the advisor's ratio for those targets.
+        gone = instructions.expire_filter_plans()
+        _EXPIRED_PLANS[:] = gone
+        for g in gone:
+            _logger.info("filters: %s's plan %s expired (last night %s)", g["dso"], g["plan"], g["until"])
+    except Exception:
+        _logger.exception("filter plan expiry failed; the plans stand")
     try:
         from configs import config
         from control import auto_stop

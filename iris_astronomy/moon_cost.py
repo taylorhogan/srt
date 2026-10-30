@@ -82,8 +82,10 @@ def frame_worth(dark_sky_adu_s: float, c: float, b_moon: float, exptime: float =
 
 def target_plan(entry: dict, dso_type: str) -> dict:
     """The filter mix the moon is judged against: the entry's own plan, else by type."""
-    plan = entry.get("filter_plan")
-    if isinstance(plan, dict) and plan:
+    from datetime import datetime
+    from control import filter_plan
+    plan = filter_plan.active_plan(entry, filter_plan.night_for(datetime.now()))
+    if plan:
         return plan
     kind = str(entry.get("obj_type") or dso_type or "").lower()
     return NARROWBAND_DEFAULT if kind in ("n", "nebula", "pn", "snr") else BROADBAND_DEFAULT

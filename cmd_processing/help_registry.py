@@ -197,15 +197,19 @@ HELP: dict[str, dict] = {
     },
     "filters": {
         "category": "super",
-        "summary": "Set which filters a DSO is shot in, and how many exposures each.",
-        "usage": ["filters <dso>", "filters <dso> <FILTER>=<count> ...",
-                  "filters <dso> clear"],
-        "examples": ["filters bubble O-III=40 Ha=10", "filters bubble",
-                     "filters bubble clear"],
-        "notes": ["Counts are taken literally, not scaled to the hours available.",
+        "summary": "Set which filters a DSO is shot in, as a ratio, for every night or for N nights.",
+        "usage": ["filters <dso>", "filters <dso> <FILTER>=<count> ... [for N]",
+                  "filters <dso> for N", "filters <dso> clear"],
+        "examples": ["filters bubble O-III=40 Ha=10", "filters ngc1961 L=2 R=1 G=1 B=1 for 2",
+                     "filters bubble", "filters bubble clear"],
+        "notes": ["Counts are a RATIO over each night's good hours (one pass fits the "
+                  "window); only a hand-made sequence with no hours takes them literally.",
+                  "`for N`: the plan covers N nights counting tonight, then expires at the "
+                  "noon refresh and the filter advisor decides again. Without it the plan "
+                  "stands until cleared. `filters <dso> for N` limits an existing plan.",
                   "Filters: L, R, G, B, S-II, O-III, Ha. Up to 3 per night.",
-                  "Without a plan the sequence splits by object type as before: "
-                  "nebulae equally across Ha/O-III/S-II, everything else L+RGB."],
+                  "Without a plan the filter advisor decides from the frames on disk, the "
+                  "seeing and the moon (nina.filter_advisor), else the split by object type."],
     },
     "doflats": {
         "category": "super",
