@@ -16,8 +16,12 @@ path, `local/publish_queue/<dso>.json` with the auto-publish date). **D3 built
 too** (`control/publish_gate`: the card through `utils/webchat_client`, the
 `DRAFT_READY` note through the PC, `approve`/`reject`/`drafts` writing
 `local/publish_decisions.json` by draft hash, `publish.gate = shadow`).
-Next: the auto-stop shadow week, then flip auto-stop live; flip the advisor
-to `default`; D4 (the Spark's publish poll).
+**D4 built too** (`scripts/publish_poll.py` on a 15-minute Spark cron: the
+PC's decisions over ssh, `publish_article(replace=True)` between anchors,
+`site_push.py --yes` on the PC, `PUBLISH_DONE --retire`). The publishing
+path exists end to end, dormant until a target converges and the gate is
+live. Next: the auto-stop shadow week, then flip auto-stop live; flip the
+advisor to `default`; E1-E3; F1 shadow.
 
 ## Context
 

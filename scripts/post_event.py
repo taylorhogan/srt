@@ -38,6 +38,9 @@ def main() -> int:
     ap.add_argument("--kind", default="note", choices=("note", "event"))
     ap.add_argument("--b64", default=None, help="base64 of the data JSON")
     ap.add_argument("--data", default=None, help="the data JSON")
+    ap.add_argument("--retire", action="store_true",
+                    help="after a PUBLISH_DONE: set the queue row of data['dso'] to completed "
+                         "(instructions.set_status_db), which the registry reads as RETIRED")
     args = ap.parse_args()
     try:
         data = parse_data(args.b64, args.data)
@@ -49,6 +52,15 @@ def main() -> int:
     if reply is None:
         print("conductor unreachable", file=sys.stderr)
         return 1
+    if args.retire and data.get("dso"):
+        try:
+            from control import instructions
+            ok = instructions.set_status_db(str(data["dso"]), "completed",
+                                            why="published %s" % (data.get("id") or ""), who="publish")
+            print(json.dumps({"retired": bool(ok)}))
+        except Exception as exc:  # noqa: BLE001
+            print(f"retire failed: {exc}", file=sys.stderr)
+            return 1
     print(json.dumps(reply))
     return 0
 

@@ -714,7 +714,8 @@ def build_fragment(art: dict, facts: dict, image_name: str, date: str) -> str:
                         {e(art['time_travel'].strip())}
                     </p>
                 </div>""" if (art.get("time_travel") or "").strip() else "")
-    return f"""        <!-- {e(facts['name'])} -->
+    return f"""{anchor(aid, "start")}
+        <!-- {e(facts['name'])} -->
         <article id="{aid}" class="dso-section" data-added="{date}" data-distance-ly="{int(art['distance_ly'])}">
             <div class="dso-image-container">
                 <img src="images/{image_name}?v={date}" alt="{e(art['alt'])}" class="dso-image">
@@ -727,11 +728,39 @@ def build_fragment(art: dict, facts: dict, image_name: str, date: str) -> str:
 {box}
             </div>
         </article>
+{anchor(aid, "end")}
 """
 
 
-def insert_fragment(html: str, fragment: str) -> str:
-    """After the last gallery entry (the notes panel follows it)."""
+def anchor(aid: str, which: str) -> str:
+    """The HTML comment that marks a pipeline entry's start or end (D4): a
+    re-render of the same target replaces the span between them instead of
+    adding a second entry. Entries written by hand have no anchors and are
+    never replaced."""
+    return f"        <!-- dso:{aid}:{which} -->"
+
+
+def anchored_span(html: str, aid: str) -> Optional[tuple]:
+    """(start, end) of the anchored entry for *aid* in *html*, or None."""
+    a, b = anchor(aid, "start").strip(), anchor(aid, "end").strip()
+    i = html.find(a)
+    if i < 0:
+        return None
+    j = html.find(b, i)
+    if j < 0:
+        return None
+    start = html.rfind("\n", 0, i) + 1
+    end = html.find("\n", j + len(b)) + 1 or len(html)
+    return start, end
+
+
+def insert_fragment(html: str, fragment: str, replace_id: Optional[str] = None) -> str:
+    """After the last gallery entry (the notes panel follows it); or, with
+    *replace_id* and an anchored entry of that id on the page, in its place."""
+    if replace_id:
+        span = anchored_span(html, replace_id)
+        if span:
+            return html[:span[0]] + fragment + html[span[1]:]
     arts = gallery_articles(html)
     if not arts:
         raise ValueError("no gallery entries found in index.html")
@@ -746,28 +775,39 @@ def _git(*args, check=True) -> str:
 
 
 def publish_article(art: dict, facts: dict, image: Path, push: bool = True,
-                    log: Callable[[str], None] = print) -> dict:
-    """Picture to images/<id>.jpg, entry into index.html, commit, push."""
+                    log: Callable[[str], None] = print, replace: bool = False) -> dict:
+    """Picture to images/<id>.jpg, entry into index.html, commit, push.
+
+    *replace* (D4): an entry of the same id that the pipeline wrote (between
+    its anchors) is replaced by this one -- a re-render re-publishes, never
+    duplicates. An entry without anchors was written by hand and is left
+    alone (ValueError, as before).
+    """
     from PIL import Image
     if not (SITE / "index.html").exists():
         raise FileNotFoundError(f"site repo not at {SITE}")
     aid = article_id(facts["dso"], art["title"])
     date = datetime.now().date().isoformat()
     html = (SITE / "index.html").read_text(encoding="utf-8")
-    if any(a["id"] == aid for a in gallery_articles(html)):
-        raise ValueError(f"index.html already has an entry with id {aid}")
+    existing = any(a["id"] == aid for a in gallery_articles(html))
+    replacing = bool(replace and existing and anchored_span(html, aid))
+    if existing and not replacing:
+        raise ValueError(f"index.html already has an entry with id {aid}"
+                         + (" (written by hand: not replaced)" if replace else ""))
     Image.MAX_IMAGE_PIXELS = None
     im = Image.open(image).convert("RGB")
     im.thumbnail((SITE_IMAGE_MAX_PX, SITE_IMAGE_MAX_PX))
     image_name = f"{aid}.jpg"
     im.save(SITE / "images" / image_name, format="JPEG", quality=92)
     fragment = build_fragment(art, facts, image_name, date)
-    (SITE / "index.html").write_text(insert_fragment(html, fragment), encoding="utf-8")
+    (SITE / "index.html").write_text(insert_fragment(html, fragment, aid if replacing else None),
+                                     encoding="utf-8")
     _git("add", "index.html", f"images/{image_name}")
-    _git("commit", "-q", "-m", f"Gallery: {art['title']}\n\n{facts['meta_frames'].replace('&times;', 'x')}, "
+    _git("commit", "-q", "-m", f"Gallery: {art['title']}" + (" (updated)" if replacing else "")
+         + f"\n\n{facts['meta_frames'].replace('&times;', 'x')}, "
          f"{facts['hours']} h over {nights_phrase(len(facts['nights']))}; entry written by astro_output.")
     commit = _git("rev-parse", "--short", "HEAD")
-    log(f"  site: committed {commit} ({aid}, images/{image_name})")
+    log(f"  site: committed {commit} ({aid}, images/{image_name}{', replaced' if replacing else ''})")
     pushed = False
     if push:
         try:
@@ -776,7 +816,7 @@ def publish_article(art: dict, facts: dict, image: Path, push: bool = True,
             log("  site: pushed; live within 5 minutes (scripts/site_push.py announces)")
         except subprocess.CalledProcessError as e:
             log(f"  site: push failed, commit kept: {e.stderr.strip()}")
-    return {"id": aid, "commit": commit, "pushed": pushed, "image": image_name}
+    return {"id": aid, "commit": commit, "pushed": pushed, "image": image_name, "replaced": replacing}
 
 
 # ---------------------------------------------------------------------------

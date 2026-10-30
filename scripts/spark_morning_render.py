@@ -346,7 +346,7 @@ def count_frames(subs_dir: Path, dso: str, exptime: int) -> dict:
     return dict(counts)
 
 
-def post_pc_event(event: str, data: dict, kind: str = "note") -> bool:
+def post_pc_event(event: str, data: dict, kind: str = "note", retire: bool = False) -> bool:
     """Report an outcome to the conductor's journal through the PC
     (scripts/post_event.py over ssh, data as base64 JSON so nothing is
     quoted through cmd.exe). False when the PC did not answer."""
@@ -359,8 +359,8 @@ def post_pc_event(event: str, data: dict, kind: str = "note") -> bool:
     b64 = base64.b64encode(json.dumps(data).encode("utf-8")).decode()
     script = ("Set-Location '%s'; "
               "$py = if (Test-Path '.venv\\Scripts\\python.exe') { '.venv\\Scripts\\python.exe' } else { 'python' }; "
-              "& $py 'scripts\\post_event.py' '%s' --source spark --kind %s --b64 '%s'"
-              % (mt.SRT, event, kind, b64))
+              "& $py 'scripts\\post_event.py' '%s' --source spark --kind %s --b64 '%s'%s"
+              % (mt.SRT, event, kind, b64, " --retire" if retire else ""))
     out = mt._ps(script, timeout=60)
     return out is not None
 

@@ -68,3 +68,17 @@ IrisSkyMonitor and IrisAllSkyMonitor (every 5 min), IrisLiveSkymap,
 IrisForecastLog (hourly), IrisCIWatch (every 5 min), IrisSkysolveAuto.
 Spark cron: `morning_trigger.py` 06:30, `sync_state_to_spark.bsh` 11:40,
 `morning_watch.py` 10:00.
+
+## publish_poll (Spark, every 15 minutes 08:00-22:00) -- added 2026-10-30
+
+Acts on `approve` / `reject` (docs/AUTOMATION_PLAN.md D4): reads the PC's
+`local/publish_decisions.json` over ssh and, with `publish.gate = live`,
+publishes an approved draft to the site, announces through the PC and journals
+`PUBLISH_DONE`. In `shadow` (the default) it says in the chat what it would do,
+once per draft. Add to the Spark's crontab:
+
+```
+*/15 8-22 * * * /home/taylor/Documents/srt/scripts/publish_poll.py >> /tmp/publish_poll.log 2>&1
+```
+
+`scripts/publish_poll.py --dry-run` prints what it would do and touches nothing.
