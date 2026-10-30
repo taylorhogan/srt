@@ -219,6 +219,15 @@ def drives_checks() -> bool:
     return bool(_cfg().get("drives_checks", False))
 
 
+def targets(timeout: float = DEFAULT_TIMEOUT_S) -> Optional[dict]:
+    """GET /v1/targets (the Target registry snapshot), or None if unreachable."""
+    try:
+        with urllib.request.urlopen(conductor_url() + "/v1/targets", timeout=timeout) as r:
+            return json.load(r)
+    except (urllib.error.URLError, OSError, ValueError):
+        return None
+
+
 def get_plan(day: Optional[str] = None, timeout: float = DEFAULT_TIMEOUT_S) -> Optional[dict]:
     """GET /v1/plan for *day* (YYYY-MM-DD, default today), or None if unreachable.
 

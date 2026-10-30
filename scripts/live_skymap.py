@@ -698,6 +698,17 @@ def main() -> None:
     js.write_text(json.dumps(status, indent=1))
     print("rendered", img.name, "->", status.get("target"), status.get("state"))
 
+    # The target board (control/targets_board, ARCHITECTURE_PLAN phase 4):
+    # every target's state as the machine sees it, beside status.json.
+    tj = None
+    try:
+        from control import targets_board
+        tj = out_dir / "live_targets.json"
+        tj.write_text(json.dumps(targets_board.gather(root, config.data()), indent=1))
+    except Exception:
+        print("target board failed", file=sys.stderr)
+        tj = None
+
     if "--no-push" in sys.argv:
         return
 
@@ -709,6 +720,8 @@ def main() -> None:
     # on a link that measured 3ms once anyone looked). One transport, one
     # place to get the bounding right.
     pushes = [(img, "skymap.jpg"), (js, "status.json")]
+    if tj is not None and tj.exists():
+        pushes.append((tj, "targets.json"))
     if plan_jpg is not None:
         pushes.insert(1, (plan_jpg, "plan.jpg"))
     if latest_jpg is not None and latest_jpg.exists():
