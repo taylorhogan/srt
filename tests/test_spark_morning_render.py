@@ -76,3 +76,19 @@ def test_a_failed_type_lookup_is_not_a_galaxy(monkeypatch):
     assert r.is_galaxy("ngc6946") is False
     monkeypatch.setattr(g, "_classify_object_type", lambda _: "galaxy")
     assert r.is_galaxy("ngc6946") is True
+
+
+def test_a_measured_weak_s_ii_drops_sho(tmp_path):
+    """C3: the PC's record says S-II is 0.06 of Ha; SHO is a channel of noise."""
+    full = {"Ha": 44, "S-II": 39, "O-III": 41}
+    assert r.pick_recipes(full, {"S-II": 0.06}) == ["HOO"]
+    assert r.pick_recipes(full, {"S-II": 0.25}) == ["SHO", "HOO"]
+    assert r.pick_recipes(full, {}) == ["SHO", "HOO"] and r.pick_recipes(full, None) == ["SHO", "HOO"]
+    # the mirror reader: the entry's levels per second against Ha, {} without the file
+    import json
+    p = tmp_path / "convergence.json"
+    p.write_text(json.dumps({"ic410": {
+        "Ha": {"emission": {"level_adu_s": 0.02, "gain": 26}},
+        "S-II": {"emission": {"level_adu_s": 0.0012, "gain": 26}}}}))
+    assert r.emission_for("IC 410", str(p)) == {"S-II": 0.06}
+    assert r.emission_for("nope", str(p)) == {} and r.emission_for("ic410", str(tmp_path / "missing.json")) == {}

@@ -179,7 +179,9 @@ def advise_offline(dso: str, row: dict, root: Optional[str] = None) -> Optional[
     frames = filter_advisor._frames_for(dso)
     if not frames:
         return None
-    return filter_advisor.advise(frames, _type_offline(row, root), row, {}, dso=dso)
+    return filter_advisor.advise(frames, _type_offline(row, root), row, {}, dso=dso,
+                                 emission=filter_advisor.emission_for(dso),
+                                 **filter_advisor.advisor_settings())
 
 
 def evaluate(rows: list) -> list:

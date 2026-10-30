@@ -6,7 +6,7 @@ class PublicConfig():
 
         },
         "version": {
-            "date": "2026.10.30.4"
+            "date": "2026.10.30.5"
         },
 
         "logger": {
@@ -314,6 +314,12 @@ class PublicConfig():
             #                `filters` plan on the queue still wins)
             #   "off"     -- nothing recorded, no post
             "filter_advisor": "shadow",
+            # The advisor's weak-line rule (C3): a narrowband filter measured
+            # below weak_line_ratio of Ha on the target's own stacks (the
+            # convergence record's "emission", measured by the PC's SNR run)
+            # needs no more frames once weak_line_min_frames have measured it;
+            # the Spark's recipe picker drops SHO on the same ratio.
+            "advisor": {"weak_line_ratio": 0.1, "weak_line_min_frames": 20},
             # Focus seeds (fits_processing/focus_model.py): before every
             # SmartExposure block the generator writes a N.I.N.A
             # MoveFocuserByTemperature (absolute: slope * T + intercept) with

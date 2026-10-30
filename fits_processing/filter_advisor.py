@@ -45,10 +45,19 @@ SOFT_SEEING = ("poor", "bad")
 DEEPEN_FLOOR = 0.25
 MOON_LIT = 0.5                  # illuminated fraction above which the moon matters
 MOON_FACTOR = {"L": 0.5, "B": 0.5, "Ha": 1.5, "O-III": 0.7}
+# A measured weak line (C3, 2026-10-30): a narrowband filter whose nebula level
+# is below WEAK_LINE_RATIO of Ha's, once WEAK_LINE_MIN_FRAMES usable frames
+# have measured it, needs no more time -- deepening it buys a palette channel
+# of noise (IC 410: S-II 0.2-0.3 of Ha was worth having; 0.06 would not be).
+# cfg["nina"]["advisor"] overrides both.
+WEAK_LINE_RATIO = 0.1
+WEAK_LINE_MIN_FRAMES = 20
+WEAK_LINES = ("S-II", "O-III")
 
 _CANON = {"l": "L", "lum": "L", "luminance": "L", "r": "R", "red": "R", "g": "G", "green": "G",
           "b": "B", "blue": "B", "ha": "Ha", "halpha": "Ha", "h-alpha": "Ha",
-          "oiii": "O-III", "o-iii": "O-III", "o3": "O-III", "sii": "S-II", "s-ii": "S-II", "s2": "S-II"}
+          "oiii": "O-III", "o-iii": "O-III", "o3": "O-III", "o2": "O-III",     # the 2024 archive wrote O2
+          "sii": "S-II", "s-ii": "S-II", "s2": "S-II"}
 
 
 def canonical(name) -> Optional[str]:
@@ -99,23 +108,31 @@ def _ratio(weights: dict) -> dict:
 
 
 def advise(frames: list, obj_type: str, entry: Optional[dict] = None,
-           tonight: Optional[dict] = None, dso: str = "") -> dict:
+           tonight: Optional[dict] = None, dso: str = "",
+           emission: Optional[dict] = None,
+           weak_line_ratio: float = WEAK_LINE_RATIO,
+           weak_line_min_frames: int = WEAK_LINE_MIN_FRAMES) -> dict:
     """Tonight's filter ratio for one target, with the reasons. Pure.
 
     obj_type: "galaxy" / "nebula" / anything else (treated as galaxy: broadband).
     entry: the queue entry (lightcurve, recipe, exposure_s, filter_plan).
     tonight: {"seeing": "good"|"fair"|"poor"|"bad"|"unknown",
               "moon_lit": fraction or None, "moon_up": bool}.
+    emission: {filter: level / Ha level} measured on the target's own stacks
+              (fits_processing.convergence.emission_ratios); a line below
+              *weak_line_ratio* with *weak_line_min_frames* usable frames
+              needs nothing more (WEAK_LINES).
     -> {"dso", "plan": {filter: ratio} or None, "reasons": [str], "need": {...},
-        "have": tally, "action": "plan"|"monitor"|"done"}
+        "have": tally, "action": "plan"|"monitor"|"done", "emission": {...}}
     """
     entry = entry or {}
     tonight = tonight or {}
+    emission = emission or {}
     kind = "nebula" if obj_type == "nebula" else "galaxy"
     have = tally(frames, entry.get("exposure_s"))
     reasons = []
     res = {"dso": dso or entry.get("dso", ""), "kind": kind, "have": have, "need": {},
-           "plan": None, "reasons": reasons, "tonight": tonight}
+           "plan": None, "reasons": reasons, "tonight": tonight, "emission": emission}
 
     if entry.get("lightcurve"):
         reasons.append("monitor target (lightcurve): its own fixed plan stands")
@@ -139,6 +156,14 @@ def advise(frames: list, obj_type: str, entry: Optional[dict] = None,
             reasons.append("%s: %d frames, %d usable but only %d sharp (<= %.1f\"; median %.2f\")"
                            % (f, h["frames"], h["usable"], h["sharp"], SHARP_ARCSEC,
                               h["median_fwhm"] or 0))
+        ratio = emission.get(f) if f in WEAK_LINES else None
+        if (ratio is not None and need[f] > 0 and float(ratio) < weak_line_ratio
+                and h["usable"] >= weak_line_min_frames):
+            need[f] = 0.0
+            reasons.append("%s measured %.2f of Ha over %d usable frames: too weak to deepen "
+                           "(below %.2f); %s target" % (
+                               f, float(ratio), h["usable"], weak_line_ratio,
+                               "HOO" if f == "S-II" else "Ha-dominated"))
 
     if not any(need.values()):
         reasons.append("every goal met (%s): a candidate to retire; deepening split"
@@ -265,6 +290,28 @@ def tonight_for(start, end) -> dict:
     return out
 
 
+def advisor_settings(cfg: Optional[dict] = None) -> dict:
+    """The weak-line thresholds from cfg["nina"]["advisor"], defaults otherwise."""
+    try:
+        if cfg is None:
+            from configs import config
+            cfg = config.data()
+        a = ((cfg or {}).get("nina") or {}).get("advisor") or {}
+        return {"weak_line_ratio": float(a.get("weak_line_ratio", WEAK_LINE_RATIO)),
+                "weak_line_min_frames": int(a.get("weak_line_min_frames", WEAK_LINE_MIN_FRAMES))}
+    except Exception:  # noqa: BLE001
+        return {"weak_line_ratio": WEAK_LINE_RATIO, "weak_line_min_frames": WEAK_LINE_MIN_FRAMES}
+
+
+def emission_for(dso: str) -> dict:
+    """The target's measured line ratios (convergence.emission_for); {} when none."""
+    try:
+        from fits_processing import convergence
+        return convergence.emission_for(dso)
+    except Exception:  # noqa: BLE001
+        return {}
+
+
 def advise_for(dso: str, start=None, end=None) -> dict:
     """advise() on the live inputs. Never raises: a failure is returned as a reason."""
     try:
@@ -280,7 +327,8 @@ def advise_for(dso: str, start=None, end=None) -> dict:
         except Exception:
             obj_type = "unknown"
         tonight = tonight_for(start, end) if start is not None and end is not None else {}
-        return advise(_frames_for(dso), obj_type, entry, tonight, dso=dso)
+        return advise(_frames_for(dso), obj_type, entry, tonight, dso=dso,
+                      emission=emission_for(dso), **advisor_settings())
     except Exception as exc:  # noqa: BLE001
         return {"dso": dso, "plan": None, "action": "error",
                 "reasons": ["advisor failed: %s: %s" % (type(exc).__name__, exc)]}

@@ -42,6 +42,7 @@ rather than running the Spark out of memory at 6am.
 
 import argparse
 import os
+from typing import Optional
 import subprocess
 import sys
 import time
@@ -178,15 +179,41 @@ def already_rendered(dso: str, recipe: str, counts: dict) -> bool:
     return bool(was) and was == now
 
 
-def pick_recipes(counts: dict) -> list[str]:
+# A measured weak line (C3, 2026-10-30): SHO is not rendered when the PC's
+# convergence record says S-II is below WEAK_LINE_RATIO of Ha (the same rule
+# the filter advisor stops shooting it by; fits_processing.filter_advisor).
+WEAK_LINE_RATIO = 0.1
+MIRROR_CONVERGENCE = os.path.expanduser("~/Desktop/iris_state/live/local/convergence.json")
+
+
+def emission_for(dso: str, path: str = MIRROR_CONVERGENCE) -> dict:
+    """{filter: level / Ha level} from the PC's mirrored convergence record;
+    {} when the mirror or the entry is missing. Read only: the PC measures."""
+    try:
+        import json
+        from fits_processing.convergence import emission_ratios
+        with open(path, encoding="utf-8") as fh:
+            data = json.load(fh)
+        return emission_ratios(data.get(dso.lower().replace(" ", ""), {}))
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def pick_recipes(counts: dict, emission: Optional[dict] = None,
+                 weak_line_ratio: float = WEAK_LINE_RATIO) -> list[str]:
     """The recipes the qualifying filters earn, in stack-first order: every
     rule satisfied (SHO and HOO both on a full narrowband set; HSO is gone).
 
     Narrowband recipes need MIN_FRAMES in every filter they use. LRGB needs
     MIN_FRAMES of L and at least two colours with MIN_COLOUR_FRAMES each (the
-    old rule's tolerance of one missing filter, kept).
+    old rule's tolerance of one missing filter, kept). *emission* ({filter:
+    ratio to Ha}, emission_for) drops SHO when S-II is measured weak: a
+    palette channel of noise is not worth the stack.
     """
     have = {f for f, n in counts.items() if n >= MIN_FRAMES}
+    weak = (emission or {}).get("S-II")
+    if weak is not None and float(weak) < weak_line_ratio:
+        have.discard("S-II")
     colours = {f for f in ("R", "G", "B") if counts.get(f, 0) >= MIN_COLOUR_FRAMES}
     out = []
     for name, need in RECIPE_RULES:
@@ -276,8 +303,12 @@ def main() -> int:
 
     plan = []
     for dso, counts in fresh.items():
-        recipes = pick_recipes(counts)
+        emission = emission_for(dso)
+        recipes = pick_recipes(counts, emission)
         summary = " ".join(f"{k}:{v}" for k, v in sorted(counts.items()))
+        if emission.get("S-II") is not None and float(emission["S-II"]) < WEAK_LINE_RATIO \
+                and counts.get("S-II", 0) >= MIN_FRAMES:
+            log(f"{dso}: S-II measured {emission['S-II']:.2f} of Ha (PC record) — SHO not rendered")
         if not recipes:
             log(f"{dso}: {summary} — no recipe reaches {MIN_FRAMES} frames, skipped")
             continue

@@ -4941,6 +4941,7 @@ def _snr_run_locked(words: list[str]) -> None:
         def _progress(msg: str, _fn: str = fn) -> None:
             social_server.post_social_message(f"Convergence [{_fn}]: {msg}")
         _t0 = time.perf_counter()
+        _measure: dict = {}          # the golden's sky and nebula level (C3), filled by the curve
         try:
             counts, resid, slope_pct, final_rmse_pct = stacker.convergence_curve(
                 paths,
@@ -4952,6 +4953,7 @@ def _snr_run_locked(words: list[str]) -> None:
                 precomputed_fwhm_stars=precomputed,
                 # Per filter, so this filter's flat comes along too.
                 calibration=stacker.calibration_from_config(fn),
+                measure=_measure,
             )
         except jobs.Cancelled:
             raise
@@ -4971,21 +4973,13 @@ def _snr_run_locked(words: list[str]) -> None:
         n_frames = f"{stacked} of {len(paths)} frames" if stacked != len(paths) \
             else f"{stacked} frames"
         _logger.info("Convergence [%s]: %s in %.1fs", fn, n_frames, time.perf_counter() - _t0)
-        fit = _conv.decay_fit(counts, resid)
+        # One entry shape for both writers (convergence.filter_entry): the
+        # curve's numbers, the whole-curve curvature, and since 2026-10-30
+        # the golden's emission level per second (C3).
+        entry = _conv.filter_entry(counts, resid, slope_pct, final_rmse_pct, len(paths),
+                                   _calibration is not None, _measure, _conv.frame_facts(paths))
         with _saved_lock:
-            saved[fn] = {
-                "tail_slope_pct": round(slope_pct, 6),
-                "final_rmse_pct": round(final_rmse_pct, 4),
-                "frame_count": stacked,
-                "total_frames": len(paths),
-                "calibrated": _calibration is not None,
-                "updated": _date.today().isoformat(),
-                # Whole-curve curvature (convergence.decay_fit): 1.0 = frames
-                # averaging as independent noise; effective_frames is how many
-                # independent frames would give the same noise.
-                "decay_exponent": fit["exponent"] if fit else None,
-                "effective_frames": fit["effective_frames"] if fit else None,
-            }
+            saved[fn] = entry
         social_server.post_social_message(
             f"Stack convergence vs golden — {fn}  ({n_frames})  slope {slope_pct:+.4f}%/frame  RMSE {final_rmse_pct:.2f}%",
             str(out),

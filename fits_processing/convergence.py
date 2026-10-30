@@ -16,6 +16,14 @@ LIGHT frame on disk for that filter. Entries written before 2026-08-01 have no
 total_frames, and their frame_count is the total rather than the stacked count.
 
 tail_slope_pct is negative (RMSE is falling), so "done" means abs(slope) < threshold.
+
+Since 2026-10-30 (C3 of docs/AUTOMATION_PLAN.md) an entry may carry
+"emission": {"level_adu_s", "sky_adu_s", "exposure_s", "gain", "block_px",
+"frames"} -- the filter's bright-nebula level per second of exposure, measured
+on the golden stack the curve was built on (stacker.golden_measure). It is a
+fact about the target, measured once on the PC where the frames are, and read
+by the filter advisor (emission_ratios: S-II and O-III against Ha, at one
+gain) and, through the morning mirror, by the Spark's recipe picker.
 """
 
 import json
@@ -137,30 +145,130 @@ def compute_dso_convergence(dso_name: str, image_dir: Path) -> dict[str, dict]:
     by_filter = stacker.group_by_filter(fits_files)
 
     results: dict[str, dict] = {}
-    today = date.today().isoformat()
     # Resolved per filter inside the loop so each gets its own flat.
     for fname, paths in by_filter.items():
         try:
             calibration = stacker.calibration_from_config(fname, like=paths[0])
+            measure: dict = {}
             counts, resid, slope_pct, final_rmse_pct = stacker.convergence_curve(
-                paths, filter_name=fname, calibration=calibration)
-            fit = decay_fit(counts, resid)
-            # counts[-1] is the all-frames point of the curve: the frames that
-            # survived the quality cut and registered, i.e. the ones the slope
-            # was actually measured on. len(paths) is every LIGHT frame on disk.
-            results[fname] = {
-                "tail_slope_pct": round(slope_pct, 6),
-                "final_rmse_pct": round(final_rmse_pct, 4),
-                "frame_count": counts[-1],
-                "total_frames": len(paths),
-                "calibrated": calibration is not None,
-                "updated": today,
-                "decay_exponent": fit["exponent"] if fit else None,
-                "effective_frames": fit["effective_frames"] if fit else None,
-            }
+                paths, filter_name=fname, calibration=calibration, measure=measure)
+            results[fname] = filter_entry(counts, resid, slope_pct, final_rmse_pct, len(paths),
+                                          calibration is not None, measure, frame_facts(paths))
         except Exception:
             _logger.exception("compute_dso_convergence: failed for filter '%s'", fname)
     return results
+
+
+def frame_facts(paths: list) -> dict:
+    """{"exposure_s", "gain"} of a filter's lights: the median EXPTIME and the
+    majority GAIN (stacker.select_gain); None where the headers are silent."""
+    out = {"exposure_s": None, "gain": None}
+    try:
+        from astropy.io import fits
+        exps = []
+        for p in list(paths)[:50]:
+            try:
+                e = float(fits.getheader(p).get("EXPTIME", 0.0) or 0.0)
+            except Exception:  # noqa: BLE001
+                continue
+            if e > 0:
+                exps.append(e)
+        if exps:
+            out["exposure_s"] = float(sorted(exps)[len(exps) // 2])
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        from stacking import stacker
+        (gain, _offset), _ok, _bad = stacker.select_gain([Path(p) for p in paths])
+        out["gain"] = gain
+    except Exception:  # noqa: BLE001
+        pass
+    return out
+
+
+def emission_record(measure: Optional[dict], facts: Optional[dict]) -> Optional[dict]:
+    """The entry's "emission" block from stacker.golden_measure's dict (ADU per
+    frame) and frame_facts (exposure, gain): levels per second, so filters at
+    different exposures compare. None when there is no measurement or no
+    exposure to divide by. Pure."""
+    m, f = measure or {}, facts or {}
+    exp = f.get("exposure_s")
+    if m.get("level_adu") is None or not exp or float(exp) <= 0:
+        return None
+    exp = float(exp)
+    return {"level_adu_s": round(float(m["level_adu"]) / exp, 6),
+            "sky_adu_s": round(float(m.get("sky_adu") or 0.0) / exp, 6),
+            "noise_adu_s": round(float(m.get("noise_adu") or 0.0) / exp, 6),
+            "exposure_s": exp, "gain": f.get("gain"),
+            "block_px": m.get("block_px"), "frames": m.get("frames")}
+
+
+def filter_entry(counts: list, resid: list, slope_pct: float, final_rmse_pct: float,
+                 total_frames: int, calibrated: bool,
+                 measure: Optional[dict] = None, facts: Optional[dict] = None) -> dict:
+    """One filter's convergence.json entry, as both writers record it (the
+    `snr` run's end-of-night loop and scripts/convergence_refresh). Pure.
+
+    counts[-1] is the all-frames point of the curve: the frames that survived
+    the quality cut and registered, i.e. the ones the slope was measured on;
+    total_frames is every LIGHT frame on disk."""
+    fit = decay_fit(counts, resid)
+    out = {
+        "tail_slope_pct": round(float(slope_pct), 6),
+        "final_rmse_pct": round(float(final_rmse_pct), 4),
+        "frame_count": int(counts[-1]) if counts else 0,
+        "total_frames": int(total_frames),
+        "calibrated": bool(calibrated),
+        "updated": date.today().isoformat(),
+        # Whole-curve curvature (decay_fit): 1.0 = frames averaging as
+        # independent noise; effective_frames is how many independent frames
+        # would give the same noise.
+        "decay_exponent": fit["exponent"] if fit else None,
+        "effective_frames": fit["effective_frames"] if fit else None,
+    }
+    em = emission_record(measure, facts)
+    if em:
+        out["emission"] = em
+    return out
+
+
+def emission_ratios(filters: dict, reference: str = "Ha") -> dict:
+    """{canonical filter: level / reference level} from a target's entries. Pure.
+
+    Only filters measured at the REFERENCE'S gain take part: ADU are not
+    comparable across the camera's gain modes (narrowband at 26, broadband at
+    0). Filter names are canonicalised (the 2024 archive writes O-III as O2).
+    {} without a reference level above zero.
+    """
+    from fits_processing.filter_advisor import canonical
+    levels, gains = {}, {}
+    for name, info in (filters or {}).items():
+        em = (info or {}).get("emission") or {}
+        lv = em.get("level_adu_s")
+        c = canonical(name) or str(name)
+        if lv is None:
+            continue
+        levels[c] = float(lv)
+        gains[c] = em.get("gain")
+    ref = levels.get(reference)
+    if not ref or ref <= 0:
+        return {}
+    out = {}
+    for c, lv in levels.items():
+        if c == reference or gains.get(c) != gains.get(reference):
+            continue
+        out[c] = round(lv / ref, 4)
+    return out
+
+
+def emission_for(dso_name: str, reference: str = "Ha") -> dict:
+    """emission_ratios of the stored record; {} when unknown or unreadable."""
+    try:
+        data = load_convergence()
+        return emission_ratios(data.get(dso_name.lower().replace(" ", ""), {}), reference)
+    except Exception:  # noqa: BLE001
+        _logger.exception("emission_for(%s) failed", dso_name)
+        return {}
 
 
 def decay_ratio(counts: list[int], residuals: list[float]) -> Optional[float]:

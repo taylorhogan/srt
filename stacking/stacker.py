@@ -2476,6 +2476,30 @@ def _prepare_for_convergence(
     return result_frames, result_accepted, fwhm_values
 
 
+NEBULA_BLOCK_NATIVE_PX = 32      # color_process.PALETTE_LEVEL_BLOCK, in native pixels
+
+
+def golden_measure(golden: np.ndarray, sky_adu: float, noise_adu: float,
+                   native_width: Optional[int], n_frames: int) -> dict:
+    """The emission record of one filter's golden stack (ADU per frame). Pure.
+
+    The level is color_process.nebula_level on the sky-subtracted golden: the
+    90th percentile of block medians, a bright-nebula level the stars cannot
+    set (the stars are the same through every narrowband filter, so a pixel
+    percentile measured 1.00/1.02/1.04 on IC 410 and said nothing). The
+    convergence golden is downscaled to ~512 px, so the block is the
+    palette's 32 native pixels scaled to the golden's pixels, at least 2.
+    """
+    from stacking.color_process import nebula_level
+    g = np.asarray(golden, dtype=np.float32)
+    scale = (float(native_width) / g.shape[1]) if native_width and g.shape[1] else 1.0
+    block = max(2, int(round(NEBULA_BLOCK_NATIVE_PX / scale)))
+    level = nebula_level(g - float(sky_adu), block=block)
+    return {"sky_adu": round(float(sky_adu), 4), "noise_adu": round(float(noise_adu), 4),
+            "level_adu": round(float(level), 4), "block_px": block,
+            "scale": round(scale, 2), "frames": int(n_frames)}
+
+
 def convergence_curve(
     paths: list[Path],
     filter_name: str = "",
@@ -2489,9 +2513,17 @@ def convergence_curve(
     cancel_cb: Optional[Callable[[], bool]] = None,
     precomputed_fwhm_stars: Optional[dict[Path, tuple[float, int]]] = None,
     calibration: Optional[CalibrationSet] = None,
+    measure: Optional[dict] = None,
 ) -> tuple[list[int], list[float], float, float]:
     """
     Measure how quickly stacking converges to the golden (all-frames) stack.
+
+    *measure*, when a dict is passed, is filled with golden_measure() of the
+    golden stack (C3 of docs/AUTOMATION_PLAN.md, 2026-10-30): the sky and the
+    bright-nebula level of this filter in ADU per frame, for the emission
+    ratios the filter advisor and the Spark's recipe picker read from the
+    convergence record. The golden is in hand here and thrown away after the
+    JPEG, so the measurement costs nothing; the return value is unchanged.
 
     Returns (counts, mean_residuals, slope_pct, final_rmse_pct). The annotation
     said three values until 2026-08-21 while the body returned four, so a caller
@@ -2562,6 +2594,17 @@ def convergence_curve(
     # stack's own noise — the curve stays comparable within the run, and the
     # warning says the absolute scale is not.
     _, golden_median, golden_std = sigma_clipped_stats(golden, sigma=3.0)
+    if measure is not None:
+        try:
+            native_w = None
+            try:
+                native_w = int(fits.getheader(paths[0]).get("NAXIS1") or 0) or None
+            except Exception:  # noqa: BLE001
+                native_w = None
+            measure.update(golden_measure(golden, float(golden_median), float(golden_std),
+                                          native_w, n))
+        except Exception:  # noqa: BLE001 -- the record is an extra, never the curve's problem
+            _logger.exception("Convergence [%s]: golden measurement failed", filter_name or "?")
     if golden_median <= 0 or (golden_std > 0 and golden_median < golden_std):
         _logger.warning(
             "Convergence [%s]: sky level %.3f ADU is at or below the stack noise "

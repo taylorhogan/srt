@@ -86,6 +86,17 @@ stays one night.
    limit. A night is named after its evening; a plan set at any hour starts
    tonight, and a sequence written before 06:00 is for the night in progress.
 
+4. **Measured emission (built 2026-10-30, C3).** The PC's SNR run already
+   builds a calibrated golden stack per filter; `stacker.golden_measure`
+   takes `color_process.nebula_level` of it (sky-subtracted, block scaled to
+   the downscale) and `convergence.filter_entry` records it per second as the
+   entry's `emission`. `convergence.emission_ratios` gives S-II and O-III
+   against Ha, at one gain only. In `advise()` a line below
+   `nina.advisor.weak_line_ratio` (0.1) with `weak_line_min_frames` (20)
+   usable frames needs nothing more; the Spark's `pick_recipes` drops SHO on
+   the same ratio from the mirrored record. The Spark never writes a fact
+   back: facts are measured where the frames are, pictures where the GPU is.
+
 ## Code
 
 - `fits_processing/filter_advisor.py`: `advise()` is pure (dict inputs,

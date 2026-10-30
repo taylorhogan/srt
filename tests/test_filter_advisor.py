@@ -106,3 +106,39 @@ def test_a_soft_night_still_fits_four_blocks_with_the_token_share():
     adv = fa.advise(fr, "galaxy", tonight={"seeing": "poor", "moon_lit": 0.6, "moon_up": True})
     assert adv["plan"]["L"] == 1 and len(adv["plan"]) <= fa.MAX_FILTERS
     assert not any("L x" in r for r in adv["reasons"] if r.startswith("moon"))
+
+
+def test_a_measured_weak_line_needs_no_more_frames():
+    """C3: S-II measured 0.06 of Ha over enough frames -> its need is zero and the
+    reason says so; O-III, measured strong, keeps its need."""
+    adv = fa.advise(frames({"Ha": [2.8] * 40, "O-III": [2.6] * 30, "S-II": [2.7] * 24}), "nebula",
+                    emission={"S-II": 0.06, "O-III": 0.45})
+    assert adv["need"]["S-II"] == 0 and adv["need"]["O-III"] > 0
+    assert "S-II" not in adv["plan"] and "O-III" in adv["plan"]
+    assert any("S-II measured 0.06 of Ha over 24 usable frames" in r and "HOO target" in r
+               for r in adv["reasons"])
+    assert adv["emission"] == {"S-II": 0.06, "O-III": 0.45}
+
+
+def test_a_weak_line_measured_on_too_few_frames_is_still_shot():
+    adv = fa.advise(frames({"Ha": [2.8] * 40, "O-III": [2.6] * 30, "S-II": [2.7] * 8}), "nebula",
+                    emission={"S-II": 0.06})
+    assert adv["need"]["S-II"] > 0 and "S-II" in adv["plan"]
+    # ...and the thresholds are the config's
+    adv = fa.advise(frames({"Ha": [2.8] * 40, "O-III": [2.6] * 30, "S-II": [2.7] * 8}), "nebula",
+                    emission={"S-II": 0.06}, weak_line_min_frames=5)
+    assert adv["need"]["S-II"] == 0
+
+
+def test_a_weak_line_can_finish_a_target():
+    """Ha and O-III at goal, S-II weak: done, not 'S-II needs 16 more'."""
+    adv = fa.advise(frames({"Ha": [2.0] * 40, "O-III": [2.6] * 40, "S-II": [2.7] * 24}), "nebula",
+                    emission={"S-II": 0.05})
+    assert adv["action"] == "done"
+
+
+def test_advisor_settings_read_the_config():
+    assert fa.advisor_settings({}) == {"weak_line_ratio": fa.WEAK_LINE_RATIO,
+                                       "weak_line_min_frames": fa.WEAK_LINE_MIN_FRAMES}
+    assert fa.advisor_settings({"nina": {"advisor": {"weak_line_ratio": 0.2, "weak_line_min_frames": 9}}}) \
+        == {"weak_line_ratio": 0.2, "weak_line_min_frames": 9}
