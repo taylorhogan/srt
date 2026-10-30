@@ -555,6 +555,16 @@ HELP: dict[str, dict] = {
                   "On a waiting target the command only sets the hold. `completed` (dbc) is "
                   "not undone here; `image <dso>` queues it again."],
     },
+    "suggest": {
+        "category": "super",
+        "summary": "What is worth adding to the queue this month, with reasons; nothing is queued.",
+        "usage": ["suggest", "suggest <N>"],
+        "examples": ["suggest", "suggest 5"],
+        "notes": ["Scores configs/candidates.json over the next 30 nights: visibility from this "
+                  "site, fit to the field, the moon for the palette, the season; anything queued, "
+                  "imaged or on the site is left out. `image <name>` queues one.",
+                  "The Spark posts the same card every Monday at 12:30."],
+    },
     "approve": {
         "category": "super",
         "summary": "Approve a publish draft (the card the Spark posted) for the site.",

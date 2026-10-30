@@ -2133,6 +2133,35 @@ def drafts_cmd(words: list[str], account: str) -> None:
     social_server.post_social_message(f"Drafts (gate: {gate}):\n" + "\n".join("  " + ln for ln in lines))
 
 
+def suggest_cmd(words: list[str], account: str) -> None:
+    """What is worth adding to the queue this month (E2). Usage: suggest [N]
+
+    Scores configs/candidates.json for the next month (control/suggest; the
+    planner's horizon, the moon, what is queued, imaged or on the site) and
+    posts the top N with reasons. Takes about a minute; nothing is queued --
+    `image <name>` is yours.
+    """
+    n = None
+    if len(words) > 2:
+        if not words[2].isdigit() or int(words[2]) < 1:
+            social_server.post_social_message("Usage: suggest [N]  e.g. suggest 5")
+            return
+        n = int(words[2])
+    social_server.post_social_message("Scoring the candidates for the next month (about a minute)...")
+
+    def _run():
+        try:
+            from control import suggest
+            from scripts import suggest_targets
+            s = suggest_targets.settings()
+            ranked = suggest_targets.compute(config.data(), s)
+            social_server.post_social_message(suggest.describe(ranked, n or int(s["top"])))
+        except Exception as exc:  # noqa: BLE001
+            _logger.exception("suggest failed")
+            social_server.post_social_message(f"suggest failed: {exc!r}")
+    jobs.spawn(_run)
+
+
 def announce_cmd(words: list[str], account: str) -> None:
     """Say text on a Sonos speaker. Usage: announce <speaker_name> <text...>"""
     if len(words) < 4:
@@ -3998,6 +4027,7 @@ def get_super_user_commands() -> dict[str, Callable]:
         "approve": approve_cmd,
         "reject": reject_cmd,
         "drafts": drafts_cmd,
+        "suggest": suggest_cmd,
         "dbb": dbb_cmd,
         "image!!": image_cmd,
         "roof!!": roof_cmd,

@@ -70,3 +70,12 @@ def test_rank_orders_by_the_product_and_explains():
     assert text.startswith("Worth adding this month") and "  neb1 -- A (nebula, SHO): 30 of 30 nights with 3 h+" in text
     assert "gal2 --" not in text and "clu1 --" not in text
     assert S.describe([r[3]], 3).startswith("Nothing worth adding")
+
+
+def test_catalogue_kind_for_the_image_command():
+    cands = [{"name": "ic1795", "kind": "nebula"}, {"name": "ic443", "kind": "snr"}, {"name": "m27", "kind": "pn"},
+             {"name": "m64", "kind": "galaxy"}, {"name": "m37", "kind": "cluster"}, {"name": "ngc7023", "kind": "reflection"}]
+    assert S.catalogue_kind("IC 1795", cands) == "nebula" and S.catalogue_kind("ic443", cands) == "nebula"
+    assert S.catalogue_kind("m27", cands) == "nebula" and S.catalogue_kind("M 64", cands) == "galaxy"
+    assert S.catalogue_kind("m37", cands) is None and S.catalogue_kind("ngc7023", cands) is None
+    assert S.catalogue_kind("nope", cands) is None

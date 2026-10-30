@@ -82,3 +82,15 @@ once per draft. Add to the Spark's crontab:
 ```
 
 `scripts/publish_poll.py --dry-run` prints what it would do and touches nothing.
+
+## suggest_targets (Spark, Mondays 12:30) -- added 2026-10-30
+
+Posts the week's queue suggestions to the web chat (docs/AUTOMATION_PLAN.md
+E2): the top three candidates from configs/candidates.json with reasons and
+"`image <name>` queues one". Nothing is queued. Add to the Spark's crontab:
+
+```
+30 12 * * 1 /home/taylor/Documents/srt/scripts/suggest_targets.py --post >> /tmp/suggest.log 2>&1
+```
+
+The chat `suggest [N]` command answers the same on demand from the PC.

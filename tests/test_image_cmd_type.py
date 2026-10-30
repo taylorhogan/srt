@@ -51,3 +51,12 @@ def test_a_failing_type_lookup_still_queues(monkeypatch):
     monkeypatch.setattr(ss.astro_dso_visibility, "get_dso_type", boom)
     ss.image_cmd(["", "image", "m1"], 1, None, "taylor")
     assert added and added[0][1]["obj_type"] is None and "added to the queue" in posted[-1]
+
+
+def test_a_catalogue_name_gets_its_kind_when_the_classifier_cannot_say(monkeypatch):
+    posted, added = _world(monkeypatch, "?")
+    ss.image_cmd(["", "image", "ic1795"], 1, None, "taylor")             # in configs/candidates.json
+    assert added[0][1]["obj_type"] == "nebula" and "nebula: narrowband" in posted[-1]
+    posted, added = _world(monkeypatch, "?")
+    ss.image_cmd(["", "image", "ngc99999"], 1, None, "taylor")
+    assert added[0][1]["obj_type"] is None

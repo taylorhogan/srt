@@ -57,3 +57,20 @@ def test_drafts_lists_what_would_happen(world):
     suc.approve_cmd(["", "approve", "ic410"], "taylor")
     suc.drafts_cmd(["", "drafts"], "taylor")
     assert "-- publish: approved by taylor" in posted[-1]
+
+
+def test_suggest_cmd_posts_the_scored_list(monkeypatch):
+    import types
+    posted = []
+    monkeypatch.setattr(suc.social_server, "post_social_message", lambda m: posted.append(m))
+    monkeypatch.setattr(suc.config, "data", lambda: {})
+    monkeypatch.setattr(suc.jobs, "spawn", lambda fn: fn())
+    ranked = [{"name": "ic1795", "common": "Fish Head", "kind": "nebula", "palette": "SHO", "score": 0.9,
+               "reasons": ["30 of 30 nights with 3 h+"]}]
+    fake = types.SimpleNamespace(settings=lambda: {"top": 3}, compute=lambda cfg, s: ranked)
+    import sys
+    monkeypatch.setitem(sys.modules, "scripts.suggest_targets", fake)
+    suc.suggest_cmd(["", "suggest"], "taylor")
+    assert posted[0].startswith("Scoring the candidates") and "ic1795 -- Fish Head" in posted[-1]
+    suc.suggest_cmd(["", "suggest", "x"], "taylor")
+    assert posted[-1].startswith("Usage: suggest")

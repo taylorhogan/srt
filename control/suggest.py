@@ -145,6 +145,19 @@ def rank(cands: list, hours: dict, moon: dict, fov: tuple, queue: set, imaged: s
     return sorted(out, key=lambda v: (-v["score"], v["name"] or ""))
 
 
+def catalogue_kind(name: str, cands: list) -> Optional[str]:
+    """The queue's obj_type for a catalogue name: galaxy / nebula (an emission
+    object of any kind) / None (clusters and reflection nebulae plan broadband,
+    an unknown name says nothing). Pure. E2: `image <name>` falls back to this
+    when the catalogue classifier cannot say."""
+    key = squash(name)
+    for c in cands or []:
+        if squash(c.get("name")) == key:
+            k = c.get("kind")
+            return "galaxy" if k == "galaxy" else ("nebula" if k in ("nebula", "snr", "pn") else None)
+    return None
+
+
 def describe(ranked: list, top: int = 3) -> str:
     """The chat text: the top candidates and why, plus the line that queues one."""
     picks = [v for v in ranked if v["score"] > 0][:top]

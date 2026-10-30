@@ -87,12 +87,22 @@ def queued_type(dso_name: str) -> Optional[str]:
     classifier (override table, type cache, SIMBAD). None when SIMBAD does not
     know the name, answers something outside the families, or is down: the
     row then carries no type and the generator plans broadband, as before."""
+    kind = None
     try:
         from control import auto_stop
-        return auto_stop.type_word(astro_dso_visibility.get_dso_type(dso_name))
+        kind = auto_stop.type_word(astro_dso_visibility.get_dso_type(dso_name))
     except Exception:                          # noqa: BLE001 -- a lookup failure is no type
         logging.getLogger(__name__).exception("image: type lookup failed for %s", dso_name)
-        return None
+    if kind is None:
+        # E2: a name from the suggestion catalogue carries its own kind, so a
+        # suggested nebula is planned narrowband even when SIMBAD is down.
+        try:
+            from control import suggest
+            root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+            kind = suggest.catalogue_kind(dso_name, suggest.load_catalogue(os.path.join(root, "configs", "candidates.json")))
+        except Exception:                      # noqa: BLE001
+            kind = None
+    return kind
 
 
 def type_note(obj_type: Optional[str]) -> str:
