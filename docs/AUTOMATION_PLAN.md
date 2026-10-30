@@ -27,8 +27,10 @@ the Spark, `--post`; chat `suggest [N]`; `image` takes the catalogue's kind
 when SIMBAD cannot say). **E3 built too** (`hold`, `moon`, `maxhours`,
 `type` through `control/queue_fields.parse` and `instructions.set_field_db`
 / `set_status_db`, each journaled as a `QUEUE_FIELD` note). Phase E is
-complete. Next: the auto-stop shadow week, then flip auto-stop live; flip
-the advisor to `default`; F1 shadow, F4, F5.
+complete. **F5 built too** (longest-waiting first, a 150-minute budget
+instead of the two-target cap). **F1 is on hold** (owner, 2026-10-30: no
+good luck with the NINA safety monitor). Next: the auto-stop shadow week,
+then flip auto-stop live; flip the advisor to `default`; F4.
 
 ## Context
 

@@ -169,6 +169,12 @@ Since 2026-09-25 the conductor decides both invariants (ADR 0014): every roof fi
   `local/deconv/models/learned_default.pt`); the starless `deblurred` one is
   an optional extra (`--deblur N`) — on one stretch pinned
   to the raw set; a field a deconvolution refuses still gets the others.
+  The morning run renders targets longest-waiting first (F5, 2026-10-30:
+  never rendered, then the oldest last render by the meta file's mtime,
+  depth breaking ties) and starts no new target after `--budget-minutes`
+  (150) of wall time, with `--max-targets` (3) the hard cap behind it;
+  the `.bsh` no longer passes `--max-targets 2`. Deepest-first starved a
+  target imaged in a shallow week behind the same deep two.
   Only ONE of them is pushed (since 2026-10-28, owner's choice): the learned
   composite, or the next class down when a field refused the deconvolution
   (`PUSH_TAGS`); `--push-all` sends the triple again. A narrowband target

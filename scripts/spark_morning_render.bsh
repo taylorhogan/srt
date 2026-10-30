@@ -22,6 +22,8 @@ mkdir -p "$LOG_DIR"
     echo "=== $(date -Is) morning render ==="
     cd "$SRT" || exit 1
     source .venv/bin/activate
-    python scripts/spark_morning_render.py --since-hours 30 --max-targets 2
+    # No --max-targets 2 since 2026-10-30 (F5): the script's wall-time budget
+    # (--budget-minutes 150) and its cap of 3 bound the run, longest-waiting first.
+    python scripts/spark_morning_render.py --since-hours 30
     echo "--- render done (rc=$?) at $(date -Is) ---"
 } >> "$LOG_DIR/morning.log" 2>&1

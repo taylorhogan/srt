@@ -35,9 +35,12 @@ the learned deconvolver, `nn/deblur_model`; a field it refuses still gets the
 other two.
 
 Bounded on purpose. Stacking is 20-60 min per target and peak RSS is ~64 GB, so
-`--max-targets` caps a run and targets are processed one at a time. A morning
-with four new targets renders the deepest and defers the rest to the next run
-rather than running the Spark out of memory at 6am.
+targets are processed one at a time, `--budget-minutes` (150) starts no new
+target once the run has spent that long, and `--max-targets` (3) is the hard
+cap behind it. The order is longest-waiting first (F5, 2026-10-30): a target
+never rendered, then the oldest last render, depth breaking ties. Deepest
+first (until then) rendered the same two deep targets every morning and a
+target imaged in a shallow week waited days for its picture.
 """
 
 import argparse
@@ -226,6 +229,20 @@ def pick_recipes(counts: dict, emission: Optional[dict] = None,
         elif need <= have:
             out.append(name)
     return out
+
+
+def last_render_time(dso: str) -> Optional[float]:
+    """When this target was last rendered (the newest meta file's mtime), or
+    None for a target never rendered."""
+    key = dso.lower().replace(" ", "")
+    times = [p.stat().st_mtime for p in (Path(_root) / "local" / "n2n_lrgb_render").glob(f"meta_{key}_*.json")]
+    return max(times) if times else None
+
+
+def order_plan(plan: list, last_times: dict) -> list:
+    """Longest-waiting first: never rendered, then oldest last render, then
+    the deeper one. Pure. *plan* rows are (dso, recipes, total_frames, summary)."""
+    return sorted(plan, key=lambda r: (last_times.get(r[0]) is not None, last_times.get(r[0]) or 0.0, -r[2]))
 
 
 def render_command(dso: str, recipe: str, first: bool, exptime: int,
@@ -449,7 +466,11 @@ def main() -> int:
     # Three, not two: a two-slot night (2026-09-08 onward) fills two by itself,
     # and a cap that exactly fits the normal case defers any incidental third
     # target to the next morning for no reason.
-    ap.add_argument("--max-targets", type=int, default=3)
+    ap.add_argument("--max-targets", type=int, default=3,
+                    help="targets a run may start (the hard cap; the budget below usually bites first)")
+    ap.add_argument("--budget-minutes", type=float, default=150.0,
+                    help="no new target starts after this much wall time (0: no budget); the morning "
+                         "run starts ~06:45 and the 10:00 watchdog wants the record by then")
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
 
@@ -508,8 +529,10 @@ def main() -> int:
             recipes = todo
         plan.append((dso, recipes, sum(counts.values()), summary))
 
-    # Deepest first: if the cap bites, the best data gets rendered.
-    plan.sort(key=lambda r: -r[2])
+    # Longest-waiting first (F5, 2026-10-30): a target never rendered, then
+    # the one whose last render is oldest; depth breaks ties. Deepest-first
+    # starved a target imaged in a shallow week behind the same deep two.
+    plan = order_plan(plan, {dso: last_render_time(dso) for dso, *_ in plan})
     for dso, recipes, total, summary in plan:
         log(f"{dso}: {summary} -> {' + '.join(recipes)} ({total} frames)")
     if len(plan) > args.max_targets:
@@ -517,7 +540,13 @@ def main() -> int:
         plan = plan[:args.max_targets]
 
     rc = 0
-    for dso, recipes, _total, _s in plan:
+    started = time.time()
+    for k, (dso, recipes, _total, _s) in enumerate(plan):
+        spent = (time.time() - started) / 60.0
+        if k and args.budget_minutes and spent > args.budget_minutes:
+            log(f"budget: {spent:.0f} min spent of {args.budget_minutes:g}; "
+                f"{len(plan) - k} target(s) wait for the next run")
+            break
         galaxy = is_galaxy(dso) if WB_STARS_RECIPES & set(recipes) else False
         if galaxy:
             log(f"{dso}: galaxy — {' + '.join(r for r in recipes if r in WB_STARS_RECIPES)} "

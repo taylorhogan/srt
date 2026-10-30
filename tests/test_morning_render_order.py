@@ -48,3 +48,22 @@ def test_render_command_carries_final():
 
 def test_final_record_path():
     assert r.final_record_path("IC 410", Path("/d")) == Path("/d/Iris/ic410/final/final.json")
+
+
+def test_order_plan_is_longest_waiting_first():
+    plan = [("deep", ["LRGB"], 200, ""), ("never", ["SHO"], 30, ""), ("old", ["HOO"], 60, ""), ("recent", ["LRGB"], 90, "")]
+    times = {"deep": 1000.0, "old": 500.0, "recent": 2000.0}             # "never" has no render
+    assert [r[0] for r in r.order_plan(plan, times)] == ["never", "old", "deep", "recent"]
+    # two never rendered: the deeper first
+    assert [x[0] for x in r.order_plan([("a", [], 10, ""), ("b", [], 50, "")], {})] == ["b", "a"]
+    assert r.order_plan([], {}) == []
+
+
+def test_last_render_time_reads_the_meta_files(tmp_path, monkeypatch):
+    monkeypatch.setattr(r, "_root", str(tmp_path))
+    d = tmp_path / "local" / "n2n_lrgb_render"
+    d.mkdir(parents=True)
+    assert r.last_render_time("ic410") is None
+    (d / "meta_ic410_SHO.json").write_text("{}")
+    (d / "meta_ic410_HOO.json").write_text("{}")
+    assert r.last_render_time("IC 410") == max(p.stat().st_mtime for p in d.glob("meta_ic410_*.json"))
