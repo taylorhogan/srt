@@ -731,6 +731,7 @@ def firmware(binary: Path = FW_BINARY) -> Optional[bytes]:
 # this size, and stretched it shows cloud, moon glow and the brighter stars.
 VIEW_PX = 240
 VIEW_TOP = 140                     # below the camera's timestamp band
+VIEW_MIN_RANGE = 60.0              # 8-bit levels: the stretch never spans fewer
 _view = {"path": None, "jpeg": None}
 
 
@@ -775,7 +776,12 @@ def view_jpeg(path: Path) -> Optional[bytes]:
         a = np.asarray(c).astype(np.float32)
         lum = a.mean(2)
         lo, hi = np.percentile(lum, 2), np.percentile(lum, 99.7)
-        v = np.clip((a - lo) / max(hi - lo, 1.0), 0, 1) ** 0.7
+        # A featureless frame (an even moonlit sky, 2026-10-29: 19 levels from
+        # the 2nd to the 99.7th percentile) must not be stretched 13x into
+        # sensor noise. VIEW_MIN_RANGE caps the gain at ~4x; frames with real
+        # contrast (cloud, the moon's glow) have more range and are unchanged.
+        hi = max(hi, lo + VIEW_MIN_RANGE)
+        v = np.clip((a - lo) / (hi - lo), 0, 1) ** 0.7
         buf = io.BytesIO()
         Image.fromarray((v * 255).astype(np.uint8)).save(buf, "JPEG", quality=85, progressive=False)
         _view.update(path=path, jpeg=buf.getvalue())

@@ -207,7 +207,7 @@ def test_sky_view_jpeg_is_square_and_stretched(tmp_path):
     Image = pytest.importorskip("PIL.Image")
     from cmd_processing import dash
     a = np.full((1440, 2560, 3), 20, np.uint8)
-    a[700:720, 1270:1290] = 60                          # a faint blob on a dark sky
+    a[700:720, 1270:1290] = 120                         # a blob 100 levels over a dark sky
     p = tmp_path / "sky_20261029T010458Z.jpg"
     Image.fromarray(a).save(p)
     im = Image.open(io.BytesIO(dash.view_jpeg(p)))
@@ -223,3 +223,17 @@ def test_pages_show_the_last_target_when_not_imaging():
     assert dash.page_target(None, frames) == "ic410"
     assert dash.page_target({"dso": "hubblev1"}, frames) == "hubblev1"
     assert dash.page_target(None, []) is None
+
+
+def test_sky_view_does_not_blow_up_a_flat_frame(tmp_path):
+    """2026-10-29: an even moonlit sky spanning 19 levels came out as noise."""
+    import io
+    import pytest
+    np = pytest.importorskip("numpy")
+    Image = pytest.importorskip("PIL.Image")
+    rng = np.random.default_rng(1)
+    a = np.clip(19 + rng.normal(0, 3, (1440, 2560, 3)), 0, 255).astype(np.uint8)
+    p = tmp_path / "sky_20261030T005958Z.jpg"
+    Image.fromarray(a).save(p)
+    out = np.asarray(Image.open(io.BytesIO(dash.view_jpeg(p)))).astype(float)
+    assert out.std() < 40 and np.median(out) < 128      # stays a dark, quiet sky
