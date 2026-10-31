@@ -449,6 +449,15 @@ def newest_frame(cfg: dict) -> Optional[dict]:
 # only. Moonlight only ever lowers it, so a moonlit low reading is not cloud.
 SKY_LOG = ROOT / "local" / "sky_log.jsonl"
 SKY_MAX_AGE_MIN = 15
+# Since 2026-10-31 the display shows the SAME number as the site: the sky
+# monitor's seen_pct, the completeness table's rows 2 to 5 added up (owner:
+# "make its number the same as the web site"; the Core2 said 91 % while the
+# site said 46 %). The old index (matches to V 6 over the V 5 stars in the
+# frame, over 0.75) is kept only for rows written before that field existed.
+# Its 65 / 20 bands scale by tonight's pair (91 index, 46 fraction) to about
+# 33 / 10; provisional until a moon-free clear night sets them.
+SKY_GOOD_PCT = 35
+SKY_POOR_PCT = 10
 
 
 def sky_label(row: Optional[dict], now_utc: datetime, in_field: Optional[int],
@@ -472,6 +481,10 @@ def sky_label(row: Optional[dict], now_utc: datetime, in_field: Optional[int],
         return {"v": "no sky cam", "c": "x", "moon": False}
     if not row.get("night"):
         return {"v": "day", "c": "x", "moon": False}
+    if row.get("seen_pct") is not None:
+        pct = int(row["seen_pct"])
+        c = "w" if moonlit else ("g" if pct >= SKY_GOOD_PCT else ("x" if pct < SKY_POOR_PCT else "a"))
+        return {"v": "%d%%" % pct, "c": c, "moon": moonlit}
     if row.get("solve_matches") is None or not in_field:
         return {"v": "?", "c": "a", "moon": moonlit}
     pct = int(round(100 * row["solve_matches"] / in_field / clear))
@@ -578,8 +591,14 @@ def read_sky_night(now: datetime) -> Optional[dict]:
         sol = None
         clear = float(dusk_check._settings()["dusk_clear_transparency"])
         pcts = []
+        # One scale per night: once the monitor writes seen_pct (the site's
+        # number), the night's median and newest come from those rows only.
+        if any(r.get("seen_pct") is not None for _t, r in frames):
+            frames = [(t, r) for t, r in frames if r.get("seen_pct") is not None]
         for t, r in frames:
             key = r.get("generated")
+            if r.get("seen_pct") is not None:
+                _sky_pct_cache[key] = int(r["seen_pct"])
             if key not in _sky_pct_cache:
                 if sol is None:
                     sol = plate_solve.load()

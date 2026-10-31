@@ -146,6 +146,19 @@ def test_sky_label_reads_a_clear_sky_and_admits_what_the_moon_hides():
     assert dash.sky_label(None, now, 200, 0.75, False) is None
 
 
+def test_sky_label_shows_the_sites_number_when_the_monitor_writes_it():
+    # 2026-10-31: the Core2 said 91 % (the old index) while the site said 46 %
+    # (rows 2 to 5 of the completeness table). The row's seen_pct wins.
+    from datetime import timezone
+    now = datetime(2026, 10, 31, 7, 30, tzinfo=timezone.utc)
+    row = {"captured": "2026-10-31T07:24:58+00:00", "night": True, "solve_matches": 142,
+           "seen_v5": 93, "cat_v5": 201, "seen_pct": 46}
+    assert dash.sky_label(row, now, 178, 0.75, False) == {"v": "46%", "c": "g", "moon": False}
+    assert dash.sky_label(dict(row, seen_pct=20), now, 178, 0.75, False)["c"] == "a"
+    assert dash.sky_label(dict(row, seen_pct=5), now, 178, 0.75, False)["c"] == "x"
+    assert dash.sky_label(row, now, 178, 0.75, True)["c"] == "w"
+
+
 # The big-type imaging pages (2026-10-26).
 def test_imaging_filters_count_and_judge_the_running_target_only():
     rows = {"m1": [_row("m1", "2026-10-25", "2026-10-26_02-10-00", "S-II", 1.90),
