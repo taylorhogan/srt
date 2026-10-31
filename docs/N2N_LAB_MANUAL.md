@@ -2541,6 +2541,15 @@ scripts/n2n_lrgb_ladder.py frames --test ngc5907 --filters Ha,O-III,S-II --group
 scripts/n2n_lrgb_ladder.py train --arm groups --suffix _narrowband_rs --upsample bilinear --resplit --workers 8 ...
 ```
 
+A second bug found at launch: the frames stage reproduces the fixed
+halves' frames from the seeded permutation over the frames ON DISK, and
+NGC 6946 Ha had grown from 26 to 49 frames (nights 10-19 and 10-20) since
+its stacks were built on 10-19, so the stage skipped the group and the
+trainer refused the pool with one group empty (13:41, 33 s in). The index
+is path-sorted and a night's frames sort by date, so the original 26 are
+exactly the paths older than the train0 stack (`original_frames`, with a
+test); relaunched 14:40 (frames 1019 across the 23 groups).
+
 Launcher `local/n2n_ladder/narrowband/run_rs.sh`, checkpoint
 `n2n_ladder_groups_narrowband_rs_300s.pt`. Acceptance is step 40's table;
 the number to watch is retention, since the loss cannot move. If it does

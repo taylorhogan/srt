@@ -111,3 +111,18 @@ def test_origin_is_clamped_into_the_coverage_box(tmp_path):
     for _ in range(50):
         y0, x0 = ds.origin(ds.groups[0])
         assert 10 <= y0 <= 60 - 32 and 20 <= x0 <= 70 - 32
+
+
+def test_original_frames_drops_frames_that_arrived_after_the_stacks():
+    """The ladder's frames stage reproduces the fixed halves from a group that
+    has since grown (NGC 6946 Ha: 26 -> 49 frames after the stacks)."""
+    import importlib
+    ladder = importlib.import_module("scripts.n2n_lrgb_ladder")
+    old = [f"2026-10-14/LIGHT/f{i}.fits" for i in range(18)] + [f"2026-10-18/LIGHT/f{i}.fits" for i in range(8)]
+    new = [f"2026-10-19/LIGHT/f{i}.fits" for i in range(12)] + [f"2026-10-20/LIGHT/f{i}.fits" for i in range(11)]
+    built = 1000.0
+    mt = lambda p: 500.0 if p in old else 2000.0
+    assert ladder.original_frames(old, 26, built, mt) == old
+    assert ladder.original_frames(old + new, 26, built, mt) == old
+    assert ladder.original_frames(old[:20], 26, built, mt) is None            # frames went missing
+    assert ladder.original_frames(old + new, 30, built, mt) is None           # the tail does not account for it

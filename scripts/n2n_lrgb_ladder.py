@@ -265,6 +265,24 @@ def frames_dir(dso: str, filt: str) -> Path:
     return FRAMES_DIR / f"{dso}__{safe}"
 
 
+def original_frames(paths: list, n_frames: int, built_mtime: float, mtime=None):
+    """The frames the fixed stacks were built from, or None when they cannot be
+    told apart. The index is path-sorted and a night's frames sort by date, so
+    frames that arrived AFTER the stacks were built (file mtime later than the
+    train0 stack's) are the tail; dropping them must leave exactly *n_frames*.
+    NGC 6946 Ha gained 23 frames over two nights after its stacks were built
+    (2026-10-19) and the re-split run refused the whole pool for it. Pure
+    given *mtime*."""
+    mtime = mtime or (lambda p: Path(p).stat().st_mtime)
+    paths = list(paths)
+    if len(paths) == n_frames:
+        return paths
+    if len(paths) < n_frames:
+        return None
+    kept = [p for p in paths if mtime(p) <= built_mtime]
+    return kept if len(kept) == n_frames else None
+
+
 def build_frames(args) -> int:
     """Keep every registered training frame of each group for the re-split
     trainer. The frames are the fixed halves' frames exactly: the same seeded
@@ -287,11 +305,15 @@ def build_frames(args) -> int:
         g = man["groups"].get(key)
         if not g or not g.get("usable") or dso == args.test:
             continue
-        paths = idx[(dso, filt)]
-        if len(paths) != g["n_frames"]:
-            log(f"[{key}] {len(paths)} frames on disk, manifest says {g['n_frames']} — "
+        paths = original_frames(idx[(dso, filt)], g["n_frames"],
+                                (Path(_root) / g["files"][0]).stat().st_mtime)
+        if paths is None:
+            log(f"[{key}] {len(idx[(dso, filt)])} frames on disk, manifest says {g['n_frames']} — "
                 f"the fixed halves' frames cannot be reproduced; skipped")
             continue
+        if len(paths) != len(idx[(dso, filt)]):
+            log(f"[{key}] {len(idx[(dso, filt)]) - len(paths)} frames arrived after the stacks "
+                f"were built; using the original {len(paths)}")
         out = frames_dir(dso, filt)
         if (out / resplit.GROUP_FILE).exists() and g.get("frames_dir") == str(out.relative_to(_root)):
             rec = json.loads((out / resplit.GROUP_FILE).read_text())

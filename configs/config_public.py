@@ -6,7 +6,7 @@ class PublicConfig():
 
         },
         "version": {
-            "date": "2026.10.31.10"
+            "date": "2026.10.31.11"
         },
 
         "logger": {
@@ -593,6 +593,9 @@ class PublicConfig():
         #   approve/reject are recorded, the timer is not armed, nothing
         #   publishes; default) / "live" (D4 publishes on approval or timer)
         "publish": {"final_mode": "shadow", "auto_approve_days": 3, "gate": "shadow"},
+        # AAVSO WebObs submissions (photometry/aavso.py, `aavso <dso>`): the
+        # owner's observer code, issued 2026-10-31. Not a secret.
+        "aavso": {"obscode": "THCA"},
         # Queue suggestions (docs/AUTOMATION_PLAN.md E, 2026-10-30; the owner
         # chose "suggest, owner approves"): scripts/suggest_targets.py scores
         # configs/candidates.json over the next `nights` nights and posts the
