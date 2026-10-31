@@ -723,3 +723,28 @@ def test_a_capped_slot_also_stops_its_cap_after_it_really_starts(tmp_path, monke
     ids, refs = [], []
     _ids_refs(seq, ids, refs)
     assert len(ids) == len(set(ids)) and set(refs) <= set(ids)
+
+
+def test_a_hard_end_after_the_clocks_fall_back_is_written_in_the_new_wall_clock(tmp_path):
+    """The planner's grid keeps the evening's -04:00 through the night; N.I.N.A
+    reads its own clock, which is EST after 02:00 EDT on 2026-11-01. The
+    slot end 06:00-04:00 is 05:00 EST and must be written as 5."""
+    from datetime import timedelta, timezone
+    edt = timezone(timedelta(hours=-4))
+    slots = [
+        {"name": "melotte15", "ra_hours": 2.55, "dec_degrees": 61.45, "seconds": None,
+         "start": datetime(2026, 10, 31, 22, 0, tzinfo=edt), "end": datetime(2026, 11, 1, 2, 0, tzinfo=edt)},
+        {"name": "ic410", "ra_hours": 5.37, "dec_degrees": 33.5, "seconds": None,
+         "start": datetime(2026, 11, 1, 2, 0, tzinfo=edt), "end": datetime(2026, 11, 1, 6, 0, tzinfo=edt)},
+    ]
+    seq, _ = _gen(tmp_path, slots)
+    dsos = [it for it in g._items_of(g._find_target_area(seq))
+            if g._short_type(it) == "DeepSkyObjectContainer"]
+    ends = [(g._find_first(d, "TimeCondition")["Hours"], g._find_first(d, "TimeCondition")["Minutes"]) for d in dsos]
+    assert ends[1] == (5, 0)                      # 10:00 UTC is 05:00 EST on the PC's clock
+    assert ends[0] == (1, 0)                      # 06:00 UTC is 01:00 EST: the repeated hour reads early, never late
+    # A summer instant is unchanged, and a naive one is wall-clock already.
+    summer = datetime(2026, 7, 10, 3, 30, tzinfo=edt)
+    assert (g.wall_clock(summer).hour, g.wall_clock(summer).minute) == (3, 30)
+    naive = datetime(2026, 11, 1, 6, 0)
+    assert g.wall_clock(naive) is naive and g.wall_clock(None) is None

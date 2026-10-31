@@ -828,9 +828,35 @@ def _clone_with_fresh_ids(node: Any, next_id: list) -> Any:
     return clone
 
 
+def wall_clock(t):
+    """The wall-clock reading N.I.N.A's own clock shows at instant *t*.
+
+    An aware *t* is converted into the site's zone (config location.timezone)
+    so the hour written into a TimeCondition is the one the PC's clock will
+    display when that instant comes. The planner's grid carries the EVENING's
+    offset through the night (pytz arithmetic keeps the tzinfo it started
+    with), so on the night the clocks fall back a slot end of
+    2026-11-01T06:00-04:00 is the instant 10:00 UTC, which the PC shows as
+    05:00 EST; written as "06:00" the slot would have run an hour past its
+    plan into twilight (found 2026-10-31, the afternoon before). An instant
+    inside the repeated hour (01:00-02:00) reads as its EST hour, so such a
+    slot ends an hour early rather than an hour late. A naive *t* is taken
+    as wall-clock already."""
+    if t is None or getattr(t, "tzinfo", None) is None:
+        return t
+    try:
+        from zoneinfo import ZoneInfo
+        from configs import config
+        name = (config.data().get("location") or {}).get("timezone") or "America/New_York"
+        return t.astimezone(ZoneInfo(name))
+    except Exception:  # noqa: BLE001 -- a bad zone name must not stop a sequence
+        return t
+
+
 def _set_hard_end(container: Any, end, next_id: list) -> None:
-    """Make every TimeCondition under *container* end at *end* (local
-    wall-clock) by switching its provider to the fixed Time provider.
+    """Make every TimeCondition under *container* end at *end* (the local
+    wall-clock at that instant, `wall_clock`) by switching its provider to
+    the fixed Time provider.
 
     Only the END is pinned, on EVERY slot. The WaitForTime stays the
     template's nautical dusk: for the first slot that is the dark start
@@ -850,7 +876,8 @@ def _set_hard_end(container: Any, end, next_id: list) -> None:
     """
     if isinstance(container, dict):
         if _short_type(container) == "TimeCondition" and end is not None:
-            container["Hours"], container["Minutes"], container["Seconds"] = end.hour, end.minute, 0
+            w = wall_clock(end)
+            container["Hours"], container["Minutes"], container["Seconds"] = w.hour, w.minute, 0
             container["MinutesOffset"] = 0
             container["SelectedProvider"] = {"$id": str(next_id[0]), "$type": TIME_PROVIDER_TYPE}
             next_id[0] += 1
