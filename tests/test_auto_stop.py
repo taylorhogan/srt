@@ -219,3 +219,20 @@ def test_cap_factor_reads_the_config_and_tolerates_nonsense():
     assert A.cap_factor({"planner": {"auto_stop_cap": "x"}}) == A.DEFAULT_CAP
     assert A.cap_factor({}) == A.DEFAULT_CAP
     assert A.cap_factor({"planner": {"auto_stop_cap": -1}}) == 0.0
+
+
+def test_is_finished_needs_both_verdicts_or_the_cap(monkeypatch):
+    import fits_processing.convergence as C
+    monkeypatch.setattr(C, "is_dso_done", lambda d: d in ("both", "curve", "capped"))
+    advice = {"both": DONE_ADVICE, "curve": PLAN_ADVICE, "goals": DONE_ADVICE,
+              "capped": _advice({"Ha": 150, "O-III": 60, "S-II": 30}, need={"S-II": 10})}
+    monkeypatch.setattr(A, "advise_offline", lambda d, r, root=None: advice.get(d))
+    cfg = {"planner": {"auto_stop_cap": 2.0}}
+    assert A.is_finished("both", {}, cfg) is True
+    assert A.is_finished("curve", {}, cfg) is False       # IC 410 on 2026-10-31: curve flat, goals short
+    assert A.is_finished("goals", {}, cfg) is False
+    assert A.is_finished("capped", {}, cfg) is True
+    assert A.is_finished("both", {"lightcurve": True}, cfg) is False
+    assert A.is_finished("nothing", {}, cfg) is False
+    look = A.finished_lookup([{"dso": "Both"}, {"dso": "curve"}], cfg)
+    assert look("both") is True and look("curve") is False

@@ -308,6 +308,38 @@ def curve_coverage(dso: str, row: dict) -> list:
     return out
 
 
+def is_finished(dso: str, row: Optional[dict] = None, cfg: Optional[dict] = None) -> bool:
+    """Auto-stop's whole verdict for one target, as a bool: both measurements
+    met, or the cap reached. Never raises (an unreadable input reads False).
+
+    The registry (iris/conductor/targets) and the audit read THIS, not the
+    convergence record alone: on 2026-10-31 IC 410's curve passed while its
+    O-III stood at 19 of 40 frames, and the site called it CONVERGED while
+    the queue, rightly, kept imaging it. One rule, one place.
+    """
+    try:
+        if (row or {}).get("lightcurve"):
+            return False
+        from fits_processing.convergence import is_dso_done
+        if cfg is None:
+            from configs import config
+            cfg = config.data()
+        adv = advise_offline(dso, row or {})
+        v = verdict(dso, bool(is_dso_done(dso)), adv)
+        if v["done"]:
+            return True
+        return cap_verdict(dso, adv, cap_factor(cfg)) is not None
+    except Exception:                          # noqa: BLE001
+        _logger.exception("auto-stop: is_finished failed for %s", dso)
+        return False
+
+
+def finished_lookup(rows: list, cfg: Optional[dict] = None) -> Callable[[str], bool]:
+    """A (dso) -> bool over the queue rows, for callers that key by name."""
+    by = {str(r.get("dso") or "").strip().lower().replace(" ", ""): r for r in rows or []}
+    return lambda dso: is_finished(dso, by.get(str(dso).strip().lower().replace(" ", "")), cfg)
+
+
 def evaluate(rows: list) -> list:
     """candidates() on the live verdicts. Never raises."""
     try:

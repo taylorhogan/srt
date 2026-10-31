@@ -259,14 +259,15 @@ def build_report(night: str) -> str:
 
 def _registry_lines():
     from configs import config
-    from fits_processing.convergence import is_dso_done, load_convergence
+    from fits_processing.convergence import load_convergence
     from iris.conductor import audit as A
     from iris.conductor.targets import _has_frames, derive_registry
 
     queue_path = ROOT / config.data()["location"]["instructions"]
     queue = json.loads(queue_path.read_text(encoding="utf-8"))
-    result = A.audit_registry(queue, derive_registry(), is_dso_done, _has_frames)
-    findings = A.find_inconsistencies(queue, load_convergence(), is_dso_done)
+    from control import auto_stop
+    result = A.audit_registry(queue, derive_registry(), auto_stop.finished_lookup(queue), _has_frames)
+    findings = A.find_inconsistencies(queue, load_convergence(), auto_stop.finished_lookup(queue))
     n_mis = (len(result["mismatches"]) + len(result["missing"])
              + len(result["extra"]))
     counts = ", ".join("%s %d" % (s, result["counts"].get(s, 0))

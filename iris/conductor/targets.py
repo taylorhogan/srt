@@ -9,7 +9,9 @@ Derivation rules (deliberately simple, and shadow_report checks them against
 the legacy answers):
     status == completed                -> RETIRED
     status == converged (auto-stop)    -> CONVERGED
-    convergence says done              -> CONVERGED     (the auto-stop fact; not for a lightcurve monitor)
+    auto-stop's verdict says done      -> CONVERGED     (control/auto_stop.is_finished: the curve AND the
+                                                         frame goals, or the cap; never a lightcurve monitor;
+                                                         the curve alone until 2026-10-31)
     frames cached for the dso          -> ACQUIRING
     coordinates resolved / plan set    -> QUEUED
     otherwise                          -> WISHED
@@ -37,12 +39,12 @@ def _load_queue():
         return []
 
 
-def _converged_lookup():
+def _converged_lookup(rows):
     try:
-        from fits_processing.convergence import is_dso_done
-        return is_dso_done
+        from control import auto_stop
+        return auto_stop.finished_lookup(rows)
     except Exception:
-        _logger.warning("targets: convergence unavailable", exc_info=True)
+        _logger.warning("targets: auto-stop unavailable", exc_info=True)
         return lambda name: False
 
 
@@ -57,9 +59,10 @@ def _has_frames(dso: str) -> bool:
 
 def derive_registry() -> dict:
     """{dso: {state, priority, filters, ...}} — the shadow Target registry."""
-    is_done = _converged_lookup()
+    rows = _load_queue()
+    is_done = _converged_lookup(rows)
     out = {}
-    for row in _load_queue():
+    for row in rows:
         dso = str(row.get("dso") or "").strip()
         if not dso:
             continue
@@ -75,10 +78,11 @@ def derive_registry() -> dict:
             state = "RETIRED"
         elif status == "converged" or (is_done(dso) and not row.get("lightcurve")):
             # "converged" is the auto-stop's own write (control/auto_stop,
-            # 2026-10-29); the verdict may also have come from the filter
-            # advisor's frame goals, which is_done does not see. A light-curve
-            # monitor is never converged by its stack's SNR (2026-10-31): only
-            # the auto-stop's curve verdict, written as the status, says so.
+            # 2026-10-29); is_done is the same module's full verdict (the
+            # curve and the frame goals both, or the cap) so the registry
+            # and the queue cannot disagree about what finished means. A
+            # light-curve monitor is never converged by its stack's SNR
+            # (2026-10-31): only its curve verdict, written as the status.
             state = "CONVERGED"
         elif _has_frames(dso):
             state = "ACQUIRING"
