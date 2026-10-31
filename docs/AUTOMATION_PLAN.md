@@ -63,7 +63,7 @@ Every phase ships beside the legacy path, shadows first where a decision changes
 
 ## A. Auto-stop
 
-**Done** = `convergence.is_dso_done(dso)` OR `filter_advisor.advise_for(dso)["action"] == "done"`, with both reasons kept. `lightcurve` monitors are never done.
+**Done** = `convergence.is_dso_done(dso)` AND `filter_advisor.advise_for(dso)["action"] == "done"`, with both reasons kept (owner decision 2026-10-31: it was OR; the convergence curve, once it levelled the nights' skies, passed IC 410 on 19 O-III frames while the advisor wanted 21 more, and noise-limited is not the same as deep enough). `lightcurve` monitors are judged by their curve's phase coverage instead. **Cap** (owner, same day): a target that has shot `planner.auto_stop_cap` (2.0) x its type's goal total is retired `converged` anyway, reason "cap: ...", one priority-0 push, so that with both verdicts required nothing sits in the queue forever.
 
 **New persisted status `converged`**, not `completed`: `completed` is the owner's word (`dbc`, maps to RETIRED in `derive_registry`); the machine's verdict needs its own so `reopen`, the audit and the display can tell them apart. `rank_targets_tonight` keeps only `status == "waiting"` (astro_dso_visibility.py:1199), so a `converged` row leaves ranking with no change to the ranking code, as `held` does. `status_dict` (instructions.py:23) must gain the key (the "held ranked 0" lesson).
 

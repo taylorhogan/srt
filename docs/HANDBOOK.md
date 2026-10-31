@@ -87,8 +87,11 @@ roof it cannot see, under the evidence rule in CLAUDE.md.
 | `replan` | re-run the noon decision now |
 | `update` | pull the release and restart the children (not start_srt itself) |
 
-**Auto-stop** retires a target when its frames are enough (`converged`). The
-noon chat lists them. `reopen` is the undo.
+**Auto-stop** retires a target (`converged`) when both its convergence
+curve is flat and the advisor's frame goals are met, or when it has shot
+twice its goals' worth of frames (the cap: the reason starts "cap:" and
+you get one low-priority push); a light-curve monitor when it can draw
+its curve. The noon chat lists them. `reopen` is the undo.
 
 **Publishing.** When a converged target's final render passes its quality
 check, a card appears in the chat: the picture, the entry's text, who wrote
@@ -126,6 +129,7 @@ processes of start_srt, run scripts/start_srt.bat. Then `status` in the chat.
 | Key | Values | What it does |
 |---|---|---|
 | `planner.auto_stop` | `off` / `shadow` / `live` | list finished targets at noon / retire them |
+| `planner.auto_stop_cap` | multiple, 2.0 | retire a target that has shot this many times its frame goals; 0 = never |
 | `nina.filter_advisor` | `off` / `shadow` / `default` | show the advised filter ratio / use it |
 | `publish.final_mode` | `off` / `shadow` | render a converged target's final |
 | `publish.gate` | `off` / `shadow` / `live` | cards and decisions / publish on approve or timer |

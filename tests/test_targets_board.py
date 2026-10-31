@@ -64,3 +64,57 @@ def test_a_stale_plan_shows_no_tonight():
 def test_empty_inputs_give_an_empty_board():
     b = B.build({}, [], {}, None, {}, {}, set(), {}, NOW)
     assert b["targets"] == [] and b["counts"] == {} and b["tonight"]["best"] is None
+
+
+GOALS = {"Ha": 40, "O-III": 40, "S-II": 40}
+
+
+def _advice(sharp, frames=None, kind="nebula"):
+    frames = frames or sharp
+    return {"action": "plan", "kind": kind,
+            "have": {f: {"frames": frames[f], "usable": frames[f], "sharp": n} for f, n in sharp.items()}}
+
+
+def test_progress_is_the_worst_filters_share_with_that_filter_named():
+    p = B.progress(_advice({"Ha": 30, "O-III": 19, "S-II": 25}, {"Ha": 35, "O-III": 25, "S-II": 25}),
+                   curve_done=True, nights=3, cap_factor=2.0, goals=GOALS)
+    assert p["pct"] == 48 and p["limiting"] == "O-III"
+    assert p["need_frames"] == 10 + 21 + 15 and p["shot"] == 85 and p["cap"] == 240
+    assert p["nights"] == 3 and p["per_night"] == 28.3 and p["nights_to_go"] == 2   # 46 / 28.3
+    assert p["curve"] is True and p["sharp"]["S-II"] == 25 and p["goals"] == GOALS
+
+
+def test_progress_complete_and_unknown_pace():
+    p = B.progress(_advice({"Ha": 44, "O-III": 41, "S-II": 40}), False, 0, 0.0, goals=GOALS)
+    assert p["pct"] == 100 and p["need_frames"] == 0 and p["nights_to_go"] == 0
+    assert p["cap"] is None and p["per_night"] is None
+    q = B.progress(_advice({"Ha": 4}), False, 0, 2.0, goals=GOALS)
+    assert q["pct"] == 0 and q["limiting"] == "O-III" and q["nights_to_go"] is None
+
+
+def test_progress_is_none_for_monitors_and_without_advice():
+    assert B.progress({"action": "monitor", "kind": "galaxy", "have": {}}, True, 5) is None
+    assert B.progress(None, True, 5) is None
+    assert B.progress({"action": "plan", "kind": "nebula", "have": {}}, True, 5, goals={}) is None
+
+
+def test_nights_from_paths_counts_sessions():
+    paths = [r"C:\Users\iriso\Documents\N.I.N.A\Targets\ic410\cdk17\2026-10-27\LIGHT\a.fits",
+             r"C:\x\ic410\cdk17\2026-10-27\LIGHT\b.fits", "/home/t/Targets/ic410/cdk17/2026-10-28/LIGHT/c.fits",
+             "/home/t/Targets/ic410/cdk17/2026-10-29/FLAT/d.fits", "nonsense"]
+    assert B.nights_from_paths(paths) == 2
+
+
+def test_build_carries_progress_except_for_monitors():
+    rows = ROWS + [{"dso": "v1", "status": "waiting", "lightcurve": True}]
+    reg = dict(REG, v1={"state": "ACQUIRING", "priority": 50, "legacy_status": "waiting"})
+    calls = []
+
+    def pf(dso, row):
+        calls.append(dso)
+        return {"pct": 48, "limiting": "O-III"}
+    b = B.build(reg, rows, CONV, PLAN, DRAFTS, {}, set(), FLAGS, NOW, progress_fn=pf)
+    by = {t["dso"]: t for t in b["targets"]}
+    assert by["ic410"]["progress"] == {"pct": 48, "limiting": "O-III"}
+    assert by["v1"]["progress"] is None and "v1" not in calls
+    assert B.build(REG, ROWS, CONV, PLAN, DRAFTS, {}, set(), FLAGS, NOW)["targets"][0]["progress"] is None

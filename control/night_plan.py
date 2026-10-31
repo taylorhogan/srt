@@ -482,6 +482,16 @@ def refresh_queue() -> None:
                 if instructions.set_status_db(v["dso"], auto_stop.CONVERGED,
                                               why="; ".join(v["why"]), who="auto_stop"):
                     _logger.info("auto-stop: %s -> converged (%s)", v["dso"], "; ".join(v["why"]))
+                    if auto_stop.capped(v):
+                        # A cap is not a measurement: say so on the phone
+                        # (priority 0, one line) so it reads apart from a
+                        # finished target and `reopen` is a thought away.
+                        try:
+                            from utils import pushover
+                            pushover.push_message("Auto-stop cap: %s retired -- %s (`reopen %s` for more)"
+                                                  % (v["dso"], v["why"][0], v["dso"]), priority=0)
+                        except Exception:  # noqa: BLE001
+                            _logger.exception("cap push failed")
     except Exception:
         _logger.exception("auto-stop (live) failed; the queue stands")
 

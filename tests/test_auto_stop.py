@@ -17,18 +17,24 @@ PLAN_ADVICE = {"action": "plan", "have": {"Ha": {"usable": 10}}}
 MONITOR = {"action": "monitor"}
 
 
-def test_converged_alone_is_done_and_says_so():
+def test_converged_alone_is_not_done_but_says_what_was_met():
     v = A.verdict("m1", True, PLAN_ADVICE)
-    assert v["done"] and v["why"] == ["convergence: every filter at its flat tail (is_dso_done)"]
+    assert not v["done"] and v["why"] == ["convergence: every filter at its flat tail (is_dso_done)"]
 
 
-def test_frame_goals_alone_are_done_with_the_counts():
+def test_frame_goals_alone_are_not_done_either():
     v = A.verdict("ic410", False, DONE_ADVICE)
-    assert v["done"] and v["why"] == ["frame goals met (filter advisor): Ha 44, O-III 41"]
+    assert not v["done"] and v["why"] == ["frame goals met (filter advisor): Ha 44, O-III 41"]
 
 
-def test_both_verdicts_keep_both_reasons():
-    assert len(A.verdict("m1", True, DONE_ADVICE)["why"]) == 2
+def test_both_verdicts_together_are_done_with_both_reasons():
+    v = A.verdict("m1", True, DONE_ADVICE)
+    assert v["done"] and len(v["why"]) == 2
+
+
+def test_a_thin_channel_that_passes_the_curve_is_kept(): 
+    # 2026-10-31: IC 410 passed the curve on 19 O-III frames; the advisor wanted 21 more.
+    assert not A.verdict("ic410", True, {"action": "plan", "need": {"O-III": 21}})["done"]
 
 
 def test_neither_is_not_done():
@@ -99,8 +105,8 @@ def test_candidates_judge_only_the_rows_the_planner_can_pick():
         seen.append(dso)
         return DONE_ADVICE if dso == "ic410" else PLAN_ADVICE
 
-    found = A.candidates(ROWS, lambda d: d == "m1", advise)
-    assert [v["dso"] for v in found] == ["m1", "ic410"]
+    found = A.candidates(ROWS, lambda d: d in ("m1", "ic410"), advise)
+    assert [v["dso"] for v in found] == ["ic410"]          # m1: curve flat, goals not met
     # held, completed and the monitor were never evaluated
     assert seen == ["m1", "ic410", "trunk"]
 
@@ -109,9 +115,9 @@ def test_a_crashing_verdict_errs_toward_imaging_once_more():
     def boom(_):
         raise RuntimeError("convergence.json unreadable")
     found = A.candidates(ROWS, boom, lambda d, r: DONE_ADVICE if d == "trunk" else None)
-    assert [v["dso"] for v in found] == ["trunk"]           # the advisor still counted
-    found = A.candidates(ROWS, lambda d: False, lambda d, r: 1 / 0)
-    assert found == []
+    assert found == []                                      # a crashed curve verdict reads not done
+    found = A.candidates(ROWS, lambda d: True, lambda d, r: 1 / 0)
+    assert found == []                                      # a crashed advisor too
 
 
 def test_the_object_type_is_taken_offline_and_unknown_reads_as_broadband(tmp_path):
@@ -173,3 +179,43 @@ def test_type_word_maps_the_grids_letter():
     assert A.type_word("C") is None and A.type_word("?") is None
     assert A.type_word("") is None and A.type_word(None) is None
     assert A.type_word("g") == "galaxy"                       # a cached letter in either case
+
+
+NEBULA_GOALS = {"Ha": 40, "O-III": 40, "S-II": 40}
+
+
+def _advice(frames, need=None):
+    return {"action": "plan", "kind": "nebula", "need": need or {},
+            "have": {f: {"frames": n, "usable": n, "sharp": n} for f, n in frames.items()}}
+
+
+def test_cap_retires_on_frames_shot_and_names_what_is_short():
+    adv = _advice({"Ha": 150, "O-III": 60, "S-II": 30}, need={"S-II": 10})
+    v = A.cap_verdict("faint", adv, 2.0, goals=NEBULA_GOALS)
+    assert v["done"] and v["why"] == ["cap: 240 frames shot, 2.0x the nebula goals of 120; still short: S-II 10"]
+    assert A.capped(v)
+
+
+def test_cap_is_not_reached_below_the_multiple_and_never_for_a_monitor_or_when_off():
+    adv = _advice({"Ha": 100, "O-III": 60, "S-II": 30})
+    assert A.cap_verdict("faint", adv, 2.0, goals=NEBULA_GOALS) is None       # 190 < 240
+    assert A.cap_verdict("faint", adv, 0.0, goals=NEBULA_GOALS) is None
+    assert A.cap_verdict("v1", {"action": "monitor", "kind": "galaxy", "have": {}}, 2.0) is None
+    assert A.cap_verdict("x", None, 2.0) is None
+
+
+def test_candidates_apply_the_cap_only_where_the_verdicts_fall_short():
+    rows = [{"dso": "faint", "status": "waiting"}, {"dso": "fresh", "status": "waiting"}]
+    big = _advice({"Ha": 150, "O-III": 60, "S-II": 30}, need={"S-II": 10})
+    small = _advice({"Ha": 10})
+    found = A.candidates(rows, lambda d: d == "faint", lambda d, r: big if d == "faint" else small, cap=2.0)
+    assert [v["dso"] for v in found] == ["faint"]
+    assert found[0]["why"][0].startswith("cap:") and "convergence" in found[0]["why"][1]
+    assert A.candidates(rows, lambda d: False, lambda d, r: big, cap=0.0) == []
+
+
+def test_cap_factor_reads_the_config_and_tolerates_nonsense():
+    assert A.cap_factor({"planner": {"auto_stop_cap": 3}}) == 3.0
+    assert A.cap_factor({"planner": {"auto_stop_cap": "x"}}) == A.DEFAULT_CAP
+    assert A.cap_factor({}) == A.DEFAULT_CAP
+    assert A.cap_factor({"planner": {"auto_stop_cap": -1}}) == 0.0

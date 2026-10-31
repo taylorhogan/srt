@@ -6,7 +6,7 @@ class PublicConfig():
 
         },
         "version": {
-            "date": "2026.10.31.8"
+            "date": "2026.10.31.9"
         },
 
         "logger": {
@@ -687,6 +687,13 @@ class PublicConfig():
             # nothing. Flip to live after a week of shadow lists the owner
             # agrees with.
             "auto_stop": "shadow",
+            # Both verdicts are needed to retire (owner, 2026-10-31), so a
+            # target can sit forever: this caps the frames SHOT per target
+            # at this multiple of its type's frame-goal total (nebula 120,
+            # galaxy 132 -> 240 / 264 frames, ~20 h). Reached, it is
+            # retired "converged" with a reason starting "cap:" and one
+            # priority-0 push; `reopen` has it back. 0 = no cap.
+            "auto_stop_cap": 2.0,
         },
 
         # Free space on the image drive (utils/disk_space, 2026-10-11). Raw

@@ -14,8 +14,10 @@ the chat.
 
 Every input is a reading the PC already has; nothing here decides.
 """
+import math
+import re
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Callable, Optional
 
 STATES = ("ACQUIRING", "CONVERGED", "QUEUED", "WISHED", "RETIRED")   # display order
 MAX_AGE_H = 20.0           # a noon plan older than this is yesterday's
@@ -54,9 +56,59 @@ def _plan_tonight(plan: Optional[dict], now: datetime) -> dict:
     return out
 
 
+def progress(advice: Optional[dict], curve_done: bool, nights: int, cap_factor: float = 0.0,
+             goals: Optional[dict] = None) -> Optional[dict]:
+    """How close a target is to the two things auto-stop waits for. Pure.
+
+    *advice* is filter_advisor.advise()'s result (kind, have, need); the
+    depth is the worst filter's sharp frames over its goal (the advisor's
+    own arithmetic, so the bar fills exactly when its verdict flips), with
+    that filter named. *curve_done* is the convergence verdict. *nights*
+    imaged so far gives the pace, and the frames still short divided by it
+    is the nights to go. *cap_factor* > 0 adds the cap in frames shot. None
+    for a monitor or when there is no advice (no frames, no type).
+    """
+    if not advice or advice.get("action") == "monitor":
+        return None
+    kind = advice.get("kind")
+    if goals is None:
+        from fits_processing.filter_advisor import GOALS
+        goals = GOALS.get(kind) or {}
+    if not goals:
+        return None
+    have = advice.get("have") or {}
+    sharp = {f: int((have.get(f) or {}).get("sharp") or 0) for f in goals}
+    shares = {f: min(1.0, sharp[f] / float(goals[f])) for f in goals if goals[f]}
+    limiting = min(shares, key=lambda f: (shares[f], f))
+    need_frames = sum(max(int(goals[f]) - sharp[f], 0) for f in goals)
+    shot = sum(int((h or {}).get("frames") or 0) for h in have.values())
+    per_night = (shot / nights) if nights and shot else None
+    if need_frames <= 0:
+        nights_to_go = 0
+    elif per_night:
+        nights_to_go = int(math.ceil(need_frames / per_night))
+    else:
+        nights_to_go = None
+    return {"pct": int(round(100 * shares[limiting])), "limiting": limiting,
+            "sharp": sharp, "goals": {f: int(v) for f, v in goals.items()},
+            "need_frames": need_frames, "shot": shot, "nights": int(nights or 0),
+            "per_night": (round(per_night, 1) if per_night else None), "nights_to_go": nights_to_go,
+            "cap": (int(round(cap_factor * sum(goals.values()))) if cap_factor and cap_factor > 0 else None),
+            "curve": bool(curve_done), "kind": kind}
+
+
+_SESSION_RE = re.compile(r"(\d{4}-\d{2}-\d{2})[\\/]LIGHT[\\/]")
+
+
+def nights_from_paths(paths) -> int:
+    """Distinct session dates in frame paths like .../<dso>/cdk17/2026-10-27/LIGHT/x.fits. Pure."""
+    return len({m.group(1) for p in paths for m in [_SESSION_RE.search(str(p))] if m})
+
+
 def build(registry: dict, rows: list, convergence: dict, plan: Optional[dict], drafts: dict,
-          decisions: dict, site_ids: set, flags: dict, now: Optional[datetime] = None) -> dict:
-    """The board. Pure."""
+          decisions: dict, site_ids: set, flags: dict, now: Optional[datetime] = None,
+          progress_fn: Optional[Callable[[str, dict], Optional[dict]]] = None) -> dict:
+    """The board. Pure given *progress_fn* (dso, row) -> progress() or None."""
     now = now or datetime.now(timezone.utc).astimezone()
     tonight = _plan_tonight(plan, now)
     by_key = {_squash(r.get("dso")): r for r in rows or []}
@@ -100,6 +152,7 @@ def build(registry: dict, rows: list, convergence: dict, plan: Optional[dict], d
             "would_stop": tonight["auto_stop"].get(key),
             "draft": draft_out,
             "on_site": key in site_ids,
+            "progress": (progress_fn(dso, row) if progress_fn and not row.get("lightcurve") else None),
         })
     order = {s: i for i, s in enumerate(STATES)}
     targets.sort(key=lambda t: (order.get(t["state"], 9), -(float(t["priority"] or 0)), t["dso"]))
@@ -156,4 +209,29 @@ def gather(root, cfg: dict, now: Optional[datetime] = None) -> dict:
              "filter_advisor": (cfg.get("nina") or {}).get("filter_advisor", "shadow"),
              "final_mode": (cfg.get("publish") or {}).get("final_mode", "shadow"),
              "gate": (cfg.get("publish") or {}).get("gate", "shadow")}
-    return build(registry, rows, conv, plan, drafts, decisions, site, flags, now)
+
+    def _progress(dso: str, row: dict) -> Optional[dict]:
+        # The advisor's own tally (offline, as auto-stop reads it), the
+        # convergence verdict and the nights imaged from the frame record.
+        try:
+            from control import auto_stop
+            from fits_processing import convergence as conv_mod
+            from fits_processing import filter_advisor
+            advice = auto_stop.advise_offline(dso, row, root=str(root))
+            if not advice:
+                return None
+            nights = 0
+            try:
+                image_dir = Path(cfg["nina"]["image_dir"])
+                key = dso.lower().replace(" ", "")
+                d = next((p for p in image_dir.iterdir()
+                          if p.is_dir() and p.name.lower().replace(" ", "") == key), None)
+                if d is not None and (d / "frame_stats.json").exists():
+                    nights = nights_from_paths(r.get("path", "") for r in json.loads(
+                        (d / "frame_stats.json").read_text(encoding="utf-8")) if isinstance(r, dict))
+            except Exception:  # noqa: BLE001
+                nights = 0
+            return progress(advice, conv_mod.is_dso_done(dso), nights, auto_stop.cap_factor(cfg))
+        except Exception:  # noqa: BLE001
+            return None
+    return build(registry, rows, conv, plan, drafts, decisions, site, flags, now, progress_fn=_progress)

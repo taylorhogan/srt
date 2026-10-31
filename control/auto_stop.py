@@ -7,19 +7,37 @@ filter advisor's "every goal met" both existed, but one only coloured the
 target was still ranked and picked every night. `completed` was written only
 by the chat `dbc`.
 
-"Done" is EITHER verdict:
+"Done" is BOTH verdicts (owner, 2026-10-31; it was either until then):
 
   * convergence: every imaged filter calibrated, >= min frames, a flat tail
-    and a low RMSE (is_dso_done);
+    and a low RMSE (is_dso_done): the stack is noise-limited;
   * the advisor's frame goals all met (filter_advisor.advise -> "done":
-    sharp L / usable colour at the per-type goals).
+    sharp L / usable colour at the per-type goals): the channels are deep
+    enough for the picture.
 
-Both reasons are kept so the chat line and the journal say which one fired.
+They measure different things. On 2026-10-31 IC 410 passed the curve on 19
+O-III frames (noise-limited is true of a thin channel too) while the
+advisor wanted 21 more; retiring on the curve alone would have left a thin
+palette channel. Both reasons are kept so the chat line and the journal
+say what was met. A target whose type the advisor cannot read is planned
+as broadband, never meets a nebula's goals, and so never retires by
+itself: the error that images once more.
 A light-curve monitor (queue entry "lightcurve": true) is judged on neither:
 it is done when it can draw its curve (owner, 2026-10-31), every star with a
 period on the entry having a nightly point in at least 8 of 10 phase bins
 (photometry.lightcurve.coverage); a star with no period never completes,
 and the SNR of its stack has nothing to do with it.
+
+The cap (cfg["planner"]["auto_stop_cap"], owner 2026-10-31, default 2.0):
+with both verdicts required some targets can never finish (a type the
+advisor cannot read, a channel that never gets sharp on this field, a curve
+that stays steep), and without a ceiling each takes a slot every clear
+night it ranks well. A target that has SHOT (not kept) at least cap x the
+sum of its type's frame goals (nebula 120, galaxy 132: 240 / 264 frames at
+2.0, about 20 h) is retired "converged" with a reason that starts "cap:"
+and names what was still short, one chat line and one priority-0 push, so
+a capped target reads differently from a finished one and `reopen` can
+have it back. 0 turns the cap off.
 
 Modes (cfg["planner"]["auto_stop"]):
   "off"     -- nothing is evaluated;
@@ -43,6 +61,8 @@ _logger = logging.getLogger(__name__)
 
 MODES = ("off", "shadow", "live")
 DEFAULT_MODE = "shadow"
+CAP_KEY = "auto_stop_cap"
+DEFAULT_CAP = 2.0                   # x the type's goal total, in frames shot
 CONVERGED = "converged"             # the queue status a live auto-stop writes
 HOLD_KEY = "auto_stop_hold_until"   # `reopen <dso> [for N]`: the last night auto-stop leaves it alone
 DEFAULT_REOPEN_NIGHTS = 7
@@ -53,11 +73,54 @@ def mode(cfg) -> str:
     return m if m in MODES else DEFAULT_MODE
 
 
+def cap_factor(cfg) -> float:
+    try:
+        return max(0.0, float(((cfg or {}).get("planner") or {}).get(CAP_KEY, DEFAULT_CAP)))
+    except (TypeError, ValueError):
+        return DEFAULT_CAP
+
+
+def cap_verdict(dso: str, advice: Optional[dict], factor: float,
+                goals: Optional[dict] = None) -> Optional[dict]:
+    """{dso, done: True, why: ["cap: ..."]} when the frames SHOT reach
+    factor x the type's goal total, else None. Pure.
+
+    *advice* is filter_advisor.advise()'s result: its "kind" picks the goals
+    (filter_advisor.GOALS unless *goals* is given), its "have" carries the
+    frames shot per filter, its "need" what is still short.
+    """
+    if not advice or factor <= 0 or advice.get("action") == "monitor":
+        return None
+    if goals is None:
+        from fits_processing.filter_advisor import GOALS
+        goals = GOALS.get(advice.get("kind")) or {}
+    total = sum(int(v) for v in goals.values())
+    if total <= 0:
+        return None
+    shot = sum(int((h or {}).get("frames") or 0) for h in (advice.get("have") or {}).values())
+    cap = int(round(factor * total))
+    if shot < cap:
+        return None
+    short = ", ".join("%s %d" % (f, int(n)) for f, n in sorted((advice.get("need") or {}).items())
+                      if n and float(n) > 0)
+    return {"dso": dso, "done": True,
+            "why": ["cap: %d frames shot, %.1fx the %s goals of %d%s"
+                    % (shot, factor, advice.get("kind"), total,
+                       ("; still short: " + short) if short else "")]}
+
+
+def capped(v: dict) -> bool:
+    """Was this verdict made by the cap rather than the two measurements?"""
+    return any(str(w).startswith("cap:") for w in (v or {}).get("why") or [])
+
+
 def verdict(dso: str, is_done: bool, advice: Optional[dict]) -> dict:
     """{dso, done, why: [...]} from the two verdicts. Pure.
 
     *advice* is filter_advisor.advise()'s result (or None when it could not
-    run). action "monitor" (a light-curve target) is never done.
+    run). action "monitor" (a light-curve target) is never done. Done needs
+    the convergence verdict AND the advisor's "done"; *why* carries the
+    reasons met either way, so a half-met target can be read too.
     """
     why = []
     action = (advice or {}).get("action")
@@ -65,12 +128,13 @@ def verdict(dso: str, is_done: bool, advice: Optional[dict]) -> dict:
         return {"dso": dso, "done": False, "why": ["light-curve monitor: never retired"]}
     if is_done:
         why.append("convergence: every filter at its flat tail (is_dso_done)")
-    if action == "done":
+    goals_met = action == "done"
+    if goals_met:
         have = (advice or {}).get("have") or {}
         counts = ", ".join("%s %d" % (f, (h or {}).get("usable", 0))
                            for f, h in sorted(have.items()))
         why.append("frame goals met (filter advisor)%s" % (": " + counts if counts else ""))
-    return {"dso": dso, "done": bool(why), "why": why}
+    return {"dso": dso, "done": bool(is_done and goals_met), "why": why}
 
 
 def monitor_verdict(dso: str, stars: list) -> dict:
@@ -119,7 +183,8 @@ def reopened(row: dict, night) -> bool:
 
 def candidates(rows: list, is_done_fn: Callable[[str], bool],
                advise_fn: Callable[[str, dict], Optional[dict]], night=None,
-               curve_fn: Optional[Callable[[str, dict], list]] = None) -> list:
+               curve_fn: Optional[Callable[[str, dict], list]] = None,
+               cap: float = 0.0) -> list:
     """The waiting rows that are done, each with its reasons. Pure.
 
     *rows* is the queue; only "waiting" / "in process" rows are judged (a
@@ -127,7 +192,9 @@ def candidates(rows: list, is_done_fn: Callable[[str], bool],
     out, a reopened one is left alone until its hold's last night, *night*).
     A light-curve monitor is judged by *curve_fn* (its stars' coverage ->
     monitor_verdict) and never by the other two; without a curve_fn it is
-    left alone. A row that raises in a verdict is skipped, logged, never
+    left alone. *cap* > 0 retires a target the two verdicts have not when
+    its frames shot reach cap x its goals (cap_verdict); the reasons met so
+    far ride along. A row that raises in a verdict is skipped, logged, never
     stopped: a crash must err toward imaging a target once more.
     """
     out = []
@@ -162,6 +229,10 @@ def candidates(rows: list, is_done_fn: Callable[[str], bool],
             _logger.exception("auto-stop: advisor verdict failed for %s", dso)
             adv = None
         v = verdict(dso, done, adv)
+        if not v["done"] and cap > 0:
+            c = cap_verdict(dso, adv, cap)
+            if c:
+                v = {"dso": dso, "done": True, "why": c["why"] + v["why"]}
         if v["done"]:
             out.append(v)
     return out
@@ -243,8 +314,9 @@ def evaluate(rows: list) -> list:
         from fits_processing.convergence import is_dso_done
         from datetime import datetime
         from control import filter_plan
+        from configs import config
         return candidates(rows, is_dso_done, advise_offline, filter_plan.night_for(datetime.now()),
-                          curve_fn=curve_coverage)
+                          curve_fn=curve_coverage, cap=cap_factor(config.data()))
     except Exception:                          # noqa: BLE001
         _logger.exception("auto-stop evaluation failed")
         return []
