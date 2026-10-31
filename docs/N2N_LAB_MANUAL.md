@@ -2514,7 +2514,7 @@ diffuse emission in Melotte 15 and the outer Trunk.
 
 ### 41. Re-split pairs: a fresh half-split per patch, same frames
 
-2026-10-31, running. With one fixed pair per group, 23 groups are 23
+2026-10-31. With one fixed pair per group, 23 groups are 23
 noise realisations and every epoch re-reads them. `nn/resplit.py` changes
 what a pair is and nothing else: each group's training frames (the fixed
 halves' frames exactly, `order[:2 * train_per]` of the seeded permutation)
@@ -2563,11 +2563,32 @@ and the combine's 0.25 s is what remains, ~2 min an epoch. Relaunched
 ~15:00 on the tiled store.
 
 Launcher `local/n2n_ladder/narrowband/run_rs.sh`, checkpoint
-`n2n_ladder_groups_narrowband_rs_300s.pt`. Acceptance is step 40's table;
-the number to watch is retention, since the loss cannot move. If it does
-not move either, pair count was not the limit and the next lever is deeper
-training targets (the half-stack median is 18 frames), then a held-out
-deep-stack benchmark that scores faint-structure recovery per scale.
+`n2n_ladder_groups_narrowband_rs_300s.pt`. Sixteen workers, 212 s an epoch,
+60 epochs in 3 h 32 min (15:25-19:00); val 0.62769 at epoch 10, 0.62556 at
+30, best **0.62487 at epoch 60**: the fixed-pair run's best (0.62487 at
+epoch 20) to five figures, reached three times slower.
+
+**Acceptance on the held-out trunk, current (`narrowband_up`) against new:**
+
+| check | current | new rs |
+| --- | --- | --- |
+| 4 px / 2 px line, worst cell (accept < x5) | 4.4 | **6.6** (Ha panel, 2 px; raw 1.6) |
+| held-out N2N loss, val halves, mean MSE / L1 | 0.53198 / 0.60316 | 0.53208 / 0.60329 |
+| retention 1-2 sigma, Ha / O-III / S-II | 0.241 / 0.216 / 0.261 | 0.258 / 0.221 / 0.270 |
+| retention 4-8 sigma | 0.321 / 0.345 / 0.331 | 0.352 / 0.336 / 0.331 |
+
+Paired retention differences -0.008 to +0.016, significant on one of six
+bins (S-II 1-2 sigma, +0.016); the loss identical; the M1 and M76 panels
+cannot be told apart; and one line-test cell is over the gate (6.6 at the
+2 px line on the Ha panel region, where step 40's model read 4.5 and the
+current 2.8). **Not promoted.** Ten million pairs per group against one
+moved nothing the fixed pairs had not already reached, so pair count was
+not the limit either; what the fixed halves were already teaching, the
+re-split teaches the same. The levers left are the ones named above:
+deeper training targets (the half-stack median is 18 frames) and a
+held-out deep-stack benchmark that scores faint-structure recovery per
+scale, since the N2N loss cannot see the faint extended flux and
+retention rewards under-denoising.
 
 ## Standing conclusions
 

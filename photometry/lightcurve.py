@@ -55,8 +55,9 @@ A frame with a vignetted sky is dropped (`obstructed`, the evening of
 2026-10-31): on every 60 s NGC 7790 night the first half hour, at altitude 58
 and azimuth 38, had a calibrated sky falling by a factor of two from the left
 of the frame to the right and every star on the right side a magnitude faint
-for its catalogue -- something near the telescope (the open roof, most likely)
-in the beam, which no flat can know about and the comparisons cancel only
+for its catalogue -- the north-east tree line in the beam (configs/my.hrz
+had it at 57 deg there and the frames are clean only from 61; raised that
+evening), which no flat can know about and the comparisons cancel only
 where they sit; CG Cas on that side came out 0.9 mag faint against the chart
 stars on the left. The witness is the sky itself: the brightest third of the
 calibrated frame over the faintest, left/right and top/bottom, above
