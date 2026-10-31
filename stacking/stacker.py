@@ -2264,10 +2264,22 @@ def _prepare_for_convergence(
     calibration: Optional[CalibrationSet] = None,
     shared_reference: Optional[tuple[np.ndarray, tuple[int, int]]] = None,
     crop: Optional[tuple[int, int, int, int]] = None,
+    level_sky: bool = False,
 ) -> tuple[list[np.ndarray], list[Path], dict[Path, float]]:
     """
     Load, FWHM-filter, register, and downscale a set of FITS paths for convergence
     analysis.
+
+    *level_sky* puts every registered frame at one common sky (its own median
+    taken off, the mean of all the medians put back: level_to_common_sky),
+    the rule stack() applies in _spill. convergence_curve passes True
+    (2026-10-31): without it a multi-night target's subsets sat at whichever
+    nights' skies they drew, the clip rejected a different night at every
+    pixel, and IC 410 Ha (calibrated skies 6, 30 and 16 ADU on its three
+    nights, moon) measured a flat 100 % residual that never converged; levelled,
+    the same 31 frames gave 0.8 % and a clean 1/sqrt(N) decay. Off by default
+    because the per-frame photometry callers (transit, night_contribution)
+    read absolute levels.
 
     *shared_reference* is (control points, full-res shape) from another frame,
     as stack() takes it. With it every frame — the group's own sharpest one
@@ -2498,7 +2510,37 @@ def _prepare_for_convergence(
             + ", building golden…"
         )
 
+    if level_sky and result_frames:
+        result_frames, common, levels = level_to_common_sky(result_frames)
+        _logger.info("Convergence prep: frames levelled to a common sky of %.2f ADU "
+                     "(spread %.2f..%.2f)", common, min(levels), max(levels))
     return result_frames, result_accepted, fwhm_values
+
+
+def level_to_common_sky(frames: list) -> tuple[list, float, list]:
+    """Put every frame at the same sky: (frames, common, levels). Pure.
+
+    Each frame's level is the median of its downscaled image (a frame may be a
+    (downscaled, native crop) pair, in which case both parts move by the same
+    amount); the common level is the plain mean of the levels, so the sky
+    stays a physical ADU figure and the RMSE-as-a-share-of-sky the
+    convergence record reports keeps its meaning. NaN pixels (outside a
+    frame's footprint) are left as NaN.
+    """
+    levels = []
+    for f in frames:
+        small = f[0] if isinstance(f, tuple) else f
+        lv = float(np.nanmedian(small))
+        levels.append(lv if np.isfinite(lv) else 0.0)
+    common = float(np.mean(levels)) if levels else 0.0
+    out = []
+    for f, lv in zip(frames, levels):
+        shift = np.float32(common - lv)
+        if isinstance(f, tuple):
+            out.append(tuple(np.asarray(part, dtype=np.float32) + shift for part in f))
+        else:
+            out.append(np.asarray(f, dtype=np.float32) + shift)
+    return out, common, levels
 
 
 NEBULA_BLOCK_NATIVE_PX = 32      # color_process.PALETTE_LEVEL_BLOCK, in native pixels
@@ -2597,6 +2639,7 @@ def convergence_curve(
         max_fwhm_multiplier=max_fwhm_multiplier,
         min_star_fraction=min_star_fraction,
         register=register,
+        level_sky=True,
         progress_cb=progress_cb,
         cancel_cb=cancel_cb,
         precomputed_fwhm_stars=precomputed_fwhm_stars,

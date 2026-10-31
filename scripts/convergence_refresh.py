@@ -2,6 +2,13 @@
 
     python scripts/convergence_refresh.py            # refresh what is stale
     python scripts/convergence_refresh.py --dry-run  # say what is stale, compute nothing
+    python scripts/convergence_refresh.py --dsos ic410,melotte15   # these, stale or not
+    python scripts/convergence_refresh.py --all      # every target with frames (hours)
+
+--dsos and --all exist because the measurement itself can change: on
+2026-10-31 the curve began levelling frames to a common sky (stacker
+level_to_common_sky), which re-values every multi-night entry, and the
+stale rule alone would never revisit a target that has no new frames.
 
 Run daily at 09:15 by the scheduled task IrisConvergenceRefresh
 (convergence_refresh.cmd), after the 09:00 morning check and before the noon
@@ -104,6 +111,18 @@ def stale_targets(imaged: list, entries: dict, newest_frame: dict,
     return out
 
 
+def all_targets(image_dir) -> list:
+    """Every DSO directory under *image_dir* with LIGHT frames, sorted. Pure given the tree."""
+    out = []
+    try:
+        for d in sorted(Path(image_dir).iterdir()):
+            if d.is_dir() and any(f.parent.name.upper() == "LIGHT" for f in d.rglob("*.fits")):
+                out.append(d.name)
+    except OSError:
+        pass
+    return out
+
+
 def _monitors(queue_path) -> list:
     try:
         with open(queue_path, encoding="utf-8") as fh:
@@ -118,6 +137,9 @@ def main() -> int:
     ap.add_argument("--dry-run", action="store_true", help="report; compute nothing")
     ap.add_argument("--hours", type=float, default=WINDOW_HOURS,
                     help="how far back a frame counts as last night's")
+    ap.add_argument("--dsos", default="", help="recompute these (comma list), stale or not")
+    ap.add_argument("--all", action="store_true",
+                    help="recompute every target with LIGHT frames (monitors excepted); hours")
     args = ap.parse_args()
     from utils import utils
     utils.set_logger()
@@ -130,7 +152,13 @@ def main() -> int:
     imaged = tonight_dsos.imaged(image_dir, max_age_hours=args.hours)
     newest = {d: newest_light(image_dir / d) for d in imaged}
     queue_path = os.path.join(ROOT, cfg["location"]["instructions"])
-    stale = stale_targets(imaged, conv.load_convergence(), newest, _monitors(queue_path))
+    monitors = _monitors(queue_path)
+    if args.all:
+        stale = [(d, "full recompute (--all)") for d in all_targets(image_dir) if d not in monitors]
+    elif args.dsos:
+        stale = [(d.strip(), "requested (--dsos)") for d in args.dsos.split(",") if d.strip()]
+    else:
+        stale = stale_targets(imaged, conv.load_convergence(), newest, monitors)
     if not stale:
         _logger.info("convergence refresh: %d target(s) imaged, all entries current", len(imaged))
         print("convergence refresh: nothing stale")

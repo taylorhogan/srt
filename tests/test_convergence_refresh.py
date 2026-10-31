@@ -59,3 +59,13 @@ def test_newest_light_reads_only_light_directories(tmp_path):
     newest = R.newest_light(tmp_path / "m1")
     assert newest is not None and newest < 2e9
     assert R.newest_light(tmp_path / "nowhere") is None
+
+
+def test_all_targets_lists_every_directory_with_light_frames(tmp_path):
+    (tmp_path / "ic410" / "cdk17" / "2026-10-27" / "LIGHT").mkdir(parents=True)
+    (tmp_path / "ic410" / "cdk17" / "2026-10-27" / "LIGHT" / "a.fits").write_bytes(b"")
+    (tmp_path / "m1" / "FLAT").mkdir(parents=True)
+    (tmp_path / "m1" / "FLAT" / "f.fits").write_bytes(b"")          # flats only: not a target
+    (tmp_path / "notes.txt").write_text("x")
+    assert R.all_targets(tmp_path) == ["ic410"]
+    assert R.all_targets(tmp_path / "missing") == []

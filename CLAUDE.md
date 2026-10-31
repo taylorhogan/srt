@@ -211,7 +211,15 @@ Since 2026-09-25 the conductor decides both invariants (ADR 0014): every roof fi
   noise, because sigma-clip rejects a different subset at every pixel and those
   frames sit at different levels. Measured on ngc5907 G: 8x the photon limit at
   39 frames, worse than a single frame, and it got worse with more frames — so
-  it hides in any small test.
+  it hides in any small test. **The convergence curve levels too (since
+  2026-10-31, `level_to_common_sky`, `_prepare_for_convergence(level_sky=)`):**
+  it did not, so a multi-night target's subsets sat at whichever nights' skies
+  they drew and IC 410 Ha (calibrated skies 6 / 30 / 16 ADU, the moon) measured
+  a flat 100 % residual, "never converging", which steered the need-weighted
+  filter fallback to 25 Ha frames and no S-II; levelled, the same frames give
+  0.8 %. Every entry in `local/convergence.json` written before that date is
+  on the old measurement; `scripts/convergence_refresh.py --all` (hours) or
+  `--dsos a,b` re-measures.
 
   **A palette can be toned on purpose: `gain=` (since 2026-10-28).** The
   shared scale makes a true-ratio SHO of an HII region green, because Ha is
