@@ -167,6 +167,35 @@ def phase(jd: float, period: float, epoch: float) -> float:
     return ((jd - epoch) / period) % 1.0
 
 
+COVERAGE_BINS = 10          # phase bins a curve is judged on
+COVERAGE_MIN_BINS = 8       # bins with a point before the curve counts as drawn
+
+
+def coverage(records: list, period, epoch, bins: int = COVERAGE_BINS, min_bins: int = COVERAGE_MIN_BINS,
+             filt: str = "L") -> dict:
+    """How much of the star's cycle the nightly points cover. Pure.
+
+    {"bins", "hit", "nights", "missing", "complete"}: the points (the *filt*
+    series when it has any, else every filter) folded on the period into
+    *bins* phase bins; complete when at least *min_bins* of them hold a
+    point. This is what "converged" means for a light-curve monitor (owner,
+    2026-10-31): a curve it can draw, nothing to do with the stack's SNR.
+    A star with no period cannot complete: its curve has no end.
+    """
+    recs = [r for r in records or [] if r.get("jd") is not None]
+    mine = [r for r in recs if r.get("filter") == filt] or recs
+    out = {"bins": bins, "hit": 0, "nights": len({r.get("night") or r["jd"] for r in mine}),
+           "missing": list(range(bins)), "complete": False}
+    if not period or float(period) <= 0:
+        out["why"] = "no period on the entry"
+        return out
+    hit = {min(int(phase(float(r["jd"]), float(period), float(epoch or 0.0)) * bins), bins - 1) for r in mine}
+    out["hit"] = len(hit)
+    out["missing"] = sorted(set(range(bins)) - hit)
+    out["complete"] = len(hit) >= min_bins
+    return out
+
+
 def night_of(path: Path) -> str:
     """The N.I.N.A session folder date: <dso>/<rig>/<YYYY-MM-DD>/LIGHT/frame."""
     for part in reversed(path.parts):

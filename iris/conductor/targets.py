@@ -9,7 +9,7 @@ Derivation rules (deliberately simple, and shadow_report checks them against
 the legacy answers):
     status == completed                -> RETIRED
     status == converged (auto-stop)    -> CONVERGED
-    convergence says done              -> CONVERGED     (the auto-stop fact)
+    convergence says done              -> CONVERGED     (the auto-stop fact; not for a lightcurve monitor)
     frames cached for the dso          -> ACQUIRING
     coordinates resolved / plan set    -> QUEUED
     otherwise                          -> WISHED
@@ -73,10 +73,12 @@ def derive_registry() -> dict:
         resolved = row.get("ra_deg") is not None or ah not in ("", "0", "None")
         if status == "completed":
             state = "RETIRED"
-        elif status == "converged" or is_done(dso):
+        elif status == "converged" or (is_done(dso) and not row.get("lightcurve")):
             # "converged" is the auto-stop's own write (control/auto_stop,
             # 2026-10-29); the verdict may also have come from the filter
-            # advisor's frame goals, which is_done does not see.
+            # advisor's frame goals, which is_done does not see. A light-curve
+            # monitor is never converged by its stack's SNR (2026-10-31): only
+            # the auto-stop's curve verdict, written as the status, says so.
             state = "CONVERGED"
         elif _has_frames(dso):
             state = "ACQUIRING"

@@ -29,6 +29,9 @@ def test_lifecycle_precedence():
     assert expected_state(r, False, True) == "ACQUIRING"
     assert expected_state(r, False, False) == "QUEUED"
     assert expected_state(_row("x"), False, False) == "WISHED"
+    # A light-curve monitor's stack SNR never converges it (2026-10-31); the auto-stop's status does.
+    assert expected_state(_row("ngc7790", ra_deg=1.0, dec_deg=2.0, lightcurve=True), True, True) == "ACQUIRING"
+    assert expected_state(_row("ngc7790", "converged", lightcurve=True), False, True) == "CONVERGED"
 
 
 def test_zero_above_horizon_is_not_resolved():

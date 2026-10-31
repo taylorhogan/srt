@@ -15,8 +15,11 @@ by the chat `dbc`.
     sharp L / usable colour at the per-type goals).
 
 Both reasons are kept so the chat line and the journal say which one fired.
-A light-curve monitor (queue entry "lightcurve": true) is never done: its
-job is to keep measuring.
+A light-curve monitor (queue entry "lightcurve": true) is judged on neither:
+it is done when it can draw its curve (owner, 2026-10-31), every star with a
+period on the entry having a nightly point in at least 8 of 10 phase bins
+(photometry.lightcurve.coverage); a star with no period never completes,
+and the SNR of its stack has nothing to do with it.
 
 Modes (cfg["planner"]["auto_stop"]):
   "off"     -- nothing is evaluated;
@@ -70,6 +73,29 @@ def verdict(dso: str, is_done: bool, advice: Optional[dict]) -> dict:
     return {"dso": dso, "done": bool(why), "why": why}
 
 
+def monitor_verdict(dso: str, stars: list) -> dict:
+    """{dso, done, why} for a light-curve monitor from its stars' coverage. Pure.
+
+    *stars*: [{"name", "period_days", "coverage": lightcurve.coverage()}].
+    Done when every star with a period has a complete curve and there is at
+    least one such star; a star without a period is named and not judged.
+    """
+    judged, why = [], []
+    for st in stars or []:
+        cov = st.get("coverage") or {}
+        if not st.get("period_days"):
+            why.append("%s: no period, not judged" % st.get("name"))
+            continue
+        judged.append(bool(cov.get("complete")))
+        why.append("%s: %d of %d phase bins over %d nights%s" % (
+            st.get("name"), int(cov.get("hit") or 0), int(cov.get("bins") or 0), int(cov.get("nights") or 0),
+            "" if cov.get("complete") else " (not yet a curve)"))
+    if not judged:
+        return {"dso": dso, "done": False, "why": ["light-curve monitor: no period on the entry, the curve has no end"]}
+    done = all(judged)
+    return {"dso": dso, "done": done, "why": (["light curve complete: " + "; ".join(why)] if done else why)}
+
+
 def reopened(row: dict, night) -> bool:
     """Is the row under a `reopen` hold for *night* (control/filter_plan dates)?
 
@@ -92,14 +118,17 @@ def reopened(row: dict, night) -> bool:
 
 
 def candidates(rows: list, is_done_fn: Callable[[str], bool],
-               advise_fn: Callable[[str, dict], Optional[dict]], night=None) -> list:
+               advise_fn: Callable[[str, dict], Optional[dict]], night=None,
+               curve_fn: Optional[Callable[[str, dict], list]] = None) -> list:
     """The waiting rows that are done, each with its reasons. Pure.
 
     *rows* is the queue; only "waiting" / "in process" rows are judged (a
     held row is the operator's, a completed or converged one is already
     out, a reopened one is left alone until its hold's last night, *night*).
-    A row that raises in either verdict is skipped, logged, never stopped:
-    a crash must err toward imaging a target once more.
+    A light-curve monitor is judged by *curve_fn* (its stars' coverage ->
+    monitor_verdict) and never by the other two; without a curve_fn it is
+    left alone. A row that raises in a verdict is skipped, logged, never
+    stopped: a crash must err toward imaging a target once more.
     """
     out = []
     for row in rows or []:
@@ -107,11 +136,20 @@ def candidates(rows: list, is_done_fn: Callable[[str], bool],
         status = str(row.get("status") or "").strip().lower()
         if not dso or status not in ("waiting", "in process"):
             continue
-        if row.get("lightcurve"):
-            continue
         if reopened(row, night):
             _logger.info("auto-stop: %s reopened by the owner until %s; not judged",
                          dso, str(row.get(HOLD_KEY))[:10])
+            continue
+        if row.get("lightcurve"):
+            if curve_fn is None:
+                continue
+            try:
+                v = monitor_verdict(dso, curve_fn(dso, row))
+            except Exception:                  # noqa: BLE001
+                _logger.exception("auto-stop: light-curve coverage failed for %s", dso)
+                continue
+            if v["done"]:
+                out.append(v)
             continue
         try:
             done = bool(is_done_fn(dso))
@@ -184,13 +222,29 @@ def advise_offline(dso: str, row: dict, root: Optional[str] = None) -> Optional[
                                  **filter_advisor.advisor_settings())
 
 
+def curve_coverage(dso: str, row: dict) -> list:
+    """monitor_verdict's input from local/lightcurves: every star of the
+    entry (lightcurve.stars_for) with its nightly records folded on its
+    period. No coordinates on the row = no stars = not done."""
+    from photometry import lightcurve as lc
+    if row.get("ra_deg") is None or row.get("dec_deg") is None:
+        return []
+    out = []
+    for st in lc.stars_for(dso, (float(row["ra_deg"]), float(row["dec_deg"])), row):
+        doc = lc.load(st["key"])
+        out.append({"name": st["name"], "period_days": st.get("period_days"),
+                    "coverage": lc.coverage(doc.get("records") or [], st.get("period_days"), st.get("epoch_jd"))})
+    return out
+
+
 def evaluate(rows: list) -> list:
     """candidates() on the live verdicts. Never raises."""
     try:
         from fits_processing.convergence import is_dso_done
         from datetime import datetime
         from control import filter_plan
-        return candidates(rows, is_dso_done, advise_offline, filter_plan.night_for(datetime.now()))
+        return candidates(rows, is_dso_done, advise_offline, filter_plan.night_for(datetime.now()),
+                          curve_fn=curve_coverage)
     except Exception:                          # noqa: BLE001
         _logger.exception("auto-stop evaluation failed")
         return []

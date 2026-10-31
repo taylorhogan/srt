@@ -36,9 +36,52 @@ def test_neither_is_not_done():
     assert A.verdict("m1", False, None)["done"] is False
 
 
-def test_a_light_curve_monitor_is_never_done():
+def test_a_light_curve_monitor_is_never_done_by_snr():
     v = A.verdict("hubblev1", True, MONITOR)
     assert v["done"] is False and "monitor" in v["why"][0]
+
+
+def _cov(hit, bins=10, nights=None, complete=None):
+    return {"bins": bins, "hit": hit, "nights": nights if nights is not None else hit,
+            "complete": (hit >= 8) if complete is None else complete}
+
+
+def test_a_monitor_is_done_when_every_periodic_star_has_its_curve():
+    # Owner 2026-10-31: "a light curve object can only be converged if it can
+    # produce a curve, nothing to do with snr".
+    stars = [{"name": "CF Cas", "period_days": 4.875, "coverage": _cov(9, nights=14)},
+             {"name": "CG Cas", "period_days": 4.366, "coverage": _cov(8, nights=14)},
+             {"name": "CE Cas A+B", "period_days": None, "coverage": _cov(0)}]
+    v = A.monitor_verdict("ngc7790", stars)
+    assert v["done"] and v["why"][0].startswith("light curve complete: CF Cas: 9 of 10 phase bins over 14 nights")
+    assert "CE Cas A+B: no period, not judged" in v["why"][0]
+    stars[1]["coverage"] = _cov(6, nights=9)
+    v = A.monitor_verdict("ngc7790", stars)
+    assert not v["done"] and any("CG Cas: 6 of 10 phase bins over 9 nights (not yet a curve)" == w for w in v["why"])
+    v = A.monitor_verdict("blend", [stars[2]])
+    assert not v["done"] and "no period" in v["why"][0]
+
+
+def test_coverage_folds_the_nightly_points_on_the_period():
+    from photometry import lightcurve as lc
+    recs = [{"jd": 2461000.0 + 0.5 * i, "filter": "L", "night": "n%d" % i} for i in range(20)]   # 10 days, P 5 d: every bin
+    c = lc.coverage(recs, 5.0, 2461000.0)
+    assert c["complete"] and c["hit"] == 10 and c["nights"] == 20 and c["missing"] == []
+    few = lc.coverage(recs[:4], 5.0, 2461000.0)                       # 4 points: 4 bins
+    assert not few["complete"] and few["hit"] == 4 and len(few["missing"]) == 6
+    assert lc.coverage(recs, None, None)["complete"] is False and "no period" in lc.coverage(recs, None, None)["why"]
+    g_only = [dict(r, filter="G") for r in recs]                      # no L series: every filter counts
+    assert lc.coverage(g_only, 5.0, 2461000.0)["hit"] == 10
+
+
+def test_candidates_judge_a_monitor_only_by_its_curve():
+    rows = [{"dso": "hubblev1", "status": "waiting", "lightcurve": True},
+            {"dso": "ngc7790", "status": "waiting", "lightcurve": True}]
+    curves = {"hubblev1": [{"name": "hubblev1", "period_days": 31.4, "coverage": _cov(9, nights=28)}],
+              "ngc7790": [{"name": "CF Cas", "period_days": 4.9, "coverage": _cov(5)}]}
+    found = A.candidates(rows, lambda d: True, lambda d, r: DONE_ADVICE, curve_fn=lambda d, r: curves[d])
+    assert [v["dso"] for v in found] == ["hubblev1"]                   # SNR and frame goals said done for both; only the curve counts
+    assert A.candidates(rows, lambda d: True, lambda d, r: DONE_ADVICE) == []   # no curve_fn: a monitor is left alone
 
 
 ROWS = [{"dso": "m1", "status": "waiting"},
