@@ -751,6 +751,7 @@ def firmware(binary: Path = FW_BINARY) -> Optional[bytes]:
 VIEW_PX = 240
 VIEW_TOP = 140                     # below the camera's timestamp band
 VIEW_MIN_RANGE = 60.0              # 8-bit levels: the stretch never spans fewer
+VIEW_GAMMA = 0.85                  # 0.7 lifted the sky grain; 1.0 hid faint stars
 _view = {"path": None, "jpeg": None}
 
 
@@ -787,20 +788,27 @@ def view_jpeg(path: Path) -> Optional[bytes]:
         import io
         import numpy as np
         from PIL import Image
+        from PIL import ImageFilter
         im = Image.open(path).convert("RGB")
         w, h = im.size
         s = h - VIEW_TOP
-        c = im.crop((w // 2 - s // 2, VIEW_TOP, w // 2 + s // 2, h)).resize((VIEW_PX, VIEW_PX),
-                                                                          Image.LANCZOS)
+        # Quiet, not sharp (owner 2026-10-31: "pretty noisy"). A 3 px median
+        # takes the camera JPEG's speckle off before the 6x reduction, the
+        # reduction averages (BOX to 4x, then Lanczos) instead of resampling
+        # the noise, and black sits AT the sky's median rather than two
+        # sigma below it, so the sky noise falls below black instead of
+        # showing as grey grain. Stars and the moon's glow are far above.
+        c = (im.crop((w // 2 - s // 2, VIEW_TOP, w // 2 + s // 2, h)).filter(ImageFilter.MedianFilter(3))
+             .resize((VIEW_PX * 4, VIEW_PX * 4), Image.BOX).resize((VIEW_PX, VIEW_PX), Image.LANCZOS))
         a = np.asarray(c).astype(np.float32)
         lum = a.mean(2)
-        lo, hi = np.percentile(lum, 2), np.percentile(lum, 99.7)
+        lo, hi = float(np.median(lum)), float(np.percentile(lum, 99.7))
         # A featureless frame (an even moonlit sky, 2026-10-29: 19 levels from
-        # the 2nd to the 99.7th percentile) must not be stretched 13x into
+        # the sky to the 99.7th percentile) must not be stretched 13x into
         # sensor noise. VIEW_MIN_RANGE caps the gain at ~4x; frames with real
         # contrast (cloud, the moon's glow) have more range and are unchanged.
         hi = max(hi, lo + VIEW_MIN_RANGE)
-        v = np.clip((a - lo) / (hi - lo), 0, 1) ** 0.7
+        v = np.clip((a - lo) / (hi - lo), 0, 1) ** VIEW_GAMMA
         buf = io.BytesIO()
         Image.fromarray((v * 255).astype(np.uint8)).save(buf, "JPEG", quality=85, progressive=False)
         _view.update(path=path, jpeg=buf.getvalue())
