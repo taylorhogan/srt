@@ -35,6 +35,22 @@ star keeps its own files, keyed <dso>_<name> (e.g. ngc7790_cf_cas.json). No
 list = one star at the entry's own coordinates, keyed <dso>, as before. The
 program stars are never used as each other's comparisons.
 
+A star whose entry carries a "distance" block ({"a_v": foreground extinction,
+"g_to_v": the V - G colour term}) beside its period gets the Leavitt-law
+distance in its report (`distance_text`: Benedict et al. 2007 calibration,
+intensity mean of the L nights, the fold's completeness stated, since a
+half-covered cycle biases the mean). Hubble's V1 is the first (2026-10-31).
+
+For the AAVSO (2026-10-31, photometry/aavso.py): every frame is bias/dark/flat
+calibrated with the stacker's masters when the config names them (the sky
+annulus and shared comparisons cancel most of the flat, not all of it: CG Cas
+on the vignetted side of the NGC 7790 field had a 0.16 mag zero-point scatter
+raw against 0.03 for CF Cas near the centre); the target's peak pixel is read
+on the RAW frame and a frame where it reaches SATURATION_ADU is dropped, not
+averaged (CF Cas at maximum is V 10.8 in 60 s frames, right at the limit), a
+saturated comparison star is left out of the zero point, and the airmass at
+mid-exposure is recorded per frame and averaged into the night's point.
+
 Short frames (the entry's exposure_s): COMP_MAG is what is unsaturated and
 well measured at 300 s, so the range moves by 2.5 log10(300 / EXPTIME) for
 each frame -- 3.7 mag brighter at 10 s. The Gaia rows are cached
@@ -47,7 +63,7 @@ import os
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Callable, NamedTuple, Optional
 
 AP_R_ARCSEC = 3.0
 ANNULUS_ARCSEC = (6.0, 10.0)
@@ -59,6 +75,9 @@ COMP_MIN_SEP_ARCSEC = 8.0        # no neighbour of similar brightness inside thi
 MIN_COMPS = 5
 MAX_COMPS = 25
 FOV_HEIGHT_DEG = 0.47            # ASTAP's -fov is the frame height
+SATURATION_ADU = 60000.0         # QHY600M 16-bit: 65535 full scale, nonlinear before it; read on the raw frame
+LEAVITT_V = (-2.43, -4.05)       # Benedict et al. 2007 (HST parallaxes): M_V = a (log10 P - 1) + b, scatter ~0.2
+LEAVITT_SCATTER_MAG = 0.2
 SCALE = "Gaia G zero point"
 
 _ROOT = Path(__file__).resolve().parent.parent
@@ -103,6 +122,37 @@ def comp_range(exptime_s) -> tuple:
     return (round(COMP_MAG[0] - off, 1), round(COMP_MAG[1] - off, 1))
 
 
+def airmass_of_alt(alt_deg: float) -> Optional[float]:
+    """Airmass at altitude *alt_deg* (Pickering 2002), None below the horizon. Pure."""
+    if alt_deg is None or not math.isfinite(alt_deg) or alt_deg <= 0:
+        return None
+    h = alt_deg
+    return 1.0 / math.sin(math.radians(h + 244.0 / (165.0 + 47.0 * h ** 1.1)))
+
+
+def airmass(jd: float, ra_deg: float, dec_deg: float, lat_deg: float, lon_deg: float) -> Optional[float]:
+    """Airmass of (ra, dec) at *jd* from the site. None when it cannot be told."""
+    try:
+        from astropy.coordinates import AltAz, EarthLocation, SkyCoord
+        from astropy.time import Time
+        import astropy.units as u
+        loc = EarthLocation(lat=lat_deg * u.deg, lon=lon_deg * u.deg)
+        alt = SkyCoord(ra_deg * u.deg, dec_deg * u.deg).transform_to(
+            AltAz(obstime=Time(jd, format="jd"), location=loc)).alt.deg
+        return airmass_of_alt(float(alt))
+    except Exception:
+        return None
+
+
+def site_from(cfg: dict) -> Optional[tuple]:
+    """(lat, lon) from the config's location block, or None. Pure."""
+    try:
+        loc = cfg.get("location") or {}
+        return float(loc["latitude"]), float(loc["longitude"])
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
 def select_comps(stars: list, target_ra: float, target_dec: float, mag_range=COMP_MAG,
                  min_sep_arcsec: float = COMP_MIN_SEP_ARCSEC, exclude_arcsec: float = 5.0,
                  max_comps: int = MAX_COMPS, exclude: Optional[list] = None) -> list:
@@ -139,6 +189,90 @@ def select_comps(stars: list, target_ra: float, target_dec: float, mag_range=COM
         good.append(dict(s, dist_arcsec=sep(s, tgt)))
     good.sort(key=lambda s: s["dist_arcsec"])
     return good[:max_comps]
+
+
+def night_extras(measured: list, saturated: list, calibrated: bool) -> dict:
+    """What the night's record carries beside the point: the frames' worst
+    peak, mean airmass, how many frames were dropped as saturated, and whether
+    the frames were calibrated. Pure."""
+    peaks = [m.get("peak_adu") for m in measured if m.get("peak_adu") is not None]
+    ams = [m.get("airmass") for m in measured if m.get("airmass") is not None]
+    out = {"n_saturated": len(saturated), "calibrated": bool(calibrated)}
+    if peaks:
+        out["peak_adu"] = round(float(max(peaks)))
+    if ams:
+        out["airmass"] = round(float(sum(ams) / len(ams)), 3)
+    return out
+
+
+def split_saturated(records: list) -> tuple:
+    """(measured, saturated) from measure_star's answers, Nones dropped. Pure."""
+    recs = [r for r in records if r]
+    return [r for r in recs if not r.get("saturated")], [r for r in recs if r.get("saturated")]
+
+
+def mean_magnitude(records: list, filt: str = "L") -> tuple:
+    """(intensity-mean magnitude, n) of the nightly points in *filt*. Pure.
+    The mean of the fluxes, back to a magnitude: the mean of magnitudes
+    weights the faint half of a cycle too much."""
+    mags = [float(r["mag"]) for r in records or [] if r.get("filter") == filt and r.get("mag") is not None]
+    if not mags:
+        return None, 0
+    flux = sum(10 ** (-0.4 * m) for m in mags) / len(mags)
+    return -2.5 * math.log10(flux), len(mags)
+
+
+def leavitt_distance(period_days: float, mean_mag: float, a_v: float = 0.0, g_to_v: float = 0.0,
+                     law: tuple = LEAVITT_V) -> Optional[dict]:
+    """The Leavitt-law distance of a classical Cepheid. Pure.
+
+    *mean_mag* is our intensity mean on the Gaia G scale; *g_to_v* takes it
+    to Johnson V (V - G, ~+0.3 for a Cepheid's colour) and *a_v* is the
+    foreground extinction. modulus = m_V - A_V - M_V; d = 10^(modulus/5 + 1) pc.
+    {abs_mag, m_v, modulus, kpc, mly, pct_err} or None without a period."""
+    try:
+        P = float(period_days)
+    except (TypeError, ValueError):
+        return None
+    if not (P > 0) or mean_mag is None:
+        return None
+    a, b = law
+    abs_mag = a * (math.log10(P) - 1.0) + b
+    m_v = float(mean_mag) + float(g_to_v or 0.0)
+    modulus = m_v - float(a_v or 0.0) - abs_mag
+    pc = 10 ** (modulus / 5.0 + 1.0)
+    return {"abs_mag": round(abs_mag, 2), "m_v": round(m_v, 2), "modulus": round(modulus, 2),
+            "kpc": round(pc / 1000.0, 0), "mly": round(pc * 3.2616 / 1e6, 2),
+            "pct_err": round(100.0 * (10 ** (LEAVITT_SCATTER_MAG / 5.0) - 1.0))}
+
+
+def distance_text(records: list, star: dict) -> Optional[str]:
+    """The report's distance lines for a star whose entry carries a period and
+    a "distance" block ({a_v, g_to_v}: the dust and the G-to-V colour term,
+    both the owner's numbers for that star). None otherwise. Pure.
+    Says when the fold is incomplete, since the mean is then biased toward
+    whichever half of the cycle the nights covered."""
+    dist = star.get("distance") if isinstance(star, dict) else None
+    period = star.get("period_days") if isinstance(star, dict) else None
+    if not isinstance(dist, dict) or not period:
+        return None
+    mean, n = mean_magnitude(records, "L")
+    if mean is None:
+        return None
+    a_v = float(dist.get("a_v") or 0.0)
+    g_to_v = float(dist.get("g_to_v") or 0.0)
+    d = leavitt_distance(period, mean, a_v=a_v, g_to_v=g_to_v)
+    if d is None:
+        return None
+    cov = coverage(records, period, star.get("epoch_jd"))
+    lines = ["Distance by the Leavitt law (P %.2f d -> M_V %.2f): mean %.2f over %d L night%s, %+.2f to V, %.2f dust"
+             " -> modulus %.2f -> %.0f kpc, %.2f million light years (about ±%d %% from the law's scatter alone)"
+             % (float(period), d["abs_mag"], mean, n, "" if n == 1 else "s", g_to_v, a_v, d["modulus"],
+                d["kpc"], d["mly"], d["pct_err"])]
+    if not cov.get("complete"):
+        lines.append("  fold incomplete (%d of %d phase bins; missing %s): the mean leans toward the nights covered"
+                     % (cov["hit"], cov["bins"], ",".join(str(b) for b in cov["missing"]) or "none"))
+    return "\n".join(lines)
 
 
 def nightly_point(frames: list) -> Optional[dict]:
@@ -263,8 +397,10 @@ def comps_for(dso: str, ra: float, dec: float, progress_cb=None, mag_range=COMP_
 
 # --------------------------------------------------------------------------- frames
 
-def _aperture_mags(data, wcs, positions_radec: list, arcsec_per_px: float):
-    """[(inst_mag, err_mag)] per sky position; (None, None) off-frame or no flux."""
+def _aperture_mags(data, wcs, positions_radec: list, arcsec_per_px: float, peak_of=None):
+    """[(inst_mag, err_mag, peak)] per sky position; (None, None, None) off-frame
+    or no flux. *peak* is the brightest pixel inside the aperture read from
+    *peak_of* (the raw frame; *data* when not given): the saturation witness."""
     import numpy as np
     from astropy.coordinates import SkyCoord
     import astropy.units as u
@@ -275,9 +411,10 @@ def _aperture_mags(data, wcs, positions_radec: list, arcsec_per_px: float):
     x, y = wcs.world_to_pixel(coords)
     out = []
     h, w = data.shape
+    peak_src = data if peak_of is None else peak_of
     for xi, yi in zip(np.atleast_1d(x), np.atleast_1d(y)):
-        if not (r_out < xi < w - r_out and r_out < yi < h - r_out) or not (math.isfinite(xi) and math.isfinite(yi)):
-            out.append((None, None)); continue
+        if not (math.isfinite(xi) and math.isfinite(yi)) or not (r_out < xi < w - r_out and r_out < yi < h - r_out):
+            out.append((None, None, None)); continue
         ap = CircularAperture((xi, yi), r=r)
         an = CircularAnnulus((xi, yi), r_in=r_in, r_out=r_out)
         mask = an.to_mask(method="center")
@@ -285,29 +422,70 @@ def _aperture_mags(data, wcs, positions_radec: list, arcsec_per_px: float):
         ann = ann[mask.data > 0]
         ann = ann[np.isfinite(ann)]
         if ann.size < 20:
-            out.append((None, None)); continue
+            out.append((None, None, None)); continue
+        apm = ap.to_mask(method="center")
+        cut = apm.cutout(peak_src)
+        peak = float(np.nanmax(cut[apm.data > 0])) if cut is not None and cut.size else None
         sky_med = float(np.median(ann)); sky_std = float(1.4826 * np.median(np.abs(ann - sky_med)))
         tot = float(aperture_photometry(data, ap)["aperture_sum"][0])
         flux = tot - sky_med * ap.area
         noise = sky_std * math.sqrt(ap.area) * math.sqrt(1 + ap.area / ann.size)
         if not math.isfinite(flux) or flux <= 0 or noise <= 0:
-            out.append((None, None)); continue
-        out.append((-2.5 * math.log10(flux), 1.0857 * noise / flux))
+            out.append((None, None, peak)); continue
+        out.append((-2.5 * math.log10(flux), 1.0857 * noise / flux, peak))
     return out
 
 
-def solve_frame(path: Path, near, astap_exe: str, progress_cb=None):
-    """-> (data, header, wcs) for one frame, or None if it does not plate-solve."""
+class Solved(NamedTuple):
+    """One plate-solved frame: *data* is what is measured (calibrated when a
+    CalibrationSet was given), *raw* the frame as stored, for the saturation
+    read. Unpacks as (data, hdr, wcs) for the callers that predate *raw*."""
+    data: object
+    hdr: object
+    wcs: object
+    raw: object = None
+
+    def __iter__(self):
+        return iter((self.data, self.hdr, self.wcs))
+
+    def __len__(self):
+        return 3
+
+
+def calibration_for(filt: str, like: Path, progress_cb=None):
+    """The stacker's bias/dark/flat masters for *filt* at the gain of *like*,
+    or None (no calibration config, or it failed: the stacker logs why)."""
+    try:
+        from stacking import stacker
+        cal = stacker.calibration_from_config(filter_name=filt, like=Path(like))
+    except Exception:
+        cal = None
+    if progress_cb:
+        progress_cb("%s: %s" % (filt, "frames calibrated with the stacker's masters%s" % (
+            "" if cal is None or getattr(cal, "flat_npy", None) else " (no flat for it)")
+            if cal is not None else "no calibration masters; measuring raw frames"))
+    return cal
+
+
+def solve_frame(path: Path, near, astap_exe: str, progress_cb=None, cal=None):
+    """-> Solved(data, header, wcs, raw) for one frame, or None if it does not
+    plate-solve. With *cal* (stacker.CalibrationSet) *data* is the calibrated
+    frame; the solve runs on the raw one either way."""
     import numpy as np
     from astropy.io import fits
     from photometry.cmd_diagram import _plate_solve_wcs
     with fits.open(path) as h:
-        data = np.asarray(h[0].data, dtype=np.float32)
+        raw = np.asarray(h[0].data, dtype=np.float32)
         hdr = h[0].header
-    wcs = _plate_solve_wcs(data, near[0], near[1], FOV_HEIGHT_DEG, astap_exe, progress_cb)
+    wcs = _plate_solve_wcs(raw, near[0], near[1], FOV_HEIGHT_DEG, astap_exe, progress_cb)
     if wcs is None:
         return None
-    return data, hdr, wcs
+    data = raw
+    if cal is not None:
+        from stacking import stacker
+        exp = float(hdr.get("EXPTIME", 0) or 0) or None
+        data = stacker._apply_calibration(raw.copy(), cal, exp)
+    return Solved(data, hdr, wcs, raw)
 
 
 def measure_frame(path: Path, target, comps: list, arcsec_per_px: float, astap_exe: str, progress_cb=None):
@@ -315,23 +493,42 @@ def measure_frame(path: Path, target, comps: list, arcsec_per_px: float, astap_e
     solved = solve_frame(path, target, astap_exe, progress_cb)
     if solved is None:
         return None
-    return measure_star(solved[0], solved[1], solved[2], path, target, comps, arcsec_per_px)
+    return measure_star(solved.data, solved.hdr, solved.wcs, path, target, comps, arcsec_per_px, raw=solved.raw)
 
 
-def measure_star(data, hdr, wcs, path: Path, target, comps: list, arcsec_per_px: float):
-    """One star on an already-solved frame: the measure_frame record, or None."""
+def measure_star(data, hdr, wcs, path: Path, target, comps: list, arcsec_per_px: float,
+                 raw=None, saturation: float = SATURATION_ADU, site: Optional[tuple] = None):
+    """One star on an already-solved frame: the measure_frame record, or None.
+
+    The record carries peak_adu (the target's brightest raw pixel) and airmass
+    (from *site* (lat, lon) at mid-exposure, else the header's AIRMASS). A
+    target whose peak reaches *saturation* comes back as {"saturated": True,
+    "peak_adu", "jd", "file"} so the caller can count it; a saturated
+    comparison star is dropped from the zero point."""
     from astropy.time import Time
     exp = float(hdr.get("EXPTIME", 0) or 0)
     jd = Time(hdr["DATE-OBS"], format="isot", scale="utc").jd + exp / 2 / 86400.0
-    mags = _aperture_mags(data, wcs, [target] + [(c["ra"], c["dec"]) for c in comps], arcsec_per_px)
-    t_mag, t_err = mags[0]
+    mags = _aperture_mags(data, wcs, [target] + [(c["ra"], c["dec"]) for c in comps], arcsec_per_px,
+                          peak_of=raw)
+    t_mag, t_err, t_peak = mags[0]
+    if t_peak is not None and saturation and t_peak >= saturation:
+        return {"saturated": True, "peak_adu": t_peak, "jd": jd, "file": path.name}
     if t_mag is None:
         return None
-    zp, zs, n = zero_point([c["gmag"] for c in comps], [m for m, _e in mags[1:]])
+    usable = [(c["gmag"], m) for c, (m, _e, pk) in zip(comps, mags[1:])
+              if not (pk is not None and saturation and pk >= saturation)]
+    zp, zs, n = zero_point([g for g, _m in usable], [m for _g, m in usable])
     if zp is None or n < MIN_COMPS:
         return None
+    am = airmass(jd, target[0], target[1], site[0], site[1]) if site else None
+    if am is None:
+        try:
+            am = float(hdr.get("AIRMASS")) if hdr.get("AIRMASS") is not None else None
+        except (TypeError, ValueError):
+            am = None
     return {"jd": jd, "mag": t_mag + zp, "err": math.sqrt(t_err ** 2 + (zs / math.sqrt(n)) ** 2),
-            "zp": zp, "zp_scatter": zs, "n_comps": n, "file": path.name}
+            "zp": zp, "zp_scatter": zs, "n_comps": n, "file": path.name,
+            "peak_adu": t_peak, "airmass": am, "comps_saturated": len(comps) - len(usable)}
 
 
 # --------------------------------------------------------------------------- run
@@ -399,14 +596,16 @@ def stars_for(dso: str, target, rec: dict) -> list:
     listed = rec.get("stars") if isinstance(rec, dict) else None
     if not listed:
         return [{"key": dso, "name": dso, "ra": float(target[0]), "dec": float(target[1]),
-                 "period_days": rec.get("period_days"), "epoch_jd": rec.get("epoch_jd")}]
+                 "period_days": rec.get("period_days"), "epoch_jd": rec.get("epoch_jd"),
+                 "distance": rec.get("distance")}]
     out = []
     for s in listed:
         try:
             name = str(s["name"])
             out.append({"key": "%s_%s" % (dso, _slug(name)), "name": name,
                         "ra": float(s["ra_deg"]), "dec": float(s["dec_deg"]),
-                        "period_days": s.get("period_days"), "epoch_jd": s.get("epoch_jd")})
+                        "period_days": s.get("period_days"), "epoch_jd": s.get("epoch_jd"),
+                        "distance": s.get("distance")})
         except (KeyError, TypeError, ValueError):
             continue
     return out
@@ -426,11 +625,13 @@ def run(dso: str, filt: Optional[str] = None, nights: Optional[list] = None, red
     image_dir = Path(cfg["nina"]["image_dir"])
     aps = float(cfg["nina"]["arc_sec_per_pixel"])
     astap = (cfg.get("hardware") or {}).get("astap_exe") or "C:/Program Files/astap/astap.exe"
+    site = site_from(cfg)
     target, rec = _target_for(dso)
     stars = stars_for(dso, target, rec)
     if not stars:
         raise ValueError("%s lists no usable stars" % dso)
     docs = {s["key"]: load(s["key"]) for s in stars}
+    cals = {}
     done = {s["key"]: {(r["night"], r["filter"]) for r in docs[s["key"]]["records"]} for s in stars}
     new = {s["key"]: [] for s in stars}
     n_comps = {s["key"]: 0 for s in stars}
@@ -454,31 +655,39 @@ def run(dso: str, filt: Optional[str] = None, nights: Optional[list] = None, red
         if progress_cb:
             progress_cb("%s %s %s: measuring %d frames, %d star%s…" % (
                 dso, night, fl, len(paths), len(need), "" if len(need) == 1 else "s"))
+        if fl not in cals:
+            cals[fl] = calibration_for(fl, paths[0], progress_cb)
         per = {s["key"]: [] for s in need}
         for p in paths:
             if cancel_cb and cancel_cb():
                 raise RuntimeError("cancelled")
-            solved = solve_frame(p, target, astap, None)
+            solved = solve_frame(p, target, astap, None, cal=cals[fl])
             if solved is None:
                 continue
             data, hdr, wcs = solved
+            raw = getattr(solved, "raw", None)
             for s in need:
                 m = measure_star(data, hdr, wcs, p, (s["ra"], s["dec"]),
-                                 comps_at(s, hdr.get("EXPTIME")), aps)
+                                 comps_at(s, hdr.get("EXPTIME")), aps, raw=raw, site=site)
                 if m:
                     per[s["key"]].append(m)
         for s in need:
-            got = per[s["key"]]
+            got, sat = split_saturated(per[s["key"]])
+            if sat and progress_cb:
+                progress_cb("%s %s %s: %d of %d frames saturated on %s (peak %.0f ADU); dropped"
+                            % (dso, night, fl, len(sat), len(paths), s["name"], max(x["peak_adu"] for x in sat)))
             pt = nightly_point([(m["jd"], m["mag"], m["err"]) for m in got])
             if pt is None:
                 if progress_cb:
-                    progress_cb("%s %s %s: no usable frames for %s (unsolved, off frame, or too few comparisons)"
-                                % (dso, night, fl, s["name"]))
+                    progress_cb("%s %s %s: no usable frames for %s (%s)" % (
+                        dso, night, fl, s["name"],
+                        "every frame saturated" if sat else "unsolved, off frame, or too few comparisons"))
                 continue
             record = dict(pt, night=night, filter=fl, frames_total=len(paths),
                           zp_scatter=round(float(sum(m["zp_scatter"] for m in got) / len(got)), 4),
                           n_comps=int(min(m["n_comps"] for m in got)),
-                          measured_at=datetime.now(timezone.utc).isoformat(timespec="seconds"))
+                          measured_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                          **night_extras(got, sat, cals[fl] is not None))
             doc = docs[s["key"]]
             doc["records"] = merge_record(doc["records"], record)
             new[s["key"]].append(record)
@@ -488,7 +697,7 @@ def run(dso: str, filt: Optional[str] = None, nights: Optional[list] = None, red
         doc = docs[s["key"]]
         out.append({"name": s["name"], "key": s["key"], "new": new[s["key"]], "doc": doc,
                     "plot": plot(s["key"], doc, s) if doc["records"] else None,
-                    "comps": n_comps[s["key"]]})
+                    "comps": n_comps[s["key"]], "star": s})
     return {"stars": out}
 
 
@@ -543,11 +752,23 @@ def report_star(dso: str, star: dict) -> str:
     if not star["new"]:
         lines.append("no new nights to measure")
     for r in star["new"]:
-        lines.append("  %s %-5s %6.3f ± %.3f  (%d/%d frames, zp scatter %.3f)" % (
-            r["night"], r["filter"], r["mag"], r["err"], r["n"], r["frames_total"], r["zp_scatter"]))
+        extra = ""
+        if r.get("n_saturated"):
+            extra += ", %d saturated dropped" % r["n_saturated"]
+        if r.get("peak_adu") is not None:
+            extra += ", peak %d ADU" % r["peak_adu"]
+        if r.get("airmass") is not None:
+            extra += ", airmass %.2f" % r["airmass"]
+        if r.get("calibrated") is False:
+            extra += ", raw frames"
+        lines.append("  %s %-5s %6.3f ± %.3f  (%d/%d frames, zp scatter %.3f%s)" % (
+            r["night"], r["filter"], r["mag"], r["err"], r["n"], r["frames_total"], r["zp_scatter"], extra))
     recs = star["doc"]["records"]
     if recs:
         lines.append("%d point%s on file, %s to %s" % (len(recs), "" if len(recs) == 1 else "s", recs[0]["night"], recs[-1]["night"]))
+        dist = distance_text(recs, star.get("star") or {})
+        if dist:
+            lines.append(dist)
     return "\n".join(lines)
 
 

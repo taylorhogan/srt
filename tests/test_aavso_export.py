@@ -77,3 +77,14 @@ def test_a_thin_sequence_borrows_the_neighbours_comps():
     assert pooled["chartid"] == "X2" and pooled["borrowed_from"] == "CF Cas"
     assert [c["auid"] for c in pooled["comps"]] == ["a", "b"] + ["c%d" % i for i in range(6)]
     assert aavso.pool_sequences(cf, [own], 5) is cf                   # enough of its own: untouched
+
+
+def test_the_line_carries_the_airmass_and_the_notes_say_calibrated_and_dropped():
+    line = aavso.format_line("CF Cas", 2461000.6, 11.2, 0.01, "L", "X1", "112", 11.205, airmass=1.2345)
+    assert line.split(",")[11] == "1.234"
+    assert aavso.format_line("x", 1.0, 1.0, 0.1, "L", None, None, None).split(",")[11] == "na"
+    notes = aavso.notes_text(14, 60.0, 6.0, 9, "check star catalog V 11.205", calibrated=True, n_saturated=2)
+    assert notes == ("nightly mean of 14 x 60 s frames; 6 arcsec aperture; ensemble of 9 sequence stars; "
+                     "bias/dark/flat calibrated; 2 saturated frames dropped; check star catalog V 11.205")
+    assert "raw frames" in aavso.notes_text(1, None, 6.0, 5, calibrated=False)
+    assert "saturated" not in aavso.notes_text(1, None, 6.0, 5, calibrated=True)

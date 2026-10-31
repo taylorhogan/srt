@@ -263,6 +263,18 @@ HELP: dict[str, dict] = {
         "notes": ["Runs automatically at the end of a night, after the SNR analysis.",
                   "Default night: each target's newest session folder."],
     },
+    "aavso": {
+        "category": "super",
+        "summary": "Write the AAVSO WebObs file for a monitored star: one calibrated observation per night against the AAVSO sequence.",
+        "usage": ["aavso <dso>", "aavso <dso> <filter>"],
+        "examples": ["aavso ngc7790", "aavso ngc7790 G", "aavso hubblev1"],
+        "notes": ["Frames are bias/dark/flat calibrated; a frame with the star's raw peak at 60000 ADU is dropped and "
+                  "counted in NOTES; airmass is the night's mean.",
+                  "L is reported as CV, G as TG, B as TB, R as TR (untransformed, TRANS=NO); one sequence star is "
+                  "held back as the check star.",
+                  "Files land in local/lightcurves/aavso/<key>_<FILT>.txt on the PC under cfg['aavso']['obscode']; "
+                  "upload them at https://app.aavso.org/webobs/ by hand. Nothing is sent from here."],
+    },
     "lightcurve": {
         "category": "super",
         "summary": "One calibrated brightness per night for a monitored star, plotted; folded on its period if known.",

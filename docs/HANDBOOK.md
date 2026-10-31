@@ -84,6 +84,8 @@ roof it cannot see, under the evidence rule in CLAUDE.md.
 | `reopen <dso> [for N]` | undo auto-stop: back to waiting, auto-stop held off N nights |
 | `suggest [N]` | what is worth adding this month |
 | `drafts`, `approve <dso>`, `reject <dso> [why]` | the publish cards (below) |
+| `lightcurve <dso>` | a monitored star's nightly points (runs itself after each night) |
+| `aavso <dso> [filter]` | the AAVSO WebObs file for a monitor, on the PC under `local/lightcurves/aavso/`; upload it by hand at app.aavso.org/webobs (observer code `aavso.obscode`) |
 | `replan` | re-run the noon decision now |
 | `update` | pull the release and restart the children (not start_srt itself) |
 

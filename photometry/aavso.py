@@ -16,7 +16,14 @@ cached, and writes the AAVSO Extended File Format:
   - the luminance filter is reported as CV (clear, V zero point) and the
     colour filters as TG / TB / TR (untransformed tri-colour), TRANS=NO,
     MTYPE=STD; nothing here invents a transformation;
-  - one line per (night, filter): the nightly mean, as the site's curves are.
+  - one line per (night, filter): the nightly mean, as the site's curves are;
+  - since the afternoon of 2026-10-31 the frames are bias/dark/flat calibrated
+    (lightcurve.calibration_for), a frame with the target's raw peak at
+    SATURATION_ADU is dropped and counted in NOTES, a saturated sequence star
+    leaves the ensemble, and AMASS is the night's mean airmass at mid-exposure.
+
+The observer code is cfg["aavso"]["obscode"] (THCA, the owner's, since
+2026-10-31) unless --obscode says otherwise.
 
 The pure parts (sequence parsing, the choice of check star, the lines) are
 tested without the network or frames; the frame work reuses
@@ -134,19 +141,29 @@ def _clean(text) -> str:
 
 def format_line(name: str, jd: float, mag: float, err: float, filt: str, chartid: Optional[str],
                 check_label: Optional[str], check_mag: Optional[float], notes: str = "",
-                ensemble: bool = True, comp_label: Optional[str] = None, comp_mag: Optional[float] = None) -> str:
+                ensemble: bool = True, comp_label: Optional[str] = None, comp_mag: Optional[float] = None,
+                airmass: Optional[float] = None) -> str:
     """One Extended Format observation. Pure."""
     return ",".join([
         _clean(name), "%.5f" % jd, "%.3f" % mag, "%.3f" % err, filter_code(filt), "NO", "STD",
         "ENSEMBLE" if ensemble else _clean(comp_label), "na" if ensemble else ("%.3f" % comp_mag if comp_mag is not None else "na"),
         _clean(check_label) if check_label else "na", "%.3f" % check_mag if check_mag is not None else "na",
-        "na", "na", _clean(chartid), _clean(notes)])
+        "%.3f" % airmass if airmass is not None and math.isfinite(airmass) else "na",
+        "na", _clean(chartid), _clean(notes)])
 
 
-def notes_text(n_frames: int, exptime_s: Optional[float], aperture_arcsec: float, n_ensemble: int, scale_note: str = "") -> str:
+def notes_text(n_frames: int, exptime_s: Optional[float], aperture_arcsec: float, n_ensemble: int, scale_note: str = "",
+               calibrated: Optional[bool] = None, n_saturated: int = 0) -> str:
     exp = ("%g s" % exptime_s) if exptime_s else "?"
-    return ("nightly mean of %d x %s frames; %.0f arcsec aperture; ensemble of %d sequence stars%s"
-            % (n_frames, exp, aperture_arcsec, n_ensemble, ("; " + scale_note) if scale_note else ""))
+    bits = ["nightly mean of %d x %s frames" % (n_frames, exp), "%.0f arcsec aperture" % aperture_arcsec,
+            "ensemble of %d sequence stars" % n_ensemble]
+    if calibrated is not None:
+        bits.append("bias/dark/flat calibrated" if calibrated else "raw frames")
+    if n_saturated:
+        bits.append("%d saturated frame%s dropped" % (n_saturated, "" if n_saturated == 1 else "s"))
+    if scale_note:
+        bits.append(scale_note)
+    return "; ".join(bits)
 
 
 # --------------------------------------------------------------------------- network
@@ -215,17 +232,22 @@ def export(dso: str, filt: str = "L", obscode: str = "", name: Optional[str] = N
                 s["name"], len(seqs[s["key"]]["comps"]), pooled["borrowed_from"], pooled["chartid"], len(pooled["comps"])))
         seqs[s["key"]] = pooled
     frames = lc._frames(image_dir, dso, filt)
+    site = lc.site_from(cfg)
     lines = {s["key"]: [] for s in stars}
+    cals = {}
     for (night, fl), paths in sorted(frames.items()):
         if nights and night not in nights:
             continue
+        if fl not in cals:
+            cals[fl] = lc.calibration_for(fl, paths[0], say)
         say("%s %s %s: %d frames against the AAVSO sequence" % (dso, night, fl, len(paths)))
         per = {s["key"]: {"t": [], "k": [], "exp": None, "n_ens": 0, "check": None} for s in stars}
         for p in paths:
-            solved = lc.solve_frame(p, target, astap, None)
+            solved = lc.solve_frame(p, target, astap, None, cal=cals[fl])
             if solved is None:
                 continue
             data, hdr, wcs = solved
+            raw = getattr(solved, "raw", None)
             exp = float(hdr.get("EXPTIME", 0) or 0)
             for s in stars:
                 seq = seqs[s["key"]]
@@ -233,28 +255,38 @@ def export(dso: str, filt: str = "L", obscode: str = "", name: Optional[str] = N
                 ens = [{"ra": c["ra"], "dec": c["dec"], "gmag": c["v"]} for c in pick["ensemble"]]
                 if len(ens) < lc.MIN_COMPS:
                     continue
-                m = lc.measure_star(data, hdr, wcs, p, (s["ra"], s["dec"]), ens, aps)
+                m = lc.measure_star(data, hdr, wcs, p, (s["ra"], s["dec"]), ens, aps, raw=raw, site=site)
                 if m:
                     per[s["key"]]["t"].append(m)
-                    per[s["key"]]["exp"] = exp
-                    per[s["key"]]["n_ens"] = m["n_comps"]
+                    if not m.get("saturated"):
+                        per[s["key"]]["exp"] = exp
+                        per[s["key"]]["n_ens"] = m["n_comps"]
                 if pick["check"]:
                     per[s["key"]]["check"] = pick["check"]
-                    k = lc.measure_star(data, hdr, wcs, p, (pick["check"]["ra"], pick["check"]["dec"]), ens, aps)
-                    if k:
+                    k = lc.measure_star(data, hdr, wcs, p, (pick["check"]["ra"], pick["check"]["dec"]), ens, aps,
+                                        raw=raw, site=site)
+                    if k and not k.get("saturated"):
                         per[s["key"]]["k"].append(k)
         for s in stars:
             got = per[s["key"]]
-            pt = lc.nightly_point([(m["jd"], m["mag"], m["err"]) for m in got["t"]])
+            meas, sat = lc.split_saturated(got["t"])
+            if sat:
+                say("%s %s %s: %d of %d frames saturated on %s (peak %.0f ADU); dropped"
+                    % (dso, night, fl, len(sat), len(paths), s["name"], max(x["peak_adu"] for x in sat)))
+            pt = lc.nightly_point([(m["jd"], m["mag"], m["err"]) for m in meas])
             if pt is None:
-                say("%s %s %s: no usable frames for %s" % (dso, night, fl, s["name"]))
+                say("%s %s %s: no usable frames for %s%s" % (dso, night, fl, s["name"],
+                                                             " (every frame saturated)" if sat else ""))
                 continue
             kpt = lc.nightly_point([(m["jd"], m["mag"], m["err"]) for m in got["k"]]) if got["k"] else None
+            extras = lc.night_extras(meas, sat, cals[fl] is not None)
             seq = seqs[s["key"]]
             line = format_line(seq.get("star") or s["name"], pt["jd"], pt["mag"], pt["err"], fl, seq.get("chartid"),
                                got["check"]["label"] if got["check"] else None, kpt["mag"] if kpt else None,
                                notes_text(pt["n"], got["exp"], 2 * lc.AP_R_ARCSEC, got["n_ens"],
-                                          "check star catalog V %.3f" % got["check"]["v"] if got["check"] else ""))
+                                          "check star catalog V %.3f" % got["check"]["v"] if got["check"] else "",
+                                          calibrated=extras["calibrated"], n_saturated=extras["n_saturated"]),
+                               airmass=extras.get("airmass"))
             lines[s["key"]].append(line)
     for s in stars:
         if not lines[s["key"]]:

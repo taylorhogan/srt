@@ -4111,6 +4111,7 @@ def get_super_user_commands() -> dict[str, Callable]:
         "snr": snr_cmd,
         "night": night_cmd,
         "lightcurve": lightcurve_cmd,
+        "aavso": aavso_cmd,
         "replan": replan_cmd,
         "core2": core2_cmd,
         "rehome": rehome_cmd,
@@ -4865,6 +4866,45 @@ def _lightcurve_run(words: list[str]) -> None:
     except Exception as exc:
         _logger.exception("lightcurve failed for %s", dso)
         social_server.post_social_message(f"Light curve failed for {dso}: {exc}")
+
+
+def aavso_cmd(words: list[str], account: str) -> None:
+    """Write the AAVSO Extended Format file for a monitored star (photometry/aavso).
+
+    Usage: aavso <dso> [filter]      (default L -> CV; G -> TG)
+    Re-measures every night of the entry's frames against the AAVSO sequence
+    (calibrated, saturated frames dropped, airmass filled in) and writes
+    local/lightcurves/aavso/<key>_<FILT>.txt on this PC, one line per night,
+    under cfg["aavso"]["obscode"]. Upload the file through WebObs by hand;
+    nothing is sent from here. Background process.
+    """
+    jobs.spawn_process(_aavso_run, args=(words,))
+
+
+def _aavso_run(words: list[str]) -> None:
+    from photometry import aavso
+    args = [w for w in words[2:] if w.strip()]
+    if not args:
+        social_server.post_social_message("Usage: aavso <dso> [filter]")
+        return
+    dso, filt = args[0].lower(), (args[1] if len(args) > 1 else "L")
+    try:
+        res = aavso.export(dso, filt, progress_cb=social_server.post_social_message)
+        lines = ["AAVSO export %s %s" % (dso, filt)]
+        for name, why in res["skipped"].items():
+            lines.append("  skipped %s: %s" % (name, why))
+        for f in res["files"]:
+            key = os.path.basename(f).rsplit("_", 1)[0]
+            n = len(res["lines"].get(key, []))
+            lines.append("  %s: %d night%s -> %s" % (key, n, "" if n == 1 else "s", f))
+        if not res["files"]:
+            lines.append("  nothing written")
+        else:
+            lines.append("Upload each file at https://app.aavso.org/webobs/ (Upload a file).")
+        social_server.post_social_message("\n".join(lines))
+    except Exception as exc:
+        _logger.exception("aavso export failed for %s", dso)
+        social_server.post_social_message(f"AAVSO export failed for {dso}: {exc}")
 
 
 def replan_reply_text(reply, state: str = "") -> str:
