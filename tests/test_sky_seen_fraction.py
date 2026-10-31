@@ -3,7 +3,8 @@
 2026-10-31: the page read 113 % of a clear sky. plate_solve.verify matched the
 whole catalogue (to V 6) and the denominator counted only V <= 5, so forty-odd
 faint matches were never in the total. verify(mag_limit=) cuts the catalogue
-before matching; sky_monitor publishes the plain fraction seen_v5 / cat_v5.
+before matching; the page's line is now plate_solve.seen_to_mag over the
+completeness table's rows, so it is literally rows 2 to 5 added up.
 """
 import pytest
 
@@ -43,8 +44,10 @@ def test_mag_limit_counts_only_the_bright_matches(monkeypatch, tmp_path):
     assert ps.verify(sol, frame, when="x", dets=dets2, mag_limit=5.0)["matches"] == 2
 
 
-def test_the_fraction_cannot_pass_one_hundred():
-    # The monitor clamps seen to the catalogue count before the percentage.
-    n_cat, seen = 174, 142
-    seen_v5 = min(seen, n_cat)
-    assert int(round(100 * seen_v5 / n_cat)) <= 100
+def test_the_sky_line_is_the_tables_rows_two_to_five_added_up():
+    # The owner's table of 2026-10-31 02:30: rows 2-5 sum to 110 of 193, row 6 is left out.
+    rows = [{"vmag": 2.0, "n": 5, "found": 5}, {"vmag": 3.0, "n": 11, "found": 11},
+            {"vmag": 4.0, "n": 44, "found": 42}, {"vmag": 5.0, "n": 133, "found": 52},
+            {"vmag": 6.0, "n": 145, "found": 10}]
+    assert ps.seen_to_mag(rows, 5.0) == {"n": 193, "found": 110}
+    assert ps.seen_to_mag([], 5.0) == {"n": 0, "found": 0}

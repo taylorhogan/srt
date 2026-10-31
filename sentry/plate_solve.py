@@ -419,11 +419,11 @@ def verify(sol, frame, when=None, dets=None, tol_px=8.0, profile=None, mag_limit
     """How well a stored solution still fits a frame. Cheap; safe on a timer.
 
     Matches every catalogue star (to bright_stars.VMAG_LIMIT, 6.0) unless
-    `mag_limit` cuts the catalogue first. The sky page's "catalogue stars seen"
-    divides matches by the V <= 5 stars in the field
-    (scripts/sky_transparency_report.in_field), so that numerator must be
-    counted over the same stars: with the full catalogue it was 142 matches
-    over 174 stars on 2026-10-31 and the page read 113 % of a clear sky.
+    `mag_limit` cuts the catalogue first. The dusk check and forecast_score
+    divide the full-catalogue count by the V <= 5 stars in the field
+    (scripts/sky_transparency_report.in_field): an index that can pass 1.0,
+    not a fraction (142 over 174 on 2026-10-31, and the sky page read 113 %
+    of a clear sky until it moved to seen_to_mag over the completeness rows).
     """
     frame = Path(frame)
     when = when or frame_time(frame)
@@ -448,6 +448,16 @@ def verify(sol, frame, when=None, dets=None, tol_px=8.0, profile=None, mag_limit
     return {"matches": int(good.sum()),
             "residual_px": round(float(np.sqrt((d[good] ** 2).mean())), 2)
             if good.sum() else None}
+
+
+def seen_to_mag(rows, max_mag=5.0):
+    """{"n", "found"} summed over the completeness rows labelled `max_mag` or
+    brighter: the sky page's "catalogue stars to magnitude 5 seen" is the
+    table's rows 2 to 5 added up, the same stars and the same matching, so the
+    reader can do the sum from the table. Pure."""
+    keep = [r for r in rows or [] if float(r.get("vmag", 99)) <= float(max_mag)]
+    return {"n": int(sum(int(r.get("n") or 0) for r in keep)),
+            "found": int(sum(int(r.get("found") or 0) for r in keep))}
 
 
 # ------------------------------------------------------- limiting magnitude

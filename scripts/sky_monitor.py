@@ -342,29 +342,13 @@ def _add_photometry(status, frame, res):
         v = plate_solve.verify(sol, frame, when, res["_stars"])
         status["solve_matches"] = v["matches"]
         status["solve_residual_px"] = v["residual_px"]
-        # The share of the catalogue's V <= 5 stars in the field that the solve
-        # matched (2026-10-28; corrected 2026-10-31). Numerator and denominator
-        # are the SAME stars: `verify` over the whole catalogue (to V 6) over
-        # in_field's V <= 5 count, divided by the dusk check's 0.75 "clear
-        # sky", read 109-113 % on the first transparent night. A noise blob
-        # cannot land on a catalogue position, so unlike the raw count this
-        # holds up under a moon and haze, where the site otherwise said only
-        # "unreliable". The plain fraction is published, no clear-sky
-        # normalisation: the dusk check, forecast_score and the dashboard keep
-        # their own mixed-depth index, which their thresholds were replayed on.
+        # Whether a bright moon is up: the sky line below says to read it low.
         try:
-            from scripts.sky_transparency_report import MAG_LIMIT, in_field
             from sentry import dusk_check
             st = dusk_check._settings()
-            n_cat = in_field(sol, when, MAG_LIMIT)
-            if n_cat:
-                seen = plate_solve.verify(sol, frame, when, res["_stars"], mag_limit=MAG_LIMIT)["matches"]
-                status["cat_v5"] = int(n_cat)
-                status["seen_v5"] = int(min(seen, n_cat))
-                status["seen_pct"] = int(round(100 * status["seen_v5"] / n_cat))
-                malt, mill = dusk_check.moon_at(when)
-                status["moon_up_bright"] = bool(malt > 0 and mill >= float(st["dusk_moon_max_illum"]))
-        except Exception:  # noqa: BLE001 -- the percentage is extra, never a reason to fail
+            malt, mill = dusk_check.moon_at(when)
+            status["moon_up_bright"] = bool(malt > 0 and mill >= float(st["dusk_moon_max_illum"]))
+        except Exception:  # noqa: BLE001 -- the flag is extra, never a reason to fail
             pass
         # A knocked or refocused camera shows up here first: the stored geometry
         # stops landing on the stars. Say so rather than publish a magnitude
@@ -413,6 +397,16 @@ def _add_photometry(status, frame, res):
         # beside it were measured in.
         status["measured_radius_px"] = lm["measured_radius_px"]
         status["completeness"] = lm["completeness"]
+        # The sky line is the table's rows 2 to 5 summed (owner, 2026-10-31):
+        # the same stars (inside the measured radius, off the foliage), the
+        # same matching, so the number on the page is the sum anyone can do
+        # from the rows above it. Before this the line counted every star in
+        # the frame against a plain V 5.0 cut and disagreed with its own table
+        # (58 % of 178 beside rows summing to 57 % of 193).
+        seen = plate_solve.seen_to_mag(lm["completeness"], 5.0)
+        if seen["n"]:
+            status["cat_v5"], status["seen_v5"] = seen["n"], seen["found"]
+            status["seen_pct"] = int(round(100 * seen["found"] / seen["n"]))
         if not res["trustworthy"] and res.get("_false"):
             fake = plate_solve.limiting_magnitude(sol, frame, when, res["_false"],
                                                   res["_mask"], step=1.0)
