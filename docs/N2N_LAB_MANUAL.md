@@ -2480,6 +2480,74 @@ which means training data cannot be chosen by inspection.
 Step 4 is not optional. Six experiments on 2026-08-20/21 were argued from
 differences that turned out to be inside the floor.
 
+### 40. Eleven more narrowband groups: a tie. Breadth is not the limit
+
+2026-10-31. Since step 39 the pool gained M76 (Ha, O-III), Melotte 15
+(Ha, O-III, S-II), M1 (Ha, O-III, S-II) and IC 410 (Ha, O-III, S-II), all
+gain 0 / 300 s: a planetary, a supernova remnant's filaments, and S-II from
+one group to four. Retrained with the step-39 recipe (ladder groups,
+bilinear decoder, seed 0, trunk held out), 23 groups, 1568 frames against
+1040; `pairs_per_epoch` still 2000, so the gain on offer was diversity.
+Stacking 1 h 50 min for the eleven new groups, training 2 h 28 min, best
+val 0.62487 at epoch 20 of 60 (step 39's twelve-group model: 0.61627 at
+epoch 40; the val sets differ, so the two are not comparable).
+Checkpoint `n2n_ladder_groups_narrowband_up2_300s.pt`.
+
+**Acceptance on the held-out trunk, current (`narrowband_up`) against new:**
+
+| check | current | new |
+| --- | --- | --- |
+| 4 px / 2 px line, worst cell (accept < x5) | 4.4 | 4.5 |
+| held-out N2N loss, val halves, mean MSE / L1 | 0.53198 / 0.60316 | 0.53212 / 0.60322 |
+| retention 1-2 sigma, Ha / O-III / S-II | 0.241 / 0.216 / 0.261 | 0.252 / 0.223 / 0.271 |
+| retention 4-8 sigma | 0.321 / 0.345 / 0.331 | 0.343 / 0.341 / 0.339 |
+
+The paired retention differences are +0.004 to +0.024 and significant on
+three of six bins; the loss is identical; M1 and M76 panels (both in the
+new model's pool, so its best case) cannot be told apart by eye. **Not
+promoted.** The N2N loss is at its floor: the raw val halves differ by
+1.13 in the trainer's units, a half's own noise is about 0.55 of that, and
+both models sit on it, so neither more groups nor more epochs can move the
+number again. What the loss does not see is where the gains are: a quarter
+to a third of the faint extended structure survives, and that is the
+diffuse emission in Melotte 15 and the outer Trunk.
+
+### 41. Re-split pairs: a fresh half-split per patch, same frames
+
+2026-10-31, running. With one fixed pair per group, 23 groups are 23
+noise realisations and every epoch re-reads them. `nn/resplit.py` changes
+what a pair is and nothing else: each group's training frames (the fixed
+halves' frames exactly, `order[:2 * train_per]` of the seeded permutation)
+are calibrated, registered and sky-levelled ONCE by the project stacker
+(`stacker.stack(keep_frames_dir=)`, new; no second registration) and kept
+under `local/n2n_ladder/frames/<dso>__<filter>/` (~210 GB for the 23
+groups); every patch draw permutes a group's frames into two disjoint
+halves of floor(k/2) and stacks the patch region of each with the
+stacker's own `_combine_tile` (SIGMA_CLIP_FWHM, the frames' FWHM weights,
+0.15 s a half). A 30-frame group has ~7.7e7 distinct pairs where it had
+one. Held fixed: the frames, the depth (step 16: shallower halves teach
+shrinkage), the validation stacks (so val compares with step 40's
+0.62487), and the normalisation (sep.Background of the full-depth stack;
+the asinh scale from the group's fixed `train0`, a half of the same depth).
+
+One bug found before launch: restoring each half to its own frames'
+weighted sky level put the patch 9 ADU (1.8 asinh units) off the full
+stack's background map on IC 410 O-III. Every half now goes back at the
+full stack's restored level; the patch statistics then match the fixed
+halves (mean 0.00 vs 0.01, sigma 0.83 vs 0.80).
+
+```
+scripts/n2n_lrgb_ladder.py frames --test ngc5907 --filters Ha,O-III,S-II --groups "<the 23>"
+scripts/n2n_lrgb_ladder.py train --arm groups --suffix _narrowband_rs --upsample bilinear --resplit --workers 8 ...
+```
+
+Launcher `local/n2n_ladder/narrowband/run_rs.sh`, checkpoint
+`n2n_ladder_groups_narrowband_rs_300s.pt`. Acceptance is step 40's table;
+the number to watch is retention, since the loss cannot move. If it does
+not move either, pair count was not the limit and the next lever is deeper
+training targets (the half-stack median is 18 frames), then a held-out
+deep-stack benchmark that scores faint-structure recovery per scale.
+
 ## Standing conclusions
 
 0. **The training set is not the limit; integration is.** Six narrowband models

@@ -1469,9 +1469,18 @@ def stack(
     cancel_cb: Optional[Callable[[], bool]] = None,
     precomputed_fwhm_stars: Optional[dict[Path, tuple[float, int]]] = None,
     shared_reference: Optional[tuple[np.ndarray, tuple[int, int]]] = None,
+    keep_frames_dir: Optional[Path] = None,
 ) -> tuple[np.ndarray, dict]:
     """
     Stack a list of FITS light frames with optional calibration and FWHM weighting.
+
+    keep_frames_dir keeps the calibrated, registered, sky-levelled frames the
+    combine read (one float32 .npy each, NaN outside the frame's footprint)
+    in that directory instead of a temp dir that is deleted, and describes
+    them in info["frames"] (files, source paths, the level taken off each,
+    the combine weights, the level restored). The N2N re-split trainer
+    (nn/resplit, 2026-10-31) builds its patch stacks from them, so it gets
+    the stacker's frames and not a second registration.
 
     shared_reference is (control_points, shape) from
     _reference_control_points. Pass it to register these frames onto someone
@@ -1634,7 +1643,11 @@ def stack(
     # actually reachable on this box. Peak is now two frames plus the tile cube.
     import shutil
     import tempfile
-    tmp_dir = Path(tempfile.mkdtemp(prefix="srt_stack_"))
+    if keep_frames_dir is not None:
+        tmp_dir = Path(keep_frames_dir)
+        tmp_dir.mkdir(parents=True, exist_ok=True)
+    else:
+        tmp_dir = Path(tempfile.mkdtemp(prefix="srt_stack_"))
     mmap_paths: list[Path] = []
     survivors: list[Path] = []
     failed = poor_qa = 0
@@ -1771,11 +1784,13 @@ def stack(
     finally:
         # Drop memmaps before deleting the backing files (matters on Windows).
         mmaps = None
-        shutil.rmtree(tmp_dir, ignore_errors=True)
+        if keep_frames_dir is None:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
 
     # Put the sky back: the frames were levelled before combining (see _spill),
     # so add the weighted mean of what was removed. Without this the stack would
     # sit near zero and every downstream sky/ADU measurement would be wrong.
+    restored = 0.0
     if frame_levels:
         lv = np.asarray(frame_levels, dtype=np.float64)
         restored = float(np.average(lv, weights=weights) if weights is not None
@@ -1835,6 +1850,16 @@ def stack(
                  "rejected_other_gain": [str(p) for p in other_gain],
                  "calibration_dropped": gain_note},
     }
+    if keep_frames_dir is not None:
+        info["frames"] = {
+            "files": [str(p) for p in mmap_paths],
+            "paths": [str(p) for p in accepted],
+            "levels": [float(v) for v in frame_levels],
+            "weights": ([float(v) for v in weights] if weights is not None
+                        else [1.0 / max(n_frames, 1)] * n_frames),
+            "restored": restored,
+            "shape": [int(H), int(W)],
+        }
     return result.astype(np.float32), info
 
 

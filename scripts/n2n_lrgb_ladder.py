@@ -98,6 +98,7 @@ sys.argv = _argv
 
 LADDER = Path(_root) / "local" / "n2n_ladder"
 STACK_DIR = LADDER / "stacks"
+FRAMES_DIR = LADDER / "frames"      # `frames` stage: every registered training frame, per group (nn/resplit)
 MANIFEST = LADDER / "manifest.json"
 ARMS = ("per-filter", "pooled-filters", "pooled-scenes", "groups")
 # `groups` is the fourth arm: an explicit list from --groups, for a pool the
@@ -256,6 +257,70 @@ def build_stacks(args) -> int:
 
 
 # --------------------------------------------------------------------------
+# stage: frames  (the re-split pool, nn/resplit; 2026-10-31)
+# --------------------------------------------------------------------------
+
+def frames_dir(dso: str, filt: str) -> Path:
+    safe = filt.replace(" ", "_").replace("/", "_")
+    return FRAMES_DIR / f"{dso}__{safe}"
+
+
+def build_frames(args) -> int:
+    """Keep every registered training frame of each group for the re-split
+    trainer. The frames are the fixed halves' frames exactly: the same seeded
+    permutation, its first 2 * train_per entries, stacked once onto the same
+    shared reference. Cached per group (group.json present)."""
+    from nn import resplit, stacks
+
+    man = read_manifest()
+    if not man.get("groups"):
+        log("No manifest — run the `stacks` stage first.")
+        return 1
+    filters = [f.strip() for f in args.filters.split(",") if f.strip()]
+    idx = stacks.index_frames(subs_dir(), filters, args.exptime)
+    wanted = {g.strip() for g in (args.groups or "").split(",") if g.strip()}
+    prog = (lambda m: log(f"      {m}")) if args.verbose else (lambda m: None)
+    for (dso, filt) in sorted(idx):
+        key = gkey(dso, filt)
+        if wanted and key not in wanted:
+            continue
+        g = man["groups"].get(key)
+        if not g or not g.get("usable") or dso == args.test:
+            continue
+        paths = idx[(dso, filt)]
+        if len(paths) != g["n_frames"]:
+            log(f"[{key}] {len(paths)} frames on disk, manifest says {g['n_frames']} — "
+                f"the fixed halves' frames cannot be reproduced; skipped")
+            continue
+        out = frames_dir(dso, filt)
+        if (out / resplit.GROUP_FILE).exists() and g.get("frames_dir") == str(out.relative_to(_root)):
+            rec = json.loads((out / resplit.GROUP_FILE).read_text())
+            log(f"[{key}] cached: {rec['n_frames']} frames")
+            continue
+        rng = np.random.default_rng(man.get("seed", args.seed))
+        order = rng.permutation(len(paths))
+        train_paths = [paths[i] for i in order[:2 * g["train_per"]]]
+        log(f"[{key}] {len(train_paths)} training frames -> {out.relative_to(_root)}")
+        t0 = time.time()
+        ref = stacks.shared_reference_for(paths, filt, progress_cb=lambda m: log(f"  {m}"))
+        if ref is None:
+            log(f"[{key}] no shared reference — skipped")
+            continue
+        rec = resplit.build_group(train_paths, filt, out, Path(_root) / g["files"][0],
+                                  shared_reference=ref, progress_cb=prog)
+        if rec is None:
+            log(f"[{key}] failed — skipped")
+            continue
+        log(f"[{key}] kept {rec['n_frames']} frames in {time.time() - t0:.0f}s, "
+            f"scale {rec['scale']:.2f} ADU, box {rec['coverage_box']}")
+        g["frames_dir"] = str(out.relative_to(_root))
+        g["frames_kept"] = rec["n_frames"]
+        write_manifest(man)
+        gc.collect()
+    return 0
+
+
+# --------------------------------------------------------------------------
 # stage: train
 # --------------------------------------------------------------------------
 
@@ -308,8 +373,11 @@ def load_group(man: dict, key: str) -> tuple[list, list]:
     return train, val
 
 
-def fit(train_frames, train_gids, val_frames, val_gids, args, tag: str):
-    """Train a UNet. Hyperparameters are run_filter's, unchanged."""
+def fit(train_frames, train_gids, val_frames, val_gids, args, tag: str, train_ds=None):
+    """Train a UNet. Hyperparameters are run_filter's, unchanged.
+
+    *train_ds* replaces the fixed-pair N2NDataset with a prebuilt one (the
+    re-split pool); the validation side is the fixed stacks either way."""
     import torch
     import torch.nn as nn
     from torch.utils.data import DataLoader
@@ -327,14 +395,22 @@ def fit(train_frames, train_gids, val_frames, val_gids, args, tag: str):
     batch = int(cfg_nn.get("batch_size", 8))
     pairs = args.pairs or int(cfg_nn.get("pairs_per_epoch", 2000))
 
-    ds = N2NDataset(train_frames, group_ids=train_gids, patch_size=patch,
-                    pairs_per_epoch=pairs, seed=args.seed)
+    if train_ds is None:
+        ds = N2NDataset(train_frames, group_ids=train_gids, patch_size=patch,
+                        pairs_per_epoch=pairs, seed=args.seed)
+        workers = 2
+        log(f"  {len(ds._valid_pairs)} training pairs over "
+            f"{len(set(train_gids))} groups; {pairs} patch draws/epoch")
+    else:
+        ds = train_ds
+        workers = int(getattr(args, "workers", 8))
+        log(f"  re-split pool: {len(ds.groups)} groups, "
+            f"{sum(len(g['mm']) for g in ds.groups)} frames, a fresh half-split per draw; "
+            f"{pairs} patch draws/epoch, {workers} workers")
     vs = N2NDataset(val_frames, group_ids=val_gids, patch_size=patch,
                     pairs_per_epoch=max(batch, pairs // 5), seed=args.seed + 1)
-    dl = DataLoader(ds, batch_size=batch, shuffle=True, num_workers=2)
+    dl = DataLoader(ds, batch_size=batch, shuffle=True, num_workers=workers)
     vl = DataLoader(vs, batch_size=batch, shuffle=False, num_workers=2)
-    log(f"  {len(ds._valid_pairs)} training pairs over "
-        f"{len(set(train_gids))} groups; {pairs} patch draws/epoch")
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     model = UNet(residual="linear", upsample=args.upsample).to(device)
@@ -461,13 +537,30 @@ def train_arm(args) -> int:
         tr_frames, tr_gids, va_frames, va_gids = [], [], [], []
         for k in keys:
             tr, va = load_group(man, k)
-            tr_frames += tr
-            tr_gids += [k] * len(tr)
+            if not args.resplit:
+                tr_frames += tr
+                tr_gids += [k] * len(tr)
             va_frames += va
             va_gids += [f"{k}|val"] * len(va)
+            del tr
+
+        train_ds = None
+        if args.resplit:
+            from nn import resplit
+            missing = [k for k in keys if not man["groups"][k].get("frames_dir")]
+            if missing:
+                log(f"  --resplit: no kept frames for {', '.join(missing)} — run the `frames` stage")
+                return 1
+            cfg_nn = config.data().get("nn", {})
+            train_ds = resplit.ResplitDataset(
+                [Path(_root) / man["groups"][k]["frames_dir"] for k in keys],
+                patch_size=int(cfg_nn.get("patch_size", 256)),
+                pairs_per_epoch=args.pairs or int(cfg_nn.get("pairs_per_epoch", 2000)),
+                seed=args.seed)
 
         model, best, best_ep = fit(tr_frames, tr_gids, va_frames, va_gids,
-                                   args, tag)
+                                   args, tag, train_ds=train_ds)
+        del train_ds
         del tr_frames, va_frames
         gc.collect()
 
@@ -481,6 +574,7 @@ def train_arm(args) -> int:
                     "arm": args.arm, "groups": keys, "test_dso": args.test,
                     "seed": args.seed, "loss": args.loss,
                     "upsample": args.upsample,
+                    "resplit": bool(args.resplit),
                     # The effective value, not args.pairs — that is 0 when the
                     # config supplies it, and a checkpoint recording "0 pairs
                     # per epoch" is worse than recording nothing.
@@ -539,7 +633,7 @@ def report(args) -> int:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("stage", choices=("stacks", "train", "report"))
+    ap.add_argument("stage", choices=("stacks", "frames", "train", "report"))
     ap.add_argument("--arm", choices=ARMS, default="per-filter")
     ap.add_argument("--test", default="ngc5907",
                     help="held-out target — never trained on by any arm")
@@ -568,6 +662,11 @@ def main() -> int:
     ap.add_argument("--max-offset", type=int, default=2,
                     help="training pair offset above which a group is unusable")
     ap.add_argument("--verbose", action="store_true", help="stacker progress lines")
+    ap.add_argument("--resplit", action="store_true",
+                    help="train on a fresh random half-split of each group's kept "
+                         "frames per patch (nn/resplit; needs the `frames` stage)")
+    ap.add_argument("--workers", type=int, default=8,
+                    help="DataLoader workers for --resplit (each draw stacks two halves)")
     # Smoke tests must not be able to leave anything behind that a later reader
     # could mistake for a result. A 2-epoch run writes the same filenames as a
     # 60-epoch one and its results.json looks entirely plausible — this project
@@ -583,6 +682,8 @@ def main() -> int:
 
     if args.stage == "stacks":
         return build_stacks(args)
+    if args.stage == "frames":
+        return build_frames(args)
     if args.stage == "train":
         return train_arm(args)
     return report(args)

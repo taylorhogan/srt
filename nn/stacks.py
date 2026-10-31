@@ -217,6 +217,7 @@ def stack_paths(
     progress_cb: Callable[[str], None] = print,
     shared_reference: Optional[tuple] = None,
     meta_out: Optional[dict] = None,
+    keep_frames_dir: Optional[Path] = None,
 ) -> Optional[np.ndarray]:
     """Stack *paths* with the project stacker, calibrated where masters exist.
 
@@ -243,6 +244,7 @@ def stack_paths(
         dark_paths=dark or None,
         flat_paths=flat or None,
         register=True,
+        keep_frames_dir=keep_frames_dir,
         # Pass the caller's callback through rather than swallowing it. The
         # stacker measures FWHM per frame, which dominates the wall time on a
         # large set, and with progress suppressed a multi-hour build is
