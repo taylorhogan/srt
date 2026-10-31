@@ -2548,7 +2548,19 @@ its stacks were built on 10-19, so the stage skipped the group and the
 trainer refused the pool with one group empty (13:41, 33 s in). The index
 is path-sorted and a night's frames sort by date, so the original 26 are
 exactly the paths older than the train0 stack (`original_frames`, with a
-test); relaunched 14:40 (frames 1019 across the 23 groups).
+test); relaunched 13:48 (frames 1019 across the 23 groups).
+
+Third: that run was disk-bound, GPU at 0 %, 35 min an epoch. The kept
+frames were row-major full frames, and a 512 px patch of a 9576-wide
+float32 frame is 512 pieces of 2 KB at a 38 KB stride: with readahead each
+half-stack read pulled ~1.3 GB (8 workers at 160 MB/s each, 120 GB read per
+worker in 14 min); with MADV_RANDOM the bytes fell tenfold but 18,000
+random 4 KB page reads still took 0.3-6 s a half against 0.25 s for the
+combine. Stopped 14:42. The store is now TILED (`resplit.tile_frame`,
+(nty, ntx, 256, 256) per frame, `read_patch` reads either layout,
+`tile_group` converts in place, 27 s for 70 frames): a half reads in 30 ms
+and the combine's 0.25 s is what remains, ~2 min an epoch. Relaunched
+~15:00 on the tiled store.
 
 Launcher `local/n2n_ladder/narrowband/run_rs.sh`, checkpoint
 `n2n_ladder_groups_narrowband_rs_300s.pt`. Acceptance is step 40's table;

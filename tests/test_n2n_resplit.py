@@ -95,7 +95,7 @@ def test_dataset_pair_is_the_combined_halves_through_the_normalisation(tmp_path)
     pa, pb = ds.pair(g, 16, 24, rng)
     rng = np.random.default_rng(5)
     a, b = resplit.split_halves(6, rng)
-    cube = np.stack([np.asarray(g["mm"][i][16:48, 24:56]) for i in a])
+    cube = np.stack([resplit.read_patch(g["mm"][i], 16, 24, 32) for i in a])
     half = resplit.combine_half(cube, g["weights"][a], g["levels"][a], g["restored"])
     want = np.arcsinh((half - 200.0) / 2.0).astype(np.float32)
     assert np.allclose(pa, want, atol=1e-5)
@@ -126,3 +126,33 @@ def test_original_frames_drops_frames_that_arrived_after_the_stacks():
     assert ladder.original_frames(old + new, 26, built, mt) == old
     assert ladder.original_frames(old[:20], 26, built, mt) is None            # frames went missing
     assert ladder.original_frames(old + new, 30, built, mt) is None           # the tail does not account for it
+
+
+def test_tiled_frames_read_back_the_same_patch_at_any_origin():
+    rng = np.random.default_rng(7)
+    arr = rng.normal(0, 1, (70, 90)).astype(np.float32)          # not a multiple of the tile
+    arr[3, 4] = np.nan
+    tiled = resplit.tile_frame(arr, tile=16)
+    assert tiled.shape == (5, 6, 16, 16) and tiled.flags["C_CONTIGUOUS"]
+    for (y0, x0, ps) in [(0, 0, 16), (5, 7, 32), (38, 58, 32), (17, 33, 50), (0, 74, 16)]:
+        want = arr[y0:y0 + ps, x0:x0 + ps]
+        got = resplit.read_patch(tiled, y0, x0, ps)
+        assert got.shape == want.shape and np.allclose(got, want, equal_nan=True)
+        assert np.allclose(resplit.read_patch(arr, y0, x0, ps), want, equal_nan=True)   # plain layout too
+
+
+def test_tile_group_converts_in_place_and_the_dataset_pair_is_unchanged(tmp_path):
+    d = _group(tmp_path, n=6, h=64, w=64)
+    rng = np.random.default_rng(5)
+    ds0 = resplit.ResplitDataset([d], patch_size=32, pairs_per_epoch=1, seed=0)
+    before = ds0.pair(ds0.groups[0], 16, 24, rng)
+    rec = resplit.tile_group(d, tile=16)
+    assert rec["tile"] == 16
+    assert np.load(d / rec["files"][0], mmap_mode="r").ndim == 4
+    rec2 = resplit.tile_group(d, tile=16)                       # idempotent: nothing re-tiled
+    assert rec2 == rec
+    rng = np.random.default_rng(5)
+    ds = resplit.ResplitDataset([d], patch_size=32, pairs_per_epoch=1, seed=0)
+    after = ds.pair(ds.groups[0], 16, 24, rng)
+    assert np.allclose(before[0], after[0]) and np.allclose(before[1], after[1])
+    assert resplit.tile_all(tmp_path, tile=16) == 1

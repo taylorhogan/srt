@@ -37,6 +37,16 @@ Patch origins come from N2NDataset's source-biased sampler run on the full
 stack (same block CDF, same fill-map rule), clamped into the box where at
 least 80 % of the frames have real pixels, because outside it a half holds
 few frames and its noise no longer matches the depth the model is told.
+
+The kept frames are stored TILED (since the afternoon of 2026-10-31: a
+(nty, ntx, TILE, TILE) array per frame, NaN-padded, `tile_frame`). The first
+run kept them row-major, and a 512-pixel patch of a 9576-wide float32 frame
+is 512 pieces of 2 KB with a 38 KB stride: with the kernel's readahead each
+half-stack read pulled ~1.3 GB from the NVMe (35 min an epoch, GPU at 0 %);
+with readahead off it was still 18,000 random 4 KB page reads, 0.3-6 s a
+half against 0.25 s for the combine. Tiled, a patch is at most nine 256 KB
+runs per frame. `read_patch` reads either layout, so a store converted
+half-way still works; `tile_group` converts a group in place, once.
 """
 import json
 import os
@@ -106,7 +116,72 @@ def build_group(paths: list, filter_name: str, out_dir: Path, scale_from: Path,
         "sky": float(np.median(img)),
     }
     (out_dir / GROUP_FILE).write_text(json.dumps(rec, indent=1))
+    return tile_group(out_dir, progress_cb=progress_cb)
+
+
+TILE = 256
+
+
+def tile_frame(arr: np.ndarray, tile: int = TILE) -> np.ndarray:
+    """(h, w) -> (nty, ntx, tile, tile), NaN-padded to whole tiles, contiguous."""
+    arr = np.asarray(arr, dtype=np.float32)
+    h, w = arr.shape
+    nty, ntx = -(-h // tile), -(-w // tile)
+    pad = np.full((nty * tile, ntx * tile), np.nan, np.float32)
+    pad[:h, :w] = arr
+    return np.ascontiguousarray(pad.reshape(nty, tile, ntx, tile).transpose(0, 2, 1, 3))
+
+
+def read_patch(mm, y0: int, x0: int, ps: int) -> np.ndarray:
+    """The (ps, ps) float32 patch at (y0, x0) from a kept frame in either
+    layout: a plain (h, w) array, or the tiled (nty, ntx, T, T) one, where it
+    is the few whole tiles the patch touches, reassembled and cropped."""
+    if mm.ndim == 2:
+        return np.asarray(mm[y0:y0 + ps, x0:x0 + ps], dtype=np.float32)
+    t = mm.shape[2]
+    ty0, ty1 = y0 // t, (y0 + ps - 1) // t
+    tx0, tx1 = x0 // t, (x0 + ps - 1) // t
+    block = np.asarray(mm[ty0:ty1 + 1, tx0:tx1 + 1], dtype=np.float32)
+    nty, ntx = block.shape[:2]
+    wide = block.transpose(0, 2, 1, 3).reshape(nty * t, ntx * t)
+    oy, ox = y0 - ty0 * t, x0 - tx0 * t
+    return np.ascontiguousarray(wide[oy:oy + ps, ox:ox + ps])
+
+
+def tile_group(group_dir: Path, tile: int = TILE, progress_cb=None) -> dict:
+    """Convert a group's kept frames to the tiled layout in place (a frame
+    already 4-D is left alone, so this is safe to re-run or resume). Records
+    "tile" in group.json. Returns the record."""
+    group_dir = Path(group_dir)
+    rec = json.loads((group_dir / GROUP_FILE).read_text())
+    done = 0
+    for f in rec["files"]:
+        p = group_dir / f
+        mm = np.load(p, mmap_mode="r")
+        if mm.ndim == 4:
+            continue
+        tiled = tile_frame(np.asarray(mm), tile)
+        del mm
+        tmp = p.with_suffix(".tmp.npy")
+        np.save(tmp, tiled)
+        os.replace(tmp, p)
+        done += 1
+    rec["tile"] = int(tile)
+    (group_dir / GROUP_FILE).write_text(json.dumps(rec, indent=1))
+    if progress_cb:
+        progress_cb("%s: %d frame%s tiled (%d already)" % (group_dir.name, done, "" if done == 1 else "s",
+                                                           len(rec["files"]) - done))
     return rec
+
+
+def tile_all(frames_root: Path, tile: int = TILE, progress_cb=None) -> int:
+    """tile_group over every group directory under *frames_root*; the count."""
+    n = 0
+    for d in sorted(Path(frames_root).iterdir()):
+        if (d / GROUP_FILE).exists():
+            tile_group(d, tile, progress_cb)
+            n += 1
+    return n
 
 
 def split_halves(k: int, rng) -> tuple[np.ndarray, np.ndarray]:
@@ -205,7 +280,7 @@ class ResplitDataset:
         bg = np.asarray(g["bg"][y0:y0 + ps, x0:x0 + ps], dtype=np.float32)
         out = []
         for idx in (a, b):
-            cube = np.stack([np.asarray(g["mm"][i][y0:y0 + ps, x0:x0 + ps], dtype=np.float32) for i in idx])
+            cube = np.stack([read_patch(g["mm"][i], y0, x0, ps) for i in idx])
             half = combine_half(cube, g["weights"][idx], g["levels"][idx], g["restored"]).astype(np.float32)
             half = np.where(np.isfinite(half), half, 0.0)
             out.append(np.arcsinh((half - bg) / g["scale"]).astype(np.float32))
