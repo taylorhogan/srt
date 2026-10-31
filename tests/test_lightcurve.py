@@ -129,9 +129,12 @@ def test_run_solves_each_frame_once_and_measures_every_star(tmp_path, monkeypatc
     frames = [Path("C:/x/ngc7790/cdk/2026-10-16/LIGHT/f%d.fits" % i) for i in range(3)]
     monkeypatch.setattr(lc, "_frames", lambda *a: {("2026-10-16", "L"): frames})
     solved = []
+    np = pytest.importorskip("numpy")
+    vignetted = np.tile(np.linspace(140.0, 70.0, 96, dtype=np.float32), (48, 1))   # the roof in the beam
     monkeypatch.setattr(lc, "calibration_for", lambda fl, like, cb=None: None)
     monkeypatch.setattr(lc, "solve_frame",
-                        lambda p, near, astap, cb, cal=None: solved.append(p) or lc.Solved("d", {"EXPTIME": 10.0}, "w", "raw"))
+                        lambda p, near, astap, cb, cal=None: solved.append(p) or lc.Solved(
+                            vignetted if p is frames[1] else "d", {"EXPTIME": 10.0}, "w", "raw"))
     seen_ranges = []
 
     def fake_comps(key, ra, dec, cb, rng, exclude=None):
@@ -152,6 +155,8 @@ def test_run_solves_each_frame_once_and_measures_every_star(tmp_path, monkeypatc
     assert (tmp_path / "lc" / "ngc7790_cg_cas.json").exists()
     rec0 = out["stars"][0]["new"][0]
     assert rec0["peak_adu"] == 41000 and rec0["airmass"] == 1.21 and rec0["n_saturated"] == 0 and rec0["calibrated"] is False
+    assert rec0["n_obstructed"] == 1 and rec0["n"] == 2 and rec0["frames_total"] == 3   # the vignetted frame is not averaged
+    assert "1 obstructed dropped" in lc.report("ngc7790", out)
     again = lc.run("ngc7790")                             # nothing new the second time
     assert all(not s["new"] for s in again["stars"]) and len(solved) == 3
     assert "CF Cas" in lc.report("ngc7790", again)
@@ -184,8 +189,29 @@ def test_night_extras_and_split_saturated():
     meas, sat = lc.split_saturated(recs)
     assert len(meas) == 2 and len(sat) == 1
     ex = lc.night_extras(meas, sat, True)
-    assert ex == {"n_saturated": 1, "calibrated": True, "peak_adu": 42000, "airmass": 1.3}
-    assert lc.night_extras([], [], False) == {"n_saturated": 0, "calibrated": False}
+    assert ex == {"n_saturated": 1, "n_obstructed": 0, "calibrated": True, "peak_adu": 42000, "airmass": 1.3}
+    assert lc.night_extras([], [], False) == {"n_saturated": 0, "n_obstructed": 0, "calibrated": False}
+    assert lc.night_extras(meas, sat, True, obstructed=4)["n_obstructed"] == 4
+
+
+def test_a_vignetted_sky_marks_the_frame_obstructed():
+    """The first half hour of every 60 s NGC 7790 night: the calibrated sky fell
+    from 141 to 72 ADU across the frame with something in the beam; a flat sky,
+    a low sky's few ADU of dark residual and a non-array pass."""
+    np = pytest.importorskip("numpy")
+    roof = np.tile(np.linspace(141.0, 72.0, 240, dtype=np.float32), (120, 1))
+    ratio, lo, hi = lc.sky_gradient(roof)
+    assert ratio == pytest.approx(129.5 / 83.5, rel=0.03) and lo < 90 and hi > 125    # thirds' medians, not the extremes
+    assert lc.obstructed(roof).startswith("sky gradient 1.")
+    flat = np.full((120, 240), 200.0, np.float32) + np.random.default_rng(0).normal(0, 2.0, (120, 240)).astype(np.float32)
+    assert lc.obstructed(flat) is None
+    low = np.tile(np.linspace(6.0, 3.0, 240, dtype=np.float32), (120, 1))        # 1.6x but 2 ADU: a narrowband sky's noise
+    assert lc.sky_gradient(low)[0] > lc.SKY_GRADIENT_MAX and lc.obstructed(low) is None
+    galaxy = np.tile(np.linspace(430.0, 390.0, 240, dtype=np.float32), (120, 1))  # V1 on M31's disk: 1.1x, a real sky
+    assert lc.obstructed(galaxy) is None
+    top_heavy = np.tile(np.linspace(141.0, 72.0, 120, dtype=np.float32)[:, None], (1, 240))
+    assert lc.obstructed(top_heavy) is not None                                   # the other axis counts too
+    assert lc.obstructed("d") is None and lc.sky_gradient(np.zeros((4, 4))) is None
 
 
 def test_measure_star_drops_a_saturated_target_and_a_saturated_comparison(monkeypatch):
@@ -220,6 +246,12 @@ def test_leavitt_distance_of_hubbles_v1():
     assert d["kpc"] == pytest.approx(711, abs=2) and d["mly"] == pytest.approx(2.32, abs=0.01)
     assert d["pct_err"] == 10
     assert lc.leavitt_distance(None, 19.0) is None and lc.leavitt_distance(31.4, None) is None
+
+
+def test_mean_magnitude_leaves_a_failed_night_out():
+    recs = [{"filter": "L", "mag": 18.0, "err": 0.02}, {"filter": "L", "mag": 19.6, "err": 11.0}]
+    assert lc.mean_magnitude(recs) == (pytest.approx(18.0), 1)              # V1's 2026-10-14: 9 frames, error 11 mag
+    assert lc.mean_magnitude(recs, max_err=20.0)[1] == 2
 
 
 def test_mean_magnitude_is_the_intensity_mean():

@@ -51,6 +51,23 @@ averaged (CF Cas at maximum is V 10.8 in 60 s frames, right at the limit), a
 saturated comparison star is left out of the zero point, and the airmass at
 mid-exposure is recorded per frame and averaged into the night's point.
 
+A frame with a vignetted sky is dropped (`obstructed`, the evening of
+2026-10-31): on every 60 s NGC 7790 night the first half hour, at altitude 58
+and azimuth 38, had a calibrated sky falling by a factor of two from the left
+of the frame to the right and every star on the right side a magnitude faint
+for its catalogue -- something near the telescope (the open roof, most likely)
+in the beam, which no flat can know about and the comparisons cancel only
+where they sit; CG Cas on that side came out 0.9 mag faint against the chart
+stars on the left. The witness is the sky itself: the brightest third of the
+calibrated frame over the faintest, left/right and top/bottom, above
+SKY_GRADIENT_MAX (1.3: a clean frame measures 1.00-1.02, the obstructed
+NGC 7790 frames 1.1-2.0, and a field on a galaxy has a real gradient -- V1 on
+M31's disk reads up to 1.11, so the threshold sits above that and the mildly
+vignetted tail is accepted) with at least SKY_GRADIENT_MIN_ADU between them (a
+10 s frame's 2 ADU of dark residual on a 16 ADU sky, or a 3 ADU narrowband
+sky's noise, is not a gradient). The night's record counts them as
+n_obstructed; the point is the clean frames' mean.
+
 Short frames (the entry's exposure_s): COMP_MAG is what is unsaturated and
 well measured at 300 s, so the range moves by 2.5 log10(300 / EXPTIME) for
 each frame -- 3.7 mag brighter at 10 s. The Gaia rows are cached
@@ -76,6 +93,9 @@ MIN_COMPS = 5
 MAX_COMPS = 25
 FOV_HEIGHT_DEG = 0.47            # ASTAP's -fov is the frame height
 SATURATION_ADU = 60000.0         # QHY600M 16-bit: 65535 full scale, nonlinear before it; read on the raw frame
+SKY_GRADIENT_MAX = 1.3           # calibrated sky: brightest third over faintest (left/right or top/bottom) -> obstructed
+SKY_GRADIENT_MIN_ADU = 4.0       # ...and at least this far apart, so a 3 ADU narrowband sky's noise is not a gradient
+MAX_POINT_ERR = 0.5              # a nightly point with a larger error is a failed night, not a measurement
 LEAVITT_V = (-2.43, -4.05)       # Benedict et al. 2007 (HST parallaxes): M_V = a (log10 P - 1) + b, scatter ~0.2
 LEAVITT_SCATTER_MAG = 0.2
 SCALE = "Gaia G zero point"
@@ -191,13 +211,13 @@ def select_comps(stars: list, target_ra: float, target_dec: float, mag_range=COM
     return good[:max_comps]
 
 
-def night_extras(measured: list, saturated: list, calibrated: bool) -> dict:
+def night_extras(measured: list, saturated: list, calibrated: bool, obstructed: int = 0) -> dict:
     """What the night's record carries beside the point: the frames' worst
-    peak, mean airmass, how many frames were dropped as saturated, and whether
-    the frames were calibrated. Pure."""
+    peak, mean airmass, how many frames were dropped as saturated and how many
+    for a vignetted sky, and whether the frames were calibrated. Pure."""
     peaks = [m.get("peak_adu") for m in measured if m.get("peak_adu") is not None]
     ams = [m.get("airmass") for m in measured if m.get("airmass") is not None]
-    out = {"n_saturated": len(saturated), "calibrated": bool(calibrated)}
+    out = {"n_saturated": len(saturated), "n_obstructed": int(obstructed or 0), "calibrated": bool(calibrated)}
     if peaks:
         out["peak_adu"] = round(float(max(peaks)))
     if ams:
@@ -211,11 +231,49 @@ def split_saturated(records: list) -> tuple:
     return [r for r in recs if not r.get("saturated")], [r for r in recs if r.get("saturated")]
 
 
-def mean_magnitude(records: list, filt: str = "L") -> tuple:
+def sky_gradient(data, step: int = 8) -> Optional[tuple]:
+    """(ratio, low, high): the calibrated sky's brightest third over its
+    faintest, taken left/right and top/bottom, the larger of the two. None when
+    *data* is not a 2-D array (the tests' stand-ins) or the sky is not
+    positive. Pure; subsampled by *step* so a full frame costs milliseconds."""
+    import numpy as np
+    if not isinstance(data, np.ndarray) or data.ndim != 2 or min(data.shape) < 3 * step:
+        return None
+    a = data[::step, ::step]
+    h, w = a.shape
+    thirds = [a[:, : w // 3], a[:, 2 * w // 3:], a[: h // 3, :], a[2 * h // 3:, :]]
+    meds = [float(np.nanmedian(t)) for t in thirds]
+    if not all(math.isfinite(m) for m in meds):
+        return None
+    best = None
+    for lo, hi in ((min(meds[0], meds[1]), max(meds[0], meds[1])), (min(meds[2], meds[3]), max(meds[2], meds[3]))):
+        if lo <= 0:
+            return None
+        r = hi / lo
+        if best is None or r > best[0]:
+            best = (r, lo, hi)
+    return best
+
+
+def obstructed(data, max_ratio: float = SKY_GRADIENT_MAX, min_adu: float = SKY_GRADIENT_MIN_ADU) -> Optional[str]:
+    """Why the frame cannot be measured -- 'sky gradient 1.9x (123 -> 66 ADU)',
+    something in the beam -- or None for a flat sky. Pure."""
+    g = sky_gradient(data)
+    if g is None:
+        return None
+    ratio, lo, hi = g
+    if ratio > max_ratio and (hi - lo) >= min_adu:
+        return "sky gradient %.1fx (%.0f -> %.0f ADU)" % (ratio, hi, lo)
+    return None
+
+
+def mean_magnitude(records: list, filt: str = "L", max_err: float = MAX_POINT_ERR) -> tuple:
     """(intensity-mean magnitude, n) of the nightly points in *filt*. Pure.
     The mean of the fluxes, back to a magnitude: the mean of magnitudes
-    weights the faint half of a cycle too much."""
-    mags = [float(r["mag"]) for r in records or [] if r.get("filter") == filt and r.get("mag") is not None]
+    weights the faint half of a cycle too much. A point whose error is past
+    *max_err* is a failed night and left out."""
+    mags = [float(r["mag"]) for r in records or [] if r.get("filter") == filt and r.get("mag") is not None
+            and float(r.get("err") or 0.0) <= max_err]
     if not mags:
         return None, 0
     flux = sum(10 ** (-0.4 * m) for m in mags) / len(mags)
@@ -658,6 +716,7 @@ def run(dso: str, filt: Optional[str] = None, nights: Optional[list] = None, red
         if fl not in cals:
             cals[fl] = calibration_for(fl, paths[0], progress_cb)
         per = {s["key"]: [] for s in need}
+        dropped = []
         for p in paths:
             if cancel_cb and cancel_cb():
                 raise RuntimeError("cancelled")
@@ -665,12 +724,19 @@ def run(dso: str, filt: Optional[str] = None, nights: Optional[list] = None, red
             if solved is None:
                 continue
             data, hdr, wcs = solved
+            why = obstructed(data)
+            if why:
+                dropped.append(why)
+                continue
             raw = getattr(solved, "raw", None)
             for s in need:
                 m = measure_star(data, hdr, wcs, p, (s["ra"], s["dec"]),
                                  comps_at(s, hdr.get("EXPTIME")), aps, raw=raw, site=site)
                 if m:
                     per[s["key"]].append(m)
+        if dropped and progress_cb:
+            progress_cb("%s %s %s: %d of %d frames dropped, something in the beam (worst %s)"
+                        % (dso, night, fl, len(dropped), len(paths), max(dropped)))
         for s in need:
             got, sat = split_saturated(per[s["key"]])
             if sat and progress_cb:
@@ -687,7 +753,7 @@ def run(dso: str, filt: Optional[str] = None, nights: Optional[list] = None, red
                           zp_scatter=round(float(sum(m["zp_scatter"] for m in got) / len(got)), 4),
                           n_comps=int(min(m["n_comps"] for m in got)),
                           measured_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
-                          **night_extras(got, sat, cals[fl] is not None))
+                          **night_extras(got, sat, cals[fl] is not None, obstructed=len(dropped)))
             doc = docs[s["key"]]
             doc["records"] = merge_record(doc["records"], record)
             new[s["key"]].append(record)
@@ -755,6 +821,8 @@ def report_star(dso: str, star: dict) -> str:
         extra = ""
         if r.get("n_saturated"):
             extra += ", %d saturated dropped" % r["n_saturated"]
+        if r.get("n_obstructed"):
+            extra += ", %d obstructed dropped" % r["n_obstructed"]
         if r.get("peak_adu") is not None:
             extra += ", peak %d ADU" % r["peak_adu"]
         if r.get("airmass") is not None:

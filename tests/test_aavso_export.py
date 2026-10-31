@@ -87,4 +87,6 @@ def test_the_line_carries_the_airmass_and_the_notes_say_calibrated_and_dropped()
     assert notes == ("nightly mean of 14 x 60 s frames; 6 arcsec aperture; ensemble of 9 sequence stars; "
                      "bias/dark/flat calibrated; 2 saturated frames dropped; check star catalog V 11.205")
     assert "raw frames" in aavso.notes_text(1, None, 6.0, 5, calibrated=False)
+    assert "3 frames dropped for a vignetted sky" in aavso.notes_text(9, 60.0, 6.0, 7, calibrated=True, n_obstructed=3)
+    assert "vignetted" not in aavso.notes_text(9, 60.0, 6.0, 7, calibrated=True)
     assert "saturated" not in aavso.notes_text(1, None, 6.0, 5, calibrated=True)

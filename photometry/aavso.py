@@ -153,7 +153,7 @@ def format_line(name: str, jd: float, mag: float, err: float, filt: str, chartid
 
 
 def notes_text(n_frames: int, exptime_s: Optional[float], aperture_arcsec: float, n_ensemble: int, scale_note: str = "",
-               calibrated: Optional[bool] = None, n_saturated: int = 0) -> str:
+               calibrated: Optional[bool] = None, n_saturated: int = 0, n_obstructed: int = 0) -> str:
     exp = ("%g s" % exptime_s) if exptime_s else "?"
     bits = ["nightly mean of %d x %s frames" % (n_frames, exp), "%.0f arcsec aperture" % aperture_arcsec,
             "ensemble of %d sequence stars" % n_ensemble]
@@ -161,6 +161,8 @@ def notes_text(n_frames: int, exptime_s: Optional[float], aperture_arcsec: float
         bits.append("bias/dark/flat calibrated" if calibrated else "raw frames")
     if n_saturated:
         bits.append("%d saturated frame%s dropped" % (n_saturated, "" if n_saturated == 1 else "s"))
+    if n_obstructed:
+        bits.append("%d frame%s dropped for a vignetted sky" % (n_obstructed, "" if n_obstructed == 1 else "s"))
     if scale_note:
         bits.append(scale_note)
     return "; ".join(bits)
@@ -242,11 +244,16 @@ def export(dso: str, filt: str = "L", obscode: str = "", name: Optional[str] = N
             cals[fl] = lc.calibration_for(fl, paths[0], say)
         say("%s %s %s: %d frames against the AAVSO sequence" % (dso, night, fl, len(paths)))
         per = {s["key"]: {"t": [], "k": [], "exp": None, "n_ens": 0, "check": None} for s in stars}
+        dropped = []
         for p in paths:
             solved = lc.solve_frame(p, target, astap, None, cal=cals[fl])
             if solved is None:
                 continue
             data, hdr, wcs = solved
+            why = lc.obstructed(data)
+            if why:
+                dropped.append(why)
+                continue
             raw = getattr(solved, "raw", None)
             exp = float(hdr.get("EXPTIME", 0) or 0)
             for s in stars:
@@ -267,6 +274,9 @@ def export(dso: str, filt: str = "L", obscode: str = "", name: Optional[str] = N
                                         raw=raw, site=site)
                     if k and not k.get("saturated"):
                         per[s["key"]]["k"].append(k)
+        if dropped:
+            say("%s %s %s: %d of %d frames dropped, something in the beam (worst %s)"
+                % (dso, night, fl, len(dropped), len(paths), max(dropped)))
         for s in stars:
             got = per[s["key"]]
             meas, sat = lc.split_saturated(got["t"])
@@ -278,14 +288,19 @@ def export(dso: str, filt: str = "L", obscode: str = "", name: Optional[str] = N
                 say("%s %s %s: no usable frames for %s%s" % (dso, night, fl, s["name"],
                                                              " (every frame saturated)" if sat else ""))
                 continue
+            if pt["err"] > lc.MAX_POINT_ERR:
+                say("%s %s %s: %s left out, error %.2f mag over %d frames is a failed night, not a measurement"
+                    % (dso, night, fl, s["name"], pt["err"], pt["n"]))
+                continue
             kpt = lc.nightly_point([(m["jd"], m["mag"], m["err"]) for m in got["k"]]) if got["k"] else None
-            extras = lc.night_extras(meas, sat, cals[fl] is not None)
+            extras = lc.night_extras(meas, sat, cals[fl] is not None, obstructed=len(dropped))
             seq = seqs[s["key"]]
             line = format_line(seq.get("star") or s["name"], pt["jd"], pt["mag"], pt["err"], fl, seq.get("chartid"),
                                got["check"]["label"] if got["check"] else None, kpt["mag"] if kpt else None,
                                notes_text(pt["n"], got["exp"], 2 * lc.AP_R_ARCSEC, got["n_ens"],
                                           "check star catalog V %.3f" % got["check"]["v"] if got["check"] else "",
-                                          calibrated=extras["calibrated"], n_saturated=extras["n_saturated"]),
+                                          calibrated=extras["calibrated"], n_saturated=extras["n_saturated"],
+                                          n_obstructed=extras["n_obstructed"]),
                                airmass=extras.get("airmass"))
             lines[s["key"]].append(line)
     for s in stars:
