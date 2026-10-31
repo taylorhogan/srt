@@ -21,7 +21,12 @@ about 50 min after sunset, and image!! fires 10 min BEFORE sunset.
 THE READING. Transparency = plate-solve matches / catalogue stars (V <= 5) in
 the field, the same quantity as scripts/sky_transparency_report.py, as the
 median of the first DUSK_FRAMES night frames of the evening, divided by a
-clear-sky reference. The reference is fixed, not per solution, because a live
+clear-sky reference. NOTE (2026-10-31): the matches are counted over the whole
+catalogue (V < 6) and the denominator over V <= 5, so this is an INDEX that can
+pass 1.0 on a very clear night, not a fraction; the thresholds below and the
+0.75 reference were replayed on exactly this index, so it is kept as it is.
+The sky page's "catalogue stars seen" (scripts/sky_monitor.py) is the honest
+fraction, both sides at V <= 5. The reference is fixed, not per solution, because a live
 check cannot wait for a moon-free week to measure the current solution's
 ceiling: the solution epochs scored by forecast_score.py put a clear sky at
 72-84%, so 0.75 by default.

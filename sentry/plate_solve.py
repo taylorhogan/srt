@@ -415,8 +415,16 @@ def refine(sol, frame, when=None, dets=None, mask=None, tol_px=20.0,
     return out
 
 
-def verify(sol, frame, when=None, dets=None, tol_px=8.0, profile=None):
-    """How well a stored solution still fits a frame. Cheap; safe on a timer."""
+def verify(sol, frame, when=None, dets=None, tol_px=8.0, profile=None, mag_limit=None):
+    """How well a stored solution still fits a frame. Cheap; safe on a timer.
+
+    Matches every catalogue star (to bright_stars.VMAG_LIMIT, 6.0) unless
+    `mag_limit` cuts the catalogue first. The sky page's "catalogue stars seen"
+    divides matches by the V <= 5 stars in the field
+    (scripts/sky_transparency_report.in_field), so that numerator must be
+    counted over the same stars: with the full catalogue it was 142 matches
+    over 174 stars on 2026-10-31 and the page read 113 % of a clear sky.
+    """
     frame = Path(frame)
     when = when or frame_time(frame)
     profile = profile or sol.get("profile", DEFAULT_PROFILE)
@@ -429,6 +437,9 @@ def verify(sol, frame, when=None, dets=None, tol_px=8.0, profile=None):
     img = star_count._load(frame)
     H, W = img.shape
     alt, az, vmag, _ra, _dec = bright_stars.above_horizon(when)
+    if mag_limit is not None:
+        keep = np.asarray(vmag) <= float(mag_limit)
+        alt, az = np.asarray(alt)[keep], np.asarray(az)[keep]
     x, y, th = cam_to_pix(unit_from_altaz(az, alt) @ np.asarray(sol["R"]).T,
                           sol["cx"], sol["cy"], sol["F"], sol["model"], sol["flip"])
     inframe = (x > 20) & (x < W - 20) & (y > 20) & (y < H - 20) & (th < 1.45)

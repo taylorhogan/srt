@@ -342,19 +342,26 @@ def _add_photometry(status, frame, res):
         v = plate_solve.verify(sol, frame, when, res["_stars"])
         status["solve_matches"] = v["matches"]
         status["solve_residual_px"] = v["residual_px"]
-        # The share of a clear sky's catalogue stars seen (2026-10-28): matches
-        # over the catalogue stars in the field, divided by a clear sky (the
-        # dusk check's 0.75) -- the Core2's "sky %". A noise blob cannot land on
-        # a catalogue position, so unlike the raw count this holds up under a
-        # moon and haze, where the site otherwise said only "unreliable".
+        # The share of the catalogue's V <= 5 stars in the field that the solve
+        # matched (2026-10-28; corrected 2026-10-31). Numerator and denominator
+        # are the SAME stars: `verify` over the whole catalogue (to V 6) over
+        # in_field's V <= 5 count, divided by the dusk check's 0.75 "clear
+        # sky", read 109-113 % on the first transparent night. A noise blob
+        # cannot land on a catalogue position, so unlike the raw count this
+        # holds up under a moon and haze, where the site otherwise said only
+        # "unreliable". The plain fraction is published, no clear-sky
+        # normalisation: the dusk check, forecast_score and the dashboard keep
+        # their own mixed-depth index, which their thresholds were replayed on.
         try:
-            from scripts.sky_transparency_report import in_field
+            from scripts.sky_transparency_report import MAG_LIMIT, in_field
             from sentry import dusk_check
             st = dusk_check._settings()
-            n_cat = in_field(sol, when)
+            n_cat = in_field(sol, when, MAG_LIMIT)
             if n_cat:
-                status["clear_pct"] = int(round(100 * v["matches"] / n_cat
-                                                / float(st["dusk_clear_transparency"])))
+                seen = plate_solve.verify(sol, frame, when, res["_stars"], mag_limit=MAG_LIMIT)["matches"]
+                status["cat_v5"] = int(n_cat)
+                status["seen_v5"] = int(min(seen, n_cat))
+                status["seen_pct"] = int(round(100 * status["seen_v5"] / n_cat))
                 malt, mill = dusk_check.moon_at(when)
                 status["moon_up_bright"] = bool(malt > 0 and mill >= float(st["dusk_moon_max_illum"]))
         except Exception:  # noqa: BLE001 -- the percentage is extra, never a reason to fail
