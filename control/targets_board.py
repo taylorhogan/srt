@@ -165,6 +165,16 @@ def build(registry: dict, rows: list, convergence: dict, plan: Optional[dict], d
             "counts": counts, "targets": targets}
 
 
+def plan_day(now: Optional[datetime] = None) -> str:
+    """The night whose plan the board shows, ISO: the evening's date until 06:00.
+
+    /v1/plan defaults to the calendar day, so from midnight to dawn the board
+    asked for a night with no plan and the Tonight column went blank while
+    its slots were being imaged (2026-11-01 01:29, SLOT_IMAGING)."""
+    from control.filter_plan import night_for
+    return night_for(now or datetime.now(timezone.utc).astimezone()).isoformat()
+
+
 def gather(root, cfg: dict, now: Optional[datetime] = None) -> dict:
     """build() from the PC's live inputs; every source that fails is empty, never fatal."""
     import json
@@ -175,7 +185,7 @@ def gather(root, cfg: dict, now: Optional[datetime] = None) -> dict:
     try:
         from iris import client
         registry = client.targets() or {}
-        plan = client.get_plan()
+        plan = client.get_plan(plan_day(now))
     except Exception:  # noqa: BLE001
         pass
     if not registry:

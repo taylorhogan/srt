@@ -118,3 +118,12 @@ def test_build_carries_progress_except_for_monitors():
     assert by["ic410"]["progress"] == {"pct": 48, "limiting": "O-III"}
     assert by["v1"]["progress"] is None and "v1" not in calls
     assert B.build(REG, ROWS, CONV, PLAN, DRAFTS, {}, set(), FLAGS, NOW)["targets"][0]["progress"] is None
+
+
+def test_plan_day_is_the_evening_until_dawn():
+    # 2026-11-01 01:29: the night of 10-31 was imaging and the board asked for 11-01.
+    from datetime import datetime
+    from control.targets_board import plan_day
+    assert plan_day(datetime(2026, 11, 1, 1, 29)) == "2026-10-31"
+    assert plan_day(datetime(2026, 11, 1, 6, 0)) == "2026-11-01"
+    assert plan_day(datetime(2026, 11, 1, 21, 0)) == "2026-11-01"
