@@ -269,6 +269,30 @@ PALETTE_STAR_FEATHER_MAX_PX = 24.0   # the skirt is 0.6 r, which on a 145 px hal
 # the size of the halo (IC 410, 2026-10-28). Same rule as the factors and
 # the white balance: a series shares one measurement.
 PALETTE_LEVEL_PCT = 90.0
+# The gain is for the nebula, and the nebula is smooth: the plane is split
+# at this scale (gaussian sigma, px; 0 scales the whole plane) and only the
+# smooth part takes the factor, the small-scale residual keeping its native
+# amplitude. Scaling the whole plane scaled its noise too: at x3.9 the S-II
+# sky noise on IC 410 was 4.5 ADU against Ha's 1.0 on a white of 112, and
+# every 2-3 sigma excursion was a red dot, 8900 of them at full resolution
+# ("why are some stars red", 2026-11-01; 6890 of the 6982 outside the star
+# mask had no star under them). 3 px is under the PSF (kernel ~7 px FWHM),
+# so a knot the PSF can resolve keeps most of its gain; a point does not,
+# but a point is a star, and the stars are the mask's.
+PALETTE_GAIN_SMOOTH_PX = 3.0
+# The quiet (denoised) star pass runs twice, on the planes' sum as it is
+# and on the sum flattened by a local background of this mesh (px; sep's
+# sigma-clipped box medians, no median filter over the boxes: the 3x3 one
+# flattens a nebula peak and leaves every star on it standing on a hill,
+# one object), and the two lists are joined. At 3 sigma of the denoised
+# noise (0.11 ADU on IC 410) the nebula itself is one object and the plain
+# pass swallows the faint stars on it (a 6 sigma star 20 px from a disc
+# had none); the flattened pass finds those but merges a star with a close
+# neighbour that the plain pass kept apart (a 1132 px object, cut), so
+# neither replaces the other. Measured on IC 410's red stars outside the
+# mask: plain 390 of 436 (3197 discs joined), plain + 32 px 414 (8527),
+# plain + 16 px 421 (15157); every disc is fill under a neutral star.
+PALETTE_QUIET_BKG_PX = 32
 PALETTE_LEVEL_BLOCK = 32
 PALETTE_GAIN_MAX = 6.0
 
@@ -408,9 +432,15 @@ def apply_palette_gain(subbed: dict[str, np.ndarray], gain,
                        level_pct: float = PALETTE_LEVEL_PCT,
                        protect_stars: bool = PALETTE_PROTECT_STARS,
                        star_discs=None, info: Optional[dict] = None,
-                       star_mode: str = PALETTE_STAR_MODE, quiet=None, star_arms=None
+                       star_mode: str = PALETTE_STAR_MODE, quiet=None, star_arms=None,
+                       smooth_px: float = PALETTE_GAIN_SMOOTH_PX
                        ) -> tuple[dict[str, np.ndarray], Optional[dict[str, float]]]:
     """Scale the palette planes; returns (channels, {role: factor} used).
+
+    Only the plane's smooth part is scaled (*smooth_px*, PALETTE_GAIN_SMOOTH_PX):
+    the residual at smaller scales, which is the noise and whatever stars the
+    mask missed, keeps its native amplitude, so a gained channel's sky is no
+    noisier than the others'. 0 scales the whole plane.
 
     *gain* is {role: factor} (applied as given, which is how a series pins
     one measurement) or "hubble" (measured here: each of R/G/B scaled so its
@@ -517,6 +547,14 @@ def apply_palette_gain(subbed: dict[str, np.ndarray], gain,
             continue
         p = np.asarray(subbed[c], dtype=np.float32)
         res = p * np.float32(f)
+        if f != 1.0 and smooth_px and smooth_px > 0:
+            # the residual took (f - 1) too much: give it back, outside the
+            # discs (inside, the star term below replaces the plane anyway)
+            fine = fine_residual(p, smooth_px)
+            back = fine * np.float32(f - 1.0)
+            if mask is not None:
+                back *= (1.0 - mask)
+            res -= back
         if mask is not None:
             fill = fill_of(c)
             star = star_common if star_common is not None else (p - fill)
@@ -526,34 +564,67 @@ def apply_palette_gain(subbed: dict[str, np.ndarray], gain,
     return out, factors
 
 
+def fine_residual(plane: np.ndarray, sigma_px: float) -> np.ndarray:
+    """*plane* minus its gaussian blur at *sigma_px*: the part the palette
+    gain leaves at native amplitude (PALETTE_GAIN_SMOOTH_PX)."""
+    from scipy.ndimage import gaussian_filter
+    p = np.nan_to_num(np.asarray(plane, dtype=np.float32))
+    return p - gaussian_filter(p, float(sigma_px), mode="nearest")
+
+
+def flatten_local(plane: np.ndarray, mesh_px: int = PALETTE_QUIET_BKG_PX) -> np.ndarray:
+    """*plane* minus a sigma-clipped local background on a *mesh_px* mesh
+    (sep), so a point on bright nebula stands above its own surroundings."""
+    import sep
+    a = np.ascontiguousarray(np.nan_to_num(plane), dtype=np.float32)
+    h, w = a.shape
+    sep.set_extract_pixstack(max(300_000, h * w // 20))
+    bkg = sep.Background(a, bw=int(mesh_px), bh=int(mesh_px), fw=1, fh=1)
+    return a - bkg.back()
+
+
 def join_quiet_stars(discs: list, quiet: dict, roles, raw_rms: float) -> list:
     """*discs* (x, y, r) found on the raw planes plus the stars found on the
     *quiet* (denoised) planes' sum that are not already among them: the
     quiet pass sees the faint stars (PALETTE_STAR_MATCH_PX comment), and
-    its discs are sized from the raw's detection floor, not its own."""
+    its discs are sized from the raw's detection floor, not its own. The
+    sum is flattened on a PALETTE_QUIET_BKG_PX local background first, or
+    the nebula, far above the denoised noise, is one object that swallows
+    every faint star on it."""
     distinct = {id(quiet[c]): quiet[c] for c in roles if c in quiet}
     if not distinct:
         return list(discs)
     total = np.sum([np.nan_to_num(np.asarray(p, dtype=np.float32))
                     for p in distinct.values()], axis=0)
-    _, qinfo = star_mask(total, thresh_sigma=PALETTE_STAR_THRESH_SIGMA,
-                         max_npix=PALETTE_STAR_MAX_NPIX, radius_a=PALETTE_STAR_RADIUS_A,
-                         max_radius=PALETTE_STAR_MAX_RADIUS_PX,
-                         min_peak_flux=PALETTE_STAR_MIN_PEAK_FLUX, radius_from="peak",
-                         peak_floor=PALETTE_STAR_THRESH_SIGMA * raw_rms)
-    extra = qinfo.get("discs", [])
-    if not extra:
-        if qinfo.get("why"):
-            _logger.warning("Palette gain: faint stars not found on the denoised planes: %s",
-                            qinfo["why"])
-        return list(discs)
     from scipy.spatial import cKDTree
-    have = cKDTree(np.array([(x, y) for x, y, _ in discs]))
-    d, _ = have.query(np.array([(x, y) for x, y, _ in extra]), distance_upper_bound=PALETTE_STAR_MATCH_PX)
-    new = [disc for disc, dist in zip(extra, d) if not np.isfinite(dist)]
-    _logger.info("Palette gain: %d faint stars from the denoised planes joined to %d",
-                 len(new), len(discs))
-    return list(discs) + new
+    out = list(discs)
+    counts = []
+    for img in (total, flatten_local(total)):
+        _, qinfo = star_mask(img, thresh_sigma=PALETTE_STAR_THRESH_SIGMA,
+                             max_npix=PALETTE_STAR_MAX_NPIX, radius_a=PALETTE_STAR_RADIUS_A,
+                             max_radius=PALETTE_STAR_MAX_RADIUS_PX,
+                             min_peak_flux=PALETTE_STAR_MIN_PEAK_FLUX, radius_from="peak",
+                             peak_floor=PALETTE_STAR_THRESH_SIGMA * raw_rms)
+        extra = qinfo.get("discs", [])
+        if not extra:
+            if qinfo.get("why"):
+                _logger.warning("Palette gain: faint stars not found on the denoised planes: %s",
+                                qinfo["why"])
+            counts.append(0)
+            continue
+        if out:
+            have = cKDTree(np.array([(x, y) for x, y, _ in out]))
+            d, _ = have.query(np.array([(x, y) for x, y, _ in extra]),
+                              distance_upper_bound=PALETTE_STAR_MATCH_PX)
+            new = [disc for disc, dist in zip(extra, d) if not np.isfinite(dist)]
+        else:
+            new = list(extra)
+        out += new
+        counts.append(len(new))
+    _logger.info("Palette gain: %d faint stars from the denoised planes joined to %d "
+                 "(%d on the sum, %d more on it flattened)", len(out) - len(discs), len(discs),
+                 counts[0] if counts else 0, counts[1] if len(counts) > 1 else 0)
+    return out
 
 
 def describe_palette_gain(gain) -> str:
@@ -575,16 +646,35 @@ HA_NOISE_FLOOR_SIGMA = 2.0
 DERIVED_PLANES = frozenset({"HA_EXCESS"})
 
 
-def synthetic_gain(lum: np.ndarray, ref: np.ndarray) -> np.ndarray:
+# Below this stretched level of the reference luminance the synthetic boost
+# is 1, ramping in to the full ratio by twice it. The ratio of two stretched
+# frames near black is noise over noise: on IC 410 at full resolution the
+# red specks (S-II blips the denoiser kept) sat at a reference of 0.006
+# (median; 0.10 at the 90th percentile) and the deconvolution, which
+# concentrates every small blob, lifted them up to x3, while across the
+# field the boost at 0.1-0.4 was 1.00 (p90 1.02) and only above 0.4 (the
+# stars: wing 0.79, core 1.21) did it do anything. 0.1 took the specks
+# boosted past x1.2 from 4174 to 272 and changed no pixel above 0.3.
+LEARNED_BOOST_FLOOR = 0.1
+
+
+def synthetic_gain(lum: np.ndarray, ref: np.ndarray,
+                   floor: float = LEARNED_BOOST_FLOOR) -> np.ndarray:
     """The brightness factor a deconvolved synthetic luminance applies, from
     the stretched deconvolved frame and the stretched frame it was made from
     (stacking/deblur.SYNTHETIC_LUM / _REF, same black, same white, same
-    curve). 1 where the reference is black (no information, nothing moved),
-    capped at MAX_LUM_BOOST like the LRGB substitution. A set whose two
-    frames are identical composes exactly as if neither were there."""
+    curve). 1 where the reference is black (no information, nothing moved)
+    and below *floor* (LEARNED_BOOST_FLOOR: noise over noise), ramping in to
+    the ratio by 2 *floor*; capped at MAX_LUM_BOOST like the LRGB
+    substitution. A set whose two frames are identical composes exactly as
+    if neither were there."""
     with np.errstate(divide="ignore", invalid="ignore"):
         g = np.where(ref > 1e-4, lum / np.maximum(ref, 1e-4), 1.0)
-    return np.clip(np.nan_to_num(g, nan=1.0), 0.0, MAX_LUM_BOOST)
+    g = np.clip(np.nan_to_num(g, nan=1.0), 0.0, MAX_LUM_BOOST)
+    if floor and floor > 0:
+        conf = np.clip((np.nan_to_num(ref) - floor) / floor, 0.0, 1.0)
+        g = 1.0 + (g - 1.0) * conf
+    return g.astype(np.float32)
 
 # Per-channel inspection JPEGs are capped at the preview's size; full resolution
 # is what the per-channel FITS is for.

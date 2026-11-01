@@ -275,7 +275,23 @@ Since 2026-09-25 the conductor decides both invariants (ADR 0014): every roof fi
   px, cap 400), and a field whose folded profile has no peak gets none.
   Outside the mask a spike took the gain and was red ("difraction spike
   are red", 2026-10-28). The arms are pinned on the series with the discs
-  (`info["palette_arms"]`).
+  (`info["palette_arms"]`). **The gain scales the smooth part of the plane
+  only (since 2026-11-01, `PALETTE_GAIN_SMOOTH_PX` 3 px, `fine_residual`):**
+  scaling the whole S-II plane x3.9 scaled its noise to 4.5 ADU against
+  Ha's 1.0 on a white of 112, and at full resolution every 2-3 sigma
+  excursion was a red dot, 8900 of them on IC 410 with no star under
+  6890 ("why are some stars red"); the residual below 3 px (noise, and the
+  stars the mask missed) keeps its native amplitude, a resolved knot keeps
+  its gain. The quiet star pass runs twice, on the denoised sum and on it
+  flattened by a 32 px local background (`flatten_local`,
+  `PALETTE_QUIET_BKG_PX`), and joins both: at 3 sigma of the denoised noise
+  the nebula is one object that swallows the faint stars on it (a 6 sigma
+  star 20 px from a disc had none), while the flattened pass merges close
+  pairs the plain one kept apart. And the learned composite's luminance
+  boost (`synthetic_gain`) is 1 below `LEARNED_BOOST_FLOOR` (0.1 of the
+  stretched reference, ramping in by 0.2): near black the ratio is noise
+  over noise and it lifted the specks the denoiser kept by up to x3,
+  while above 0.4 (the stars) it is unchanged.
 
   **The sky-anchored black is one offset for every channel (since 2026-10-25).**
   The morning render and the movie put black at each channel's sky median

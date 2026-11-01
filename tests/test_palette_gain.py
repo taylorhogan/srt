@@ -83,10 +83,40 @@ def test_hubble_level_is_the_nebula_not_the_stars():
 
 def test_explicit_factor_scales_only_its_role():
     sub = _planes()
-    out, factors = cp.apply_palette_gain(sub, {"G": 0.4}, protect_stars=False)
+    out, factors = cp.apply_palette_gain(sub, {"G": 0.4}, protect_stars=False, smooth_px=0)
     assert factors == {"G": 0.4}
-    assert np.allclose(out["G"], sub["G"] * 0.4)
+    assert np.allclose(out["G"], sub["G"] * 0.4)                # the whole plane, when asked
     assert out["R"] is sub["R"] and out["B"] is sub["B"]
+    # the default scales the smooth part and leaves the residual as it was
+    out, _ = cp.apply_palette_gain(sub, {"G": 0.4}, protect_stars=False)
+    fine = cp.fine_residual(sub["G"], cp.PALETTE_GAIN_SMOOTH_PX)
+    assert np.allclose(out["G"], (sub["G"] - fine) * 0.4 + fine, atol=1e-5)
+    assert not np.allclose(out["G"], sub["G"] * 0.4)
+
+
+def test_the_gain_leaves_the_noise_at_its_native_amplitude():
+    # IC 410 at x3.9: the S-II sky noise came out 4.5 ADU against Ha's 1.0
+    # and every 2-3 sigma excursion was a red dot ("why are some stars
+    # red", 2026-11-01). The gain is for the nebula, which is smooth; the
+    # small-scale residual, noise and all, keeps its native amplitude.
+    pytest.importorskip("scipy")
+    rng = np.random.default_rng(2)
+    yy, xx = np.mgrid[0:200, 0:200]
+    neb = 20.0 * np.exp(-(((yy - 100) / 40.0) ** 2 + ((xx - 100) / 60.0) ** 2)).astype(np.float32)
+    noise = rng.normal(0, 1.0, neb.shape).astype(np.float32)
+    sub = {"R": neb + noise, "G": neb * 4 + noise, "B": neb * 2 + noise}
+    out, factors = cp.apply_palette_gain(sub, {"R": 4.0}, protect_stars=False)
+    fine = cp.fine_residual(sub["R"], cp.PALETTE_GAIN_SMOOTH_PX)
+    resid_out = out["R"] - 4.0 * (sub["R"] - fine)
+    assert np.std(resid_out) == pytest.approx(np.std(fine), rel=0.02)     # x1, not x4
+    assert np.std(fine) == pytest.approx(1.0, rel=0.1)                     # ~ the noise
+    # the nebula still took the whole gain: block medians scale x4
+    assert cp.nebula_level(out["R"]) == pytest.approx(4.0 * cp.nebula_level(sub["R"]), rel=0.03)
+    # and a resolved knot (wider than the PSF) keeps most of it
+    knot = 30.0 * np.exp(-((yy - 40) ** 2 + (xx - 40) ** 2) / (2 * 6.0 ** 2)).astype(np.float32)
+    sub2 = {"R": neb + knot, "G": neb * 4, "B": neb * 2}
+    out2, _ = cp.apply_palette_gain(sub2, {"R": 4.0}, protect_stars=False)
+    assert out2["R"][40, 40] > 0.85 * 4.0 * sub2["R"][40, 40]
 
 
 def _starry(seed=5, n=25, peak=300.0):
@@ -135,7 +165,8 @@ def test_stars_are_neutral_under_the_gain():
                            min_peak_flux=cp.PALETTE_STAR_MIN_PEAK_FLUX, radius_from="peak")
     far = (mask < 1e-3)                  # the feather's tail: at most 3e-3 of the residual leaks
     assert far.any()
-    assert np.allclose(out["R"][far], sub["R"][far] * 4.0, rtol=0.02, atol=0.1)
+    fine = cp.fine_residual(sub["R"], cp.PALETTE_GAIN_SMOOTH_PX)
+    assert np.allclose(out["R"][far], (sub["R"] * 4.0 - 3.0 * fine)[far], rtol=0.02, atol=0.1)
 
 
 def test_star_discs_are_found_once_and_pinned_on_a_series():
@@ -174,7 +205,7 @@ def test_faint_stars_come_from_the_denoised_planes_and_join_the_raw_finds():
     sub = _planes()
     yy, xx = np.mgrid[0:120, 0:160]
     bright = [(20, 30), (90, 120)]
-    faint = [(12, 100), (30, 130), (100, 40)]   # off the nebula: a star ON it blends into the knot
+    faint = [(12, 100), (30, 130), (100, 40)]   # off the nebula; a star ON one is the next test
     clean = {c: np.full_like(v, 0.0) for c, v in sub.items()}
     for y, x in bright:
         for c in clean:
@@ -209,6 +240,37 @@ def test_faint_stars_come_from_the_denoised_planes_and_join_the_raw_finds():
     star = {c: float(out[c][y, x] - cp.smooth_fill(noisy[c], mask=mask)[y, x] * (4.0 if c == "R" else 1.0))
             for c in out}
     assert star["R"] == pytest.approx(star["G"], rel=1e-3)
+
+
+def test_a_faint_star_on_the_nebula_is_found_by_the_quiet_pass():
+    # IC 410 at full resolution: a 6 sigma star 20 px from the nearest disc
+    # had none, because at 3 sigma of the denoised noise the nebula is one
+    # object and the detector swallows the stars on it. The quiet pass now
+    # flattens the sum on a PALETTE_QUIET_BKG_PX local background first.
+    pytest.importorskip("sep")
+    pytest.importorskip("scipy")
+    rng = np.random.default_rng(7)
+    yy, xx = np.mgrid[0:384, 0:384]
+    neb = np.exp(-(((yy - 192) / 90.0) ** 2 + ((xx - 192) / 120.0) ** 2)).astype(np.float32)
+    sub = {"R": 5.0 * neb, "G": 20.0 * neb, "B": 8.0 * neb}
+    stars = np.zeros_like(neb)
+    for y, x in ((40, 60), (330, 300)):
+        stars += 300.0 * np.exp(-((yy - y) ** 2 + (xx - x) ** 2) / 3.0)
+    on_neb = [(192, 192), (160, 230), (220, 150)]            # on the peak and its flanks
+    for y, x in on_neb:
+        stars += 3.0 * np.exp(-((yy - y) ** 2 + (xx - x) ** 2) / 3.0)
+    noisy = {c: v + stars + rng.normal(0, 3.0, v.shape) for c, v in sub.items()}
+    quiet = {c: v + stars + rng.normal(0, 0.05, v.shape) for c, v in sub.items()}
+    info_raw = {}
+    cp.apply_palette_gain(noisy, {"R": 4.0}, info=info_raw)
+    info = {}
+    cp.apply_palette_gain(noisy, {"R": 4.0}, info=info, quiet=quiet)
+    def found(pos, lst):
+        return any(np.hypot(x - pos[1], y - pos[0]) <= cp.PALETTE_STAR_MATCH_PX for x, y, _ in lst)
+    assert not any(found(p, info_raw["star_discs"]) for p in on_neb)   # under 3 sigma of the raw
+    assert all(found(p, info["star_discs"]) for p in on_neb)           # found on the flattened quiet sum
+    # and the flattening did not invent stars out of the nebula itself
+    assert len(info["star_discs"]) <= len(info_raw["star_discs"]) + len(on_neb) + 2
 
 
 def test_bright_star_discs_grow_a_halo_and_the_dex_reads_back():
@@ -369,11 +431,14 @@ def test_sky_black_offset_ignores_the_gain():
     rng = np.random.default_rng(11)
     sub = {c: rng.normal(0, 1.0, (160, 160)).astype(np.float32) for c in ("R", "G", "B")}
     plain = cp.sky_anchored_blacks(sub, 0.5, 40.0)
-    gained, factors = cp.apply_palette_gain(sub, {"R": 4.0})
+    gained, factors = cp.apply_palette_gain(sub, {"R": 4.0}, smooth_px=0)
     naive = cp.sky_anchored_blacks(gained, 0.5, 40.0)
     fixed = cp.sky_anchored_blacks(gained, 0.5, 40.0, gains=factors)
     assert naive["G"] < 3 * plain["G"]                           # the x4 noise drove the offset
     assert fixed["G"] == pytest.approx(plain["G"], abs=0.05)     # pre-gain sigma: unchanged
+    # with the smooth-only gain (the default) the noise is not scaled at all
+    gained, factors = cp.apply_palette_gain(sub, {"R": 4.0})
+    assert cp.sky_anchored_blacks(gained, 0.5, 40.0)["G"] == pytest.approx(plain["G"], abs=0.15)
 
 
 def test_compose_with_gain_turns_the_green_region_gold():
