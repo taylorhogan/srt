@@ -236,6 +236,28 @@ def rain_spans(night_key):
     return spans
 
 
+def night_points(rows, n_in_field):
+    """([(when, pct)], uses_site): one night's percents, on the site's scale when it can. Pure.
+
+    Since 2026-10-31 the sky monitor writes seen_pct, the site's number (V 5
+    catalogue stars detected over V 5 stars in the frame); the old index
+    (every solve match, fainter stars included, over the V 5 count) read far
+    higher (night of 10-31: median 68 % on the site, 91 % here). As in
+    dash.read_sky_night, a night
+    with any seen_pct row is drawn from those rows only, so one row never
+    mixes the two scales. *n_in_field(when)* is the old index's denominator.
+    """
+    site = [(w, r) for w, r in rows if r.get("seen_pct") is not None]
+    if site:
+        return [(w, r, float(r["seen_pct"])) for w, r in site], True
+    out = []
+    for when, r in rows:
+        n = n_in_field(when)
+        if n > 0:
+            out.append((when, r, 100.0 * r["solve_matches"] / n))
+    return out, False
+
+
 def build_multi(days=5, mag_limit=MAG_LIMIT):
     """One row per night, newest at the top; rain-flagged periods shaded red."""
     sol = ps.load()
@@ -256,11 +278,10 @@ def build_multi(days=5, mag_limit=MAG_LIMIT):
                              squeeze=False)
     for ax, key in zip(axes[:, 0], reversed(keys)):
         pts, faint = [], []
-        for when, r in nights[key]:
-            n = in_field(sol, when.astimezone(), mag_limit)
-            if n > 0:
-                (faint if r.get("trustworthy") is False else pts).append(
-                    (when, 100.0 * r["solve_matches"] / n))
+        points, uses_site = night_points(
+            nights[key], lambda when: in_field(sol, when.astimezone(), mag_limit))
+        for when, r, pct in points:
+            (faint if r.get("trustworthy") is False else pts).append((when, pct))
         # Yellow: motion above the detector's onset. Red: an alert was sent.
         for t0, t1, alerted in rain_spans(key):
             ax.axvspan(t0, t1 + timedelta(minutes=5),
@@ -286,7 +307,7 @@ def build_multi(days=5, mag_limit=MAG_LIMIT):
                 seg_t.append(ts[i]); seg_p.append(pc[i])
             ax.plot(seg_t, seg_p, color="#4cc9f0", lw=1.2, zorder=3)
             med = float(np.median(pc))
-            label = "%s   median %.0f%%" % (key, med)
+            label = "%s   median %.0f%%%s" % (key, med, "" if uses_site else "   (old index)")
         else:
             label = "%s   (no solved samples)" % key
         ax.set_ylim(0, 105)
@@ -297,7 +318,7 @@ def build_multi(days=5, mag_limit=MAG_LIMIT):
         ax.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
         ax.grid(alpha=0.2)
     axes[0, 0].set_title(
-        "Catalogue stars seen per night (%% of mag<=%.1f in frame)   "
+        "Catalogue stars seen per night (%% of mag<=%.1f in frame, as on the site)\n"
         "yellow = motion above rain onset   red = rain alert sent   "
         "grey dots = star counts the pipeline distrusts" % mag_limit, fontsize=10)
     fig.patch.set_facecolor("#1a1a2e")
