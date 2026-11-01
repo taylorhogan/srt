@@ -1,7 +1,10 @@
 """`seen` draws the site's number (seen_pct) where the sky monitor wrote it (2026-11-01)."""
 from datetime import datetime, timedelta
 
-from scripts.sky_transparency_report import night_points
+import pytest
+
+# The module imports numpy and astropy at the top; CI installs only pytest.
+night_points = pytest.importorskip("scripts.sky_transparency_report").night_points
 
 T0 = datetime(2026, 11, 1, 5, 0)
 
