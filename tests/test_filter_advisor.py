@@ -142,3 +142,60 @@ def test_advisor_settings_read_the_config():
                                        "weak_line_min_frames": fa.WEAK_LINE_MIN_FRAMES}
     assert fa.advisor_settings({"nina": {"advisor": {"weak_line_ratio": 0.2, "weak_line_min_frames": 9}}}) \
         == {"weak_line_ratio": 0.2, "weak_line_min_frames": 9}
+
+
+# The curve (2026-11-01): stack SNR weights a shortfall; with every goal met
+# the night goes to the filters the curve still waits on.
+IC410_CURVE = {"Ha": {"slope_pct": -0.2, "flat": True, "snr": 1.96},
+               "O-III": {"slope_pct": -0.3, "flat": True, "snr": 1.39},
+               "S-II": {"slope_pct": -0.3, "flat": True, "snr": 0.73}}
+
+
+def test_a_shortfall_leans_to_the_noisiest_stack():
+    # IC 410 on 11-01: 38 Ha, 47 O-III, 37 S-II sharp/usable of 40 each.
+    fr = frames({"Ha": [2.0] * 38, "O-III": [2.0] * 47, "S-II": [2.0] * 37})
+    plain = fa.advise(fr, "nebula")
+    curved = fa.advise(fr, "nebula", curve=IC410_CURVE)
+    assert plain["plan"] == {"Ha": 3, "S-II": 4}
+    assert curved["plan"] == {"Ha": 1, "S-II": 4}
+    assert curved["need"] == plain["need"] and curved["action"] == "plan"
+    assert any("stack SNR" in r for r in curved["reasons"])
+
+
+def test_snr_weight_is_capped():
+    # Ha needs 30, S-II 3; S-II's stack is 20x noisier. Capped at x4 the
+    # weights are Ha 30 / S-II 12; uncapped S-II's 60 would take the night.
+    fr = frames({"Ha": [2.0] * 10, "S-II": [2.0] * 37, "O-III": [2.0] * 40})
+    adv = fa.advise(fr, "nebula", curve={"Ha": {"snr": 10.0}, "S-II": {"snr": 0.5}})
+    assert adv["plan"] == {"Ha": 4, "S-II": 2}
+
+
+def test_goals_met_curve_not_flat_sends_the_night_to_the_unflat_filters():
+    # Melotte 15 on 11-01: every goal met; O-III -2.56, S-II -0.69, Ha flat.
+    fr = frames({"Ha": [2.0] * 76, "O-III": [2.0] * 51, "S-II": [2.0] * 54})
+    curve = {"Ha": {"slope_pct": -0.26, "flat": True}, "O-III": {"slope_pct": -2.56, "flat": False},
+             "S-II": {"slope_pct": -0.69, "flat": False}}
+    adv = fa.advise(fr, "nebula", curve=curve)
+    assert adv["action"] == "done"                 # auto-stop reads this as goals met
+    assert adv["plan"] == {"O-III": 4, "S-II": 1}
+    assert "Ha" not in adv["plan"]
+    assert fa.advise(fr, "nebula")["plan"] == {"Ha": 1, "O-III": 1, "S-II": 1}   # no curve: as before
+
+
+def test_goals_met_and_curve_flat_keeps_the_deepening_split():
+    fr = frames({"Ha": [2.0] * 50, "O-III": [2.0] * 50, "S-II": [2.0] * 50})
+    flat = {f: {"slope_pct": -0.1, "flat": True} for f in ("Ha", "O-III", "S-II")}
+    assert fa.advise(fr, "nebula", curve=flat)["plan"] == {"Ha": 1, "O-III": 1, "S-II": 1}
+
+
+def test_curve_status_reads_the_convergence_entries():
+    import pytest
+    conv = pytest.importorskip("fits_processing.convergence")
+    entries = {"O2": {"tail_slope_pct": -2.56, "final_rmse_pct": 4.1, "frame_count": 56, "calibrated": True,
+                      "emission": {"level_adu_s": 0.0027, "noise_adu_s": 0.0025}},
+               "Ha": {"tail_slope_pct": -0.26, "final_rmse_pct": 5.3, "frame_count": 85, "calibrated": True},
+               "S-II": {"tail_slope_pct": -0.1, "final_rmse_pct": 9.3, "frame_count": 55}}
+    st = conv.curve_status(entries, 0.40, 25.0, 16)
+    assert st["O-III"] == {"slope_pct": -2.56, "flat": False, "snr": 1.08}
+    assert st["Ha"]["flat"] is True and st["Ha"]["snr"] is None
+    assert st["S-II"]["flat"] is False             # uncalibrated: not known, so not flat

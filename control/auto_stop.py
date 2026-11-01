@@ -290,6 +290,7 @@ def advise_offline(dso: str, row: dict, root: Optional[str] = None) -> Optional[
         return None
     return filter_advisor.advise(frames, _type_offline(row, root), row, {}, dso=dso,
                                  emission=filter_advisor.emission_for(dso),
+                                 curve=filter_advisor.curve_for(dso),
                                  **filter_advisor.advisor_settings())
 
 

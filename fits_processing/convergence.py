@@ -261,6 +261,46 @@ def emission_ratios(filters: dict, reference: str = "Ha") -> dict:
     return out
 
 
+def curve_status(filters: dict, slope_threshold: float, rmse_threshold: float,
+                 min_frames: int) -> dict:
+    """{canonical filter: {"slope_pct", "flat", "snr"}} from a target's entries. Pure.
+
+    "flat" is is_dso_done's test for that one filter (calibrated, enough
+    frames, tail slope and RMSE under the thresholds). "snr" is the golden
+    stack's bright-nebula level over its sky noise (the emission block: both
+    are measured on the same stack, so the ratio is the stack's own SNR and
+    needs no frame count or gain), None when not measured. The filter advisor
+    reads this (2026-11-01): which filters a target's curve still waits on,
+    and which channel is the noisiest.
+    """
+    from fits_processing.filter_advisor import canonical
+    out = {}
+    for name, info in (filters or {}).items():
+        info = info or {}
+        slope = info.get("tail_slope_pct")
+        rmse = info.get("final_rmse_pct")
+        flat = (bool(info.get("calibrated")) and info.get("frame_count", 0) >= min_frames
+                and slope is not None and abs(float(slope)) <= slope_threshold
+                and (rmse is None or float(rmse) <= rmse_threshold))
+        em = info.get("emission") or {}
+        lv, nz = em.get("level_adu_s"), em.get("noise_adu_s")
+        snr = round(float(lv) / float(nz), 3) if lv is not None and nz and float(nz) > 0 else None
+        out[canonical(name) or str(name)] = {
+            "slope_pct": None if slope is None else float(slope), "flat": flat, "snr": snr}
+    return out
+
+
+def curve_for(dso_name: str) -> dict:
+    """curve_status of the stored record at the configured thresholds; {} when unknown."""
+    try:
+        data = load_convergence()
+        return curve_status(data.get(dso_name.lower().replace(" ", ""), {}),
+                            _threshold(), _rmse_threshold(), _min_frames())
+    except Exception:  # noqa: BLE001
+        _logger.exception("curve_for(%s) failed", dso_name)
+        return {}
+
+
 def emission_for(dso_name: str, reference: str = "Ha") -> dict:
     """emission_ratios of the stored record; {} when unknown or unreadable."""
     try:

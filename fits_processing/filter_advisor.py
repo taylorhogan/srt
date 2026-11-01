@@ -53,6 +53,19 @@ MOON_FACTOR = {"L": 0.5, "B": 0.5, "Ha": 1.5, "O-III": 0.7}
 WEAK_LINE_RATIO = 0.1
 WEAK_LINE_MIN_FRAMES = 20
 WEAK_LINES = ("S-II", "O-III")
+# The curve (2026-11-01, owner: "shouldn't the advisor look at the curve"),
+# from convergence.curve_status. Two uses:
+#  - a shortfall is weighted by the stacks' SNR, the noisiest channel by up to
+#    SNR_WEIGHT_CAP x the cleanest's: IC 410 needed 2 Ha and 3 S-II with Ha's
+#    stack at SNR 1.96 and S-II's at 0.73, and an even split by frames missing
+#    spent half the night on the channel that needed it least;
+#  - goals met but the curve not flat (Melotte 15: O-III -2.56 and S-II -0.69
+#    %/frame against 0.40, Ha flat) gives the night to the filters the curve
+#    waits on, by tail slope, instead of the even deepening split.
+# A tail slope jumps ~30 % when the frame count crosses a Fibonacci number
+# (stacker._fib_counts moves the fitted points); it is smooth otherwise, so it
+# can weigh a ratio rounded to whole numbers but is not read as a fine number.
+SNR_WEIGHT_CAP = 4.0
 
 _CANON = {"l": "L", "lum": "L", "luminance": "L", "r": "R", "red": "R", "g": "G", "green": "G",
           "b": "B", "blue": "B", "ha": "Ha", "halpha": "Ha", "h-alpha": "Ha",
@@ -111,7 +124,8 @@ def advise(frames: list, obj_type: str, entry: Optional[dict] = None,
            tonight: Optional[dict] = None, dso: str = "",
            emission: Optional[dict] = None,
            weak_line_ratio: float = WEAK_LINE_RATIO,
-           weak_line_min_frames: int = WEAK_LINE_MIN_FRAMES) -> dict:
+           weak_line_min_frames: int = WEAK_LINE_MIN_FRAMES,
+           curve: Optional[dict] = None) -> dict:
     """Tonight's filter ratio for one target, with the reasons. Pure.
 
     obj_type: "galaxy" / "nebula" / anything else (treated as galaxy: broadband).
@@ -122,12 +136,17 @@ def advise(frames: list, obj_type: str, entry: Optional[dict] = None,
               (fits_processing.convergence.emission_ratios); a line below
               *weak_line_ratio* with *weak_line_min_frames* usable frames
               needs nothing more (WEAK_LINES).
+    curve: {filter: {"slope_pct", "flat", "snr"}} (convergence.curve_status);
+           weights a shortfall by stack SNR, and with every goal met sends
+           the night to the filters whose curve is not flat. Never changes
+           "need" or "action", which auto-stop and the board read.
     -> {"dso", "plan": {filter: ratio} or None, "reasons": [str], "need": {...},
         "have": tally, "action": "plan"|"monitor"|"done", "emission": {...}}
     """
     entry = entry or {}
     tonight = tonight or {}
     emission = emission or {}
+    curve = curve or {}
     kind = "nebula" if obj_type == "nebula" else "galaxy"
     have = tally(frames, entry.get("exposure_s"))
     reasons = []
@@ -166,14 +185,38 @@ def advise(frames: list, obj_type: str, entry: Optional[dict] = None,
                                "HOO" if f == "S-II" else "Ha-dominated"))
 
     if not any(need.values()):
-        reasons.append("every goal met (%s): a candidate to retire; deepening split"
-                       % ", ".join("%s %d" % (f, goals.get(f, 0)) for f in fset))
         res["need"] = need
-        res["plan"] = {f: w for f, w in DEEPEN[kind].items() if f in fset}
         res["action"] = "done"
+        waiting = {f: abs(c["slope_pct"]) for f, c in curve.items()
+                   if f in fset and not c.get("flat") and c.get("slope_pct") is not None}
+        if waiting:
+            res["plan"] = _ratio({f: max(v, 1e-3) for f, v in waiting.items()})
+            flat = [f for f in fset if (curve.get(f) or {}).get("flat")]
+            reasons.append("every goal met (%s); the curve still waits on %s, so the night goes "
+                           "there by tail slope%s" % (
+                               ", ".join("%s %d" % (f, goals.get(f, 0)) for f in fset),
+                               ", ".join("%s %.2f%%/frame" % (f, -waiting[f]) for f in waiting),
+                               ("; %s flat" % ", ".join(flat)) if flat else ""))
+        else:
+            res["plan"] = {f: w for f, w in DEEPEN[kind].items() if f in fset}
+            reasons.append("every goal met (%s): a candidate to retire; deepening split"
+                           % ", ".join("%s %d" % (f, goals.get(f, 0)) for f in fset))
         return res
 
     w = dict(need)
+    snr = {f: (curve.get(f) or {}).get("snr") for f in w if w[f] > 0}
+    snr = {f: float(s) for f, s in snr.items() if s}
+    if len(snr) >= 2:
+        top = max(snr.values())
+        tilted = []
+        for f, s in snr.items():
+            k = min(SNR_WEIGHT_CAP, top / s)
+            if k > 1.05:
+                w[f] *= k
+                tilted.append("%s x%.1f" % (f, k))
+        if tilted:
+            reasons.append("stack SNR %s: the noisier channels weigh more (%s)" % (
+                ", ".join("%s %.2f" % (f, s) for f, s in snr.items()), ", ".join(tilted)))
     seeing = tonight.get("seeing") or "unknown"
     soft_night = seeing in SOFT_SEEING and w.get(detail, 0) > 0
     if soft_night:
@@ -312,6 +355,15 @@ def emission_for(dso: str) -> dict:
         return {}
 
 
+def curve_for(dso: str) -> dict:
+    """The target's curve status (convergence.curve_for); {} when none."""
+    try:
+        from fits_processing import convergence
+        return convergence.curve_for(dso)
+    except Exception:  # noqa: BLE001
+        return {}
+
+
 def advise_for(dso: str, start=None, end=None) -> dict:
     """advise() on the live inputs. Never raises: a failure is returned as a reason."""
     try:
@@ -328,7 +380,7 @@ def advise_for(dso: str, start=None, end=None) -> dict:
             obj_type = "unknown"
         tonight = tonight_for(start, end) if start is not None and end is not None else {}
         return advise(_frames_for(dso), obj_type, entry, tonight, dso=dso,
-                      emission=emission_for(dso), **advisor_settings())
+                      emission=emission_for(dso), curve=curve_for(dso), **advisor_settings())
     except Exception as exc:  # noqa: BLE001
         return {"dso": dso, "plan": None, "action": "error",
                 "reasons": ["advisor failed: %s: %s" % (type(exc).__name__, exc)]}
