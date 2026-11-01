@@ -6,7 +6,7 @@ class PublicConfig():
 
         },
         "version": {
-            "date": "2026.11.1.3"
+            "date": "2026.11.1.4"
         },
 
         "logger": {
@@ -682,8 +682,9 @@ class PublicConfig():
             "moon_min_worth": 0.6,
             # Auto-stop (control/auto_stop, docs/AUTOMATION_PLAN.md A,
             # 2026-10-29): a waiting target whose convergence record says
-            # done, or whose frame goals the filter advisor says are all
-            # met, is finished. "shadow" lists the candidates in the noon
+            # done AND whose frame goals the filter advisor says are all
+            # met, or that reached the cap below, is finished
+            # (auto_stop.is_finished). "shadow" lists the candidates in the noon
             # plan record and the chat and changes nothing; "live" sets
             # their queue status to "converged", which the ranking no
             # longer sees (`reopen <dso>` undoes one); "off" evaluates

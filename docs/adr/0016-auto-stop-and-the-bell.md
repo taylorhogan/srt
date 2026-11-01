@@ -22,8 +22,12 @@ added as a stopping item the same day.
 
 ## Decision
 
-1. **"Done" is either verdict**, kept apart: convergence (every filter at
-   its flat tail) OR the advisor's frame goals all met. A light-curve
+1. **"Done" is both verdicts, or the cap** (amended by the owner 2026-10-31;
+   first written as either verdict): convergence (every filter at its flat
+   tail) AND the advisor's frame goals all met, or the target has shot
+   `planner.auto_stop_cap` (2.0) x its type's frame-goal total. Either alone
+   was wrong: on 10-31 IC 410's curve passed with O-III at 19 of 40 frames.
+   `auto_stop.is_finished` is the one place the rule lives. A light-curve
    monitor is never done. The noon plan evaluates it (`control/auto_stop`)
    and the list rides the `NIGHT_PLAN` record as `auto_stop`.
 2. **A new queue status, `converged`**, is the machine's word; `completed`
