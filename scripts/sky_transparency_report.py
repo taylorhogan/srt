@@ -189,7 +189,9 @@ def all_nights(rows):
             continue
         local = when.replace(tzinfo=None)
         out.setdefault((local - timedelta(hours=12)).date(), []).append((local, r))
-    return {k: sorted(v) for k, v in out.items()}
+    # By time alone: the fall-back hour repeats a local time, and a tie would
+    # go on to compare the row dicts (TypeError, 2026-11-01).
+    return {k: sorted(v, key=lambda p: p[0]) for k, v in out.items()}
 
 
 def rain_spans(night_key):

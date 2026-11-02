@@ -23,3 +23,12 @@ def test_an_older_night_keeps_the_old_index():
     pts, site = night_points(rows, lambda w: 190 if w == T0 else 0)
     assert site is False
     assert [round(p) for _w, _r, p in pts] == [50]
+
+
+def test_the_repeated_fall_back_hour_does_not_break_the_sort():
+    all_nights = pytest.importorskip("scripts.sky_transparency_report").all_nights
+    # 01:30 EDT and 01:30 EST: two instants, one local clock time.
+    rows = [{"generated": "2026-11-01T01:30:00-04:00", "solve_matches": 150, "night": True},
+            {"generated": "2026-11-01T01:30:00-05:00", "solve_matches": 140, "night": True}]
+    nights = all_nights(rows)
+    assert [len(v) for v in nights.values()] == [2]
