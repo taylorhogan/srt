@@ -120,25 +120,64 @@ def verdict(r):
     return "helped" if g > 0.5 else "no change"
 
 
+def sky_words(signal, noise):
+    """Why the night's frames weigh what they do, from the per-frame ratios. Pure.
+
+    signal is the median frame's nebula scale against the earlier nights'
+    (transparency); noise its residual sigma against theirs, which in a 300 s
+    narrowband frame is the sky. IC 410 S-II, 2026-11-01: noise 0.82x with the
+    raw sky at the bias level against moonlit earlier nights -> "a darker sky".
+    """
+    if signal is None or noise is None:
+        return ""
+    words = []
+    if noise <= 0.9:
+        words.append("a darker sky")
+    elif noise >= 1.1:
+        words.append("a brighter sky")
+    if signal <= 0.9:
+        words.append("thinner air")
+    elif signal >= 1.1:
+        words.append("clearer air")
+    return " and ".join(words) if words else "a sky like the earlier nights'"
+
+
 def describe(r):
-    """One chat line per filter. Pure."""
+    """One chat line per filter, in sentences. Pure.
+
+    The owner read "stack SNR +32% (plain mean +38%); worth 33.5 earlier
+    frames; signal 0.93x, noise 0.82x earlier nights" as a puzzle
+    (2026-11-02): two SNR figures with no word on why they differ, "earlier
+    frames" that reads as a count, and HELPED beside a worse FWHM. So: the
+    gate and the seeing first, then how much deeper the stack is (the plain
+    mean only where it carries the verdict, HURT or NO CHANGE), then what
+    the new frames were worth and why.
+    """
     v = verdict(r)
-    head = "%s %s: %s" % (r["dso"], r["filter"], v.upper())
-    gate = "%d of %d frames passed the quality gate" % (r["accepted"], r["shot"])
-    if v in ("nothing usable", "first night"):
-        return "%s -- %s." % (head, gate)
-    parts = ["stack SNR %+.0f%% (plain mean %+.0f%%)" % (r["gain_optimal_pct"], r["gain_equal_pct"]),
-             gate]
-    if r.get("worth_prior_frames") is not None:
-        parts.append("worth %.1f earlier frames" % r["worth_prior_frames"])
-    if r.get("signal_vs_prior") is not None:
-        parts.append("signal %.2fx, noise %.2fx earlier nights"
-                     % (r["signal_vs_prior"], r["noise_vs_prior"]))
+    head = "%s %s: %s." % (r["dso"], r["filter"], v.upper())
+    gate = "%d of %d frames passed the gate" % (r["accepted"], r["shot"])
     if r.get("fwhm_last") and r.get("fwhm_prior"):
-        # "now ... was ...", not "x vs y": the bare comparison never said which
+        # "now ... earlier ...", never "x vs y": the bare pair did not say which
         # number was the night being judged (owner, 2026-10-08).
-        parts.append('FWHM now %.2f" was %.2f"' % (r["fwhm_last"], r["fwhm_prior"]))
-    return "%s -- %s." % (head, "; ".join(parts))
+        gate += ' (seeing %.2f", earlier nights %.2f")' % (r["fwhm_last"], r["fwhm_prior"])
+    if v in ("nothing usable", "first night"):
+        return "%s %s." % (head, gate)
+    opt, eq = r["gain_optimal_pct"], r["gain_equal_pct"]
+    if v == "hurt":
+        depth = ("The new frames are weaker than the stack's average: a plain mean of every "
+                 "frame comes out %.0f%% shallower, a weighted stack %+.0f%%." % (-eq, opt))
+    elif v == "no change":
+        depth = "The stack is about as deep as before (weighted %+.0f%%, plain mean %+.0f%%)." % (opt, eq)
+    else:
+        depth = "The stack is %.0f%% deeper." % opt
+    parts = [gate + ".", depth]
+    if r.get("worth_prior_frames") is not None:
+        why = sky_words(r.get("signal_vs_prior"), r.get("noise_vs_prior"))
+        parts.append("The %d new frames are worth %.1f typical earlier ones: %s (per frame: "
+                     "noise %.2fx, signal %.2fx the earlier nights)."
+                     % (r["accepted"], r["worth_prior_frames"], why,
+                        r["noise_vs_prior"], r["signal_vs_prior"]))
+    return "%s %s" % (head, " ".join(parts))
 
 
 # ------------------------------------------------------------------ measuring

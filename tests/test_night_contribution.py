@@ -1,5 +1,5 @@
 """fits_processing/night_contribution: the summary, the verdict and the chat line."""
-from fits_processing.night_contribution import describe, night_of, summarize, verdict
+from fits_processing.night_contribution import describe, night_of, sky_words, summarize, verdict
 
 
 def _rows(night, n, a=1.0, sigma=1.0):
@@ -44,4 +44,24 @@ def test_fwhm_and_ratios_in_the_line():
     r = summarize("ngc7380", "Ha", "B", rows, {"A": 4, "B": 4},
                   {"A": [1.9, 1.9], "B": [2.1, 2.1]})
     line = describe(r)
-    assert "signal 0.80x, noise 1.10x" in line and 'FWHM now 2.10" was 1.90"' in line
+    assert "noise 1.10x, signal 0.80x" in line and 'seeing 2.10", earlier nights 1.90"' in line
+    assert "a brighter sky and thinner air" in line
+
+
+def test_the_line_reads_as_sentences_and_the_plain_mean_only_carries_a_bad_verdict():
+    # The owner read the one-liner of numbers as a puzzle (2026-11-02).
+    rows = _rows("A", 16) + _rows("B", 9, a=0.93, sigma=0.82)
+    r = summarize("ic410", "S-II", "B", rows, {"A": 16, "B": 12}, {})
+    line = describe(r)
+    assert line.startswith("ic410 S-II: HELPED. 9 of 12 frames passed the gate.")
+    assert "deeper." in line and "plain mean" not in line
+    assert "The 9 new frames are worth" in line and "a darker sky" in line
+    hurt = summarize("ic410", "S-II", "B", _rows("A", 10) + _rows("B", 10, a=0.2), {"A": 10, "B": 10}, {})
+    assert "plain mean of every frame comes out" in describe(hurt) and "shallower" in describe(hurt)
+
+
+def test_sky_words():
+    assert sky_words(0.93, 0.82) == "a darker sky"
+    assert sky_words(1.0, 1.0) == "a sky like the earlier nights'"
+    assert sky_words(1.2, 1.3) == "a brighter sky and clearer air"
+    assert sky_words(None, 0.5) == ""
