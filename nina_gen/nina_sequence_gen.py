@@ -28,6 +28,7 @@ def _decompose_dec(dec_degrees: float) -> tuple[bool, int, int, float]:
 
 _GALAXY_OTYPES = {"G", "SyG", "Sy1", "Sy2", "rG", "GrG", "GiC", "GiG", "BCG", "AGN", "QSO", "LIN", "Sy"}
 _NEBULA_OTYPES = {"PN", "HII", "SNR", "RNe", "GNe", "MoC", "SFR", "HH", "Cld", "DN", "PoC", "ISM"}
+_SIMBAD_TIMEOUT_S = 10          # the grid's figure: a lookup not back in 10 s is not coming
 
 
 def _queued_object_type(dso_name: str) -> Optional[str]:
@@ -60,8 +61,13 @@ def _classify_object_type(dso_name: str) -> str:
     nebulae while this function, with its own smaller SIMBAD map and no
     overrides, called them unknown and would have planned LRGB. A star
     cluster plans broadband ("unknown"), as before. Only when that classifier
-    cannot be imported (no astropy) or answers "?" does the direct SIMBAD
-    lookup below run.
+    cannot be imported (no astropy) does the direct SIMBAD lookup below run:
+    the grid has asked SIMBAD already, with its cache, its timeout and its
+    outage cooldown, and a fresh client here asked again with none of those.
+    On 2026-11-02, CDS dropping SYNs, pyvo's capability fetch under
+    add_votable_fields (no timeout, see utils.bounded) held every sequence
+    generation 18+ minutes per slot, and the venv test suite with it. The
+    grid's "?" means unknown here.
     """
     queued = _queued_object_type(dso_name)
     if queued:
@@ -70,18 +76,16 @@ def _classify_object_type(dso_name: str) -> str:
         import importlib
         grid = importlib.import_module("iris_astronomy.astro_dso_visibility").get_dso_type(dso_name)
     except Exception:
-        grid = "?"
-    if grid == "G":
-        return "galaxy"
-    if grid == "N":
-        return "nebula"
-    if grid == "C":
-        return "unknown"
+        grid = None
+    if grid is not None:
+        return {"G": "galaxy", "N": "nebula"}.get(grid, "unknown")
     try:
         from astroquery.simbad import Simbad
+        from utils.bounded import call_bounded
         custom = Simbad()
-        custom.add_votable_fields("otype")
-        result = custom.query_object(dso_name)
+        custom.TIMEOUT = _SIMBAD_TIMEOUT_S
+        call_bounded(custom.add_votable_fields, _SIMBAD_TIMEOUT_S, "otype")
+        result = call_bounded(custom.query_object, _SIMBAD_TIMEOUT_S + 2, dso_name)
         if result is None or len(result) == 0:
             return "unknown"
         # astroquery renamed the column OTYPE -> otype (v0.4.8); accept either,

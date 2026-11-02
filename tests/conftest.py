@@ -40,3 +40,17 @@ def _drives_checks_from_the_test_not_the_machine(monkeypatch):
     except Exception:          # noqa: BLE001
         return
     monkeypatch.setattr(_shadow, "_read_drives_checks", lambda: False, raising=False)
+
+
+@pytest.fixture(autouse=True)
+def _no_live_simbad(monkeypatch):
+    """SIMBAD is off for the whole suite. With CDS unreachable (2026-11-02,
+    SYN sent and nothing back) a test that classified an unstubbed name hung
+    the venv run for 18 minutes: pyvo's capability fetch has no timeout. The
+    grid answers "?" as it does in an outage; a test of the lookup itself
+    binds the real function at import and stubs the client it needs."""
+    try:
+        from iris_astronomy import astro_dso_visibility as _av
+    except Exception:          # noqa: BLE001 -- no astropy in this env
+        return
+    monkeypatch.setattr(_av, "_get_simbad", lambda: None, raising=False)

@@ -33,6 +33,7 @@ from astroplan import FixedTarget
 from astroplan import Observer
 from astroplan import moon_illumination
 from astroquery.simbad import Simbad
+from utils.bounded import call_bounded
 from astropy.coordinates import EarthLocation, AltAz, get_body
 from astropy.time import Time
 from matplotlib import dates
@@ -126,6 +127,14 @@ _simbad_retry_after = 0.0
 # while making the outage effectively free.
 _SIMBAD_RETRY_COOLDOWN_S = 600
 
+# 4. THE TIMEOUT DOES NOT REACH PYVO. Simbad.TIMEOUT covers astroquery's own
+#    requests; add_votable_fields() first fetches the TAP capabilities through
+#    pyvo (vosi.py, session.get with no timeout), which waits for the OS to
+#    abandon the TCP connect. Measured 2026-11-02, CDS dropping SYNs: 18+
+#    minutes per lookup, with TIMEOUT set to 10. So the setup and the query
+#    run under utils.bounded.call_bounded, and a bound hit trips the cooldown
+#    like any other failure.
+
 
 def _get_simbad() -> Optional[Simbad]:
     """The configured Simbad client, or None if SIMBAD cannot be set up.
@@ -141,7 +150,7 @@ def _get_simbad() -> Optional[Simbad]:
     if time.monotonic() < _simbad_retry_after:
         return None
     try:
-        _simbad.add_votable_fields('otype')
+        call_bounded(_simbad.add_votable_fields, _SIMBAD_TIMEOUT_S, 'otype')
         _simbad_ready = True
         return _simbad
     except Exception as e:  # noqa: BLE001 -- offline is a normal state here
@@ -235,7 +244,7 @@ def get_dso_type(name: str) -> str:
     if simbad is None:
         return "?"
     try:
-        result = simbad.query_object(name)
+        result = call_bounded(simbad.query_object, _SIMBAD_TIMEOUT_S + 2, name)
         # An unresolvable name yields an empty table, not None; indexing it
         # raises rather than returning anything useful. Cached as "" -- a name
         # SIMBAD does not know is a permanent fact about the name, and these
