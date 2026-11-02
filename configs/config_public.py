@@ -6,7 +6,7 @@ class PublicConfig():
 
         },
         "version": {
-            "date": "2026.11.2.6"
+            "date": "2026.11.2.7"
         },
 
         "logger": {
@@ -593,7 +593,10 @@ class PublicConfig():
         #   gate: "off" (no cards, no timer) / "shadow" (the card is posted,
         #   approve/reject are recorded, the timer is not armed, nothing
         #   publishes; default) / "live" (D4 publishes on approval or timer)
-        "publish": {"final_mode": "shadow", "auto_approve_days": 3, "gate": "shadow"},
+        # auto_crop (stacking/auto_crop, 2026-11-02): "shadow" writes and pushes a
+        # cropped view beside every morning composite, "off" does not.
+        "publish": {"final_mode": "shadow", "auto_approve_days": 3, "gate": "shadow",
+                    "auto_crop": "shadow"},
         # AAVSO WebObs submissions (photometry/aavso.py, `aavso <dso>`): the
         # owner's observer code, issued 2026-10-31. Not a secret.
         "aavso": {"obscode": "THCA"},

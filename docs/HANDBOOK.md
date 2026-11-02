@@ -136,6 +136,7 @@ processes of start_srt, run scripts/start_srt.bat. Then `status` in the chat.
 | `publish.final_mode` | `off` / `shadow` | render a converged target's final |
 | `publish.gate` | `off` / `shadow` / `live` | cards and decisions / publish on approve or timer |
 | `publish.auto_approve_days` | days | silence publishes after this (gate live) |
+| `publish.auto_crop` | `off` / `shadow` | a cropped view written and pushed beside every morning composite (stacking/auto_crop) |
 | `alerts.enabled` | bool | the bell |
 | `conductor.drives_checks` | bool | the conductor makes the noon and sunset decisions (on) |
 

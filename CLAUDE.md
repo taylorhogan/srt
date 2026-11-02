@@ -188,6 +188,32 @@ Since 2026-09-25 the conductor decides both invariants (ADR 0014): every roof fi
   (`spark_morning_render.RECIPE_RULES`, `PALETTE_GAIN`). Known weak case: a bright star on a smooth galaxy's envelope
   (coloured rings where the per-channel masks meet the fill, NGC 7317).
 
+  **An auto crop rides every composite, in SHADOW (since 2026-11-02,
+  `stacking/auto_crop`, `publish.auto_crop`).** Beside each full composite the
+  render writes `<dso>_<recipe>_<tag>_crop.jpg`, records the box in the meta
+  as `auto_crop[tag]` (array coordinates, the picture's own) and pushes the
+  crop after the full view; nothing downstream reads it. The subject is
+  found by type on the composite's luminance at ~800 px with the stars
+  median-filtered out: a nebula or galaxy is the diffuse light above an
+  isophote relative to its own bright level (the core at the brightest
+  ladder level, then fainter levels while the region grows like a halo,
+  under 2x the core: faint-first flooded M76's 2 % core to 16 % of
+  background), a star cluster is star DENSITY per block unioned with any
+  nebula (Melotte 15 is both), a galaxy cluster is its members' robust
+  centre and spread, else the full frame (Abell 2218 at this depth: the
+  diffuse map is star halos). The box is the subject grown by a
+  type-specific margin (galaxies the most, 0.5 a side), floored at 35-50 %
+  of the field for a small object's context, widened to the nearest of
+  3:2, 16:10, 4:3 and 1:1 (1:1 pays a penalty: the gallery is landscape),
+  clamped inside the footprint keeping the aspect, nudged off bright stars
+  at an edge, scored by coverage minus empty share minus shape gap. A
+  subject over 70 % of the field, or a box over 85 % of it, is no crop.
+  The type comes offline: the queue mirror's `obj_type` (a monitor's
+  "star" crops as a cluster), configs/candidates.json's kind, the type
+  cache. On the 2026-11-02 hand crops it scores 0.7 overlap on IC 410 and
+  0.65 on Melotte 15; weak cases are two equal subjects far apart, a
+  bright star's glow on a galaxy field (NGC 2276), and taste.
+
   **The morning render cuts every channel to the common footprint (since
   2026-10-28).** The stacker crops a lone stack to where 80 % of its frames
   landed, but not one built onto a shared reference (the box differs per

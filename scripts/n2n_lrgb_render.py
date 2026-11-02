@@ -622,7 +622,33 @@ def _fit_for_push(src: Path, work: Path) -> Path:
     return out
 
 
-def push_render(args, out_dir: Path, written: list, meta: dict, log=print) -> bool:
+def crop_file(written: list, dso: str, recipe: str, tag: str):
+    """The crop written beside the *tag* composite, or None. Pure."""
+    return next((p for p in written if p.name == f"{dso}_{recipe}_{tag}_crop.jpg"), None)
+
+
+def push_crop(args, out_dir: Path, written: list, tag: str, crops: dict, log=print) -> bool:
+    """Pushover the shadow crop of the *tag* composite after the full view,
+    with its box line; nothing when the crop was the full frame. Never raises."""
+    try:
+        from stacking import auto_crop
+        from utils import pushover
+        rec = (crops or {}).get(tag)
+        pick = crop_file(written, args.dso, args.recipe, tag)
+        if not rec or rec.get("full") or pick is None:
+            return False
+        img = _fit_for_push(pick, out_dir)
+        ok = pushover.push_message_with_picture(
+            f"{args.dso} {args.recipe} {tag} {auto_crop.describe(rec)}", str(img))
+        log(f"  push {tag} crop: {'sent' if ok else 'NOT ACCEPTED'} ({img.name}, "
+            f"{img.stat().st_size / 1024:.0f} KB)")
+        return bool(ok)
+    except Exception as e:  # noqa: BLE001
+        log(f"  push crop failed: {e}")
+        return False
+
+
+def push_render(args, out_dir: Path, written: list, meta: dict, log=print, crops=None) -> bool:
     """Pushover the composite(s): by default the one best picture (the first
     of PUSH_TAGS that was written), with --push-all every class in TAGS,
     plus any extra one that was written. Never raises -- a render must not
@@ -664,6 +690,8 @@ def push_render(args, out_dir: Path, written: list, meta: dict, log=print) -> bo
             log(f"  push {tag}: {'sent' if ok else 'NOT ACCEPTED'} ({img.name}, "
                 f"{img.stat().st_size / 1024:.0f} KB)")
             sent += bool(ok)
+            if tag in PUSH_TAGS:
+                push_crop(args, out_dir, written, tag, crops, log)
         return sent > 0
     except Exception as e:  # noqa: BLE001
         log(f"  push failed: {e}")
@@ -881,6 +909,16 @@ def routine(args) -> int:
         + ", ".join(f"{c} {v:.2f}" for c, v in sorted(blacks.items())))
     composites: dict = {}          # tag -> finished rgb, kept only for the final product
 
+    # The auto crop (stacking/auto_crop, SHADOW since 2026-11-02): every
+    # composite gets `<dso>_<recipe>_<tag>_crop.jpg` beside it, the box goes
+    # into the meta as auto_crop[tag], and the crop is pushed after the full
+    # view. Nothing downstream reads it. The object's type is read offline.
+    from stacking import auto_crop
+    crops: dict = {}
+    crop_mode = getattr(args, "auto_crop", "shadow") or "shadow"
+    obj_type = getattr(args, "obj_type", "") or auto_crop.type_for(args.dso, _root)
+    log(f"auto crop: {crop_mode}, type {obj_type}")
+
     def st(chan, black):
         y = np.clip((chan - black) / max(white - black, 1e-6), 0.0, 1.0)
         return np.arcsinh(y / soft) / np.arcsinh(1.0 / soft)
@@ -944,6 +982,19 @@ def routine(args) -> int:
         pth = color_process.save_rgb(rgb, out_dir / f"{args.dso}_{args.recipe}_{tag}.jpg",
                                      max_px=args.max_px)
         written.append(pth)
+        if crop_mode != "off":
+            try:
+                rec = auto_crop.propose(rgb, obj_type)
+                rec["tag"] = tag
+                rec["box_on_jpg"] = auto_crop.scaled_box(rec["box"], rgb.shape, args.max_px)
+                crops[tag] = rec
+                log("  " + auto_crop.describe(rec))
+                if not rec["full"]:
+                    written.append(color_process.save_rgb(
+                        auto_crop.crop(rgb, rec["box"]),
+                        out_dir / f"{args.dso}_{args.recipe}_{tag}_crop.jpg", max_px=args.max_px))
+            except Exception as e:  # noqa: BLE001 -- a crop must never cost the render
+                log(f"  crop (shadow) failed: {type(e).__name__}: {e}")
         if getattr(args, "final", False) and tag in PUSH_TAGS:
             # raw, denoised, learned are emitted in rising preference, so the
             # latest kept is the best product (PUSH_TAGS order).
@@ -995,13 +1046,18 @@ def routine(args) -> int:
         log(f"  wrote {pth.name}")
     log("")
     log(f"{len(written)} files in {out_dir}")
+    if crops:
+        meta["auto_crop"] = crops
+        meta_path(args).write_text(json.dumps(meta, indent=2))
 
     if getattr(args, "final", False) and composites:
         tag, rgb = next(iter(composites.items()))
         cropped = all((meta["channels"].get(f) or {}).get("coverage") for f in filters)
         final_product(args, out_dir, tag, rgb, final_stretch, cropped, meta, raw_info, opts, log)
+        if args.push:
+            push_crop(args, out_dir, written, tag, crops, log)
     elif args.push:
-        push_render(args, out_dir, written, meta, log)
+        push_render(args, out_dir, written, meta, log, crops=crops)
     return 0
 
 
@@ -1054,6 +1110,14 @@ def final_product(args, out_dir: Path, tag: str, rgb, stretch, cropped: bool, me
         except Exception as e:  # noqa: BLE001
             log(f"  push final failed: {e}")
     return rec
+
+
+def _cfg_auto_crop() -> str:
+    try:
+        from configs import config
+        return str((config.data().get("publish") or {}).get("auto_crop") or "shadow")
+    except Exception:  # noqa: BLE001
+        return "shadow"
 
 
 def main() -> int:
@@ -1165,6 +1229,12 @@ def main() -> int:
                     help="D1: stretch with auto_stretch_v2, judge the best composite with "
                          "render_qc, write <dso>/final/<dso>_<recipe>_final.jpg + final.json "
                          "and push the picture with the verdict (publishes nothing)")
+    ap.add_argument("--auto-crop", default=_cfg_auto_crop(), choices=("shadow", "off"),
+                    help="write and push a cropped view beside each composite "
+                         "(stacking/auto_crop; config publish.auto_crop)")
+    ap.add_argument("--obj-type", default="",
+                    help="galaxy / nebula / cluster / galaxy_cluster for the crop "
+                         "(default: the queue mirror, the catalogue, the type cache)")
     ap.add_argument("--push-all", action="store_true",
                     help="push every composite class (raw, denoised, learned) "
                          "instead of the one best picture")
