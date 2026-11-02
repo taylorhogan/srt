@@ -6,7 +6,7 @@ class PublicConfig():
 
         },
         "version": {
-            "date": "2026.11.2.2"
+            "date": "2026.11.2.3"
         },
 
         "logger": {
@@ -313,7 +313,8 @@ class PublicConfig():
             #   "default" -- the plan's ratio IS the sequence's (an explicit
             #                `filters` plan on the queue still wins)
             #   "off"     -- nothing recorded, no post
-            "filter_advisor": "shadow",
+            # Default since 2026-11-02 (owner), after two weeks of shadow.
+            "filter_advisor": "default",
             # The advisor's weak-line rule (C3): a narrowband filter measured
             # below weak_line_ratio of Ha on the target's own stacks (the
             # convergence record's "emission", measured by the PC's SNR run)
