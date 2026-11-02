@@ -6,7 +6,7 @@ class PublicConfig():
 
         },
         "version": {
-            "date": "2026.11.2.1"
+            "date": "2026.11.2.2"
         },
 
         "logger": {
@@ -688,9 +688,10 @@ class PublicConfig():
             # plan record and the chat and changes nothing; "live" sets
             # their queue status to "converged", which the ranking no
             # longer sees (`reopen <dso>` undoes one); "off" evaluates
-            # nothing. Flip to live after a week of shadow lists the owner
-            # agrees with.
-            "auto_stop": "shadow",
+            # nothing. Live since 2026-11-02 (owner), first retiring IC 410
+            # and Melotte 15 (cap); Hubble V1 held through 11-22 for its
+            # second maximum.
+            "auto_stop": "live",
             # Both verdicts are needed to retire (owner, 2026-10-31), so a
             # target can sit forever: this caps the frames SHOT per target
             # at this multiple of its type's frame-goal total (nebula 120,
