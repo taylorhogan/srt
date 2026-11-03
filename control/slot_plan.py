@@ -114,8 +114,9 @@ def plan_slots(rows, dark_hours, weather_by_hour, min_slot_hours: float = 2.0,
     If it is PINNED and the main slots leave it no gap, its block is reserved
     at an edge of the night instead -- dusk or dawn, whichever side its good
     run is longer (the proxy for where it is higher) -- and the main slots
-    are planned around that. An unpinned capped target is simply skipped on
-    such a night.
+    are planned around that; several pinned ones stack inward from the edge
+    in rank order. An unpinned capped target is simply skipped on such a
+    night.
     """
     if not rows or not dark_hours:
         return []
@@ -124,29 +125,44 @@ def plan_slots(rows, dark_hours, weather_by_hour, min_slot_hours: float = 2.0,
     placed = {s.name for s in plan}
     missing = [r for r in rows if r[0] in caps and int(r[6]) > 5 and r[0] not in placed]
     if missing and plan:
-        r = missing[0]
-        n = max(1, int(caps[r[0]]))
-        f = _good_flags(r, dark_hours, weather_by_hour)
-        head_ok = len(f) >= n and all(f[:n])
-        tail_ok = len(f) >= n and all(f[-n:])
-        head_run = next((i for i, ok in enumerate(f) if not ok), len(f))
-        tail_run = next((i for i, ok in enumerate(reversed(f)) if not ok), len(f))
-        edge = None
-        if head_ok and (not tail_ok or head_run >= tail_run):
-            edge = list(range(n))
-        elif tail_ok:
-            edge = list(range(len(f) - n, len(f)))
-        if edge:
-            reserved = Slot(r[0], dark_hours[edge[0]], dark_hours[edge[-1]] + timedelta(hours=1),
-                            n, int(r[6]))
+        # Every pinned one gets its block, in rank order, each at an edge of
+        # what the earlier ones left, so they stack inward from dusk or dawn
+        # (2026-11-02: only the first was reserved, and with one main target
+        # filling the night ngc7790 lost to V1 every night).
+        wx = dict(weather_by_hour)
+        reserved = []
+        for r in missing:
+            if len(reserved) >= max_slots - 1:
+                break
+            n = max(1, int(caps[r[0]]))
+            taken = {i for x in reserved for i, h in enumerate(dark_hours) if x.start <= h < x.end}
+            free = [i for i in range(len(dark_hours)) if i not in taken]
+            if not free:
+                break
+            lo, hi = free[0], free[-1]
+            f = _good_flags(r, dark_hours, wx)[lo:hi + 1]
+            head_ok = len(f) >= n and all(f[:n])
+            tail_ok = len(f) >= n and all(f[-n:])
+            head_run = next((i for i, ok in enumerate(f) if not ok), len(f))
+            tail_run = next((i for i, ok in enumerate(reversed(f)) if not ok), len(f))
+            edge = None
+            if head_ok and (not tail_ok or head_run >= tail_run):
+                edge = list(range(lo, lo + n))
+            elif tail_ok:
+                edge = list(range(hi + 1 - n, hi + 1))
+            if not edge:
+                continue
+            reserved.append(Slot(r[0], dark_hours[edge[0]], dark_hours[edge[-1]] + timedelta(hours=1),
+                                 n, int(r[6])))
             # Those hours read as bad weather to everyone else, so the main
             # plan is laid out in what is left (an edge leaves no hole).
-            wx = dict(weather_by_hour)
             for i in edge:
                 wx[dark_hours[i].hour] = False
-            others = [x for x in rows if x[0] != r[0]]
-            rest = _plan_main_and_gaps(others, dark_hours, wx, min_slot_hours, max_slots - 1, caps)
-            plan = sorted(rest + [reserved], key=lambda s: s.start)
+        if reserved:
+            names = {x.name for x in reserved}
+            others = [x for x in rows if x[0] not in names]
+            rest = _plan_main_and_gaps(others, dark_hours, wx, min_slot_hours, max_slots - len(reserved), caps)
+            plan = sorted(rest + reserved, key=lambda x: x.start)
     return plan
 
 

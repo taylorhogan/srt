@@ -222,6 +222,25 @@ def test_edge_reservation_prefers_the_side_where_the_run_is_longer():
     assert [x.name for x in s] == ["a", "b", "v1"] and s[2].start == HOURS[7]
 
 
+def test_every_pinned_capped_target_is_reserved_stacking_from_the_edge():
+    # 2026-11-02: one main target filled the night, V1 got dusk and ngc7790,
+    # also pinned, was dropped every night
+    rows = [row("v1", "++++++++", priority=50), row("n7790", "++++++++", priority=50),
+            row("galaxy", "++++++++")]
+    s = plan_slots(rows, HOURS, WX_ALL, min_slot_hours=2, max_slots=4, max_hours={"v1": 1, "n7790": 0.5})
+    assert [x.name for x in s] == ["v1", "n7790", "galaxy"]
+    assert s[0].start == HOURS[0] and s[1].start == HOURS[1] and s[2].start == HOURS[2]
+    for x, y in zip(s, s[1:]):
+        assert x.end <= y.start
+
+
+def test_reservations_leave_at_least_one_main_slot():
+    rows = [row("v1", "++++++++", priority=50), row("n7790", "++++++++", priority=50),
+            row("galaxy", "++++++++")]
+    s = plan_slots(rows, HOURS, WX_ALL, min_slot_hours=2, max_slots=2, max_hours={"v1": 1, "n7790": 1})
+    assert [x.name for x in s] == ["v1", "galaxy"]
+
+
 def test_unpinned_capped_target_with_no_gap_is_skipped():
     rows = [row("a", "++++----"), row("b", "----++++"), row("v1", "++++++++")]
     s = plan_slots(rows, HOURS, WX_ALL, min_slot_hours=2, max_slots=3, max_hours={"v1": 1})
