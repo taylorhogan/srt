@@ -278,3 +278,12 @@ def test_stars_for_carries_the_distance_block():
     assert one[0]["distance"] == {"a_v": 0.3}
     many = lc.stars_for("ngc7790", (0, 0), {"stars": [{"name": "CF Cas", "ra_deg": 1.0, "dec_deg": 2.0, "distance": {"a_v": 1.5}}]})
     assert many[0]["distance"] == {"a_v": 1.5}
+
+
+def test_a_failed_night_fills_no_phase_bin():
+    good = [{"filter": "L", "mag": 18.6, "err": 0.03, "jd": 2455430.5 + 31.4 * (b + 0.5) / 10, "night": "n%d" % b}
+            for b in range(7)]
+    failed = {"filter": "L", "mag": 19.6, "err": 11.0, "jd": 2455430.5 + 31.4 * 0.85, "night": "bad"}
+    cov = lc.coverage(good + [failed], 31.4, 2455430.5)
+    assert cov["hit"] == 7 and 8 in cov["missing"] and not cov["complete"]   # V1's 2026-10-14 made it 8 of 10
+    assert lc.good_points(good + [failed]) == good

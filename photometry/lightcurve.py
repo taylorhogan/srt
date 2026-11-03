@@ -268,13 +268,19 @@ def obstructed(data, max_ratio: float = SKY_GRADIENT_MAX, min_adu: float = SKY_G
     return None
 
 
+def good_points(records: list, max_err: float = MAX_POINT_ERR) -> list:
+    """The nightly points that are measurements: one whose error is past
+    *max_err* is a failed night (V1's 2026-10-14, 11 mag) and is left out of
+    the mean, the coverage and the plot alike. Pure."""
+    return [r for r in records or [] if float(r.get("err") or 0.0) <= max_err]
+
+
 def mean_magnitude(records: list, filt: str = "L", max_err: float = MAX_POINT_ERR) -> tuple:
     """(intensity-mean magnitude, n) of the nightly points in *filt*. Pure.
     The mean of the fluxes, back to a magnitude: the mean of magnitudes
     weights the faint half of a cycle too much. A point whose error is past
     *max_err* is a failed night and left out."""
-    mags = [float(r["mag"]) for r in records or [] if r.get("filter") == filt and r.get("mag") is not None
-            and float(r.get("err") or 0.0) <= max_err]
+    mags = [float(r["mag"]) for r in good_points(records, max_err) if r.get("filter") == filt and r.get("mag") is not None]
     if not mags:
         return None, 0
     flux = sum(10 ** (-0.4 * m) for m in mags) / len(mags)
@@ -373,9 +379,10 @@ def coverage(records: list, period, epoch, bins: int = COVERAGE_BINS, min_bins: 
     *bins* phase bins; complete when at least *min_bins* of them hold a
     point. This is what "converged" means for a light-curve monitor (owner,
     2026-10-31): a curve it can draw, nothing to do with the stack's SNR.
-    A star with no period cannot complete: its curve has no end.
+    A star with no period cannot complete: its curve has no end. A failed
+    night fills no bin (it filled V1's bin 8 until 2026-11-03).
     """
-    recs = [r for r in records or [] if r.get("jd") is not None]
+    recs = [r for r in good_points(records) if r.get("jd") is not None]
     mine = [r for r in recs if r.get("filter") == filt] or recs
     out = {"bins": bins, "hit": 0, "nights": len({r.get("night") or r["jd"] for r in mine}),
            "missing": list(range(bins)), "complete": False}
@@ -781,7 +788,8 @@ def plot(dso: str, doc: dict, rec: dict) -> Path:
     SURF, INK, INK2, GRID = "#1a1a19", "#ffffff", "#c3c2b7", "#3a3a37"
     COL = {"L": "#f2c14e", "G": "#3fb950", "R": "#d95926", "B": "#3987e5", "V": "#3fb950"}
     period = rec.get("period_days"); epoch = rec.get("epoch_jd")
-    recs = doc["records"]
+    recs = good_points(doc["records"])
+    failed = len(doc["records"]) - len(recs)
     fig, axs = plt.subplots(1, 2 if period else 1, figsize=(16 if period else 11, 6), dpi=100, facecolor=SURF, squeeze=False)
     ax = axs[0][0]
     for fl in sorted({r["filter"] for r in recs}):
@@ -790,7 +798,8 @@ def plot(dso: str, doc: dict, rec: dict) -> Path:
         ax.errorbar(t, [r["mag"] for r in rr], yerr=[r["err"] for r in rr], fmt="o", ms=6, color=COL.get(fl, INK2),
                     ecolor=COL.get(fl, INK2), capsize=3, label="%s (%d night%s)" % (fl, len(rr), "" if len(rr) == 1 else "s"))
     ax.invert_yaxis(); ax.set_ylabel("magnitude (%s)" % SCALE, color=INK2); ax.xaxis.set_major_formatter(DateFormatter("%b %d"))
-    ax.set_title("%s: one point per night" % (rec.get("name") or dso), color=INK, fontsize=13, loc="left")
+    ax.set_title("%s: one point per night%s" % (rec.get("name") or dso, "" if not failed else
+                 " (%d failed point%s left out)" % (failed, "" if failed == 1 else "s")), color=INK, fontsize=13, loc="left")
     if period:
         px = axs[0][1]
         for fl in sorted({r["filter"] for r in recs}):
