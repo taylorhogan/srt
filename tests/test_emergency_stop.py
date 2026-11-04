@@ -302,7 +302,9 @@ def stop_env(tmp_path, monkeypatch):
     monkeypatch.setattr(suc.time, "sleep", lambda s: None)
     monkeypatch.setattr(suc, "turn_inside_light_on", lambda d: None)
     monkeypatch.setattr(suc, "set_imaging_state", lambda s: None)
-    monkeypatch.setattr(suc, "_power_down_after_close", lambda: calls.append("power_down"))
+    monkeypatch.setattr(suc, "_power_down_after_close",
+                        lambda pegasus=True: calls.append("power_down" if pegasus else "power_down_no_pegasus"))
+    monkeypatch.setattr(suc, "_power_off_pegasus_train", lambda: calls.append("pegasus") or True)
 
     async def fake_map(*a, **k):
         return {"Telescope mount": "m", "Roof motor": "r", "Iris inside light": "l"}
@@ -350,7 +352,7 @@ def test_stop_blind_parks_then_closes_on_a_fresh_read(stop_env):
     script([BLIND, (True, False, True, None)], ["not_parked", "parked"])
     suc._emergency_stop_body()
     assert calls.index("read") < calls.index("stop") < calls.index("park") < calls.index("close")
-    assert "power_down" in calls
+    assert "power_down_no_pegasus" in calls
     assert any("parking scope" in p for p in posts)
 
 
@@ -422,3 +424,24 @@ def test_light_curve_monitors_are_not_given_snr(monkeypatch):
     queue = {"hubblev1": {"dso": "hubblev1", "lightcurve": True}, "ic410": {"dso": "ic410"}}
     monkeypatch.setattr(suc.instructions, "get_instruction_by_dso", lambda d: queue.get(d))
     assert suc.eon_lightcurve_targets(["melotte15", "hubblev1", "ic410"]) == ["hubblev1"]
+
+
+def test_stop_switches_the_train_off_before_the_roof_moves(stop_env):
+    """Owner, 2026-11-03: a stop! closes like a normal night, ports off first
+    (the fan running made both stop! closes' audio read "bad")."""
+    calls, posts, pushes, script = stop_env
+    script([(True, False, True, None), (True, False, True, None)], ["parked", "parked"])
+    suc._emergency_stop_body()
+    assert calls.index("pegasus") < calls.index("close")
+    assert calls.count("pegasus") == 1 and "power_down_no_pegasus" in calls
+
+
+def test_power_down_can_leave_the_pegasus_step_out(monkeypatch):
+    order = []
+    monkeypatch.setattr(suc.utl_shelly, "set_dehumidifier", lambda on: order.append(("dehum", on)))
+    monkeypatch.setattr(suc.pegasus, "power_off_imaging_train",
+                        lambda: order.append("pegasus") or (True, {1: 0, 2: 0, 3: 0}))
+    monkeypatch.setattr(suc.pwi4_utils, "close_pwi4", lambda: order.append("pwi4") or "closed")
+    monkeypatch.setattr(suc.social_server, "post_social_message", lambda m: None)
+    suc._power_down_after_close(pegasus=False)
+    assert order == [("dehum", True), "pwi4"]

@@ -1343,10 +1343,11 @@ def _dehumidifier_on() -> bool:
         return False
 
 
-def _power_down_after_close() -> None:
+def _power_down_after_close(pegasus: bool = True) -> None:
     """What every stop! ends with once the roof is CONFIRMED closed (and so the
     scope confirmed parked): dehumidifier back on, PWI4 closed, then the three
-    Pegasus ports off (last).
+    Pegasus ports off (last). *pegasus* False when they went off before the
+    close, as on the roof-open branch (owner, 2026-11-03).
 
     All idempotent, so it does not matter that end.do_main() may already
     have switched the dehumidifier: the user's requirement is that a stop!
@@ -1355,7 +1356,8 @@ def _power_down_after_close() -> None:
     sequence's last step, which a stop! skips."""
     _dehumidifier_on()
     _close_pwi4()
-    _power_off_pegasus_train()
+    if pegasus:
+        _power_off_pegasus_train()
 
 
 def _close_pwi4() -> str:
@@ -1669,6 +1671,12 @@ def _emergency_stop_body() -> None:
             # cuts mount power first). It returns whether the roof was
             # CONFIRMED closed; a crash inside it counts as not confirmed.
             social_server.post_social_message("Scope parked — closing roof and shutting down")
+            # The imaging train goes off BEFORE the roof moves, as on a normal
+            # night (the N.I.N.A end sequence switches the ports off, then
+            # end.bat closes). Owner, 2026-11-03: the same close either way;
+            # with the fan running the roof audio read 23-24x its floor
+            # against 150-347x and judged both stop! closes "bad".
+            _power_off_pegasus_train()
             roof_closed = False
             try:
                 roof_closed = bool(end.do_main())
@@ -1695,13 +1703,12 @@ def _emergency_stop_body() -> None:
             except Exception:
                 _logger.exception("emergency: mount power-off backstop failed")
             if roof_closed:
-                _power_down_after_close()
+                _power_down_after_close(pegasus=False)
             else:
-                # The roof close is what the power-down waits on; do not
-                # dehumidify an open building or unpower the train while
-                # someone may still need to see or move it.
-                msg = ("EMERGENCY: roof NOT confirmed closed -- Pegasus ports left "
-                       "powered and dehumidifier left off; check the observatory")
+                # The roof close is what the rest of the power-down waits on;
+                # do not dehumidify an open building.
+                msg = ("EMERGENCY: roof NOT confirmed closed -- dehumidifier left off; "
+                       "check the observatory")
                 social_server.post_social_message(msg)
                 pushover.push_message(msg, inside_view)
         else:

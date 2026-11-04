@@ -66,8 +66,12 @@ where `status` says, do not type it. A night will not run in a hold, and the
 reminder repeats daily; that is cheaper than a roof driven into a scope.
 
 **Emergency stop:** `stop!` from anywhere. It kills N.I.N.A, parks the scope and
-closes the roof, asking the conductor at each step. It may park a scope whose
-roof it cannot see, under the evidence rule in CLAUDE.md.
+closes the roof, asking the conductor at each step. Like a normal night, the
+Pegasus imaging-train ports (camera, Gemini, fan) go off before the roof moves.
+It may park a scope whose roof it cannot see, under the evidence rule in
+CLAUDE.md. Its priority-2 push repeats every minute for an hour until
+acknowledged in the Pushover app; `resolve!` releases the hold but does not
+silence the push.
 
 ## 4. The queue and the pictures
 
