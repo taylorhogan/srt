@@ -210,3 +210,15 @@ def test_replan_reply_text():
     assert "ranking the queue again" in replan_reply_text({"accepted": True})
     assert "PRE_FLIGHT" in replan_reply_text({"accepted": False, "state": "PRE_FLIGHT",
                                               "guard": "no transition"})
+
+
+def test_one_slot_that_is_not_the_best_images_the_slot(monkeypatch):
+    # 2026-11-03 sunset: best hubblev1, one slot ngc2276 20-02; the sequence
+    # was hubblev1 until dawn and the slot never ran
+    got = []
+    monkeypatch.setattr(S, "_generate_nina_sequence",
+                        lambda name, hours, end=None, filters=None: got.append((name, hours, end)) or None)
+    end = datetime(2026, 11, 4, 2, 0, tzinfo=TZ)
+    slot = S.slot_plan.Slot("ngc2276", end - timedelta(hours=6), end, 5, 5)
+    S.generate_sequence_task.fn("hubblev1", 4, notify=False, slots=[slot])
+    assert got == [("ngc2276", 5.0, end)]

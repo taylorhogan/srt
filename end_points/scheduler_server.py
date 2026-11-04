@@ -767,6 +767,13 @@ def generate_sequence_task(dso_name: str, good_hours: float = 0.0, notify: bool 
             dso_name = " + ".join(s.name for s in slots)
             good_hours = float(sum(s.good_hours for s in slots))
         else:
+            if len(slots) == 1 and slots[0].name != dso_name:
+                # The plan's "best" is the top of the ranking, not what got a
+                # slot. 2026-11-03: the sunset forecast left one slot,
+                # ngc2276, and this wrote best=hubblev1 to run until dawn.
+                LOGGER.warning("One slot (%s), not the ranking's best (%s): imaging the slot",
+                               slots[0].name, dso_name)
+                dso_name, good_hours = slots[0].name, float(slots[0].good_hours)
             end = slots[0].end if slots and slots[0].name == dso_name else None
             preset = slots[0].filters if (plan_filters and slots and slots[0].name == dso_name) else None
             got = _generate_nina_sequence(dso_name, good_hours, end=end, filters=preset)
