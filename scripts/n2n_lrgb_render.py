@@ -887,26 +887,41 @@ def routine(args) -> int:
         # bright ones on the raw), pinned on every set from here
         palette_quiet=to_channels(den) if den else None)
     log_shared_measurements(raw_info, log)
+    # The ROUTINE stretch: the shared white from the raw set, sky-anchored
+    # blacks, the options' softening. Every morning composite is on it, and
+    # so is the crop, in every mode (below).
+    if args.auto_stretch:
+        log("auto stretch:")
+        auto = color_process.auto_stretch(subbed_raw, white, lum="L", log=log)
+        routine = {"blacks": auto["blacks"], "white": white, "soft": auto["softening"]}
+    else:
+        routine = {"blacks": sky_anchored_blacks(subbed_raw, args.black_sigma, opts["black_pct"], log,
+                                                 gains=raw_info.get("palette_gain")),
+                   "white": white, "soft": opts["softening"]}
     final_stretch = None
+    stretch = routine
     if getattr(args, "final", False):
         # The final product (D1): the class's targets on this field, with the
         # stretch's own confidence as the first QC check (auto_stretch_v2).
+        # The crop is NOT on it (owner, 2026-11-04): the first final of
+        # Melotte 15 set its white at 12 ADU from the extended signal before
+        # the x4.3 palette gain, against the routine's 114, and the crop
+        # pushed beside it was a saturated, grey-skied picture of a field the
+        # routine renders had shown right for a week. The crop is judged
+        # beside the routine renders, so it is cut on the routine stretch.
         cls = color_process.stretch_class(args.recipe)
         final_stretch = color_process.auto_stretch_v2(
             subbed_raw, cls, lum="L" if "L" in subbed_raw else None)
-        blacks, white, soft = final_stretch["blacks"], final_stretch["white"], final_stretch["softening"]
+        stretch = {"blacks": dict(final_stretch["blacks"]), "white": final_stretch["white"],
+                   "soft": final_stretch["softening"]}
         log(f"final stretch ({cls}): confident {final_stretch['confident']}"
             + (" -- " + "; ".join(final_stretch["why"]) if final_stretch["why"] else ""))
-    elif args.auto_stretch:
-        log("auto stretch:")
-        auto = color_process.auto_stretch(subbed_raw, white, lum="L", log=log)
-        blacks, soft = auto["blacks"], auto["softening"]
-    else:
-        blacks = sky_anchored_blacks(subbed_raw, args.black_sigma, opts["black_pct"], log,
-                                     gains=raw_info.get("palette_gain"))
-        soft = opts["softening"]
+    blacks, white, soft = stretch["blacks"], stretch["white"], stretch["soft"]
     log(f"stretch from raw: white {white:.2f} ADU, blacks "
         + ", ".join(f"{c} {v:.2f}" for c, v in sorted(blacks.items())))
+    if final_stretch is not None:
+        log(f"  the crop is cut on the routine stretch: white {routine['white']:.2f} ADU, blacks "
+            + ", ".join(f"{c} {v:.2f}" for c, v in sorted(routine["blacks"].items())))
     composites: dict = {}          # tag -> finished rgb, kept only for the final product
 
     # The auto crop (stacking/auto_crop, SHADOW since 2026-11-02): every
@@ -919,14 +934,13 @@ def routine(args) -> int:
     obj_type = getattr(args, "obj_type", "") or auto_crop.type_for(args.dso, _root)
     log(f"auto crop: {crop_mode}, type {obj_type}")
 
-    def st(chan, black):
-        y = np.clip((chan - black) / max(white - black, 1e-6), 0.0, 1.0)
-        return np.arcsinh(y / soft) / np.arcsinh(1.0 / soft)
-
     from PIL import Image
     written = []
 
     from stacking import stacker
+
+    look = {"scnr": opts["scnr"], "saturation": args.saturation,
+            "star_img": star_img, "star_mask": star_mask_arr}
 
     def emit(subbed, tag):
         # HALRGB: R and L are the blended planes; HA is the raw Ha stack and
@@ -934,18 +948,12 @@ def routine(args) -> int:
         # zero-floored, so it has no sky to anchor to).
         names = {**mapping, "HA_EXCESS": "Ha_excess", "LSYN": "Lsyn"}
         if "LSYN" in subbed and "LSYN" not in blacks:
-            # A synthetic luminance (stacking/deblur.synthetic_luminance, a
-            # set with no L): one black for the pair, the same weighted sum
-            # of the planes' blacks, so it sits on the pinned stretch.
-            from stacking.deblur import LUM_WEIGHTS
-            present = {c: LUM_WEIGHTS[c] for c in ("R", "G", "B") if c in blacks}
-            tot = sum(present.values()) or 1.0
-            blacks["LSYN"] = blacks["LSYN_REF"] = sum(w / tot * blacks[c] for c, w in present.items())
+            synthetic_black(blacks)
             log(f"  synthetic L black {blacks['LSYN']:.2f} ADU from the planes' blacks")
         for ch in ("R", "G", "B", "L", "HA", "HA_EXCESS", "LSYN"):
             if ch not in subbed:
                 continue
-            mono = st(subbed[ch], blacks.get(ch, 0.0))
+            mono = stretch_plane(subbed[ch], blacks.get(ch, 0.0), white, soft)
             arr = stacker.sky_parity((np.clip(np.nan_to_num(mono), 0, 1) * 255).astype(np.uint8))
             img = Image.fromarray(arr, mode="L")
             mx = color_process.CHANNEL_JPG_MAX_PX
@@ -956,42 +964,29 @@ def routine(args) -> int:
             pth = out_dir / f"{args.dso}_{args.recipe}_{tag}_{names[ch]}.jpg"
             img.save(pth, quality=92, optimize=True)
             written.append(pth)
-        rgb = np.dstack([st(subbed[c], blacks[c]) for c in ("R", "G", "B")])
-        if opts["scnr"] > 0:
-            rgb = color_process._scnr(rgb, float(np.clip(opts["scnr"], 0, 1)))
-        if "L" in subbed:
-            lum = st(subbed["L"], blacks["L"])
-            rl = rgb @ np.array([0.299, 0.587, 0.114], dtype=np.float32)
-            with np.errstate(divide="ignore", invalid="ignore"):
-                sc = np.where(rl > 1e-4, lum / np.maximum(rl, 1e-4), 0.0)
-            rgb = rgb * np.clip(sc, 0.0, color_process.MAX_LUM_BOOST)[:, :, None]
-        elif "LSYN" in subbed and "LSYN_REF" in subbed:
-            rgb = rgb * color_process.synthetic_gain(
-                st(subbed["LSYN"], blacks["LSYN"]), st(subbed["LSYN_REF"], blacks["LSYN_REF"]))[:, :, None]
-        if args.saturation != 1.0:
-            # Chroma scaled about each pixel's own luminance, so brightness is
-            # untouched and only the colour difference from grey grows (or
-            # shrinks). Applied before the star recolouring: the stars keep
-            # the colour the RGB stacks gave them.
-            rgb = np.clip(np.nan_to_num(rgb), 0, 1)
-            y = (rgb @ np.array([0.299, 0.587, 0.114], dtype=np.float32))[:, :, None]
-            rgb = y + (rgb - y) * float(args.saturation)
-        if star_mask_arr is not None:
-            rgb = color_process.rgb_stars(np.clip(np.nan_to_num(rgb), 0, 1), star_img, star_mask_arr)
-        rgb = np.clip(np.nan_to_num(rgb), 0, 1)
+        rgb = compose_rgb(subbed, blacks, white, soft, **look)
         pth = color_process.save_rgb(rgb, out_dir / f"{args.dso}_{args.recipe}_{tag}.jpg",
                                      max_px=args.max_px)
         written.append(pth)
         if crop_mode != "off":
             try:
-                rec = auto_crop.propose(rgb, obj_type)
+                src = rgb
+                if final_stretch is not None:
+                    # the crop is judged beside the routine renders: cut it on
+                    # the routine stretch, not the final's
+                    if "LSYN" in subbed and "LSYN" not in routine["blacks"]:
+                        synthetic_black(routine["blacks"])
+                    src = compose_rgb(subbed, routine["blacks"], routine["white"], routine["soft"], **look)
+                rec = auto_crop.propose(src, obj_type)
                 rec["tag"] = tag
-                rec["box_on_jpg"] = auto_crop.scaled_box(rec["box"], rgb.shape, args.max_px)
+                rec["stretch"] = "routine"      # never the final's (above)
+                rec["box_on_jpg"] = auto_crop.scaled_box(rec["box"], src.shape, args.max_px)
                 crops[tag] = rec
-                log("  " + auto_crop.describe(rec))
+                log("  " + auto_crop.describe(rec)
+                    + (" (on the routine stretch)" if src is not rgb else ""))
                 if not rec["full"]:
                     written.append(color_process.save_rgb(
-                        auto_crop.crop(rgb, rec["box"]),
+                        auto_crop.crop(src, rec["box"]),
                         out_dir / f"{args.dso}_{args.recipe}_{tag}_crop.jpg", max_px=args.max_px))
             except Exception as e:  # noqa: BLE001 -- a crop must never cost the render
                 log(f"  crop (shadow) failed: {type(e).__name__}: {e}")
@@ -1059,6 +1054,58 @@ def routine(args) -> int:
     elif args.push:
         push_render(args, out_dir, written, meta, log, crops=crops)
     return 0
+
+
+def stretch_plane(chan, black: float, white: float, soft: float):
+    """One plane onto 0..1: linear between black and white, then arcsinh
+    softened. The routine's stretch, the same for every plane and set."""
+    y = np.clip((chan - black) / max(white - black, 1e-6), 0.0, 1.0)
+    return np.arcsinh(y / soft) / np.arcsinh(1.0 / soft)
+
+
+def synthetic_black(blacks: dict) -> dict:
+    """A synthetic luminance (stacking/deblur.synthetic_luminance, a set with
+    no L) gets one black for the pair: the same weighted sum of the planes'
+    blacks, so it sits on the pinned stretch. In place; returns *blacks*."""
+    from stacking.deblur import LUM_WEIGHTS
+    present = {c: LUM_WEIGHTS[c] for c in ("R", "G", "B") if c in blacks}
+    tot = sum(present.values()) or 1.0
+    blacks["LSYN"] = blacks["LSYN_REF"] = sum(w / tot * blacks[c] for c, w in present.items())
+    return blacks
+
+
+def compose_rgb(subbed: dict, blacks: dict, white: float, soft: float, *, scnr: float = 0.0,
+                saturation: float = 1.0, star_img=None, star_mask=None) -> np.ndarray:
+    """The finished composite of one set on one stretch: R, G, B stretched,
+    SCNR, lit by L (or by the synthetic L's sharpened/unsharpened ratio),
+    chroma scaled about each pixel's luminance, the stars recoloured. Pure
+    in *subbed*; the stretch is whatever is passed, which is how the final's
+    stretch and the routine's are drawn from the same planes."""
+    from stacking import color_process
+    rgb = np.dstack([stretch_plane(subbed[c], blacks[c], white, soft) for c in ("R", "G", "B")])
+    if scnr > 0:
+        rgb = color_process._scnr(rgb, float(np.clip(scnr, 0, 1)))
+    if "L" in subbed:
+        lum = stretch_plane(subbed["L"], blacks["L"], white, soft)
+        rl = rgb @ np.array([0.299, 0.587, 0.114], dtype=np.float32)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            sc = np.where(rl > 1e-4, lum / np.maximum(rl, 1e-4), 0.0)
+        rgb = rgb * np.clip(sc, 0.0, color_process.MAX_LUM_BOOST)[:, :, None]
+    elif "LSYN" in subbed and "LSYN_REF" in subbed:
+        rgb = rgb * color_process.synthetic_gain(
+            stretch_plane(subbed["LSYN"], blacks["LSYN"], white, soft),
+            stretch_plane(subbed["LSYN_REF"], blacks["LSYN_REF"], white, soft))[:, :, None]
+    if saturation != 1.0:
+        # Chroma scaled about each pixel's own luminance, so brightness is
+        # untouched and only the colour difference from grey grows (or
+        # shrinks). Applied before the star recolouring: the stars keep
+        # the colour the RGB stacks gave them.
+        rgb = np.clip(np.nan_to_num(rgb), 0, 1)
+        y = (rgb @ np.array([0.299, 0.587, 0.114], dtype=np.float32))[:, :, None]
+        rgb = y + (rgb - y) * float(saturation)
+    if star_mask is not None:
+        rgb = color_process.rgb_stars(np.clip(np.nan_to_num(rgb), 0, 1), star_img, star_mask)
+    return np.clip(np.nan_to_num(rgb), 0, 1)
 
 
 def final_record(dso: str, recipe: str, tag: str, stretch: dict, qc: dict, meta: dict,
