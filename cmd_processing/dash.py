@@ -688,7 +688,7 @@ def build(cfg: dict) -> dict:
     out["dew"] = read_dew()
     # The sky camera's newest frame (?part=view); the display fetches the
     # picture only when this id changes.
-    out["view"] = sky_view_info(newest_sky_frame(_capture_dir(cfg)))
+    out["view"] = sky_view_info(view_frame(newest_sky_frame(_capture_dir(cfg)), read_seen())[0])
     out["fw"] = firmware_info()
     return out
 
@@ -818,14 +818,96 @@ def view_jpeg(path: Path) -> Optional[bytes]:
         return None
 
 
+# At night the page is a chart instead (owner 2026-11-04): the catalog stars
+# the sky camera actually detected in the frame, black on white inside the
+# circle inscribed in the photo's square. Drawn in the frame's own pixels
+# through the same crop, so it turns exactly as the camera does and a star
+# sits where the photo would show it. Size follows catalog magnitude.
+# The stars come from scripts/sky_monitor, which detects and matches every
+# night frame anyway (~35 s here); it counts only at night, so a frame with a
+# record is a night frame. Detection lags the capture, so at night the page
+# shows the newest frame that has its record, at most one frame behind.
+SEEN_STARS = ROOT / "local" / "sky_seen_stars.json"
+CHART_MAX_LAG_S = 6 * 60
+_chart = {"key": None, "jpeg": None}
+
+
+def _stamp(path: Path) -> Optional[datetime]:
+    m = re.match(r"sky_(\d{8}T\d{6})Z\.jpg$", path.name)
+    return datetime.strptime(m.group(1), "%Y%m%dT%H%M%S") if m else None
+
+
+def read_seen() -> Optional[dict]:
+    try:
+        return json.loads(SEEN_STARS.read_text())
+    except (OSError, ValueError):
+        return None
+
+
+def view_frame(newest: Optional[Path], seen: Optional[dict]) -> tuple:
+    """(frame, stars or None) the sky page shows. Pure.
+
+    The chart's frame when its record is no more than CHART_MAX_LAG_S behind
+    the newest frame (night); else the newest frame as a photo (day)."""
+    if newest is None:
+        return None, None
+    if seen and seen.get("frame"):
+        base = newest.parent.parent if newest.parent.name == "keep" else newest.parent
+        p = base / seen["frame"]
+        if not p.exists():
+            p = base / "keep" / seen["frame"]       # bursts move frames there
+        a, b = _stamp(p), _stamp(newest)
+        if a and b and 0 <= (b - a).total_seconds() <= CHART_MAX_LAG_S:
+            return p, seen.get("stars") or []
+    return newest, None
+
+
+def chart_image(xs, ys, mags, w: int = 2560, h: int = 1440):
+    """The VIEW_PX square chart of stars given in frame pixels, as a PIL image. Pure."""
+    from PIL import Image, ImageDraw
+    s = h - VIEW_TOP
+    x0, k = w // 2 - s // 2, VIEW_PX / s          # the photo's crop, scaled the same way
+    im = Image.new("RGB", (VIEW_PX, VIEW_PX), "white")
+    dr = ImageDraw.Draw(im)
+    c, r = VIEW_PX / 2, VIEW_PX / 2 - 1
+    dr.ellipse((c - r, c - r, c + r, c + r), outline="black")
+    for x, y, m in sorted(zip(xs, ys, mags), key=lambda t: -t[2]):
+        u, v = (x - x0) * k, (y - VIEW_TOP) * k
+        if (u - c) ** 2 + (v - c) ** 2 > (r - 2) ** 2:
+            continue
+        rad = min(5.0, max(0.8, 0.6 + 0.8 * (5.0 - m)))
+        dr.ellipse((u - rad, v - rad, u + rad, v + rad), fill="black")
+    return im
+
+
+def chart_jpeg(path: Path, stars: list) -> Optional[bytes]:
+    if _chart["key"] == path.name:
+        return _chart["jpeg"]
+    try:
+        import io
+        from PIL import Image
+        w, h = Image.open(path).size
+        xs, ys, ms = zip(*stars) if stars else ((), (), ())
+        buf = io.BytesIO()
+        chart_image(xs, ys, ms, w=w, h=h).save(buf, "JPEG", quality=90, progressive=False)
+        _chart.update(key=path.name, jpeg=buf.getvalue())
+        return _chart["jpeg"]
+    except Exception:  # noqa: BLE001 -- the photo is the fallback
+        _logger.debug("dash sky chart failed for %s", path, exc_info=True)
+        return None
+
+
 def _capture_dir(cfg: dict) -> Path:
     return ROOT / cfg.get("sky camera", {}).get("capture_dir", "local/sky_frames")
 
 
 def view(cfg: dict) -> Optional[bytes]:
-    """The sky camera's newest frame as a 240 x 240 JPEG (GET /api/dash?part=view)."""
-    p = newest_sky_frame(_capture_dir(cfg))
-    return view_jpeg(p) if p else None
+    """The sky page as a 240 x 240 JPEG (GET /api/dash?part=view): the star
+    chart at night, the camera's picture by day or if the chart fails."""
+    p, stars = view_frame(newest_sky_frame(_capture_dir(cfg)), read_seen())
+    if p is None:
+        return None
+    return (chart_jpeg(p, stars) if stars is not None else None) or view_jpeg(p)
 
 
 def image(cfg: dict) -> Optional[bytes]:

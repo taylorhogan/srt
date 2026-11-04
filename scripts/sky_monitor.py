@@ -45,6 +45,7 @@ from sentry import (plate_solve, rain_detect, sky_annotate, sky_archive,
 from scripts import live_push
 
 ROOT = Path(__file__).resolve().parents[1]
+SEEN_STARS = ROOT / "local" / "sky_seen_stars.json"
 
 
 def _last_good_captured():
@@ -342,6 +343,14 @@ def _add_photometry(status, frame, res):
         v = plate_solve.verify(sol, frame, when, res["_stars"])
         status["solve_matches"] = v["matches"]
         status["solve_residual_px"] = v["residual_px"]
+        # The catalogue stars this frame saw, for the Core2's night chart
+        # (cmd_processing/dash.py reads it; detection is too slow to redo there).
+        try:
+            SEEN_STARS.write_text(json.dumps({
+                "frame": Path(frame).name,
+                "stars": plate_solve.seen_catalogue(sol, when, res["_stars"])}))
+        except Exception:  # noqa: BLE001 -- the chart is extra
+            pass
         # Whether a bright moon is up: the sky line below says to read it low.
         try:
             from sentry import dusk_check

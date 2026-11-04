@@ -250,3 +250,38 @@ def test_sky_view_does_not_blow_up_a_flat_frame(tmp_path):
     Image.fromarray(a).save(p)
     out = np.asarray(Image.open(io.BytesIO(dash.view_jpeg(p)))).astype(float)
     assert out.std() < 40 and np.median(out) < 128      # stays a dark, quiet sky
+
+
+def test_night_page_is_the_chart_of_the_newest_frame_with_stars(tmp_path):
+    """Owner 2026-11-04: at night the sky page is a chart of the catalog stars
+    the camera saw; by day (no record near the newest frame) it is the photo."""
+    from cmd_processing import dash
+    (tmp_path / "keep").mkdir()
+    old = tmp_path / "sky_20261104T065458Z.jpg"
+    new = tmp_path / "sky_20261104T065958Z.jpg"
+    for p in (old, new):
+        p.write_bytes(b"x")
+    seen = {"frame": old.name, "stars": [[1280.0, 790.0, 1.0]]}
+    assert dash.view_frame(new, seen) == (old, [[1280.0, 790.0, 1.0]])     # one frame behind
+    day = tmp_path / "sky_20261104T150458Z.jpg"
+    day.write_bytes(b"x")
+    assert dash.view_frame(day, seen) == (day, None)                       # stale record: photo
+    assert dash.view_frame(new, None) == (new, None)
+    burst = tmp_path / "keep" / "sky_20261104T065800Z.jpg"
+    burst.write_bytes(b"x")
+    assert dash.view_frame(burst, seen)[0] == old
+    assert dash.view_frame(None, seen) == (None, None)
+
+
+def test_chart_draws_a_star_where_the_photo_crop_puts_it():
+    """Same crop and scale as view_jpeg, so the chart turns with the camera."""
+    import pytest
+    np = pytest.importorskip("numpy")
+    pytest.importorskip("PIL")
+    from cmd_processing import dash
+    s = 1440 - dash.VIEW_TOP
+    x, y = 1280 - s // 2 + s * 0.3, dash.VIEW_TOP + s * 0.6               # 30 % across, 60 % down
+    a = np.asarray(dash.chart_image([x, 5.0], [y, 5.0], [0.5, 0.5]).convert("L"))
+    assert a.shape == (240, 240)
+    assert a[int(0.6 * 240), int(0.3 * 240)] < 50                          # black star, there
+    assert a[120, 120] > 200 and a[2:10, 2:10].min() > 200                 # white; corner star clipped

@@ -450,6 +450,20 @@ def verify(sol, frame, when=None, dets=None, tol_px=8.0, profile=None, mag_limit
             if good.sum() else None}
 
 
+def seen_catalogue(sol, when, dets, tol_px=8.0):
+    """[(x, y, vmag)] in frame pixels of the catalogue stars a detection list
+    found, matched as verify() matches them. The Core2's night chart."""
+    if not dets:
+        return []
+    alt, az, vmag, _ra, _dec = bright_stars.above_horizon(when)
+    x, y, th = cam_to_pix(unit_from_altaz(az, alt) @ np.asarray(sol["R"]).T,
+                          sol["cx"], sol["cy"], sol["F"], sol["model"], sol["flip"])
+    d, _i = cKDTree([(s["x"], s["y"]) for s in dets]).query(np.stack([x, y], 1))
+    hit = (th < 1.45) & (d < tol_px)
+    return [(round(float(a), 1), round(float(b), 1), round(float(m), 2))
+            for a, b, m in zip(x[hit], y[hit], np.asarray(vmag)[hit])]
+
+
 def seen_to_mag(rows, max_mag=5.0):
     """{"n", "found"} summed over the completeness rows labelled `max_mag` or
     brighter: the sky page's "catalogue stars to magnitude 5 seen" is the
