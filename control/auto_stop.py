@@ -253,6 +253,46 @@ def describe(found: list, live: bool) -> str:
     return "\n".join(lines)
 
 
+# A converged target already in the site's gallery was published (by hand or
+# by D4) and is completed (owner 2026-11-04: IC 410 and Melotte 15 sat at
+# converged for two days after they were on the site). Matched on the entry's
+# id, title or picture name only: a target merely named in another entry's
+# write-up (NGC 7320 in the Quintet's) is not published.
+SITE_URL = "https://irisscience.org/"
+COMPLETED = "completed"
+
+
+def published(rows: list, articles: list) -> list:
+    """[(dso, gallery entry id)] of converged rows the gallery shows. Pure."""
+    from scripts import astro_output as ao
+    out = []
+    for r in rows:
+        if r.get("status") != CONVERGED or not r.get("dso"):
+            continue
+        m = ao.site_match(r["dso"], [], articles)
+        if m and m[1] in ("id", "title", "image"):
+            out.append((r["dso"], m[0]["id"]))
+    return out
+
+
+def site_articles(timeout: float = 10.0) -> list:
+    """The live gallery's entries, else the local site checkout's, else []."""
+    from scripts import astro_output as ao
+    try:
+        import requests
+        resp = requests.get(SITE_URL, timeout=timeout)
+        resp.raise_for_status()
+        arts = ao.gallery_articles(resp.text)
+        if arts:
+            return arts
+    except Exception:  # noqa: BLE001 -- the checkout may be behind, but it is something
+        _logger.warning("auto-stop: %s unreadable; using the local site checkout", SITE_URL)
+    try:
+        return ao.gallery_articles((ao.SITE / "index.html").read_text(encoding="utf-8"))
+    except OSError:
+        return []
+
+
 # ------------------------------------------------------------------ live inputs
 
 TYPE_WORDS = {"G": "galaxy", "N": "nebula"}     # the grid's letter -> the queue row's obj_type

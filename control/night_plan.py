@@ -494,6 +494,22 @@ def refresh_queue() -> None:
                             _logger.exception("cap push failed")
     except Exception:
         _logger.exception("auto-stop (live) failed; the queue stands")
+    try:
+        # A converged target already in the site's gallery is completed.
+        from configs import config
+        from control import auto_stop
+        cfg = config.data()
+        path = os.path.join(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")),
+                            cfg["location"]["instructions"])
+        with open(path, encoding="utf-8") as f:
+            rows = json.load(f)
+        if any(r.get("status") == auto_stop.CONVERGED for r in rows):
+            for dso, entry in auto_stop.published(rows, auto_stop.site_articles()):
+                if instructions.set_status_db(dso, auto_stop.COMPLETED,
+                                              why="on the site (gallery entry %s)" % entry, who="auto_stop"):
+                    _logger.info("auto-stop: %s -> completed (on the site as %s)", dso, entry)
+    except Exception:
+        _logger.exception("published check failed; the queue stands")
 
 
 if __name__ == "__main__":

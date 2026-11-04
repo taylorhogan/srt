@@ -236,3 +236,18 @@ def test_is_finished_needs_both_verdicts_or_the_cap(monkeypatch):
     assert A.is_finished("nothing", {}, cfg) is False
     look = A.finished_lookup([{"dso": "Both"}, {"dso": "curve"}], cfg)
     assert look("both") is True and look("curve") is False
+
+
+def test_a_converged_target_in_the_gallery_is_published():
+    """Owner 2026-11-04: IC 410 and Melotte 15 stayed converged after their
+    hand publish. Only the entry's own id/title/picture counts, never a
+    mention in another write-up, and only converged rows are touched."""
+    from control import auto_stop
+    arts = [{"id": "ic410", "title": "IC410 - The Tadpoles Nebula", "image": "ic410.jpg", "text": ""},
+            {"id": "stephans-quintet", "title": "HCG92 - Stephan's Quintet", "image": "q.jpg",
+             "text": "NGC 7320 sits in front of the group"}]
+    rows = [{"dso": "ic410", "status": "converged"},
+            {"dso": "ngc7320", "status": "converged"},     # named in the text only
+            {"dso": "hcg92", "status": "waiting"},         # on the site but still being imaged
+            {"dso": "melotte15", "status": "converged"}]   # not on the site
+    assert auto_stop.published(rows, arts) == [("ic410", "ic410")]
