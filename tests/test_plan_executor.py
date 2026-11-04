@@ -258,10 +258,10 @@ def test_a_file_that_does_not_say_what_was_announced_is_refused_and_moved_aside(
     assert not out.exists() and (tmp_path / "full_for_tonight.refused.json").exists()
     assert posts and posts[-1].startswith("⛔ Sequence REFUSED for ngc2276")
     assert pushes == [(posts[-1][2:], 1)]
-    # the same refusal again the same day: said in the chat, not pushed twice
+    # the same refusal again the same day (the loop retries every minute): said once
     with pytest.raises(SequenceLintError):
         S.generate_sequence_task.fn("ngc2276", 5, notify=False, slots=[slot])
-    assert len(pushes) == 1 and len(posts) == 2
+    assert len(pushes) == 1 and len(posts) == 1
 
 
 def test_a_file_that_says_what_was_announced_is_kept(monkeypatch, tmp_path):

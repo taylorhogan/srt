@@ -1433,11 +1433,19 @@ def announced_vs_written(slots, path) -> list:
         if not counts:
             problems.append("%s: no exposure blocks in the file" % name)
         got_end = ends.get(got_name)
-        if end is not None and got_end is not None:
-            w = wall_clock(end)
-            if (w.hour, w.minute) != tuple(got_end):
-                problems.append("%s: announced to end %02d:%02d, the file stops at %02d:%02d"
-                                % (name, w.hour, w.minute, got_end[0], got_end[1]))
+        start = getattr(slots[k - 1], "start", None)
+        if end is not None and got_end is not None and start is not None:
+            # Only a file that runs PAST the announced end is refused. An
+            # earlier end is the generator's own max_hours cap (2026-11-04
+            # noon: ngc7790's slot ends 21:00, its 30-min cap ends it 20:30,
+            # and this refused a correct file every minute for an hour).
+            # Minutes from the slot's start, so a slot across midnight compares.
+            ws, we = wall_clock(start), wall_clock(end)
+            announced = (we.hour * 60 + we.minute - ws.hour * 60 - ws.minute) % 1440
+            written = (got_end[0] * 60 + got_end[1] - ws.hour * 60 - ws.minute) % 1440
+            if written > announced:
+                problems.append("%s: announced to end %02d:%02d, the file runs to %02d:%02d"
+                                % (name, we.hour, we.minute, got_end[0], got_end[1]))
     return problems
 
 

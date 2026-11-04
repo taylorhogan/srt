@@ -772,13 +772,15 @@ def _refuse_unless_announced(slots, output_path: Path, dso_name: str) -> None:
            "N.I.N.A has nothing to load tonight until the plan and the file agree."
            % (dso_name, "; ".join(problems), where))
     LOGGER.error(msg)
-    try:
-        social_server.post_social_message("⛔ " + msg)
-    except Exception:
-        LOGGER.exception("could not post the refusal")
     key = (_local_now().date().isoformat(), tuple(problems))
     if key != (_REFUSED["day"], _REFUSED["key"]):
+        # once per distinct problem per day, chat and push alike: the
+        # scheduler loop retries a failed noon every minute
         _REFUSED["day"], _REFUSED["key"] = key
+        try:
+            social_server.post_social_message("⛔ " + msg)
+        except Exception:
+            LOGGER.exception("could not post the refusal")
         try:
             pushover.push_message(msg, priority=1)
         except Exception:

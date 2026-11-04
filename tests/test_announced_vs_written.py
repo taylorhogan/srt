@@ -103,7 +103,7 @@ def test_count_order_exposures_and_end_are_each_a_problem(tmp_path):
     problems = g.announced_vs_written(slots, p)
     assert any(p_.startswith("announced 4 slot(s)") for p_ in problems)
     assert "b: no exposure blocks in the file" in problems
-    assert "b: announced to end 21:00, the file stops at 23:00" in problems
+    assert "b: announced to end 21:00, the file runs to 23:00" in problems
     # swapped order
     (tmp_path / "x").mkdir()
     swapped = _file(tmp_path / "x", [_target(100, "a", (20, 0), {"L": 4}),
@@ -116,3 +116,18 @@ def test_no_slots_and_an_unreadable_file(tmp_path):
     assert g.announced_vs_written([], tmp_path / "missing.json") == []
     got = g.announced_vs_written([_slot("a", 19, 20)], tmp_path / "missing.json")
     assert len(got) == 1 and got[0].startswith("the written sequence could not be read back")
+
+
+def test_an_earlier_end_is_the_max_hours_cap_and_passes(tmp_path):
+    # 2026-11-04 noon: ngc7790 slot 20:00-21:00, capped at 30 min -> the file ends 20:30
+    p = _file(tmp_path, [_target(100, "ngc7790", (20, 30), {"L": 12, "G": 6})])
+    assert g.announced_vs_written([_slot("ngc7790", 20, 21)], p) == []
+
+
+def test_ends_compare_across_midnight(tmp_path):
+    ok = _file(tmp_path, [_target(100, "ngc2276", (1, 30), {"L": 4})])
+    assert g.announced_vs_written([_slot("ngc2276", 21, 2)], ok) == []
+    (tmp_path / "late").mkdir()
+    late = _file(tmp_path / "late", [_target(100, "ngc2276", (4, 0), {"L": 4})])
+    assert g.announced_vs_written([_slot("ngc2276", 21, 2)], late) == [
+        "ngc2276: announced to end 02:00, the file runs to 04:00"]
