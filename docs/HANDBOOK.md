@@ -48,6 +48,7 @@ is one push. Priority 0 is a notice.
 | `Iris morning watch` (1) | The Spark's morning run is missing, skipped or failed. | On the Spark, `tail /tmp/morning_trigger.log`; run `scripts/morning_trigger.py` by hand. |
 | `<child> exited (code); relaunching` (1) | start_srt restarted a dead scheduler or conductor. | Nothing. Twice a day: read iris.log. |
 | `... give up` (2) | A process crashed five times in ten minutes. | Restart start_srt (section 6) after reading the log. |
+| `Iris: the sunset plan dropped <dso> (noon had ...; now ...)` (0) | The fresher forecast at the sunset check took a target the noon plan had. The night runs the new plan. | Nothing, unless you want the dropped one anyway: then `hold` the others before sunset next time, or image by hand. |
 | `FINAL <dso> <recipe> -- QC PASS/FAIL` (0) | A converged target's final render and its verdict. | A card follows in the chat (section 4). |
 
 ## 3. The holds, and the commands that release them

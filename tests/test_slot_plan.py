@@ -241,6 +241,16 @@ def test_reservations_leave_at_least_one_main_slot():
     assert [x.name for x in s] == ["v1", "galaxy"]
 
 
+def test_a_clouded_first_hour_moves_the_edge_to_the_first_clear_one():
+    # 2026-11-03 sunset: 19:00 clouded, both monitors dropped though 20:00 was clear
+    wx = dict(WX_ALL); wx[HOURS[0].hour] = False
+    rows = [row("v1", "++++++--", priority=50), row("n7790", "++++++--", priority=50),
+            row("galaxy", "++++++++")]
+    s = plan_slots(rows, HOURS, wx, min_slot_hours=2, max_slots=4, max_hours={"v1": 1, "n7790": 0.5})
+    assert [x.name for x in s] == ["v1", "n7790", "galaxy"]
+    assert s[0].start == HOURS[1] and s[1].start == HOURS[2] and s[2].start == HOURS[3]
+
+
 def test_unpinned_capped_target_with_no_gap_is_skipped():
     rows = [row("a", "++++----"), row("b", "----++++"), row("v1", "++++++++")]
     s = plan_slots(rows, HOURS, WX_ALL, min_slot_hours=2, max_slots=3, max_hours={"v1": 1})
@@ -298,3 +308,4 @@ def test_two_capped_targets_share_a_two_hour_gap_on_a_four_slot_night():
     assert {x.name for x in s4[1:3]} == {"n7790", "v1"}
     for x, y in zip(s4, s4[1:]):
         assert x.end <= y.start
+

@@ -131,25 +131,35 @@ def plan_slots(rows, dark_hours, weather_by_hour, min_slot_hours: float = 2.0,
         # filling the night ngc7790 lost to V1 every night).
         wx = dict(weather_by_hour)
         reserved = []
+        head, tail = 0, len(dark_hours) - 1
+
+        def clouded(i):
+            return not wx.get(dark_hours[i].hour, False)
+
         for r in missing:
-            if len(reserved) >= max_slots - 1:
+            # An hour the forecast clouds is lost to every target, so the edge
+            # is the first and last CLEAR hour of what is left (2026-11-03: a
+            # cloudy 19:00 put the edge there and both Cepheids lost the night
+            # though 20:00 was clear for them).
+            while head <= tail and clouded(head):
+                head += 1
+            while tail >= head and clouded(tail):
+                tail -= 1
+            if len(reserved) >= max_slots - 1 or head > tail:
                 break
             n = max(1, int(caps[r[0]]))
-            taken = {i for x in reserved for i, h in enumerate(dark_hours) if x.start <= h < x.end}
-            free = [i for i in range(len(dark_hours)) if i not in taken]
-            if not free:
-                break
-            lo, hi = free[0], free[-1]
-            f = _good_flags(r, dark_hours, wx)[lo:hi + 1]
+            f = _good_flags(r, dark_hours, wx)[head:tail + 1]
             head_ok = len(f) >= n and all(f[:n])
             tail_ok = len(f) >= n and all(f[-n:])
             head_run = next((i for i, ok in enumerate(f) if not ok), len(f))
             tail_run = next((i for i, ok in enumerate(reversed(f)) if not ok), len(f))
             edge = None
             if head_ok and (not tail_ok or head_run >= tail_run):
-                edge = list(range(lo, lo + n))
+                edge = list(range(head, head + n))
+                head += n
             elif tail_ok:
-                edge = list(range(hi + 1 - n, hi + 1))
+                edge = list(range(tail + 1 - n, tail + 1))
+                tail -= n
             if not edge:
                 continue
             reserved.append(Slot(r[0], dark_hours[edge[0]], dark_hours[edge[-1]] + timedelta(hours=1),

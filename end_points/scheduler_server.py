@@ -1144,7 +1144,20 @@ def _carry_out_replan(rec: dict):
     return slots
 
 
-def _carry_out_sunset(rec: dict, noon_name: str) -> None:
+def sunset_change_text(noon_slots, sunset_slots) -> Optional[str]:
+    """The push for a sunset plan that dropped a target the noon plan had, or
+    None. Pure. 2026-11-03: the sunset forecast took 19:00, both Cepheids
+    fell out, and the only word of it was a chat line nobody was reading."""
+    before = [s.name for s in noon_slots or []]
+    after = [s.name for s in sunset_slots or []]
+    dropped = [n for n in before if n not in after]
+    if not dropped:
+        return None
+    return ("Iris: the sunset plan dropped %s (noon had %s; now %s)"
+            % (", ".join(dropped), ", ".join(before), ", ".join(after) or "nothing"))
+
+
+def _carry_out_sunset(rec: dict, noon_name: str, noon_slots=None) -> None:
     plan = rec["plan"]
     best, hours = plan["best"], int(plan["good_hours"])
     slots = _plan_slots(plan)
@@ -1163,6 +1176,10 @@ def _carry_out_sunset(rec: dict, noon_name: str) -> None:
         social_server.post_social_message(
             "Plan changed since the sequence was written — regenerating:\n"
             + slot_plan.describe(slots))
+        dropped = sunset_change_text(noon_slots, slots)
+        if dropped:
+            LOGGER.warning(dropped)
+            pushover.push_message(dropped)
         _run(generate_sequence_task, best, hours, slots=slots, plan_filters=live)
         _post_filters(plan)
     else:
@@ -1239,7 +1256,7 @@ def driven_cycle():
         set_state(State.PRE_SUNSET_CHECK, plan.get("best") or None, False)
         LOGGER.info("Conditions degraded at sunset — skipping tonight (%s)", srec.get("outcome"))
         return
-    _carry_out_sunset(srec, noon_name)
+    _carry_out_sunset(srec, noon_name, slots)
 
 
 # ---------------------------------------------------------------------------

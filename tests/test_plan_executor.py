@@ -222,3 +222,12 @@ def test_one_slot_that_is_not_the_best_images_the_slot(monkeypatch):
     slot = S.slot_plan.Slot("ngc2276", end - timedelta(hours=6), end, 5, 5)
     S.generate_sequence_task.fn("hubblev1", 4, notify=False, slots=[slot])
     assert got == [("ngc2276", 5.0, end)]
+
+
+def test_sunset_change_text_names_what_was_dropped():
+    t0 = datetime(2026, 11, 3, 19, 0, tzinfo=TZ)
+    noon = [S.slot_plan.Slot("hubblev1", t0, t0, 1, 50), S.slot_plan.Slot("ngc7790", t0, t0, 1, 50),
+            S.slot_plan.Slot("ngc2276", t0, t0, 8, 5)]
+    assert S.sunset_change_text(noon, noon) is None
+    txt = S.sunset_change_text(noon, [noon[2]])
+    assert "dropped hubblev1, ngc7790" in txt and "now ngc2276" in txt
