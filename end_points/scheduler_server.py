@@ -390,6 +390,23 @@ def _publish_plan_to_site(verdict: str, title: str = "", summary: str = "",
         LOGGER.exception("could not trigger the live render for the plan")
 
 
+def _site_plan_is_todays() -> bool:
+    """Was the site's plan sidecar written at or after today's noon? A
+    restart after a noon that never published (2026-11-04: the sequence
+    refused every minute, so no timeline went out) must not restamp
+    yesterday's card at sunset as tonight's."""
+    from control import night_plan_status
+    try:
+        doc = night_plan_status.read(_PLAN_STATUS_PATH, max_age_h=None)
+        if not doc:
+            return False
+        written = datetime.fromisoformat(doc["written"])
+        now = _local_now()
+        return written >= now.replace(hour=12, minute=0, second=0, microsecond=0) - timedelta(minutes=5)
+    except Exception:
+        return False
+
+
 def _publish_skip_to_site(reason: str) -> None:
     """Draw the "no imaging tonight" card and publish it (noon, sunset, or a
     refusal at start)."""
@@ -1084,7 +1101,8 @@ def _carry_out_noon(rec: dict, resumed: bool):
             "Scheduler restarted: carrying on with the conductor's noon plan\n"
             + slot_plan.describe(slots))
         set_state(State.NOON_CHECK, best, True, slots=slots)
-        _run(generate_sequence_task, best, hours, notify=False, slots=slots,
+        # quietly, unless the noon before the restart never got its plan out
+        _run(generate_sequence_task, best, hours, notify=not _site_plan_is_todays(), slots=slots,
              plan_filters=_plan_filters_live(plan))
         return slots
     social_server.post_social_message(f"Imaging mode: {super_user_commands.get_mode()}")
@@ -1228,6 +1246,11 @@ def _carry_out_sunset(rec: dict, noon_name: str, noon_slots=None) -> None:
             pushover.push_message(dropped)
         _run(generate_sequence_task, best, hours, slots=slots, plan_filters=live)
         _post_filters(plan)
+    elif not _site_plan_is_todays():
+        # the sidecar is an earlier night's: publish tonight's, never restamp that
+        LOGGER.info("Site plan is not today's: publishing tonight's timeline at sunset")
+        _push_imaging_plan(best, hours, _plan_best_start(plan),
+                           Path(CFG["nina"]["sequence_output"]), slots=slots)
     else:
         _publish_plan_to_site("imaging", restamp=True)
     _run(imaging_task)

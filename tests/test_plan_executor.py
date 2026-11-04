@@ -43,6 +43,7 @@ class World:
         monkeypatch.setattr(S.weather, "get_sunrise_sunset", lambda: (None, SUNSET))
         monkeypatch.setattr(S.time, "sleep", self.sleep)
         monkeypatch.setattr(S, "set_state", lambda st, *a, **k: self.log.append(("state", st.name)))
+        monkeypatch.setattr(S, "_site_plan_is_todays", lambda: True)
         monkeypatch.setattr(S, "_cross_check", lambda *a, **k: self.log.append(("cross", a[0])))
         monkeypatch.setattr(S, "_post_filters", lambda plan: self.log.append(("filters", plan.get("filter_mode"))))
         monkeypatch.setattr(S, "_publish_skip_to_site", lambda r: self.log.append(("skip_site", r)))
@@ -275,3 +276,30 @@ def test_a_file_that_says_what_was_announced_is_kept(monkeypatch, tmp_path):
     slot = S.slot_plan.Slot("ngc2276", end - timedelta(hours=6), end, 5, 5)
     S.generate_sequence_task.fn("ngc2276", 5, notify=False, slots=[slot])
     assert out.exists()
+
+
+def test_site_plan_is_todays_reads_the_sidecar_written_time(monkeypatch, tmp_path):
+    import json
+    side = tmp_path / "night_plan_status.json"
+    monkeypatch.setattr(S, "_PLAN_STATUS_PATH", str(side))
+    monkeypatch.setattr(S, "_local_now", lambda: datetime(2026, 11, 4, 13, 0, tzinfo=TZ))
+    assert S._site_plan_is_todays() is False                      # no file
+    side.write_text(json.dumps({"written": "2026-11-03T16:33:30-04:00", "verdict": "imaging",
+                                "check": "sunset"}))
+    assert S._site_plan_is_todays() is False                      # yesterday's card
+    side.write_text(json.dumps({"written": "2026-11-04T12:00:50-04:00", "verdict": "imaging",
+                                "check": "noon"}))
+    assert S._site_plan_is_todays() is True
+
+
+def test_sunset_publishes_tonights_timeline_when_the_sites_card_is_an_earlier_nights(monkeypatch):
+    # 2026-11-04: the noon timeline never went out; at sunset the same plan
+    # would have restamped 11-03's "Tonight: ngc2276" card as tonight's
+    pushed = []
+    monkeypatch.setattr(S, "_push_imaging_plan", lambda *a, **k: pushed.append(a[0]))
+    w = World(monkeypatch, [{"noon": rec("noon", "good", 1)},
+                            {"noon": rec("noon", "good", 1), "sunset": rec("sunset", "good", 2)}])
+    monkeypatch.setattr(S, "_site_plan_is_todays", lambda: False)
+    S.driven_cycle()
+    assert ("restamp",) not in w.log
+    assert "ngc7790" in pushed
