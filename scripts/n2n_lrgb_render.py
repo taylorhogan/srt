@@ -910,11 +910,18 @@ def routine(args) -> int:
         # routine renders had shown right for a week. The crop is judged
         # beside the routine renders, so it is cut on the routine stretch.
         cls = color_process.stretch_class(args.recipe)
+        # The routine's shared white (the stars, before any palette gain) is
+        # the final's floor: the ext_clip rule put Melotte 15's white at 12
+        # ADU against the stars' 100 and the picture blew out (2026-11-04).
         final_stretch = color_process.auto_stretch_v2(
-            subbed_raw, cls, lum="L" if "L" in subbed_raw else None)
+            subbed_raw, cls, lum="L" if "L" in subbed_raw else None,
+            white_floor=white, black_floor=routine["blacks"])
         stretch = {"blacks": dict(final_stretch["blacks"]), "white": final_stretch["white"],
                    "soft": final_stretch["softening"]}
-        log(f"final stretch ({cls}): confident {final_stretch['confident']}"
+        log(f"final stretch ({cls}): confident {final_stretch['confident']}; white by "
+            f"{final_stretch.get('white_rule')} (routine {white:.2f} ADU), blacks by "
+            f"{final_stretch.get('black_rule')}, median pixel at "
+            f"{100 * final_stretch.get('sky_out', 0):.1f}% of white"
             + (" -- " + "; ".join(final_stretch["why"]) if final_stretch["why"] else ""))
     blacks, white, soft = stretch["blacks"], stretch["white"], stretch["soft"]
     log(f"stretch from raw: white {white:.2f} ADU, blacks "
@@ -1121,6 +1128,9 @@ def final_record(dso: str, recipe: str, tag: str, stretch: dict, qc: dict, meta:
                         "blacks": {c: round(float(v), 4) for c, v in (stretch or {}).get("blacks", {}).items()},
                         "white": round(float((stretch or {}).get("white", 0.0)), 4),
                         "softening": (stretch or {}).get("softening"),
+                        "white_rule": (stretch or {}).get("white_rule"),
+                        "black_rule": (stretch or {}).get("black_rule"),
+                        "sky_out": (stretch or {}).get("sky_out"),
                         "confident": (stretch or {}).get("confident"), "why": (stretch or {}).get("why", [])},
             "options": color_process.describe_options(opts),
             "palette_gain": (raw_info or {}).get("palette_gain"),

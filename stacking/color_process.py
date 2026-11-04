@@ -1717,10 +1717,18 @@ def field_model(subbed: dict[str, np.ndarray], lum: Optional[str] = None) -> dic
 # them leave-one-out and prints the values to put here.
 STRETCH_TARGETS = {
     # m33, ngc7320 (owner): margins -0.3..-0.8, object clip 0.4-0.7%, bright 0.58-0.76
-    "broadband": {"margin": -0.45, "ext_clip": 0.005, "bright_out": 0.65},
+    "broadband": {"margin": -0.45, "ext_clip": 0.005, "bright_out": 0.65, "sky_max": 0.08},
     # ngc7380, sh2-92, bubble, ic1396 (owner): margins +0.5..-0.5, bright 0.58-1.0
-    "narrowband": {"margin": -0.2, "ext_clip": 0.006, "bright_out": 0.85},
+    "narrowband": {"margin": -0.2, "ext_clip": 0.006, "bright_out": 0.85, "sky_max": 0.08},
 }
+# sky_max (2026-11-04): the field's median pixel may not be drawn above this
+# share of white. The bright_out target was taken from fields with a compact
+# object on sky; on a field-filling nebula (Melotte 15) "bright p90" is most
+# of the field, the softening solved for it put the sky at 39 % grey, and QC
+# refused; with the white floored at the stars the solver still ran to its
+# hardest curve and the median sat at 12-13 %. The owner's published
+# pictures (the routine stretch, softening 0.025) have their median at
+# 5-6 %; 0.08 lets the final go a notch harder and no further.
 NARROWBAND_RECIPES = frozenset({"HOO", "SHO", "HSO"})
 
 
@@ -1731,23 +1739,53 @@ def stretch_class(recipe: str) -> str:
 
 def auto_stretch_v2(subbed: dict[str, np.ndarray], cls: str = "broadband",
                     targets: Optional[dict] = None, lum: Optional[str] = None,
-                    fm: Optional[dict] = None) -> dict:
+                    fm: Optional[dict] = None, white_floor: Optional[float] = None,
+                    black_floor: Optional[dict] = None) -> dict:
     """Blacks, white and softening that hit the class's targets on this field.
 
-    -> {"blacks", "white", "softening", "confident", "why", "targets", "fm"}.
-    "confident" is False when the dominant channel has no clean sky or the
-    field has no extended signal to set the white from; the stretch is still
-    returned (sky-anchored, white at a percentile) but should not be published
-    unattended.
+    -> {"blacks", "white", "softening", "confident", "why", "targets", "fm",
+    "white_rule"}. "confident" is False when the dominant channel has no
+    clean sky or the field has no extended signal to set the white from; the
+    stretch is still returned (sky-anchored, white at a percentile) but
+    should not be published unattended.
+
+    *white_floor* (2026-11-04): the white never sits below it. The render
+    passes the routine's shared white (the 99.95th percentile of every
+    pixel, the stars, taken before any palette gain). The ext_clip rule sets
+    white from the object's own brightest pixels, which on the owner's label
+    fields (a compact object on sky) landed at the stars anyway; on a
+    field-filling nebula it landed at 11-12 ADU against the stars' 100-114
+    (Melotte 15, IC 410, the first finals), every channel the palette gain
+    had lifted blew past it, and the owner's verdict was the routine's look.
+    *black_floor* ({channel: ADU}, the routine's sky-anchored blacks): a
+    black is never put ABOVE it. The class margins (-0.2 / -0.45 sigma, black
+    above sky) were the medians of picks on raw-noise renders; the final is
+    the learned composite, whose sky noise is a tenth of the raw's, so a
+    black above the sky there blacks out the whole sky (IC 410's first final:
+    10 % of the field at pure black). The routine's black, half a raw sigma
+    below sky, is the one the owner has looked at every morning.
     """
     t = dict(STRETCH_TARGETS[cls], **(targets or {}))
     fm = fm if fm is not None else field_model(subbed, lum)
     diag, dom, colour, ext = fm["diag"], fm["dominant"], fm["colour"], fm["ext"]
     why = []
     blacks = {c: d["sky"] - t["margin"] * d["sigma"] for c, d in diag.items()}
+    black_rule = "margin"
+    if black_floor:
+        held = {c: float(black_floor[c]) for c in blacks if c in black_floor and blacks[c] > black_floor[c]}
+        if held:
+            blacks.update(held)
+            black_rule = "floor"
     if not diag[dom]["confident"]:
-        why.append("no clean sky in %s (%.0f%% of tiles at sky)"
-                   % (dom, 100 * diag[dom]["clean_fraction"]))
+        if black_floor:
+            # the sky estimate is doubtful, but the blacks cannot sit above
+            # the routine's and the median ceiling holds them from below: a
+            # note ("softening..." prefix keeps it a note), not a fault
+            why.append("softening note: no clean sky in %s (%.0f%% of tiles at sky); "
+                       "blacks bounded by the routine's" % (dom, 100 * diag[dom]["clean_fraction"]))
+        else:
+            why.append("no clean sky in %s (%.0f%% of tiles at sky)"
+                       % (dom, 100 * diag[dom]["clean_fraction"]))
 
     # White: the object may clip by ext_clip, stars by whatever it takes.
     vals = colour[ext]
@@ -1758,6 +1796,9 @@ def auto_stretch_v2(subbed: dict[str, np.ndarray], cls: str = "broadband",
         white = shared_white(subbed, 99.9)
     white = max(white, max(blacks[c] for c in ("R", "G", "B") if c in blacks)
                 + 10.0 * diag[dom]["sigma"])
+    white_rule = "ext_clip"
+    if white_floor is not None and white < float(white_floor):
+        white, white_rule = float(white_floor), "floor"
 
     # Softening: draw the dominant channel's bright p90 at bright_out.
     d = diag[dom]
@@ -1771,9 +1812,30 @@ def auto_stretch_v2(subbed: dict[str, np.ndarray], cls: str = "broadband",
     else:
         soft = SOFTENING
         why.append("no bright signal; default softening")
+    # The field's MEDIAN pixel (the sky where there is sky, the nebula where
+    # it fills the frame; what render_qc reads as the sky's grey) may not be
+    # drawn above sky_max: a harder curve for the object is not worth a grey
+    # picture (output falls as softening rises). The sky's own level would
+    # not do: with black at or above sky it maps to 0 by construction while
+    # the noise above black is stretched to 20 % grey (IC 410 at the floor,
+    # softening 0.002).
+    median = float(np.median(subbed[dom]))
+    y_med = float(np.clip((median - blacks[dom]) / max(white - blacks[dom], 1e-6), 0, 1))
+    if t.get("sky_max") is not None and _asinh_out(y_med, soft) > t["sky_max"]:
+        soft = max(soft, _solve_soft(y_med, t["sky_max"], lo, hi))
+        if _asinh_out(y_med, soft) > t["sky_max"] + 1e-6:
+            # even the softest curve draws the median pixel above the band:
+            # the field has no sky to hold down, and the stretch is not one
+            # to publish unattended (not a "softening" note on purpose)
+            why.append("the median pixel sits at %.2f of white at the softest curve: no sky to hold down"
+                       % _asinh_out(y_med, soft))
+        else:
+            why.append("softening raised for the sky: the median pixel would sit above %.2f" % t["sky_max"])
     return {"blacks": blacks, "white": white, "softening": float(soft),
             "confident": not why or all(w.startswith("softening") for w in why),
-            "why": why, "targets": t, "dominant": dom, "fm": fm}
+            "why": why, "targets": t, "dominant": dom, "fm": fm,
+            "white_rule": white_rule, "black_rule": black_rule,
+            "sky_out": float(_asinh_out(y_med, soft))}
 
 
 # ------------------------------------------------------------------ render QC (D1)
@@ -1784,8 +1846,13 @@ def auto_stretch_v2(subbed: dict[str, np.ndarray], cls: str = "broadband",
 # seen this autumn: a black-crushed sky (IC 1396 at black_pct 65), a lit
 # channel over the sky (the brown M1 sky, 2026-10-25), a red bar from an
 # uncropped footprint (IC 410, 2026-10-28), magenta stars under a palette gain.
+# QC_BLACK_CLIP_MAX was 0.01 until 2026-11-04: the owner's published IC 410
+# (the routine stretch) has 12 % of the field at pure black, the dark dust
+# north-east of the Tadpoles below the sky level, and the first final of the
+# same stacks failed on it at 9.6 %. A crushed SKY is caught by QC_SKY_RANGE's
+# floor (the median pixel); dark nebulosity below sky is allowed to be black.
 QC_SKY_RANGE = (0.01, 0.20)      # the sky's grey level, as a fraction of white
-QC_BLACK_CLIP_MAX = 0.01         # share of the field at pure black
+QC_BLACK_CLIP_MAX = 0.15         # share of the field at pure black (see below)
 QC_WHITE_CLIP_MAX = 0.005        # share of the field at pure white (stars saturate; the field must not)
 QC_CHANNEL_MEDIAN_MAX = 0.5      # a channel whose median is this bright is lit over the sky
 QC_STAR_NEUTRAL_MAX = 0.15       # palettes: mean |channel difference| on the star discs

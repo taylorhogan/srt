@@ -140,3 +140,67 @@ def test_v2_white_ignores_the_stars():
 def test_recipes_map_to_their_class():
     assert cp.stretch_class("HOO") == "narrowband" and cp.stretch_class("hso_noflat") == "narrowband"
     assert cp.stretch_class("HALRGB") == "broadband" and cp.stretch_class("LRGB") == "broadband"
+
+
+# --- the white floor and the sky ceiling (2026-11-04, the first finals) -------
+
+def test_v2_white_never_sits_below_the_floor_and_says_which_rule_won():
+    sub = _galaxy()
+    v2 = cp.auto_stretch_v2(sub, "broadband", {"ext_clip": 0.0})
+    assert v2["white_rule"] == "ext_clip" and 20.0 < v2["white"] < 60.0
+    floored = cp.auto_stretch_v2(sub, "broadband", {"ext_clip": 0.0}, fm=v2["fm"], white_floor=400.0)
+    assert floored["white"] == 400.0 and floored["white_rule"] == "floor"
+    # a floor below the rule's own white changes nothing
+    low = cp.auto_stretch_v2(sub, "broadband", {"ext_clip": 0.0}, fm=v2["fm"], white_floor=5.0)
+    assert low["white"] == v2["white"] and low["white_rule"] == "ext_clip"
+
+
+def test_v2_raises_the_softening_rather_than_draw_the_sky_above_sky_max():
+    # the Melotte 15 final: bright p90 is most of the field, the curve solved
+    # for it put the sky at 39 % grey
+    sub = _nebula_everywhere()
+    free = cp.auto_stretch_v2(sub, "narrowband", {"sky_max": None})
+    held = cp.auto_stretch_v2(sub, "narrowband", fm=free["fm"])
+    sky_max = cp.STRETCH_TARGETS["narrowband"]["sky_max"]
+    assert free["sky_out"] > sky_max
+    assert held["softening"] > free["softening"]
+    # emission fills this frame: the median pixel IS the object, and even the
+    # softest curve cannot hold it down; the stretch says so and is not confident
+    assert held["sky_out"] > sky_max and any("no sky to hold down" in w for w in held["why"])
+    assert not held["confident"]
+    # a field with sky: the ceiling is met by softening alone, a note that keeps confidence
+    g = _galaxy()
+    g = {c: a * 0.05 for c, a in g.items()}          # faint: the solved curve would be hard
+    lifted = cp.auto_stretch_v2(g, "broadband", {"bright_out": 0.95})
+    assert lifted["sky_out"] <= sky_max + 1e-6
+    assert all(w.startswith("softening") for w in lifted["why"]) and lifted["confident"], lifted["why"]
+    # the ceiling is a softening note: it does not by itself make the stretch unconfident
+    galaxy = cp.auto_stretch_v2(_galaxy(), "broadband")
+    assert galaxy["confident"], galaxy["why"]
+    assert galaxy["sky_out"] <= cp.STRETCH_TARGETS["broadband"]["sky_max"] + 1e-6
+
+
+def test_a_doubtful_sky_is_a_note_not_a_fault_when_the_blacks_are_bounded():
+    sub = _nebula_everywhere()
+    v2 = cp.auto_stretch_v2(sub, "narrowband")
+    assert not v2["confident"] and any(w.startswith("no clean sky") for w in v2["why"])
+    routine = {c: float(np.percentile(a, 40)) - 0.5 for c, a in sub.items()}
+    held = cp.auto_stretch_v2(sub, "narrowband", fm=v2["fm"], white_floor=400.0, black_floor=routine)
+    assert held["white"] == 400.0
+    assert all(held["blacks"][c] <= routine[c] + 1e-6 for c in "RGB")
+    assert not any(w.startswith("no clean sky") for w in held["why"])
+    assert any("no clean sky" in w for w in held["why"])
+    # with the white at the stars the median pixel is held down and the stretch is confident
+    assert held["sky_out"] <= cp.STRETCH_TARGETS["narrowband"]["sky_max"] + 1e-6
+    assert held["confident"], held["why"]
+
+
+def test_black_never_sits_above_the_floor_but_may_sit_below_it():
+    sub = _galaxy()
+    v2 = cp.auto_stretch_v2(sub, "broadband")
+    above = {c: v2["blacks"][c] - 1.0 for c in v2["blacks"]}     # a floor below v2's blacks: they move down to it
+    held = cp.auto_stretch_v2(sub, "broadband", fm=v2["fm"], black_floor=above)
+    assert held["black_rule"] == "floor" and all(held["blacks"][c] == above[c] for c in above)
+    below = {c: v2["blacks"][c] + 1.0 for c in v2["blacks"]}     # a floor above them: nothing moves
+    kept = cp.auto_stretch_v2(sub, "broadband", fm=v2["fm"], black_floor=below)
+    assert kept["black_rule"] == "margin" and all(kept["blacks"][c] == v2["blacks"][c] for c in below)
