@@ -648,6 +648,18 @@ def push_crop(args, out_dir: Path, written: list, tag: str, crops: dict, log=pri
         return False
 
 
+def push_final_crop(args, out_dir: Path, written: list, tag: str, crops: dict, rec: dict,
+                    log=print) -> bool:
+    """The crop beside a --final is pushed only when the final passed QC
+    (2026-11-04): a failed final's crop went out after the "QC FAIL" push
+    with nothing on it to say so, and read as a picture ready to go."""
+    qc = (rec or {}).get("qc") or {}
+    if not qc.get("pass"):
+        log("  push crop: not sent, the final failed QC")
+        return False
+    return push_crop(args, out_dir, written, tag, crops, log)
+
+
 def push_render(args, out_dir: Path, written: list, meta: dict, log=print, crops=None) -> bool:
     """Pushover the composite(s): by default the one best picture (the first
     of PUSH_TAGS that was written), with --push-all every class in TAGS,
@@ -1055,9 +1067,9 @@ def routine(args) -> int:
     if getattr(args, "final", False) and composites:
         tag, rgb = next(iter(composites.items()))
         cropped = all((meta["channels"].get(f) or {}).get("coverage") for f in filters)
-        final_product(args, out_dir, tag, rgb, final_stretch, cropped, meta, raw_info, opts, log)
+        rec = final_product(args, out_dir, tag, rgb, final_stretch, cropped, meta, raw_info, opts, log)
         if args.push:
-            push_crop(args, out_dir, written, tag, crops, log)
+            push_final_crop(args, out_dir, written, tag, crops, rec, log)
     elif args.push:
         push_render(args, out_dir, written, meta, log, crops=crops)
     return 0

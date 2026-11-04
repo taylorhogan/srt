@@ -88,3 +88,15 @@ def test_the_routine_cuts_the_crop_on_the_routine_stretch_in_final_mode():
     block = src[i:i + 600]
     assert 'compose_rgb(subbed, routine["blacks"], routine["white"], routine["soft"]' in block
     assert 'rec["stretch"] = "routine"' in src
+
+
+def test_a_qc_failed_final_does_not_push_its_crop(monkeypatch):
+    sent = []
+    monkeypatch.setattr(R, "push_crop", lambda *a, **k: sent.append(a) or True)
+    logs = []
+    fail = {"qc": {"pass": False, "reasons": ["sky grey 31 %"]}}
+    assert R.push_final_crop(None, None, [], "learned", {}, fail, logs.append) is False
+    assert R.push_final_crop(None, None, [], "learned", {}, {}, logs.append) is False
+    assert sent == [] and "failed QC" in logs[0]
+    assert R.push_final_crop(None, None, [], "learned", {}, {"qc": {"pass": True}}, logs.append) is True
+    assert len(sent) == 1

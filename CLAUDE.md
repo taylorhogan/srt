@@ -220,7 +220,7 @@ Since 2026-09-25 the conductor decides both invariants (ADR 0014): every roof fi
   given; the meta's `auto_crop[tag].stretch` says `routine`), because the
   first final of Melotte 15 set its white at 12 ADU from the extended
   signal before the x4.3 palette gain, against the routine's 114, and the
-  crop pushed beside it was a saturated, grey-skied picture.
+  crop pushed beside it was a saturated, grey-skied picture. A final that fails QC pushes no crop (`push_final_crop`): the "QC FAIL" push is the only picture it sends.
 
   **The morning render cuts every channel to the common footprint (since
   2026-10-28).** The stacker crops a lone stack to where 80 % of its frames
