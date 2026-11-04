@@ -204,3 +204,16 @@ def test_black_never_sits_above_the_floor_but_may_sit_below_it():
     below = {c: v2["blacks"][c] + 1.0 for c in v2["blacks"]}     # a floor above them: nothing moves
     kept = cp.auto_stretch_v2(sub, "broadband", fm=v2["fm"], black_floor=below)
     assert kept["black_rule"] == "margin" and all(kept["blacks"][c] == v2["blacks"][c] for c in below)
+
+
+def test_the_final_is_never_harder_than_the_routine():
+    # 2026-11-04: shown the final (median 8 %) beside the routine (5 %), the owner preferred the routine
+    sub = _galaxy()
+    v2 = cp.auto_stretch_v2(sub, "broadband", {"bright_out": 0.95})     # a hard curve
+    assert v2["softening"] < 0.025 and v2["soft_rule"] == "solved"
+    held = cp.auto_stretch_v2(sub, "broadband", {"bright_out": 0.95}, fm=v2["fm"], soft_floor=0.025)
+    assert held["softening"] == 0.025 and held["soft_rule"] == "floor"
+    assert held["confident"] and any(w.startswith("softening held at the routine") for w in held["why"])
+    # a curve already softer than the floor is left alone
+    soft = cp.auto_stretch_v2(sub, "broadband", {"bright_out": 0.3}, fm=v2["fm"], soft_floor=0.025)
+    assert soft["softening"] >= 0.025 and soft["soft_rule"] == "solved"

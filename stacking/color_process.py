@@ -1740,7 +1740,7 @@ def stretch_class(recipe: str) -> str:
 def auto_stretch_v2(subbed: dict[str, np.ndarray], cls: str = "broadband",
                     targets: Optional[dict] = None, lum: Optional[str] = None,
                     fm: Optional[dict] = None, white_floor: Optional[float] = None,
-                    black_floor: Optional[dict] = None) -> dict:
+                    black_floor: Optional[dict] = None, soft_floor: Optional[float] = None) -> dict:
     """Blacks, white and softening that hit the class's targets on this field.
 
     -> {"blacks", "white", "softening", "confident", "why", "targets", "fm",
@@ -1764,6 +1764,12 @@ def auto_stretch_v2(subbed: dict[str, np.ndarray], cls: str = "broadband",
     black above the sky there blacks out the whole sky (IC 410's first final:
     10 % of the field at pure black). The routine's black, half a raw sigma
     below sky, is the one the owner has looked at every morning.
+    *soft_floor* (the routine's softening, 0.025): the softening is never
+    below it, so the final is never a HARDER stretch than the routine
+    render. Shown the two side by side (2026-11-04, the final at the 8 %
+    median ceiling against the routine's 5 %), the owner preferred the
+    routine. With the three floors the final is the routine's stretch on an
+    ordinary field; the solver can still make it softer, never harder.
     """
     t = dict(STRETCH_TARGETS[cls], **(targets or {}))
     fm = fm if fm is not None else field_model(subbed, lum)
@@ -1831,10 +1837,15 @@ def auto_stretch_v2(subbed: dict[str, np.ndarray], cls: str = "broadband",
                        % _asinh_out(y_med, soft))
         else:
             why.append("softening raised for the sky: the median pixel would sit above %.2f" % t["sky_max"])
+    soft_rule = "solved"
+    if soft_floor is not None and soft < float(soft_floor):
+        soft, soft_rule = float(soft_floor), "floor"
+        why.append("softening held at the routine's %.4f: the final is never harder than the routine"
+                   % soft)
     return {"blacks": blacks, "white": white, "softening": float(soft),
             "confident": not why or all(w.startswith("softening") for w in why),
             "why": why, "targets": t, "dominant": dom, "fm": fm,
-            "white_rule": white_rule, "black_rule": black_rule,
+            "white_rule": white_rule, "black_rule": black_rule, "soft_rule": soft_rule,
             "sky_out": float(_asinh_out(y_med, soft))}
 
 
