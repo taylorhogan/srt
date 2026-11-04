@@ -744,6 +744,48 @@ def pre_sunset_check_task() -> tuple[str, int]:
     return best_name, best_good_hours
 
 
+_REFUSED = {"day": None, "key": None}      # one push per distinct refusal per day
+
+
+def _refuse_unless_announced(slots, output_path: Path, dso_name: str) -> None:
+    """The ANNOUNCED slots against the file N.I.N.A will load, after every
+    generation (nina_sequence_gen.announced_vs_written). 2026-11-03: the
+    generator was handed the ranking's best instead of the one slot, wrote
+    a self-consistent file for it, and every check downstream of the
+    generator's input passed; V1 was imaged for a slot that said ngc2276.
+    A mismatch moves the file aside (nothing under the name N.I.N.A loads),
+    says so in the chat, pushes once per distinct problem per day, and
+    raises like the lint refusal: the flow fails rather than image a plan
+    nobody announced."""
+    problems = nina_sequence_gen.announced_vs_written(slots, output_path)
+    if not problems:
+        LOGGER.info("Announced plan matches the written sequence: %s",
+                    ", ".join(s.name for s in slots))
+        return
+    aside = output_path.with_name(output_path.stem + ".refused" + output_path.suffix)
+    try:
+        os.replace(output_path, aside)
+        where = "moved aside to %s" % aside.name
+    except OSError as exc:
+        where = "could NOT be moved aside (%s)" % exc
+    msg = ("Sequence REFUSED for %s: the file does not say what was announced (%s); %s. "
+           "N.I.N.A has nothing to load tonight until the plan and the file agree."
+           % (dso_name, "; ".join(problems), where))
+    LOGGER.error(msg)
+    try:
+        social_server.post_social_message("⛔ " + msg)
+    except Exception:
+        LOGGER.exception("could not post the refusal")
+    key = (_local_now().date().isoformat(), tuple(problems))
+    if key != (_REFUSED["day"], _REFUSED["key"]):
+        _REFUSED["day"], _REFUSED["key"] = key
+        try:
+            pushover.push_message(msg, priority=1)
+        except Exception:
+            LOGGER.exception("could not push the refusal")
+    raise sequence_lint.SequenceLintError(problems)
+
+
 @task(name="generate-nina-sequence")
 def generate_sequence_task(dso_name: str, good_hours: float = 0.0, notify: bool = True,
                            slots=None, plan_filters: bool = False):
@@ -788,6 +830,8 @@ def generate_sequence_task(dso_name: str, good_hours: float = 0.0, notify: bool 
         social_server.post_social_message("⛔ " + msg)
         pushover.push_message(msg)
         raise
+    if got and slots:
+        _refuse_unless_announced(slots, Path(got[1]), dso_name)
     _PLAN_ON_DISK["sig"] = slot_plan.signature(slots, _filter_plans_for(slots, plan_filters))
     if got and notify:
         _plan, output_path = got

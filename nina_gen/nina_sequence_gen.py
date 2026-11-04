@@ -1346,6 +1346,101 @@ def _normal_name(name) -> str:
     return "".join(str(name or "").lower().split())
 
 
+def _provider_types(sequence: Any) -> dict:
+    """$id -> $type for every date-time provider node in the document, so a
+    provider written as a $ref (after _dedupe_singletons) can be resolved."""
+    out: dict = {}
+
+    def walk(n):
+        if isinstance(n, dict):
+            t = n.get("$type")
+            if isinstance(t, str) and "DateTimeProvider" in t and n.get("$id") is not None:
+                out[str(n["$id"])] = t
+            for v in n.values():
+                walk(v)
+        elif isinstance(n, list):
+            for v in n:
+                walk(v)
+    walk(sequence)
+    return out
+
+
+def read_back_ends(path) -> list:
+    """[(target name, (hour, minute) or None), ...] per DeepSkyObjectContainer:
+    the hard end _set_hard_end wrote (a TimeCondition on the fixed Time
+    provider), None when the target's end is a computed provider (dawn)."""
+    with open(path, encoding="utf-8-sig") as fh:
+        seq = json.load(fh)
+    providers = _provider_types(seq)
+    area = _find_target_area(seq)
+    out = []
+
+    def fixed_end(n):
+        if isinstance(n, dict):
+            if _short_type(n) == "TimeCondition":
+                prov = n.get("SelectedProvider") or {}
+                ptype = prov.get("$type") or providers.get(str(prov.get("$ref")))
+                if ptype == TIME_PROVIDER_TYPE:
+                    return (int(n.get("Hours") or 0), int(n.get("Minutes") or 0))
+            for v in n.values():
+                got = fixed_end(v)
+                if got is not None:
+                    return got
+        elif isinstance(n, list):
+            for v in n:
+                got = fixed_end(v)
+                if got is not None:
+                    return got
+        return None
+
+    for t in (_items_of(area) if area else []):
+        if _short_type(t) != "DeepSkyObjectContainer":
+            continue
+        name = (t.get("Target") or {}).get("TargetName") or t.get("Name")
+        out.append((name, fixed_end(t)))
+    return out
+
+
+def announced_vs_written(slots, path) -> list:
+    """The plan's slots against the FILE N.I.N.A will load: the same targets,
+    in the same order, each with exposures, each ending when its slot ends.
+    Problems as strings; [] when the file says what was announced.
+
+    _write_verified compares the file with the plan the GENERATOR was given;
+    this compares it with the plan that was ANNOUNCED (the conductor's slots),
+    which is the gap of 2026-11-03: the sunset forecast left one slot,
+    ngc2276 20:00-02:00, the generator was handed the ranking's best,
+    hubblev1, wrote a self-consistent hubblev1 file, and every check passed
+    while the chat's filters table alone showed "sequence -". *slots* carry
+    .name and .end (control/slot_plan.Slot); an end of None is not compared.
+    """
+    want = [(s.name, getattr(s, "end", None)) for s in (slots or [])]
+    if not want:
+        return []
+    try:
+        back = read_back(path)
+        ends = dict(read_back_ends(path))
+    except Exception as exc:  # noqa: BLE001 -- an unreadable file is the finding
+        return ["the written sequence could not be read back: %s" % exc]
+    problems = []
+    if len(back) != len(want):
+        problems.append("announced %d slot(s) %s, the file holds %d target(s) %s"
+                        % (len(want), [n for n, _ in want], len(back), [b[0] for b in back]))
+    for k, ((name, end), (got_name, counts, _exp)) in enumerate(zip(want, back), 1):
+        if _normal_name(name) != _normal_name(got_name):
+            problems.append("slot %d: announced %s, the file has %s" % (k, name, got_name))
+            continue
+        if not counts:
+            problems.append("%s: no exposure blocks in the file" % name)
+        got_end = ends.get(got_name)
+        if end is not None and got_end is not None:
+            w = wall_clock(end)
+            if (w.hour, w.minute) != tuple(got_end):
+                problems.append("%s: announced to end %02d:%02d, the file stops at %02d:%02d"
+                                % (name, w.hour, w.minute, got_end[0], got_end[1]))
+    return problems
+
+
 def read_back(path) -> list:
     """What the sequence FILE says each target will shoot, read from disk.
 

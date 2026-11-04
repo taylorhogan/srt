@@ -231,3 +231,47 @@ def test_sunset_change_text_names_what_was_dropped():
     assert S.sunset_change_text(noon, noon) is None
     txt = S.sunset_change_text(noon, [noon[2]])
     assert "dropped hubblev1, ngc7790" in txt and "now ngc2276" in txt
+
+
+def test_a_file_that_does_not_say_what_was_announced_is_refused_and_moved_aside(monkeypatch, tmp_path):
+    # 2026-11-03: the announced slot was ngc2276, the generator wrote hubblev1
+    # and every check passed. Now the file is compared with the slots.
+    import json
+    from nina_gen.sequence_lint import SequenceLintError
+    out = tmp_path / "full_for_tonight.json"
+    posts, pushes = [], []
+    monkeypatch.setattr(S.social_server, "post_social_message", lambda m, *a, **k: posts.append(m))
+    monkeypatch.setattr(S.pushover, "push_message", lambda m, **k: pushes.append((m, k.get("priority"))))
+    monkeypatch.setattr(S, "_local_now", lambda: datetime(2026, 11, 3, 16, 33, tzinfo=TZ))
+    monkeypatch.setattr(S.nina_sequence_gen, "announced_vs_written",
+                        lambda slots, path: ["slot 1: announced ngc2276, the file has hubblev1"])
+    S._REFUSED.update(day=None, key=None)
+
+    def fake_generate(name, hours, end=None, filters=None):
+        out.write_text(json.dumps({"target": name}))
+        return ({"L": 8}, out)
+    monkeypatch.setattr(S, "_generate_nina_sequence", fake_generate)
+    end = datetime(2026, 11, 4, 2, 0, tzinfo=TZ)
+    slot = S.slot_plan.Slot("ngc2276", end - timedelta(hours=6), end, 5, 5)
+    with pytest.raises(SequenceLintError):
+        S.generate_sequence_task.fn("ngc2276", 5, notify=False, slots=[slot])
+    assert not out.exists() and (tmp_path / "full_for_tonight.refused.json").exists()
+    assert posts and posts[-1].startswith("⛔ Sequence REFUSED for ngc2276")
+    assert pushes == [(posts[-1][2:], 1)]
+    # the same refusal again the same day: said in the chat, not pushed twice
+    with pytest.raises(SequenceLintError):
+        S.generate_sequence_task.fn("ngc2276", 5, notify=False, slots=[slot])
+    assert len(pushes) == 1 and len(posts) == 2
+
+
+def test_a_file_that_says_what_was_announced_is_kept(monkeypatch, tmp_path):
+    import json
+    out = tmp_path / "full_for_tonight.json"
+    monkeypatch.setattr(S.nina_sequence_gen, "announced_vs_written", lambda slots, path: [])
+    monkeypatch.setattr(S, "_generate_nina_sequence",
+                        lambda name, hours, end=None, filters=None: (out.write_text(json.dumps({})), out)[1:]
+                        and ({"L": 4}, out))
+    end = datetime(2026, 11, 4, 2, 0, tzinfo=TZ)
+    slot = S.slot_plan.Slot("ngc2276", end - timedelta(hours=6), end, 5, 5)
+    S.generate_sequence_task.fn("ngc2276", 5, notify=False, slots=[slot])
+    assert out.exists()

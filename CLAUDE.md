@@ -105,7 +105,7 @@ Since 2026-09-25 the conductor decides both invariants (ADR 0014): every roof fi
 
 - **Roof state is decided by the north camera (since 2026-09-24).** `sentry/north_roof.py` reads AprilTag id 2 on the moving south truss from "Iris North" (192.168.87.78, DHCP-reserved; home pose (102, −9), driven there before every read) and compares its corners with two recorded positions in `local/north_roof_marker.json`: SHUT (72 px, low in frame) and OPEN (351 px, high), 650 px apart. Both states are positive decodes; absence is only ever *unknown*; a part-way roof lands between the references and is *unknown*. It needs no inside light (decodes in pure IR) and is read FIRST in `visual_status()`, before the light is touched, because Iris North takes ~9 s to swap IR/colour and a frame inside the swap decodes nothing. `north_roof.decide()` combines it with Iris cam: north decides, Iris cam (tag 1 at shut; the gold star for open) may veto — disagreement is unknown — and is the fallback when the north camera cannot answer. `cfg["camera safety"]["north_decides"]` False reverts to Iris cam deciding. The picture the operator sees (`status`, every Pushover push of `scope_view`) is the north frame that decided, tag and verdict drawn on; Iris cam's own picture is `cam_view`. Every north frame is archived under `local/north_archive/<date>/`. The gold-star description in the `sentry/` bullet above is now the fallback path, not the decider.
 
-- **`nina_gen/nina_sequence_gen.py`** — Generates N.I.N.A imaging sequences by recursively patching a JSON template with target name and RA/Dec coordinates. Since 2026-09-12 it also writes a `MoveFocuserByTemperature` (absolute: slope × T + intercept) before every SmartExposure block, per filter, from `fits_processing/focus_model.py` — a fit of N.I.N.A's own autofocus reports refit at every generation (`local/focus_model.json`). The seed centres the autofocus sweep and is what N.I.N.A restores when a run fails; `cfg["nina"]["focus_seed"] = False` turns it off.
+- **`nina_gen/nina_sequence_gen.py`** — Generates N.I.N.A imaging sequences by recursively patching a JSON template with target name and RA/Dec coordinates. Since 2026-09-12 it also writes a `MoveFocuserByTemperature` (absolute: slope × T + intercept) before every SmartExposure block, per filter, from `fits_processing/focus_model.py` — a fit of N.I.N.A's own autofocus reports refit at every generation (`local/focus_model.json`). The seed centres the autofocus sweep and is what N.I.N.A restores when a run fails; `cfg["nina"]["focus_seed"] = False` turns it off. **After every generation the file is compared with the ANNOUNCED plan** (`nina_sequence_gen.announced_vs_written`, called by the scheduler's `_refuse_unless_announced`, 2026-11-04): the conductor's slots against the file's targets, order, exposures and hard ends. `_write_verified` compares the file with the plan the generator was GIVEN, and on 2026-11-03 the generator was given the ranking's best (hubblev1) for a plan whose one slot was ngc2276, wrote a self-consistent file, and every check passed. A mismatch moves the file aside (`.refused.json`), says so in the chat, pushes once per distinct problem per day and raises like a lint refusal.
 
 - **`stacking/`** — `stacker.py` stacks LIGHT frames: bias/dark/flat calibration
   (masters cached as `.npy` in scratch, keyed on the calibration frames' mtimes),
@@ -213,6 +213,14 @@ Since 2026-09-25 the conductor decides both invariants (ADR 0014): every roof fi
   cache. On the 2026-11-02 hand crops it scores 0.7 overlap on IC 410 and
   0.65 on Melotte 15; weak cases are two equal subjects far apart, a
   bright star's glow on a galaxy field (NGC 2276), and taste.
+  **The crop is always cut on the routine stretch** (owner, 2026-11-04):
+  a `--final` render draws its full picture on `auto_stretch_v2` for QC,
+  but its crop on the routine's shared white and sky-anchored blacks
+  (`n2n_lrgb_render.compose_rgb` draws one set on whatever stretch it is
+  given; the meta's `auto_crop[tag].stretch` says `routine`), because the
+  first final of Melotte 15 set its white at 12 ADU from the extended
+  signal before the x4.3 palette gain, against the routine's 114, and the
+  crop pushed beside it was a saturated, grey-skied picture.
 
   **The morning render cuts every channel to the common footprint (since
   2026-10-28).** The stacker crops a lone stack to where 80 % of its frames
