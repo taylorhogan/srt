@@ -70,20 +70,33 @@ def _names(split: str):
     return [n for n in names if dso(n) in D.HOLDOUT]
 
 
-def _loss(out, tgt, lam: float):
-    """L2 in asinh units. The deblur's Poisson chi^2 term is off by default
-    here (lam 0): there the input and the target differ by noise, here they
-    differ by the STARS, up to 1e6 ADU linear, and the chi^2 of an
-    identity-initialised net on a saturated star is 1e5 (smoke run: train
-    354, val 37946, all of it that term). The asinh L2 already judges a
-    residual at a star site in sky sigmas."""
+def _loss(out, tgt, lam: float, inp=None, lam_frac: float = 0.0):
+    """L2 in asinh units, plus (v3) lam_frac times the FRACTION OF STAR LIGHT
+    LEFT: sum |sinh(out) - sinh(tgt)| over star pixels / the stars' total
+    linear light in the batch. The asinh L2 alone under-counts a bright
+    star's core: 500 ADU left of a 10,000 ADU peak reads as a few pixels a
+    little off, so v1 left a nub inside a dark ring at every bright star
+    while the sky term was long satisfied. The fraction is dimensionless,
+    flux-weighted (a bright star dominates its own patch) and is the very
+    number `score` reports.
+
+    The deblur's Poisson chi^2 term is off by default (lam 0): there the
+    input and the target differ by noise, here they differ by the STARS,
+    up to 1e6 ADU linear, and the chi^2 of an identity-initialised net on a
+    saturated star is 1e5 (smoke run: train 354, val 37946)."""
     import torch
     l2 = ((out - tgt) ** 2).mean()
-    if lam <= 0:
-        return l2
-    lin_o, lin_t = torch.sinh(out), torch.sinh(tgt)
-    chi = ((lin_o - lin_t) ** 2 / (lin_t.abs() + 1.0)).mean()
-    return l2 + lam * chi
+    total = l2
+    if lam > 0:
+        lin_o, lin_t = torch.sinh(out), torch.sinh(tgt)
+        total = total + lam * ((lin_o - lin_t) ** 2 / (lin_t.abs() + 1.0)).mean()
+    if lam_frac > 0 and inp is not None:
+        lin_o, lin_t, lin_x = torch.sinh(out), torch.sinh(tgt), torch.sinh(inp)
+        star = (inp - tgt) > 0.1                       # where the injected stars are
+        left = ((lin_o - lin_t).abs() * star).sum()
+        light = ((lin_x - lin_t) * star).sum().clamp(min=1.0)
+        total = total + lam_frac * left / light
+    return total
 
 
 class _Pairs:
@@ -124,6 +137,12 @@ def _batch(ds, rng, n):
 
 def cmd_train(args):
     import torch
+    if args.bright_fraction is not None:
+        D.BRIGHT_FRACTION = float(args.bright_fraction)
+    if args.no_far_arms:
+        D.ARM_FROM_SIGMA = float("inf")
+    print(f"recipe: shift order {D.SHIFT_ORDER}, bright fraction {D.BRIGHT_FRACTION}, far arms from "
+          f"{D.ARM_FROM_SIGMA} sigma, lam_frac {args.lam_frac}", flush=True)
     torch.manual_seed(args.seed)
     rng = np.random.default_rng(args.seed)
     vrng = np.random.default_rng(10_000 + args.seed)
@@ -145,7 +164,7 @@ def cmd_train(args):
         n_steps = 0
         for x, t in _Pairs(train, args.pairs, args.seed * 1000 + ep).loader(args.batch, args.workers):
             x, t = x.to(dev), t.to(dev)
-            loss = _loss(model(x), t, args.lam)
+            loss = _loss(model(x), t, args.lam, inp=x, lam_frac=args.lam_frac)
             opt.zero_grad(set_to_none=True)
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
@@ -155,14 +174,17 @@ def cmd_train(args):
             n_steps += 1
         model.eval()
         with torch.no_grad():
-            vl = float(np.mean([float(_loss(model(x.to(dev)), t.to(dev), args.lam)) for x, t in vbatches]))
+            vl = float(np.mean([float(_loss(model(x.to(dev)), t.to(dev), args.lam, inp=x.to(dev),
+                                            lam_frac=args.lam_frac)) for x, t in vbatches]))
         n_steps = max(n_steps, 1)
         hist.append({"epoch": ep, "train": tr / n_steps, "val": vl, "t": time.time() - t0})
         flag = ""
         if vl < best:
             best = vl
             starsplit.save(model, out, {"name": args.name, "seed": args.seed, "epoch": ep, "val": vl,
-                                        "features": [32, 64, 128, 256], "recipe": "starsplit_data v1"})
+                                        "features": [32, 64, 128, 256],
+                                        "recipe": {"shift_order": D.SHIFT_ORDER, "bright_fraction": D.BRIGHT_FRACTION,
+                                                   "far_arms_from_sigma": D.ARM_FROM_SIGMA, "lam_frac": args.lam_frac}})
             flag = " *"
         starsplit.save(model, D.MODELS / f"{args.name}_last.pt", {"name": args.name, "seed": args.seed, "epoch": ep})
         (D.MODELS / f"{args.name}.json").write_text(json.dumps({"name": args.name, "seed": args.seed, "history": hist,
@@ -247,6 +269,9 @@ def main():
     a.add_argument("--epochs", type=int, default=40); a.add_argument("--pairs", type=int, default=2000)
     a.add_argument("--batch", type=int, default=4); a.add_argument("--lr", type=float, default=3e-4)
     a.add_argument("--lam", type=float, default=0.0); a.add_argument("--workers", type=int, default=8)
+    a.add_argument("--lam-frac", type=float, default=0.0, help="weight of the fraction-of-star-light-left term (v3)")
+    a.add_argument("--bright-fraction", type=float, default=None, help="override starsplit_data.BRIGHT_FRACTION")
+    a.add_argument("--no-far-arms", action="store_true", help="no wings or arms past the PSF stamp (the v1 data)")
     a = sub.add_parser("score"); a.add_argument("--name", required=True); a.add_argument("--n", type=int, default=200)
     a = sub.add_parser("split"); a.add_argument("--name", required=True); a.add_argument("--dso", required=True)
     a.add_argument("--filter", required=True); a.add_argument("--out", default=None)

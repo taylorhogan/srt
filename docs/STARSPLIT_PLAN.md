@@ -79,3 +79,24 @@ teacher-student net reproduces the teacher (LEARNED_DEBLUR_PLAN).
   the second axis at 119 deg on IC 1396, so `starless.py`'s arm removal
   may take arms off at the wrong angle on some fields; the palette's
   mod-90 fold is right.
+- 2026-11-05 09:00, v1_s0 done (best val 0.0206 at ep 39). Held-out TRUNK by
+  eye: faint and medium stars gone, nebula untouched (0.003 ADU away from
+  stars), star layer clean; the two brightest stars (8-10k ADU) leave a nub
+  (541 / 277 ADU at the centre) inside a faint ring, and a faint spike line.
+- 2026-11-05 10:30, v2_s0 done (val 0.47, not comparable: harder data). On
+  the Trunk it LOSES: faint stars left behind, background 10x less faithful
+  (0.034 ADU), the nub BIGGER (2339 / 1656 ADU), and the star layer carries
+  the nebula (the pillar is in it). A quarter saturated giants with 400 px
+  wings taught it that broad smooth light near a bright thing is star. So
+  the bilinear core was not the nub's cause. Panel
+  ~/Desktop/trunk_Ha_starless_v1_vs_v2.jpg. Score on the common synthetic
+  benchmark (v2 data): v1 removed 0.90/0.95/0.99/0.68 of the light at
+  5-20/20-100/100-1000/>1000 sigma, v2 0.92/0.97/0.97/0.81; background away
+  from stars v1 0.60 sigma rms, v2 0.86.
+- Diagnosis of the nub: the asinh L2. 500 ADU left of a 10,000 ADU peak is
+  a few pixels a little off in asinh units; the sky term is satisfied long
+  before. **v3** = v1's data (no far wings or arms, bright fraction 0.05,
+  spline cores kept) + `lam_frac` 1.0: the flux-weighted fraction of star
+  light left behind, the very number `score` reports. 60 epochs, launched
+  10:40 as v3_s0.
+
