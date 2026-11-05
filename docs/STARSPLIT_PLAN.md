@@ -114,3 +114,16 @@ teacher-student net reproduces the teacher (LEARNED_DEBLUR_PLAN).
   stars above 1500 sigma, peak-normalised), v3's loss kept with a floor on
   the fraction term's denominator. Panel ~/Desktop/trunk_Ha_starless_v1_vs_v3.jpg.
 \n
+- 2026-11-05 15:30, v4_s0 done (val 0.273, converged; the real stamps'
+  noise is in the target, so the floor is higher than v3's 0.126). Trunk:
+  bright-star residual rms 39/27 ADU (best), the spike lines GONE (the
+  stamps carried the real arms), but a dark annulus at 20-40 px (halo
+  over-subtracted), 35 faint residuals of 358 (v1 20), sky 0.054 ADU (v1
+  0.003). Synthetic: 0.85/0.94/0.994/0.99 by bin. Four recipes each moved
+  the bright-star error rather than removing it. **Decision:** stop
+  iterating the recipe. v1 is the starless product (best sky and faint-star
+  removal); the two or three brightest stars per field go to a HYBRID with
+  `starless.py`'s PSF fit (`star_layer`) above ~2000 ADU, the network
+  below. Panel ~/Desktop/trunk_bright_stars_v1_v3_v4.jpg. Checkpoints:
+  local/starsplit/models/v{1,2,3,4}_s0.pt.
+
