@@ -762,6 +762,31 @@ def pre_sunset_check_task() -> tuple[str, int]:
 
 
 _REFUSED = {"day": None, "key": None}      # one push per distinct refusal per day
+# A refused sequence (lint, or the file not saying what was announced) used
+# to raise out of driven_cycle into _driven_main's catch-all, which slept a
+# minute and re-entered the day: the noon announcement and the refusal every
+# minute until sunset (2026-11-04, 86 posts). A refusal is deterministic
+# until the plan changes, so the day carries on to the sunset check with no
+# file on disk, the generation is tried once more there, and a second
+# refusal is a night off, said once.
+_NO_SEQUENCE = {"day": None, "why": None}
+
+
+def _note_refusal(exc, day: str, when: str, slots) -> None:
+    """Record a refused generation and say, once, what happens next."""
+    why = exc.problems[0] if getattr(exc, "problems", None) else str(exc)
+    _NO_SEQUENCE["day"], _NO_SEQUENCE["why"] = day, why
+    LOGGER.error("No sequence on disk after the %s check: %s", when, why)
+    if when == "noon":
+        social_server.post_social_message(
+            "No sequence on disk for tonight (refused at noon). The sunset check will "
+            "generate it again from whatever plan it has then; if that is refused too, "
+            "there is no imaging tonight.")
+    else:
+        msg = f"Not imaging tonight: the sequence was refused again at sunset ({why})"
+        social_server.post_social_message("⛔ " + msg)
+        pushover.push_message(msg, priority=1)
+        _publish_skip_to_site("the sequence was refused: " + why)
 
 
 def _refuse_unless_announced(slots, output_path: Path, dso_name: str) -> None:
@@ -851,6 +876,7 @@ def generate_sequence_task(dso_name: str, good_hours: float = 0.0, notify: bool 
         raise
     if got and slots:
         _refuse_unless_announced(slots, Path(got[1]), dso_name)
+    _NO_SEQUENCE["day"] = _NO_SEQUENCE["why"] = None
     _PLAN_ON_DISK["sig"] = slot_plan.signature(slots, _filter_plans_for(slots, plan_filters))
     if got and notify:
         _plan, output_path = got
@@ -1234,17 +1260,29 @@ def _carry_out_sunset(rec: dict, noon_name: str, noon_slots=None) -> None:
     set_state(State.PRE_SUNSET_CHECK, best, True, slots=slots)
     live = _plan_filters_live(plan)
     sig = slot_plan.signature(slots, _filter_plans_for(slots, live))
-    if best != noon_name or sig != _PLAN_ON_DISK.get("sig"):
-        LOGGER.info("Plan changed since the sequence was written (%s -> %s) — regenerating",
-                    noon_name, best)
-        social_server.post_social_message(
-            "Plan changed since the sequence was written — regenerating:\n"
-            + slot_plan.describe(slots))
+    no_file = _NO_SEQUENCE.get("day") == _local_now().date().isoformat()
+    if no_file or best != noon_name or sig != _PLAN_ON_DISK.get("sig"):
+        if no_file:
+            LOGGER.info("No sequence on disk since the noon refusal — generating at sunset")
+            social_server.post_social_message(
+                "No sequence on disk since the noon refusal — generating it now:\n"
+                + slot_plan.describe(slots))
+        else:
+            LOGGER.info("Plan changed since the sequence was written (%s -> %s) — regenerating",
+                        noon_name, best)
+            social_server.post_social_message(
+                "Plan changed since the sequence was written — regenerating:\n"
+                + slot_plan.describe(slots))
         dropped = sunset_change_text(noon_slots, slots)
         if dropped:
             LOGGER.warning(dropped)
             pushover.push_message(dropped)
-        _run(generate_sequence_task, best, hours, slots=slots, plan_filters=live)
+        try:
+            _run(generate_sequence_task, best, hours, slots=slots, plan_filters=live)
+        except sequence_lint.SequenceLintError as exc:
+            _note_refusal(exc, _local_now().date().isoformat(), "sunset", slots)
+            set_state(State.PRE_SUNSET_CHECK, best, False, slots=slots)
+            return
         _post_filters(plan)
     elif not _site_plan_is_todays():
         # the sidecar is an earlier night's: publish tonight's, never restamp that
@@ -1281,7 +1319,11 @@ def driven_cycle():
         LOGGER.info("Restarted after the sunset check (%s): not launching",
                     reply["sunset"].get("outcome"))
         return
-    slots = _carry_out_noon(rec, resumed)
+    try:
+        slots = _carry_out_noon(rec, resumed)
+    except sequence_lint.SequenceLintError as exc:
+        slots = _plan_slots(rec["plan"])
+        _note_refusal(exc, day, "noon", slots)
     _cross_check("noon", rec.get("plan"), post_grid=False)
     noon_name, noon_seq = rec["plan"]["best"], int(rec["seq"])
 
@@ -1297,7 +1339,11 @@ def driven_cycle():
         newer = reply.get("noon")
         if newer and int(newer.get("seq") or 0) > noon_seq:
             noon_seq = int(newer["seq"])
-            slots = _carry_out_replan(newer)
+            try:
+                slots = _carry_out_replan(newer)
+            except sequence_lint.SequenceLintError as exc:
+                slots = _plan_slots(newer["plan"])
+                _note_refusal(exc, day, "noon", slots)
             if slots is None:
                 return
             noon_name = newer["plan"]["best"]

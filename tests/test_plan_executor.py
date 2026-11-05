@@ -303,3 +303,52 @@ def test_sunset_publishes_tonights_timeline_when_the_sites_card_is_an_earlier_ni
     S.driven_cycle()
     assert ("restamp",) not in w.log
     assert "ngc7790" in pushed
+
+
+def _refusing_gen(world, refuse_first_n):
+    """generate_sequence_task that refuses its first N calls (lint-style)."""
+    from nina_gen.sequence_lint import SequenceLintError
+    calls = {"n": 0}
+
+    def gen(dso, hours=0.0, notify=True, slots=None, plan_filters=False):
+        calls["n"] += 1
+        world.log.append(("generate", dso, notify, [s.name for s in slots]))
+        if calls["n"] <= refuse_first_n:
+            raise SequenceLintError(["slot 1: announced ngc7790, the file has hubblev1"])
+        S._NO_SEQUENCE["day"] = S._NO_SEQUENCE["why"] = None
+        S._PLAN_ON_DISK["sig"] = S.slot_plan.signature(slots, S._filter_plans_for(slots, plan_filters))
+    return gen
+
+
+def test_a_refused_noon_waits_for_sunset_and_generates_there(monkeypatch):
+    """2026-11-04: the refusal raised out of driven_cycle and the day was
+    re-entered every minute, announcement and all. Now the day carries on
+    with no file and the sunset check writes it."""
+    w = World(monkeypatch, [reply(rec("noon", "good", 5)), reply(rec("noon", "good", 5)),
+                            reply(rec("noon", "good", 5)),
+                            reply(rec("noon", "good", 5), rec("sunset", "good", 9))])
+    monkeypatch.setattr(S, "generate_sequence_task", _refusing_gen(w, 1))
+    S._NO_SEQUENCE.update(day=None, why=None)
+    S.driven_cycle()                                   # no exception escapes
+    gens = w.kinds("generate")
+    assert len(gens) == 2 and w.kinds("launch") == [("launch",)]
+    chat = " ".join(str(c[2]) for c in w.kinds("chat"))
+    assert "No sequence on disk for tonight (refused at noon)" in chat
+    assert "generating it now" in chat
+    assert ("restamp",) not in w.log
+    assert w.kinds("skip_site") == []
+    assert S._NO_SEQUENCE["day"] is None
+
+
+def test_a_refusal_at_sunset_too_is_a_night_off_said_once(monkeypatch):
+    w = World(monkeypatch, [reply(rec("noon", "good", 5)), reply(rec("noon", "good", 5)),
+                            reply(rec("noon", "good", 5)),
+                            reply(rec("noon", "good", 5), rec("sunset", "good", 9))])
+    monkeypatch.setattr(S, "generate_sequence_task", _refusing_gen(w, 5))
+    S._NO_SEQUENCE.update(day=None, why=None)
+    S.driven_cycle()
+    assert len(w.kinds("generate")) == 2 and w.kinds("launch") == []
+    assert len(w.kinds("skip_site")) == 1 and "refused" in w.kinds("skip_site")[0][1]
+    pushes = [p[1] for p in w.kinds("push")]
+    assert sum("refused again at sunset" in p for p in pushes) == 1
+    assert S._NO_SEQUENCE["day"] is not None
