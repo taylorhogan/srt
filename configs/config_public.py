@@ -6,11 +6,7 @@ class PublicConfig():
 
         },
         "version": {
-<<<<<<< Updated upstream
-            "date": "2026.11.4.9"
-=======
             "date": "2026.11.5.1"
->>>>>>> Stashed changes
         },
 
         "logger": {
