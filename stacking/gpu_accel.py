@@ -2,10 +2,14 @@
 
 Registration profile on the DGX Spark (61 MP QHY600M frames, m92):
 despike (scipy 3x3 median) 4.1 s + find_transform 2.6 s + apply_transform
-(skimage warp) 1.6 s per frame. The two image-wide raster ops — the median
-filter and the affine warp — are the GPU wins; transform *estimation*
-(sep detection + astroalign triangle matching) stays on CPU where it is
-cheap and already validated.
+(skimage warp) 1.6 s per frame. The affine warp is the GPU win; transform
+*estimation* (sep detection + astroalign triangle matching) stays on CPU
+where it is cheap and already validated.
+
+median3 is no longer called (2026-11-05): measured on the GB10 it takes
+2.3 s a 61 MP frame against cv2.medianBlur's 0.02 s for the same answer
+(unfold materialises the 9x neighbourhood tensor), and stacker._despike
+goes straight to cv2. Kept for the record and for the test that says so.
 
 Every helper returns None when torch/CUDA is unavailable so callers fall
 back to the CPU path — the Windows observatory box runs this same code

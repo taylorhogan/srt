@@ -645,16 +645,22 @@ def _count_sources(frame: np.ndarray) -> int:
 def _despike(frame: np.ndarray) -> np.ndarray:
     """3×3 median filter: annihilates single-pixel spikes, barely touches stars.
 
-    Runs on the GPU when torch+CUDA is present (stacking/gpu_accel.py,
-    ~4 s → ~0.1 s on 61 MP frames), then OpenCV, then scipy.
+    OpenCV's medianBlur, then scipy. cv2 only accepts uint8/uint16/float32 at
+    ksize=3, so any other dtype (the FWHM pass loads frames as float64) goes
+    through a float32 copy and comes back in its own dtype: a raw frame's
+    values are 16-bit integers, exact in float32, and a calibrated frame is
+    float32 already, so nothing is lost; the result is only ever used for
+    detection anyway.
 
-    The OpenCV path matters: this is called once per frame inside the
-    registration loop, and scipy's generic n-d median_filter takes ~5.8 s on a
-    61 MP (6388×9576) frame — about 40% of the whole per-frame registration
-    cost. cv2.medianBlur is the same 3×3 median, specialised for 2-D, and runs
-    it in ~0.08 s — 70x faster and bit-identical (verified on real sh2-92 Ha
-    subs: np.array_equal(scipy, cv2) is True). It only accepts uint8/uint16/
-    float32 at ksize=3, so anything else falls through to scipy.
+    The OpenCV path matters: this is called once per frame in the quality
+    pass and once per frame inside the registration loop, and scipy's
+    generic n-d median_filter takes ~5.8 s on a 61 MP (6388×9576) frame.
+    cv2.medianBlur is the same 3×3 median, specialised for 2-D, and runs it
+    in ~0.02-0.08 s, bit-identical in the interior (verified on real sh2-92
+    Ha subs and on IC 410 O-III, 2026-11-05). Until 2026-11-05 a torch
+    median (gpu_accel.median3) was tried FIRST: measured on the Spark's GB10
+    it takes 2.3 s a call, 100x slower than cv2, and the Spark paid 134 s of
+    it per 53-frame filter while the PC, with no torch, took the fast path.
 
     Used on the DETECTION side of registration only (find_transform control
     points, reference source counts) — transforms are always applied to the
@@ -666,17 +672,13 @@ def _despike(frame: np.ndarray) -> np.ndarray:
     "aligned" at identity, sky drifted 63 px over the night, every star smeared
     away — the stack's sharpest objects were the hot pixels themselves.
     """
-    try:
-        from stacking import gpu_accel
-        out = gpu_accel.median3(frame)
-        if out is not None:
-            return out
-    except Exception:
-        pass
-    if frame.ndim == 2 and frame.dtype in (np.uint8, np.uint16, np.float32):
+    if frame.ndim == 2:
         try:
             import cv2
-            return cv2.medianBlur(np.ascontiguousarray(frame), 3)
+            if frame.dtype in (np.uint8, np.uint16, np.float32):
+                return cv2.medianBlur(np.ascontiguousarray(frame), 3)
+            out = cv2.medianBlur(np.ascontiguousarray(frame, dtype=np.float32), 3)
+            return out.astype(frame.dtype, copy=False)
         except Exception:
             _logger.debug("cv2 despike unavailable, falling back to scipy", exc_info=True)
     from scipy.ndimage import median_filter
@@ -1108,6 +1110,49 @@ def _measure_fwhm_and_stars(path: Path) -> tuple[float, int]:
     except Exception as exc:
         _logger.warning("FWHM/star measurement failed for %s: %s", path.name, exc)
     return 0.0, 0
+
+
+# Workers for the quality pass (FWHM + star count per frame). The pass is
+# per-frame independent and, measured on the Spark 2026-11-05 (IC 410 O-III,
+# 53 frames), 62 % of a stack's wall time at 9.6 s a frame on one core:
+# sigma-clipped stats 2.8 s, DAOStarFinder 2.4 s, ~1100 Gaussian+Moffat fits
+# 3.0 s. Threads do not help (the fit loop is pure Python under the GIL:
+# 6 threads 7.9 -> 6.9 s a frame); processes do (6 workers 1.5 s a frame,
+# 12 workers 1.35, memory-bound by then), with identical answers. A worker
+# peaks near 2 GB (the 61 MP frame as float64 plus its despiked and
+# background-subtracted copies), so the count follows the cores, not the
+# frame count: 20 cores -> 6 (the Spark), 8 -> 2 (the observatory PC, where
+# the frame_stats cache usually answers anyway and N.I.N.A needs the RAM).
+_FWHM_POOL_WORKERS = min(6, max(1, (os.cpu_count() or 2) // 3))
+_FWHM_POOL_MIN_FRAMES = 4
+
+
+def _measure_many(paths: list[Path], cancel_cb: Optional[Callable[[], bool]] = None,
+                  workers: Optional[int] = None) -> "dict[Path, tuple[float, int]]":
+    """(FWHM px, star count) for every path, measured in a process pool when
+    there are enough frames to pay for one, serially otherwise or when the
+    pool cannot start. The answers are the serial ones in any case."""
+    n_workers = _FWHM_POOL_WORKERS if workers is None else workers
+    out: dict[Path, tuple[float, int]] = {}
+    if n_workers > 1 and len(paths) >= _FWHM_POOL_MIN_FRAMES:
+        try:
+            from concurrent.futures import ProcessPoolExecutor
+            with ProcessPoolExecutor(max_workers=min(n_workers, len(paths)),
+                                     initializer=_reg_worker_init) as pool:
+                futs = {pool.submit(_measure_fwhm_and_stars, p): p for p in paths}
+                for fut in as_completed(futs):
+                    _ckpt(cancel_cb)
+                    out[futs[fut]] = fut.result()
+            return out
+        except Cancelled:
+            raise
+        except Exception:
+            _logger.exception("FWHM pool failed — measuring serially")
+            out = {}
+    for p in paths:
+        _ckpt(cancel_cb)
+        out[p] = _measure_fwhm_and_stars(p)
+    return out
 
 
 def _split_cached(
@@ -1591,10 +1636,9 @@ def stack(
             _logger.info("Measuring FWHM + star counts for %d frames…", len(misses))
             if progress_cb:
                 progress_cb(f"measuring FWHM + star counts for {len(misses)} frames…")
-            for p in misses:
-                _ckpt(cancel_cb)
-                fwhm_values[p], star_counts[p] = _measure_fwhm_and_stars(p)
-                _logger.debug("  %s → FWHM %.2f px, %d stars", p.name, fwhm_values[p], star_counts[p])
+            for p, (fw, sc) in _measure_many(misses, cancel_cb).items():
+                fwhm_values[p], star_counts[p] = fw, sc
+                _logger.debug("  %s → FWHM %.2f px, %d stars", p.name, fw, sc)
 
     # Shared quality gate — identical logic to the convergence/snr analysis.
     accepted, rejected, q = _select_by_quality(

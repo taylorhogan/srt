@@ -239,6 +239,19 @@ Since 2026-09-25 the conductor decides both invariants (ADR 0014): every roof fi
   recipe, and the HOO after the morning's SHO rebuild, reading only its own
   day-old meta, rendered uncropped.
 
+  **The quality pass runs in a process pool and the despike is OpenCV's
+  (2026-11-05).** Profiled on the Spark (IC 410 O-III, 53 frames, 827 s):
+  the per-frame FWHM + star count was 62 % of the stack at 9.6 s a frame
+  on one core, registration 23 %, the sigma-clip combine 10 %. The torch
+  3x3 median (`gpu_accel.median3`) that `_despike` tried first took 2.3 s a
+  frame on the GB10 against cv2's 0.02 s for the same answer, so the Spark
+  was slower than the PC there; `_despike` now goes straight to cv2 (a
+  float64 frame through an exact float32 copy). The FWHM pass is per-frame
+  independent and pure-Python under the GIL (threads: 7.9 -> 6.9 s), so
+  `stacker._measure_many` runs it in `_FWHM_POOL_WORKERS` processes (cores
+  // 3, at most 6: 1.5 s a frame at 6) with the serial answers. The
+  convergence path's own 4-thread pass is unchanged.
+
   Frames are **levelled to a common sky before combining** and the level is
   restored afterwards. This is not cosmetic: sky varies 3x across nights (moon,
   transparency), and combining at native levels turns that spread into per-pixel
