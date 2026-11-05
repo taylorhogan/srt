@@ -154,3 +154,23 @@ def test_the_routine_writes_the_starless_beside_palette_renders_in_shadow():
     assert '!= "off" and not getattr(args, "final", False)' in src
     assert src.index("push_render(args, out_dir, written, meta, log, crops=crops)") < src.index("push_starless(args, out_dir, starless_path, log)")
     assert '"starless"' in inspect.getsource(R.starless_product)
+
+
+def test_faint_residual_fill_takes_small_stars_and_keeps_a_knot():
+    pytest.importorskip("sep")
+    from nn import starsplit
+    rng = np.random.default_rng(5)
+    h, w = 400, 400
+    yy, xx = np.mgrid[:h, :w]
+    def blob(y, x, amp, sig):
+        return amp * np.exp(-((yy - y) ** 2 + (xx - x) ** 2) / (2 * sig ** 2))
+    base = rng.normal(0, 0.3, (h, w))                                   # a denoised sky
+    knot = blob(300, 300, 12.0, 9.0)                                     # a broad HII knot (FWHM ~21 px)
+    stars = sum(blob(y, x, a, 2.0) for (y, x, a) in ((80, 60, 6.0), (150, 250, 4.0), (220, 120, 9.0)))
+    plane = (base + knot + stars).astype(np.float32)
+    out, n = starsplit.fill_faint_residuals({"Ha": plane, "S-II": plane * 0.5}, log=lambda s: None)
+    assert n == 3
+    for (y, x) in ((80, 60), (150, 250), (220, 120)):
+        assert abs(float(out["Ha"][y, x])) < 1.5                        # the star is gone
+    assert float(out["Ha"][300, 300]) > 10.0                             # the knot stays
+    assert abs(float(out["S-II"][80, 60])) < 1.0

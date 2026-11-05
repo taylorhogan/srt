@@ -165,4 +165,12 @@ teacher-student net reproduces the teacher (LEARNED_DEBLUR_PLAN).
   the planes with stars, no discs pinned), `push_starless` after the crop,
   `publish.starless` = shadow, meta `starless`. Palette recipes only, not in
   final mode. No chat `stars=none`: the PC has no GPU or model.
+- 2026-11-05 19:10, the first production starless SHO (the render's own
+  path): the arm fill took the red crosses, but the field was peppered with
+  red dots: the faint stars the network leaves below its threshold, each
+  taking the x4.3 S-II gain, since no discs are pinned on starless planes
+  (the normal render finds these same stars on the denoised planes and
+  neutralises them under discs). `starsplit.fill_faint_residuals`: the
+  palette's finder on the denoised starless sum at 3 sigma, peak-sized
+  discs, the knot guard, smooth_fill under them, before the gain.
 

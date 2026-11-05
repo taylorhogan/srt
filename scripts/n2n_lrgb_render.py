@@ -702,6 +702,9 @@ def starless_product(args, out_dir: Path, raw: dict, raw_info: dict, stretch: di
             den_models[mp] = denoiser.load_model(Path(mp))
         h, w = sl.shape
         sl_den[f] = denoiser.denoise_frame(sl, den_models[mp], device=dev)[:h, :w]
+    # the faint stars the network leaves, found on the denoised starless sum
+    # and filled, or every one of them takes the palette gain (red dots)
+    sl_den, _ = starsplit.fill_faint_residuals(sl_den, log=log)
     chans = {ch: sl_den[mapping[ch]] for ch in ("R", "G", "B") if ch in mapping}
     shared = shared_from_raw(raw_info)
     shared["palette_stars"] = []

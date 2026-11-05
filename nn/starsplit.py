@@ -152,6 +152,38 @@ def fill_bright_residuals(frame: np.ndarray, starless: np.ndarray, peak_adu: flo
     return out, n
 
 
+def fill_faint_residuals(planes: dict, thresh_sigma: float = 3.0, log=print) -> tuple[dict, int]:
+    """The faint stars the network leaves below its threshold, filled on a
+    set of (denoised) starless planes before a palette gain (2026-11-05: on
+    the first starless SHO of IC 410 every one of them took the x4.3 S-II
+    gain and the field was peppered with red dots; the normal render finds
+    these same stars on the denoised planes and neutralises them under
+    discs). The palette's own finder on the planes' sum at *thresh_sigma*,
+    peak-sized discs, the knot guard (min_peak_flux) so a compact HII knot
+    is not a star; each plane filled under the discs by smooth_fill.
+    Returns (planes, star count)."""
+    from stacking import color_process as cp
+    names = list(planes)
+    total = np.zeros_like(next(iter(planes.values())), dtype=np.float32)
+    for n in names:
+        total += np.nan_to_num(planes[n], nan=0.0).astype(np.float32)
+    mask, info = cp.star_mask(total, thresh_sigma, cp.PALETTE_STAR_MAX_NPIX, cp.PALETTE_STAR_RADIUS_A,
+                              cp.PALETTE_STAR_MAX_RADIUS_PX, feather=0.6,
+                              min_peak_flux=cp.PALETTE_STAR_MIN_PEAK_FLUX, radius_from="peak",
+                              feather_max=cp.PALETTE_STAR_FEATHER_MAX_PX)
+    m = np.clip(mask, 0.0, 1.0).astype(np.float32)
+    n_stars = int(info.get("kept", 0))
+    if n_stars == 0:
+        return planes, 0
+    out = {}
+    for n in names:
+        pl = np.nan_to_num(planes[n], nan=float(np.nanmedian(planes[n]))).astype(np.float32)
+        fill = cp.smooth_fill(pl, cp.PALETTE_FILL_BLOCK, mask=m)
+        out[n] = (pl * (1.0 - m) + fill * m).astype(np.float32)
+    log(f"    faint-residual fill: {n_stars} star(s) at {thresh_sigma:g} sigma, {float(m.mean()) * 100:.1f}% of the field")
+    return out, n_stars
+
+
 def split_frame(frame: np.ndarray, model=None, device: Optional[str] = None,
                 tile: int = TILE, overlap: int = OVERLAP, log=print,
                 fill_bright: bool = True, arms=None) -> tuple[np.ndarray, np.ndarray]:
