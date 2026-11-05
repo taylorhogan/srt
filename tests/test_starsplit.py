@@ -87,3 +87,28 @@ def test_loss_is_asinh_l2_by_default():
     o = torch.tensor([[1.0, 2.0]]); t = torch.tensor([[1.0, 4.0]])
     assert float(T._loss(o, t, 0.0)) == pytest.approx(2.0)
     assert float(T._loss(o, t, 0.5)) > 2.0
+
+
+def test_bright_star_fill_removes_a_compact_nub_and_leaves_the_rest():
+    pytest.importorskip("sep")
+    from nn import starsplit
+    rng = np.random.default_rng(7)
+    h, w = 300, 300
+    frame = (rng.normal(100, 1.0, (h, w))).astype(np.float32)
+    yy, xx = np.mgrid[:h, :w]
+    star = 5000.0 * np.exp(-((yy - 150) ** 2 + (xx - 150) ** 2) / (2 * 2.5 ** 2))
+    frame += star.astype(np.float32)
+    # the network's output: star gone but a nub of 300 ADU at the core inside a -40 ADU ring
+    starless = frame - star.astype(np.float32)
+    rr = np.hypot(yy - 150, xx - 150)
+    starless += np.where(rr < 3, 300.0, 0.0).astype(np.float32) + np.where((rr >= 5) & (rr < 8), -40.0, 0.0).astype(np.float32)
+    out, n = starsplit.fill_bright_residuals(frame, starless, log=lambda s: None)
+    assert n == 1
+    core = out[140:161, 140:161]
+    assert abs(float(core.mean()) - 100.0) < 1.0 and float(core.std()) < 3.0
+    far = rr > 40
+    np.testing.assert_array_equal(out[far], starless[far])          # untouched away from the star
+    # a faint star is not a candidate
+    faint = (frame - star).astype(np.float32); faint[50, 50] += 400
+    _, n2 = starsplit.fill_bright_residuals(faint, faint.copy(), log=lambda s: None)
+    assert n2 == 0

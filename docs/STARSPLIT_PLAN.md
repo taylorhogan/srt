@@ -126,4 +126,22 @@ teacher-student net reproduces the teacher (LEARNED_DEBLUR_PLAN).
   `starless.py`'s PSF fit (`star_layer`) above ~2000 ADU, the network
   below. Panel ~/Desktop/trunk_bright_stars_v1_v3_v4.jpg. Checkpoints:
   local/starsplit/models/v{1,2,3,4}_s0.pt.
+- 2026-11-05 16:20, the PSF-fit hybrid tried on the Trunk (v1 + `deblur.star_layer`
+  spliced in at the 15 stars > 2000 ADU): the 12 px rms read 7/3 ADU against
+  v1's 69/40, but the panel shows a bright annulus at 15-25 px around every
+  star and a hole at one. star_layer was built for deconvolution: it fits
+  off the far wing and lifts the core onto a fill, and the halo between
+  stays. Not a star remover; dropped. Next: v1 + a disc fill of the compact
+  nub only (~10-20 px), the net having already taken the halo and arms.
+- 2026-11-05 16:40, **the product path is settled: v1 + a fill of the
+  compact residual at bright stars** (`nn/starsplit.fill_bright_residuals`,
+  on by default in `split_frame`): compact peaks above 1200 ADU over the sky,
+  the disc where the starless differs from its surroundings by 3 sigma
+  (8-30 px, +2) filled by `starless.normalised_fill`, feathered 4 px.
+  Trunk: residual rms within 12 px 69/40 -> 0/0 ADU, the close pair's
+  companion 12 -> 1, compact residuals left 20 -> 14 of 358, nothing else
+  touched. Panel ~/Desktop/trunk_bright_stars_v1_vs_corefill.jpg. Next:
+  the starless jpg beside each palette composite in shadow and
+  `process ... stars=none`; then `apply_palette_gain(star_source="learned")`
+  judged on IC 410 / Melotte 15 / NGC 7317 beside the hand rules.
 
