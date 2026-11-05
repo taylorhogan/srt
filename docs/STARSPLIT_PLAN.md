@@ -144,4 +144,16 @@ teacher-student net reproduces the teacher (LEARNED_DEBLUR_PLAN).
   the starless jpg beside each palette composite in shadow and
   `process ... stars=none`; then `apply_palette_gain(star_source="learned")`
   judged on IC 410 / Melotte 15 / NGC 7317 beside the hand rules.
-
+- 2026-11-05 17:30, first starless SHO of IC 410 (scratch sho_starless.py, the
+  palette pipeline on the three starless planes with the routine's white,
+  blacks and Hubble gain measured on the planes WITH stars). Lessons for the
+  integration: (1) compose the DENOISED starless planes, as the morning's
+  pushed picture is the denoised set (raw S-II under the x4.3 gain is red
+  speckle); (2) pin NO star discs on starless planes (the protection fill
+  under each pinned disc left a field of dark circles); (3) the network leaves
+  the far arms of the three or four brightest stars and the gain paints them
+  as red crosses; pinning the palette's measured arms (63) did NOT remove
+  them, so `fill_bright_residuals` should take the arms too (a ribbon fill
+  along the measured axis out to the palette's length rule) before the
+  render integration. Product on the desktop: ic410_SHO_starless_v1.jpg,
+  with those crosses as its one blemish.
