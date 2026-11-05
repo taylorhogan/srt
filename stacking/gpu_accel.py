@@ -112,3 +112,4 @@ def apply_affine(matrix: np.ndarray, source: np.ndarray, out_shape):
     except Exception:
         _logger.exception("GPU apply_affine failed — falling back to CPU")
         return None
+

@@ -1123,8 +1123,122 @@ def _measure_fwhm_and_stars(path: Path) -> tuple[float, int]:
 # background-subtracted copies), so the count follows the cores, not the
 # frame count: 20 cores -> 6 (the Spark), 8 -> 2 (the observatory PC, where
 # the frame_stats cache usually answers anyway and N.I.N.A needs the RAM).
-_FWHM_POOL_WORKERS = min(6, max(1, (os.cpu_count() or 2) // 3))
+def _in_a_worker() -> bool:
+    """True inside a multiprocessing child. A pool is never started from one:
+    a caller script without an `if __name__ == "__main__"` guard would
+    otherwise re-run its top level in every spawned worker and each worker
+    would start its own pool (42 orphans from one scratch script,
+    2026-11-05); inside a worker the per-frame work is simply done inline."""
+    try:
+        import multiprocessing
+        return multiprocessing.parent_process() is not None
+    except Exception:
+        return False
+
+
+def _machine_pool_workers(cap: int = 6, min_ram_gb: float = 48.0,
+                          ram_gb: Optional[float] = None, cpus: Optional[int] = None) -> int:
+    """Workers for a per-frame process pool on this machine: cores // 3, at
+    most *cap*, and 1 (serial, the code as it was) on a box with less than
+    *min_ram_gb*: a worker peaks near 2 GB, the observatory PC has 29 GB
+    with N.I.N.A beside it, and its commands stack filters in threads, so
+    the real budget there is workers x filters. The Spark (122 GB, 20
+    cores) gets 6."""
+    if ram_gb is None:
+        try:
+            import psutil
+            ram_gb = psutil.virtual_memory().total / 2 ** 30
+        except Exception:
+            try:
+                ram_gb = os.sysconf("SC_PHYS_PAGES") * os.sysconf("SC_PAGE_SIZE") / 2 ** 30
+            except Exception:
+                ram_gb = 0.0
+    if ram_gb < min_ram_gb:
+        return 1
+    return min(cap, max(1, (cpus or os.cpu_count() or 2) // 3))
+
+
+_FWHM_POOL_WORKERS = _machine_pool_workers()
 _FWHM_POOL_MIN_FRAMES = 4
+# stack()'s streaming registration (load, calibrate, find_transform, warp,
+# spill) in the same kind of pool, 2026-11-05: 2 s a frame on one core,
+# astroalign's matching the CPU half of it. A SPAWN context, not fork: the
+# workers warp on the GPU, and CUDA cannot be initialised in a forked child
+# of a process that has already used it (the render denoises in the parent).
+_STACK_REG_WORKERS = _machine_pool_workers()
+
+
+def _register_spill_worker(i: int, path: Path, det_target, ref_shape, master_npys,
+                           tmp_dir: str):
+    """One frame of stack()'s streaming registration, in a worker or inline:
+    load, calibrate against the master .npy paths, register onto the shared
+    control points, level to its own sky median and spill as f<i>.npy.
+    Returns (i, npy path or None, level, reason)."""
+    bias, dark, flat = (np.load(m, mmap_mode="r") if m else None for m in master_npys)
+    try:
+        frame = _calibrate(_load_fits_2d(Path(path)), bias, dark, flat)
+    except Exception as exc:
+        return i, None, 0.0, f"load failed: {exc}"
+    aligned, reason = _register_one_array(frame, det_target, ref_shape)
+    frame = None
+    if aligned is None:
+        return i, None, 0.0, reason
+    level = float(np.nanmedian(aligned))
+    if np.isfinite(level):
+        aligned = aligned - level
+    else:
+        level = 0.0
+    out = Path(tmp_dir) / f"f{i:04d}.npy"   # i = the frame's index in `accepted`
+    np.save(out, aligned.astype(np.float32, copy=False))
+    return i, str(out), level, ""
+
+
+def _register_many(pending: list, det_target, ref_shape, master_npys, tmp_dir: Path,
+                   cancel_cb=None, progress_cb=None, n_total: int = 0,
+                   workers: Optional[int] = None) -> dict:
+    """{i: (npy or None, level, reason)} for every (i, path) in *pending*,
+    through a spawn-context process pool when there are enough frames and
+    workers, inline otherwise or when the pool cannot start. Same answers."""
+    n_workers = _STACK_REG_WORKERS if workers is None else workers
+    if _in_a_worker():
+        n_workers = 1
+    results: dict = {}
+    tick = max(1, (n_total or len(pending)) // 10)
+    if n_workers > 1 and len(pending) >= _FWHM_POOL_MIN_FRAMES:
+        pool = None
+        try:
+            import multiprocessing
+            from concurrent.futures import ProcessPoolExecutor
+            pool = ProcessPoolExecutor(max_workers=min(n_workers, len(pending)),
+                                       mp_context=multiprocessing.get_context("spawn"),
+                                       initializer=_reg_worker_init)
+            futs = [pool.submit(_register_spill_worker, i, p, det_target, ref_shape,
+                                master_npys, str(tmp_dir)) for i, p in pending]
+            for k, fut in enumerate(as_completed(futs), 1):
+                _ckpt(cancel_cb)
+                i, out, level, reason = fut.result()
+                results[i] = (out, level, reason)
+                if progress_cb and k % tick == 0:
+                    progress_cb(f"registered {k}/{n_total or len(pending)}…")
+            pool.shutdown(wait=True)
+            return results
+        except Cancelled:
+            if pool is not None:
+                pool.shutdown(wait=False, cancel_futures=True)
+            raise
+        except Exception:
+            _logger.exception("Registration pool failed — registering serially")
+            if pool is not None:
+                pool.shutdown(wait=False, cancel_futures=True)
+            results = {}
+    for k, (i, p) in enumerate(pending, 1):
+        _ckpt(cancel_cb)
+        _, out, level, reason = _register_spill_worker(i, p, det_target, ref_shape,
+                                                       master_npys, str(tmp_dir))
+        results[i] = (out, level, reason)
+        if progress_cb and k % tick == 0:
+            progress_cb(f"registered {k}/{n_total or len(pending)}…")
+    return results
 
 
 def _measure_many(paths: list[Path], cancel_cb: Optional[Callable[[], bool]] = None,
@@ -1133,6 +1247,8 @@ def _measure_many(paths: list[Path], cancel_cb: Optional[Callable[[], bool]] = N
     there are enough frames to pay for one, serially otherwise or when the
     pool cannot start. The answers are the serial ones in any case."""
     n_workers = _FWHM_POOL_WORKERS if workers is None else workers
+    if _in_a_worker():
+        n_workers = 1
     out: dict[Path, tuple[float, int]] = {}
     if n_workers > 1 and len(paths) >= _FWHM_POOL_MIN_FRAMES:
         try:
@@ -1215,6 +1331,63 @@ def _combine_tile(
         return np.where(denom > 0, numer / np.where(denom > 0, denom, 1.0), fallback)
 
     raise ValueError(f"Unknown stack method: {method}")
+
+
+# Threads for the tiled combine (2026-11-05). astropy's sigma clip is a C
+# gufunc that releases the GIL, so threads scale and the result is the very
+# same code on the same tiles: measured on 47-frame IC 410 O-III tiles,
+# 0.32 s serial, 0.064 s at 6 threads, bit-identical. A GPU version was
+# built and dropped the same day: exact only in float64 (astropy's axis
+# path works in double, and a float32 clip breaks an exact tie at the
+# bound the other way at ~1 pixel in 4 M, by up to 0.9 ADU), and in
+# float64 the GB10 managed 0.16 s a tile. A tile cube is ~50 MB at 47
+# frames, so the threads cost nothing the PC cannot spare.
+_COMBINE_THREADS = min(6, max(1, (os.cpu_count() or 2) // 2))
+
+
+def _combine_tiles(mmaps: list, method: "StackMethod", weights, sigma: float, tile: int,
+                   result: np.ndarray, coverage: np.ndarray, cancel_cb=None, progress_cb=None,
+                   threads: Optional[int] = None) -> None:
+    """Fill *result* and *coverage* tile by tile from the registered frames'
+    memmaps, the tiles combined on a thread pool (disjoint slices, so the
+    writes need no lock). Serial when *threads* is 1."""
+    H, W = result.shape
+    boxes = [(y0, min(y0 + tile, H), x0, min(x0 + tile, W))
+             for y0 in range(0, H, tile) for x0 in range(0, W, tile)]
+    n_total = len(boxes)
+    fired: set[int] = set()
+
+    def one(box):
+        y0, y1, x0, x1 = box
+        cube_tile = np.stack([np.asarray(m[y0:y1, x0:x1]) for m in mmaps], axis=0)
+        coverage[y0:y1, x0:x1] = np.sum(~np.isnan(cube_tile), axis=0).astype(np.int32)
+        result[y0:y1, x0:x1] = _combine_tile(cube_tile, method, weights, sigma)
+
+    def progress(done: int):
+        if progress_cb:
+            milestone = (done * 100 // n_total) // 25 * 25
+            if milestone > 0 and milestone not in fired:
+                fired.add(milestone)
+                progress_cb(f"combining {milestone}%…")
+
+    n_threads = _COMBINE_THREADS if threads is None else threads
+    if n_threads <= 1 or n_total < 2:
+        for k, box in enumerate(boxes, 1):
+            _ckpt(cancel_cb)
+            one(box)
+            progress(k)
+        return
+    pool = ThreadPoolExecutor(max_workers=min(n_threads, n_total))
+    try:
+        futs = [pool.submit(one, box) for box in boxes]
+        for k, fut in enumerate(as_completed(futs), 1):
+            _ckpt(cancel_cb)
+            fut.result()
+            progress(k)
+    except BaseException:
+        pool.shutdown(wait=False, cancel_futures=True)
+        raise
+    pool.shutdown(wait=True)
 
 
 def _fwhm_weights(fwhm_values: dict, accepted: list[Path]) -> np.ndarray:
@@ -1598,11 +1771,13 @@ def stack(
     if progress_cb:
         progress_cb("calibration masters…")
     master_bias = master_dark = master_flat = None
+    bias_npy = dark_npy = _flat_npy = None
     if bias_paths:
-        master_bias = np.load(_cached_master(list(bias_paths), "bias"), mmap_mode="r")
+        bias_npy = _cached_master(list(bias_paths), "bias")
+        master_bias = np.load(bias_npy, mmap_mode="r")
     if dark_paths:
-        master_dark = np.load(
-            _cached_master(list(dark_paths), "dark", subtract=master_bias), mmap_mode="r")
+        dark_npy = _cached_master(list(dark_paths), "dark", subtract=master_bias)
+        master_dark = np.load(dark_npy, mmap_mode="r")
     if flat_paths:
         _cal = CalibrationSet(
             _master_cache_path(list(bias_paths), "bias") if bias_paths else None,
@@ -1709,14 +1884,16 @@ def stack(
     # is restored afterwards so the output keeps a physical ADU scale.
     frame_levels: list[float] = []
 
-    def _spill(frame: np.ndarray, path: Path) -> Path:
+    def _spill(frame: np.ndarray, path: Path, idx: Optional[int] = None) -> Path:
         level = float(np.nanmedian(frame))
         if np.isfinite(level):
             frame = frame - level
             frame_levels.append(level)
         else:
             frame_levels.append(0.0)
-        p = tmp_dir / f"f{len(mmap_paths):04d}.npy"
+        # named by the frame's index in `accepted` when registering, so the
+        # reference and the pool's workers (f<i> too) never share a name
+        p = tmp_dir / f"f{len(mmap_paths) if idx is None else idx:04d}.npy"
         np.save(p, frame.astype(np.float32, copy=False))
         mmap_paths.append(p)
         survivors.append(path)
@@ -1749,30 +1926,30 @@ def stack(
                 det_target = _reference_control_points(_despike(reference))
                 if det_target is None:
                     det_target = _despike(reference)
-                _spill(reference, accepted[ref_idx])
+                _spill(reference, accepted[ref_idx], idx=ref_idx)
                 reference = None
             if progress_cb:
                 progress_cb(f"registering {len(accepted)} frames (streaming)…")
 
-            tick = max(1, len(accepted) // 10)
-            for i, p in enumerate(accepted):
-                if i == ref_idx:
-                    continue
-                _ckpt(cancel_cb)
-                frame = _calibrate(_load_fits_2d(p), master_bias, master_dark, master_flat)
-                aligned, reason = _register_one_array(frame, det_target, ref_shape)
-                frame = None
-                if aligned is None:
+            pending = [(i, p) for i, p in enumerate(accepted) if i != ref_idx]
+            master_npys = (str(bias_npy) if bias_npy else None,
+                           str(dark_npy) if dark_npy else None,
+                           str(_flat_npy) if _flat_npy else None)
+            got = _register_many(pending, det_target, ref_shape, master_npys, tmp_dir,
+                                 cancel_cb, progress_cb, n_total=len(accepted))
+            for i, p in pending:
+                out, level, reason = got[i]
+                if out is None:
                     if reason.startswith("QA:"):
                         poor_qa += 1
                     else:
                         failed += 1
                     _logger.warning("Registration: frame %d — %s", i, reason)
                     continue
-                _spill(aligned, p)
-                aligned = None
-                if progress_cb and i % tick == 0:
-                    progress_cb(f"registered {len(mmap_paths)}/{len(accepted)}…")
+                # the worker levelled and spilled; record it as _spill would
+                frame_levels.append(level)
+                mmap_paths.append(Path(out))
+                survivors.append(p)
 
             _logger.info("Registration: %d/%d aligned, %d failed, %d dropped QA",
                          len(mmap_paths), len(accepted), failed, poor_qa)
@@ -1806,25 +1983,8 @@ def stack(
             n_frames, n_ty, n_tx, TILE, method.name,
         )
 
-        _progress_pcts_fired: set[int] = set()
-        tile_idx = 0
-        for y0 in range(0, H, TILE):
-            y1 = min(y0 + TILE, H)
-            for x0 in range(0, W, TILE):
-                _ckpt(cancel_cb)
-                x1 = min(x0 + TILE, W)
-                cube_tile = np.stack(
-                    [np.asarray(m[y0:y1, x0:x1]) for m in mmaps], axis=0,
-                )
-                coverage[y0:y1, x0:x1] = np.sum(~np.isnan(cube_tile), axis=0).astype(np.int32)
-                result[y0:y1, x0:x1] = _combine_tile(cube_tile, method, weights, sigma)
-                tile_idx += 1
-                if progress_cb:
-                    pct = tile_idx * 100 // n_tiles_total
-                    milestone = (pct // 25) * 25
-                    if milestone > 0 and milestone not in _progress_pcts_fired:
-                        _progress_pcts_fired.add(milestone)
-                        progress_cb(f"combining {milestone}%…")
+        _combine_tiles(mmaps, method, weights, sigma, TILE, result, coverage,
+                       cancel_cb, progress_cb)
     finally:
         # Drop memmaps before deleting the backing files (matters on Windows).
         mmaps = None

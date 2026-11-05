@@ -250,7 +250,24 @@ Since 2026-09-25 the conductor decides both invariants (ADR 0014): every roof fi
   independent and pure-Python under the GIL (threads: 7.9 -> 6.9 s), so
   `stacker._measure_many` runs it in `_FWHM_POOL_WORKERS` processes (cores
   // 3, at most 6: 1.5 s a frame at 6) with the serial answers. The
-  convergence path's own 4-thread pass is unchanged.
+  convergence path's own 4-thread pass is unchanged. **Phase 2, the same
+  day:** the streaming registration runs in a spawn-context pool of the
+  same size (`_register_many` / `_register_spill_worker`; spawn, because
+  the workers warp on the GPU and CUDA cannot start in a forked child of a
+  process that has used it; a pool is never started from inside a worker,
+  so a caller script without a `__main__` guard degrades to serial instead
+  of breeding processes), and the tiled sigma-clip combine runs on 6
+  threads (`_combine_tiles`: astropy's C clip releases the GIL; 0.32 ->
+  0.064 s a tile, bit-identical). A GPU combine was built and dropped:
+  astropy's clip along an axis works in double, a float32 clip breaks an
+  exact tie at the bound the other way at ~1 pixel in 4 M (by up to 0.9
+  ADU: the bounds iterate on the shrinking set but the mask is the ORIGINAL
+  data against the converged bounds, and a tie there is common), and in
+  float64 the GB10 was slower than the threads. Both process pools are
+  sized by `_machine_pool_workers` (cores // 3, max 6, and 1 under 48 GB
+  RAM: the PC stays serial, exactly the code it ran before). Measured on
+  the 53-frame filter: 827 s -> 255 s (phase 1) -> 155 s (phase 2),
+  bit-identical to the cached stack throughout.
 
   Frames are **levelled to a common sky before combining** and the level is
   restored afterwards. This is not cosmetic: sky varies 3x across nights (moon,
