@@ -76,6 +76,15 @@ BRIGHT_FRACTION = 0.25
 BRIGHT_FLOOR_SIGMA = 100.0
 ARM_FROM_SIGMA = 1500.0                   # below this the wing past 62 px and the arms past 100 px are under 0.05 sigma
 ARM_L0, ARM_L_PER_DEX2, ARM_MAX = 40.0, 100.0, 400.0
+# v4 (2026-11-05, after v1 and v3 both missed the brightest stars' cores,
+# one under, one over, same footprint): a star past REAL_STAMP_FROM_SIGMA
+# is injected as a REAL bright star cut from the plane (its own core, its
+# own arms, the field's own shapes), peak-normalised, not the field-median
+# PSF of unsaturated stars. prepare_plane keeps up to STAMP_MAX of them.
+REAL_STAMP_FROM_SIGMA = 1000.0
+STAMP_MAX = 24
+STAMP_PEAK_MIN_SIGMA = 1500.0
+USE_REAL_STAMPS = False                   # the trainer's --real-stamps turns it on
 
 
 # ---------------------------------------------------------------------------
@@ -105,7 +114,8 @@ def prepare_plane(plane: np.ndarray, name: str, out_dir: Path = PREPARED, log=pr
     rms = float(info.get("rms", np.nanstd(sub[::8, ::8])))
     np.save(out_dir / f"{name}_bg.npy", bg)
     axes = pinfo.get("spike_axes") or []
-    np.savez_compressed(out_dir / f"{name}_psf.npz", psf=psf.astype(np.float32),
+    stamps = real_star_stamps(sub, rms, float(sat or 65535.0), R=psf.shape[0] // 2)
+    np.savez_compressed(out_dir / f"{name}_psf.npz", psf=psf.astype(np.float32), stamps=stamps,
                         spikes=np.asarray(pinfo.get("spikes"), dtype=np.float32),
                         sat=float(sat or 65535.0), rms=rms,
                         density=float(info.get("detected", 0)) / float(a.size),
@@ -115,9 +125,55 @@ def prepare_plane(plane: np.ndarray, name: str, out_dir: Path = PREPARED, log=pr
              "detected": int(info.get("detected", 0)), "rms": rms, "sat": float(sat or 65535.0),
              "fwhm_px": float(pinfo.get("fwhm_px", 0.0)), "psf_stars": int(pinfo.get("stars", 0)),
              "wing_beyond_24px": float(pinfo.get("wing_flux_beyond_24px", 0.0))}
+    entry["real_stamps"] = int(len(stamps))
     log(f"  {name}: {entry['stars_filled']} stars filled of {entry['detected']}, rms {rms:.2f}, "
-        f"fwhm {entry['fwhm_px']:.2f} px from {entry['psf_stars']} stars, sat {entry['sat']:.0f}")
+        f"fwhm {entry['fwhm_px']:.2f} px from {entry['psf_stars']} stars, sat {entry['sat']:.0f}, "
+        f"{len(stamps)} real bright stamps")
     return entry
+
+
+def real_star_stamps(sub: np.ndarray, rms: float, sat: float, R: int = 72,
+                     n_max: int = STAMP_MAX) -> np.ndarray:
+    """Up to *n_max* isolated bright unsaturated stars of the background-
+    subtracted plane as (n, 2R+1, 2R+1) peak-normalised stamps, each sitting
+    on zero (its outer annulus median taken off). Isolated: no other source
+    brighter than 2 % of it within R px. Brightest first."""
+    import sep
+    a = np.ascontiguousarray(sub, dtype=np.float32)
+    try:
+        obj = sep.extract(a, 40.0, err=float(rms), minarea=5)
+    except Exception:
+        return np.zeros((0, 2 * R + 1, 2 * R + 1), dtype=np.float32)
+    if len(obj) == 0:
+        return np.zeros((0, 2 * R + 1, 2 * R + 1), dtype=np.float32)
+    h, w = a.shape
+    order = np.argsort(obj["peak"])[::-1]
+    xs, ys, pk = obj["x"], obj["y"], obj["peak"]
+    out = []
+    yy, xx = np.mgrid[-R:R + 1, -R:R + 1]
+    ring = np.hypot(yy, xx) > R - 10
+    for i in order:
+        if len(out) >= n_max:
+            break
+        p = float(pk[i])
+        if p < STAMP_PEAK_MIN_SIGMA * rms or p > 0.85 * sat:
+            continue
+        y, x = int(round(ys[i])), int(round(xs[i]))
+        if not (R + 2 <= y < h - R - 2 and R + 2 <= x < w - R - 2):
+            continue
+        d = np.hypot(xs - xs[i], ys - ys[i])
+        near = (d < R) & (d > 2) & (pk > 0.02 * p)
+        if near.any():
+            continue
+        st = np.asarray(a[y - R:y + R + 1, x - R:x + R + 1], dtype=np.float64)
+        st = st - np.median(st[ring])
+        m = float(st.max())
+        if not np.isfinite(m) or m <= 0:
+            continue
+        out.append((st / m).astype(np.float32))
+    if not out:
+        return np.zeros((0, 2 * R + 1, 2 * R + 1), dtype=np.float32)
+    return np.stack(out)
 
 
 def write_manifest(entries: list, out_dir: Path = PREPARED) -> Path:
@@ -255,7 +311,8 @@ def _far_arms(out: np.ndarray, y: float, x: float, amp: float, psf: np.ndarray,
 
 
 def inject_stars(bg_shape, psf: np.ndarray, rng, n: int, rms: float, sat: float,
-                 spikes: Optional[np.ndarray] = None, axes=None, arm_sigma: float = 3.0):
+                 spikes: Optional[np.ndarray] = None, axes=None, arm_sigma: float = 3.0,
+                 stamps: Optional[np.ndarray] = None):
     """A star field: *n* stars at sub-pixel positions, peak amplitudes from
     AMP_SIGMA_MIN*rms to AMP_SAT_MAX*sat (see _amplitudes), each the measured
     PSF spline-shifted by its fractional offset, with far arms past the stamp
@@ -269,12 +326,17 @@ def inject_stars(bg_shape, psf: np.ndarray, rng, n: int, rms: float, sat: float,
     xs = rng.uniform(0, w - 1, n)
     pk = float(psf.max())
     table = np.zeros((n, 3), dtype=np.float64)
+    have_real = stamps is not None and len(stamps) > 0 and stamps.shape[1] == psf.shape[0]
     for k, (y, x, A) in enumerate(zip(ys, xs, amps)):
         iy, ix = int(np.floor(y)), int(np.floor(x))
         fy, fx = y - iy, x - ix
-        stamp = (np.clip(ndshift(psf, (fy, fx), order=SHIFT_ORDER, mode="constant", cval=0.0), 0, None)
-                 if (fy > 0.02 or fx > 0.02) else psf)
-        out[iy:iy + 2 * R + 1, ix:ix + 2 * R + 1] += (A / pk) * stamp
+        if have_real and A > REAL_STAMP_FROM_SIGMA * rms:
+            base, scale = stamps[rng.integers(len(stamps))], A           # peak-normalised real star
+        else:
+            base, scale = psf, A / pk
+        stamp = (ndshift(base, (fy, fx), order=SHIFT_ORDER, mode="constant", cval=0.0)
+                 if (fy > 0.02 or fx > 0.02) else base)
+        out[iy:iy + 2 * R + 1, ix:ix + 2 * R + 1] += scale * stamp
         table[k] = (y, x, A)
         if A > ARM_FROM_SIGMA * rms:
             _far_arms(out, y, x, A, psf, spikes, axes, rms, arm_sigma)
@@ -335,7 +397,8 @@ class StarSplitDataset:
                                 "fwhm": float(man.get("fwhm_px") or 5.0),
                                 "spikes": z["spikes"] if "spikes" in z.files else None,
                                 "axes": (z["spike_axes"].tolist() if "spike_axes" in z.files else []),
-                                "arm_sigma": float(z["arm_sigma"]) if "arm_sigma" in z.files else 3.0})
+                                "arm_sigma": float(z["arm_sigma"]) if "arm_sigma" in z.files else 3.0,
+                                "stamps": z["stamps"] if "stamps" in z.files else None})
         if not self.planes:
             raise ValueError("no planes")
 
@@ -367,7 +430,8 @@ class StarSplitDataset:
         dens = pl["density"] * rng.uniform(*STAR_DENSITY_JITTER)
         n = int(rng.poisson(max(dens * P * P, 1.0)))
         stars, table = inject_stars((P, P), pl["psf"], rng, n, rms, pl["sat"],
-                                    spikes=pl["spikes"], axes=pl["axes"], arm_sigma=pl["arm_sigma"])
+                                    spikes=pl["spikes"], axes=pl["axes"], arm_sigma=pl["arm_sigma"],
+                                    stamps=pl["stamps"] if USE_REAL_STAMPS else None)
         inp = np.minimum(target + stars, pl["sat"])            # saturation plateau
         _, scale = denoiser.normalise(target)
         t_in = np.arcsinh(inp / scale).astype(np.float32)[None]

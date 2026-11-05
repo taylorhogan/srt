@@ -100,3 +100,17 @@ teacher-student net reproduces the teacher (LEARNED_DEBLUR_PLAN).
   light left behind, the very number `score` reports. 60 epochs, launched
   10:40 as v3_s0.
 
+
+- 2026-11-05 13:00, v3_s0 done (val 0.126 at ep 60). Synthetic benchmark:
+  0.94/0.97/0.996/0.98 of the light removed by bin (v1 0.90/0.95/0.99/0.68).
+  Trunk: bright-star residual rms within 12 px 45/29 ADU (v1 69/40), but
+  the centre now reads -208 ADU (a hole) where v1 read +541 (a nub); 33
+  star-like residuals left of 358 (v1 20); sky fidelity 0.019 ADU (v1
+  0.003); smooth light in the star layer equal (0.8 ADU rms). A trade. The
+  sign flip on the same footprint says the net cannot represent the real
+  bright core: the injected core is the field-median PSF of unsaturated
+  stars. **v4**: past 1000 sigma a star is injected as a REAL bright star
+  cut from the plane (`real_star_stamps`, up to 24 isolated unsaturated
+  stars above 1500 sigma, peak-normalised), v3's loss kept with a floor on
+  the fraction term's denominator. Panel ~/Desktop/trunk_Ha_starless_v1_vs_v3.jpg.
+\n

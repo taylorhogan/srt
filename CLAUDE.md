@@ -222,6 +222,15 @@ Since 2026-09-25 the conductor decides both invariants (ADR 0014): every roof fi
   signal before the x4.3 palette gain, against the routine's 114, and the
   crop pushed beside it was a saturated, grey-skied picture. A final that fails QC pushes no crop (`push_final_crop`): the "QC FAIL" push is the only picture it sends.
 
+  **A learned star/nebula split is being built (2026-11-05, docs/STARSPLIT_PLAN.md;
+  `nn/starsplit`, `nn/starsplit_data`, `scripts/starsplit_train.py`): a UNet
+  trained on real backgrounds with the field's own PSF injected as known
+  stars; it returns the starless plane, the star layer being the difference.
+  Nothing in the render uses it yet; v1 cleans a held-out field but for the
+  two or three brightest stars, and the plan's log has each recipe's numbers.
+  Its product is a starless render beside the palette composites, and in
+  time the replacement of the hand-rule stars above.**
+
   **The morning render cuts every channel to the common footprint (since
   2026-10-28).** The stacker crops a lone stack to where 80 % of its frames
   landed, but not one built onto a shared reference (the box differs per

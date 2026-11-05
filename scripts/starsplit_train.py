@@ -94,7 +94,7 @@ def _loss(out, tgt, lam: float, inp=None, lam_frac: float = 0.0):
         lin_o, lin_t, lin_x = torch.sinh(out), torch.sinh(tgt), torch.sinh(inp)
         star = (inp - tgt) > 0.1                       # where the injected stars are
         left = ((lin_o - lin_t).abs() * star).sum()
-        light = ((lin_x - lin_t) * star).sum().clamp(min=1.0)
+        light = ((lin_x - lin_t) * star).sum().clamp(min=2000.0)   # a near-empty batch is not a huge ratio (v3 ep 11: 764)
         total = total + lam_frac * left / light
     return total
 
@@ -141,8 +141,9 @@ def cmd_train(args):
         D.BRIGHT_FRACTION = float(args.bright_fraction)
     if args.no_far_arms:
         D.ARM_FROM_SIGMA = float("inf")
+    D.USE_REAL_STAMPS = bool(args.real_stamps)
     print(f"recipe: shift order {D.SHIFT_ORDER}, bright fraction {D.BRIGHT_FRACTION}, far arms from "
-          f"{D.ARM_FROM_SIGMA} sigma, lam_frac {args.lam_frac}", flush=True)
+          f"{D.ARM_FROM_SIGMA} sigma, lam_frac {args.lam_frac}, real stamps {D.USE_REAL_STAMPS}", flush=True)
     torch.manual_seed(args.seed)
     rng = np.random.default_rng(args.seed)
     vrng = np.random.default_rng(10_000 + args.seed)
@@ -184,7 +185,8 @@ def cmd_train(args):
             starsplit.save(model, out, {"name": args.name, "seed": args.seed, "epoch": ep, "val": vl,
                                         "features": [32, 64, 128, 256],
                                         "recipe": {"shift_order": D.SHIFT_ORDER, "bright_fraction": D.BRIGHT_FRACTION,
-                                                   "far_arms_from_sigma": D.ARM_FROM_SIGMA, "lam_frac": args.lam_frac}})
+                                                   "far_arms_from_sigma": D.ARM_FROM_SIGMA, "lam_frac": args.lam_frac,
+                                                   "real_stamps": D.USE_REAL_STAMPS}})
             flag = " *"
         starsplit.save(model, D.MODELS / f"{args.name}_last.pt", {"name": args.name, "seed": args.seed, "epoch": ep})
         (D.MODELS / f"{args.name}.json").write_text(json.dumps({"name": args.name, "seed": args.seed, "history": hist,
@@ -272,6 +274,7 @@ def main():
     a.add_argument("--lam-frac", type=float, default=0.0, help="weight of the fraction-of-star-light-left term (v3)")
     a.add_argument("--bright-fraction", type=float, default=None, help="override starsplit_data.BRIGHT_FRACTION")
     a.add_argument("--no-far-arms", action="store_true", help="no wings or arms past the PSF stamp (the v1 data)")
+    a.add_argument("--real-stamps", action="store_true", help="inject real bright stars cut from the plane past 1000 sigma (v4)")
     a = sub.add_parser("score"); a.add_argument("--name", required=True); a.add_argument("--n", type=int, default=200)
     a = sub.add_parser("split"); a.add_argument("--name", required=True); a.add_argument("--dso", required=True)
     a.add_argument("--filter", required=True); a.add_argument("--out", default=None)
