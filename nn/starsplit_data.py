@@ -63,6 +63,19 @@ STAR_DENSITY_JITTER = (0.5, 2.0)
 AMP_SIGMA_MIN = 1.5
 AMP_SAT_MAX = 30.0
 BRIGHT_SLOPE = 0.6                       # power-law slope of the amplitude distribution, as deconv_phase0
+# v2 (2026-11-05, after the epoch-13 look at IC 410: bright stars left a
+# nub inside a dark ring, a faint far spike survived): the star stamp is
+# shifted with a cubic spline, not bilinearly, so the injected core is as
+# sharp as a real star's; BRIGHT_FRACTION of the stars are drawn
+# log-uniform from 100 sigma to the cap, since the power law makes a
+# bright star a 1-in-500 event; and a star past ARM_FROM_SIGMA gets four
+# arms beyond the stamp along the measured spike axes, amplitude falling
+# as 1/r from the stamp's edge out to the palette's length rule.
+SHIFT_ORDER = 3
+BRIGHT_FRACTION = 0.25
+BRIGHT_FLOOR_SIGMA = 100.0
+ARM_FROM_SIGMA = 1500.0                   # below this the wing past 62 px and the arms past 100 px are under 0.05 sigma
+ARM_L0, ARM_L_PER_DEX2, ARM_MAX = 40.0, 100.0, 400.0
 
 
 # ---------------------------------------------------------------------------
@@ -91,10 +104,13 @@ def prepare_plane(plane: np.ndarray, name: str, out_dir: Path = PREPARED, log=pr
     sat = deblur.saturation_level(a)
     rms = float(info.get("rms", np.nanstd(sub[::8, ::8])))
     np.save(out_dir / f"{name}_bg.npy", bg)
+    axes = pinfo.get("spike_axes") or []
     np.savez_compressed(out_dir / f"{name}_psf.npz", psf=psf.astype(np.float32),
                         spikes=np.asarray(pinfo.get("spikes"), dtype=np.float32),
                         sat=float(sat or 65535.0), rms=rms,
-                        density=float(info.get("detected", 0)) / float(a.size))
+                        density=float(info.get("detected", 0)) / float(a.size),
+                        spike_axes=np.asarray(axes, dtype=np.float64),
+                        arm_sigma=float(pinfo.get("arm_sigma") or 0.0))
     entry = {"name": name, "shape": list(a.shape), "stars_filled": int(info.get("kept", 0)),
              "detected": int(info.get("detected", 0)), "rms": rms, "sat": float(sat or 65535.0),
              "fwhm_px": float(pinfo.get("fwhm_px", 0.0)), "psf_stars": int(pinfo.get("stars", 0)),
@@ -117,19 +133,138 @@ def write_manifest(entries: list, out_dir: Path = PREPARED) -> Path:
 # synthesis
 # ---------------------------------------------------------------------------
 
-def inject_stars(bg_shape, psf: np.ndarray, rng, n: int, rms: float, sat: float):
+def _amplitudes(rng, n: int, lo: float, hi: float):
+    """Peak amplitudes: a power law from lo to hi (slope BRIGHT_SLOPE) for
+    most stars, log-uniform from BRIGHT_FLOOR_SIGMA*lo/AMP_SIGMA_MIN to hi
+    for BRIGHT_FRACTION of them."""
+    s = BRIGHT_SLOPE
+    u = rng.random(n)
+    amps = (lo ** -s + u * (hi ** -s - lo ** -s)) ** (-1.0 / s)
+    bright = rng.random(n) < BRIGHT_FRACTION
+    b_lo = min(lo * BRIGHT_FLOOR_SIGMA / AMP_SIGMA_MIN, hi / 2)
+    amps[bright] = np.exp(rng.uniform(np.log(b_lo), np.log(hi), bright.sum()))
+    return amps
+
+
+def _wing_extension(psf: np.ndarray, r_max: float):
+    """A power-law continuation of the psf's azimuthal wing beyond its stamp:
+    the slope is fitted in log-log between 40 px and the taper's start and
+    clipped to a halo's range; the LEVEL is the measured ring median just
+    inside the taper, so the continuation starts where the stamp leaves
+    off. Returns (slope, level at r0, r0) or None."""
+    R = psf.shape[0] // 2
+    yy, xx = np.mgrid[-R:R + 1, -R:R + 1]
+    rr = np.hypot(yy, xx)
+    r0 = R - 10
+    rs, vs = [], []
+    for r in range(40, r0, 4):
+        ring = (rr >= r - 2) & (rr < r + 2)
+        v = float(np.median(psf[ring]))
+        if v > 0:
+            rs.append(r); vs.append(v)
+    anchor = (rr >= r0 - 4) & (rr < r0)
+    v0 = float(np.median(psf[anchor])) if anchor.any() else 0.0
+    if len(rs) < 3 or v0 <= 0:
+        return None
+    slope = float(np.clip(np.polyfit(np.log(rs), np.log(vs), 1)[0], -3.5, -1.5))
+    return slope, v0, r0
+
+
+def _far_arms(out: np.ndarray, y: float, x: float, amp: float, psf: np.ndarray,
+              spikes: Optional[np.ndarray], axes, rms: float, arm_sigma: float = 3.0) -> None:
+    """What a bright star has beyond the PSF stamp, in place on *out* (which
+    carries a psf-radius border): the azimuthal wing continued as a power
+    law (the stamp ends in a 10 px cosine taper at 72 px; a real halo does
+    not), measure_psf's spike template (201 px) blended in where the stamp
+    tapers out, and past the template a Gaussian ribbon of the template's
+    own width per half-axis, its peak continuing the template's edge level
+    as 1/r out to the palette's length rule. A four-vane spider's axes are
+    90 deg apart, so the second axis is the first folded, as the palette's
+    spike_axis assumes (measure_psf's second peak was 50 deg off on IC 1396)."""
+    R = psf.shape[0] // 2
+    pk = float(psf.max())
+    h, w = out.shape
+    cy, cx = int(np.floor(y)) + R, int(np.floor(x)) + R
+    dex = np.log10(max(amp / max(rms, 1e-6), 1.0))
+    length = min(ARM_L0 + ARM_L_PER_DEX2 * max(dex - 2.5, 0.0) ** 2, ARM_MAX)
+    # 1. the wing beyond the stamp
+    ext = _wing_extension(psf, length)
+    if ext is not None:
+        slope, v0, r0 = ext
+        Re = int(min(max(length, R + 40), 400))
+        yy, xx = np.mgrid[-Re:Re + 1, -Re:Re + 1].astype(np.float32)
+        rr = np.hypot(yy, xx)
+        r1 = np.arange(0, Re + 2, dtype=np.float64)
+        p1 = np.where(r1 > r0, v0 * (np.maximum(r1, 1.0) / r0) ** slope, 0.0)
+        tt = np.clip((r1 - r0) / 10.0, 0.0, 1.0)
+        p1 *= 1.0 - 0.5 * (1.0 + np.cos(np.pi * tt))           # the complement of the stamp's cosine taper
+        p1 *= np.clip((Re - r1) / 20.0, 0.0, 1.0)               # and fades at its own edge
+        halo = (amp / pk) * np.interp(rr, r1, p1).astype(np.float32)
+        if halo.max() > 0.02 * rms:
+            y0, x0 = cy - Re, cx - Re
+            ys0, xs0 = max(0, -y0), max(0, -x0)
+            ys1, xs1 = min(2 * Re + 1, h - y0), min(2 * Re + 1, w - x0)
+            if ys1 > ys0 and xs1 > xs0:
+                out[y0 + ys0:y0 + ys1, x0 + xs0:x0 + xs1] += halo[ys0:ys1, xs0:xs1].astype(np.float32)
+    # 2. the arms: ribbons from where the stamp's taper starts, along the
+    # first measured axis and that axis + 90 deg (IC 410's and Melotte 15's
+    # brightest stars both show arms at 65 and 155 deg: a four-vane spider;
+    # measure_psf's second peak read 119 deg on IC 1396, so it is not used),
+    # at the arm level the spike template shows along the first axis at
+    # 48-58 px, continued as 1/r. The template's pixels themselves are not
+    # blended in: they carry that wrong second pair.
+    if axes is None or len(axes) == 0:
+        return
+    th0 = float(axes[0])
+    axes2 = (th0, th0 + np.pi / 2)
+    src = spikes if spikes is not None and spikes.shape[0] > psf.shape[0] else psf
+    Rt = src.shape[0] // 2
+    yy, xx = np.mgrid[-Rt:Rt + 1, -Rt:Rt + 1]
+    rr = np.hypot(yy, xx)
+    dang = np.abs((np.arctan2(yy, xx) - th0 + np.pi / 2) % np.pi - np.pi / 2)
+    band = (rr > 48) & (rr < 58)
+    on_axis = band & (dang < np.radians(8))
+    off_axis = band & (dang > np.radians(30)) & (dang < np.radians(60))
+    if not on_axis.any() or not off_axis.any():
+        return
+    excess = float(np.max(src[on_axis]) - np.median(src[off_axis]))
+    r_edge = R - 10
+    edge = excess * (amp / pk) * (53.0 / r_edge)
+    if edge <= 0.05 * rms or length <= r_edge:
+        return
+    sig = float(arm_sigma) if arm_sigma and arm_sigma > 0.5 else 3.0
+    L = int(np.ceil(length)) + 4
+    yy, xx = np.mgrid[-L:L + 1, -L:L + 1].astype(np.float32)
+    fy, fx = (y - np.floor(y)), (x - np.floor(x))
+    yy -= fy; xx -= fx
+    ribbon = np.zeros_like(yy)
+    for th in axes2:
+        s_ = yy * np.sin(th) + xx * np.cos(th)          # along the axis, signed
+        d_ = -yy * np.cos(th) + xx * np.sin(th)         # across it
+        sa = np.abs(s_)
+        on = (sa >= r_edge) & (sa <= length)
+        tt = np.clip((sa - r_edge) / 10.0, 0.0, 1.0)
+        ramp = 1.0 - 0.5 * (1.0 + np.cos(np.pi * tt))        # in as the stamp's cosine taper goes out
+        with np.errstate(divide="ignore", invalid="ignore"):
+            ribbon += np.where(on, ramp * edge * (r_edge / np.maximum(sa, 1.0)) * np.exp(-0.5 * (d_ / sig) ** 2), 0.0)
+    y0, x0 = cy - L, cx - L
+    ys0, xs0 = max(0, -y0), max(0, -x0)
+    ys1, xs1 = min(2 * L + 1, h - y0), min(2 * L + 1, w - x0)
+    if ys1 > ys0 and xs1 > xs0:
+        out[y0 + ys0:y0 + ys1, x0 + xs0:x0 + xs1] += ribbon[ys0:ys1, xs0:xs1]
+
+
+def inject_stars(bg_shape, psf: np.ndarray, rng, n: int, rms: float, sat: float,
+                 spikes: Optional[np.ndarray] = None, axes=None, arm_sigma: float = 3.0):
     """A star field: *n* stars at sub-pixel positions, peak amplitudes from
-    AMP_SIGMA_MIN*rms to AMP_SAT_MAX*sat on a power law, each the measured
-    PSF shifted by its fractional offset. Returns (stars, table[n,3] y x amp)."""
+    AMP_SIGMA_MIN*rms to AMP_SAT_MAX*sat (see _amplitudes), each the measured
+    PSF spline-shifted by its fractional offset, with far arms past the stamp
+    for the bright ones. Returns (stars, table[n,3] y x amp)."""
     from scipy.ndimage import shift as ndshift
     h, w = bg_shape
     R = psf.shape[0] // 2
     out = np.zeros((h + 2 * R, w + 2 * R), dtype=np.float32)
-    lo, hi = AMP_SIGMA_MIN * rms, AMP_SAT_MAX * sat
-    # power law p(A) ~ A^-(1+slope) between lo and hi, via inverse CDF
-    u = rng.random(n)
-    s = BRIGHT_SLOPE
-    amps = (lo ** -s + u * (hi ** -s - lo ** -s)) ** (-1.0 / s)
+    amps = _amplitudes(rng, n, AMP_SIGMA_MIN * rms, AMP_SAT_MAX * sat)
     ys = rng.uniform(0, h - 1, n)
     xs = rng.uniform(0, w - 1, n)
     pk = float(psf.max())
@@ -137,9 +272,12 @@ def inject_stars(bg_shape, psf: np.ndarray, rng, n: int, rms: float, sat: float)
     for k, (y, x, A) in enumerate(zip(ys, xs, amps)):
         iy, ix = int(np.floor(y)), int(np.floor(x))
         fy, fx = y - iy, x - ix
-        stamp = ndshift(psf, (fy, fx), order=1, mode="constant", cval=0.0) if (fy > 0.02 or fx > 0.02) else psf
+        stamp = (np.clip(ndshift(psf, (fy, fx), order=SHIFT_ORDER, mode="constant", cval=0.0), 0, None)
+                 if (fy > 0.02 or fx > 0.02) else psf)
         out[iy:iy + 2 * R + 1, ix:ix + 2 * R + 1] += (A / pk) * stamp
         table[k] = (y, x, A)
+        if A > ARM_FROM_SIGMA * rms:
+            _far_arms(out, y, x, A, psf, spikes, axes, rms, arm_sigma)
     return out[R:R + h, R:R + w], table
 
 
@@ -194,7 +332,10 @@ class StarSplitDataset:
             man = json.loads((prepared / "manifest.json").read_text())["planes"][n]
             self.planes.append({"name": n, "bg": bg, "psf": z["psf"], "sat": float(z["sat"]),
                                 "rms": float(z["rms"]), "density": float(z["density"]),
-                                "fwhm": float(man.get("fwhm_px") or 5.0)})
+                                "fwhm": float(man.get("fwhm_px") or 5.0),
+                                "spikes": z["spikes"] if "spikes" in z.files else None,
+                                "axes": (z["spike_axes"].tolist() if "spike_axes" in z.files else []),
+                                "arm_sigma": float(z["arm_sigma"]) if "arm_sigma" in z.files else 3.0})
         if not self.planes:
             raise ValueError("no planes")
 
@@ -225,7 +366,8 @@ class StarSplitDataset:
         target = bg + noise
         dens = pl["density"] * rng.uniform(*STAR_DENSITY_JITTER)
         n = int(rng.poisson(max(dens * P * P, 1.0)))
-        stars, table = inject_stars((P, P), pl["psf"], rng, n, rms, pl["sat"])
+        stars, table = inject_stars((P, P), pl["psf"], rng, n, rms, pl["sat"],
+                                    spikes=pl["spikes"], axes=pl["axes"], arm_sigma=pl["arm_sigma"])
         inp = np.minimum(target + stars, pl["sat"])            # saturation plateau
         _, scale = denoiser.normalise(target)
         t_in = np.arcsinh(inp / scale).astype(np.float32)[None]

@@ -59,4 +59,23 @@ teacher-student net reproduces the teacher (LEARNED_DEBLUR_PLAN).
 ## Log
 
 - 2026-11-05: built `nn/starsplit_data`, `nn/starsplit`,
-  `scripts/starsplit_train.py` (prepare / train / score / split).
+  `scripts/starsplit_train.py` (prepare / train / score / split). v1_s0
+  launched 07:20 (13 planes, val m76, 137 s/epoch).
+- 2026-11-05 07:50, epoch-13 checkpoint on IC 410 Ha (a training plane):
+  faint and medium stars gone cleanly, nebula untouched (0.02 ADU away
+  from stars), the star layer clean; bright stars (> ~2000 ADU) leave a
+  nub inside a dark ring and a faint far spike survives. Diagnosis: the
+  injected core was a bilinearly shifted median stamp (broader than a real
+  star), bright stars are rare under the power law, the stamp ends at 72
+  px. **Recipe v2** (same file, constants `SHIFT_ORDER`, `BRIGHT_FRACTION`,
+  `ARM_FROM_SIGMA`): cubic-spline shift; a quarter of the stars drawn
+  log-uniform from 100 sigma; past 1500 sigma the azimuthal wing continues
+  as a measured power law beyond the stamp (level anchored at the taper's
+  start, slope clipped to -3.5..-1.5) and four arms ride out along the
+  first measured spike axis and that axis + 90 deg, at the template's
+  on-axis level at 53 px falling as 1/r, to the palette's length rule.
+  Found on the way: IC 410's and Melotte 15's brightest stars have arms at
+  65 and 155 deg (four vanes), but `deblur.measure_psf._spike_axes` read
+  the second axis at 119 deg on IC 1396, so `starless.py`'s arm removal
+  may take arms off at the wrong angle on some fields; the palette's
+  mod-90 fold is right.

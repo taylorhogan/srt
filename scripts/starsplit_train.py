@@ -246,7 +246,7 @@ def main():
     a = sub.add_parser("train"); a.add_argument("--name", required=True); a.add_argument("--seed", type=int, required=True)
     a.add_argument("--epochs", type=int, default=40); a.add_argument("--pairs", type=int, default=2000)
     a.add_argument("--batch", type=int, default=4); a.add_argument("--lr", type=float, default=3e-4)
-    a.add_argument("--lam", type=float, default=0.0); a.add_argument("--workers", type=int, default=6)
+    a.add_argument("--lam", type=float, default=0.0); a.add_argument("--workers", type=int, default=8)
     a = sub.add_parser("score"); a.add_argument("--name", required=True); a.add_argument("--n", type=int, default=200)
     a = sub.add_parser("split"); a.add_argument("--name", required=True); a.add_argument("--dso", required=True)
     a.add_argument("--filter", required=True); a.add_argument("--out", default=None)
