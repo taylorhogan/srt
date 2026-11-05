@@ -65,6 +65,8 @@ def decode(img):
 def main(argv):
     path = argv[1] if len(argv) > 1 else os.path.join(ROOT, "openscad", "scope_tag_black_id0.scad")
     img = render(path)
+    # The id the part must decode as: the bits comment names it ("tag 36h11 id 2").
+    want = int(re.search(r"tag 36h11 id (\d+)", open(path, encoding="utf-8").read()).group(1))
     n_parts, _ = cv2.connectedComponents((img == 0).astype(np.uint8), connectivity=4)
     print("black pieces (4-connected): %d" % (n_parts - 1))
     h = img.shape[0]
@@ -81,8 +83,8 @@ def main(argv):
     for name, v in views.items():
         ids = decode(v)
         print("%-22s decodes as %s" % (name, ids))
-        ok &= ids == [0]
-    print("OK" if ok else "NOT OK -- do not print")
+        ok &= ids == [want]
+    print(("OK (id %d)" % want) if ok else "NOT OK -- do not print")
     return 0 if ok else 1
 
 
