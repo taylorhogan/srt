@@ -45,6 +45,16 @@ def test_tree_limb_holds_for_both_readers():
         assert _linear(a, az, al) >= 48.0, a
 
 
+def test_the_north_holds_44_for_both_readers():
+    """2026-11-04: ngc2276 at az 5 shot 2-12 stars a frame at 40 deg, a third
+    of its R stars at 42, most of its B at 43 and all of it from 44 (the
+    10-23/10-24 nights at az 0-4). The file said 36.9 for az 0-12.9."""
+    az, al = _points()
+    for a in (0.0, 2.5, 5.0, 8.0, 12.0, 12.9):
+        assert _step(a, az, al) >= 44.0, a
+        assert _linear(a, az, al) >= 44.0, a
+
+
 def test_azimuths_increase():
     az, _ = _points()
     assert az == sorted(az) and len(set(az)) == len(az)
