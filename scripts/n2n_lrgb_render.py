@@ -660,6 +660,79 @@ def push_final_crop(args, out_dir: Path, written: list, tag: str, crops: dict, r
     return push_crop(args, out_dir, written, tag, crops, log)
 
 
+def _cfg_starless() -> str:
+    try:
+        return str((config.data().get("publish") or {}).get("starless") or "shadow")
+    except Exception:  # noqa: BLE001
+        return "shadow"
+
+
+def starless_product(args, out_dir: Path, raw: dict, raw_info: dict, stretch: dict, opts: dict,
+                     mapping: dict, meta: dict, log=print):
+    """The starless composite beside a palette render (docs/STARSPLIT_PLAN.md,
+    SHADOW behind `publish.starless`): each narrowband plane through the
+    learned split (nn/starsplit, v1 plus the bright-star and arm fill), the
+    starless planes DENOISED (the pushed picture is the denoised set; raw
+    S-II under the x4 gain is red speckle), composed on the routine's own
+    white, blacks, softening and palette gain measured on the planes WITH
+    stars, with no star discs or arms pinned (there are no stars). Palette
+    recipes only; a galaxy's starless is not a product anyone asked for.
+    Writes `<dso>_<recipe>_starless.jpg` at full resolution, records it in
+    the meta as `starless`, returns the path or None."""
+    narrow = {"Ha", "O-III", "S-II"}
+    planes = sorted(set(mapping.values()))
+    if not planes or not set(planes) <= narrow:
+        log("starless: palette recipes only — skipped")
+        return None
+    from nn import denoiser, starsplit
+    from stacking import color_process
+    try:
+        model, mmeta, dev = starsplit.load()
+    except Exception as e:  # noqa: BLE001
+        log(f"starless: no model ({type(e).__name__}: {e}) — skipped")
+        return None
+    t0 = time.time()
+    den_models: dict = {}
+    sl_den: dict = {}
+    for f in planes:
+        sl, _ = starsplit.split_frame(raw[f], model, dev, log=log, arms=raw_info.get("palette_arms"))
+        sl = np.nan_to_num(sl, nan=float(np.nanmedian(sl))).astype(np.float32)
+        mp = os.path.join(_root, DOMAIN_MODELS[domain_for(f)])
+        if mp not in den_models:
+            den_models[mp] = denoiser.load_model(Path(mp))
+        h, w = sl.shape
+        sl_den[f] = denoiser.denoise_frame(sl, den_models[mp], device=dev)[:h, :w]
+    chans = {ch: sl_den[mapping[ch]] for ch in ("R", "G", "B") if ch in mapping}
+    shared = shared_from_raw(raw_info)
+    shared["palette_stars"] = []
+    shared["palette_arms"] = []
+    subbed, _ = color_process._prepare(chans, opts["subtract_background"], opts["mesh"],
+                                       opts["white_pct"], **shared)
+    rgb = compose_rgb(subbed, stretch["blacks"], stretch["white"], stretch["soft"],
+                      scnr=opts["scnr"], saturation=args.saturation)
+    path = color_process.save_rgb(rgb, out_dir / f"{args.dso}_{args.recipe}_starless.jpg", max_px=None)
+    meta["starless"] = {"file": path.name, "model": str(mmeta.get("name")), "planes": planes,
+                        "built": time.strftime("%Y-%m-%dT%H:%M"), "stretch": "routine", "mode": "shadow"}
+    log(f"starless: {path.name} in {time.time() - t0:.0f}s ({mmeta.get('name')}, planes {', '.join(planes)})")
+    return path
+
+
+def push_starless(args, out_dir: Path, path, log=print) -> bool:
+    """Pushover the starless composite after the full view and the crop
+    (shadow). Never raises."""
+    if path is None:
+        return False
+    try:
+        from utils import pushover
+        img = _fit_for_push(Path(path), out_dir)
+        ok = pushover.push_message_with_picture(f"{args.dso} {args.recipe} starless (shadow)", str(img))
+        log(f"  push starless: {'sent' if ok else 'NOT ACCEPTED'} ({img.name})")
+        return bool(ok)
+    except Exception as e:  # noqa: BLE001
+        log(f"  push starless failed: {e}")
+        return False
+
+
 def push_render(args, out_dir: Path, written: list, meta: dict, log=print, crops=None) -> bool:
     """Pushover the composite(s): by default the one best picture (the first
     of PUSH_TAGS that was written), with --push-all every class in TAGS,
@@ -1064,6 +1137,18 @@ def routine(args) -> int:
         meta["auto_crop"] = crops
         meta_path(args).write_text(json.dumps(meta, indent=2))
 
+    # The starless composite (SHADOW, publish.starless): beside every palette
+    # render, written and pushed after the full view and the crop; nothing
+    # downstream reads it. Not in final mode: the final is a QC product.
+    starless_path = None
+    if (getattr(args, "starless", "shadow") or "shadow") != "off" and not getattr(args, "final", False):
+        try:
+            starless_path = starless_product(args, out_dir, raw, raw_info, routine, opts, mapping, meta, log)
+            if starless_path is not None:
+                meta_path(args).write_text(json.dumps(meta, indent=2))
+        except Exception as e:  # noqa: BLE001 -- a shadow product must never cost the render
+            log(f"starless (shadow) failed: {type(e).__name__}: {e}")
+
     if getattr(args, "final", False) and composites:
         tag, rgb = next(iter(composites.items()))
         cropped = all((meta["channels"].get(f) or {}).get("coverage") for f in filters)
@@ -1072,6 +1157,7 @@ def routine(args) -> int:
             push_final_crop(args, out_dir, written, tag, crops, rec, log)
     elif args.push:
         push_render(args, out_dir, written, meta, log, crops=crops)
+        push_starless(args, out_dir, starless_path, log)
     return 0
 
 
@@ -1299,6 +1385,9 @@ def main() -> int:
                     help="D1: stretch with auto_stretch_v2, judge the best composite with "
                          "render_qc, write <dso>/final/<dso>_<recipe>_final.jpg + final.json "
                          "and push the picture with the verdict (publishes nothing)")
+    ap.add_argument("--starless", default=_cfg_starless(), choices=("shadow", "off"),
+                    help="write and push the starless composite beside a palette render "
+                         "(nn/starsplit; config publish.starless)")
     ap.add_argument("--auto-crop", default=_cfg_auto_crop(), choices=("shadow", "off"),
                     help="write and push a cropped view beside each composite "
                          "(stacking/auto_crop; config publish.auto_crop)")

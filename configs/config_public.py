@@ -6,7 +6,7 @@ class PublicConfig():
 
         },
         "version": {
-            "date": "2026.11.5.12"
+            "date": "2026.11.5.13"
         },
 
         "logger": {
@@ -596,7 +596,11 @@ class PublicConfig():
         # auto_crop (stacking/auto_crop, 2026-11-02): "shadow" writes and pushes a
         # cropped view beside every morning composite, "off" does not.
         "publish": {"final_mode": "shadow", "auto_approve_days": 3, "gate": "shadow",
-                    "auto_crop": "shadow"},
+                    "auto_crop": "shadow",
+                    # the starless composite beside every palette render
+                    # (nn/starsplit, docs/STARSPLIT_PLAN.md): "shadow" writes
+                    # and pushes it, nothing downstream reads it; "off"
+                    "starless": "shadow"},
         # AAVSO WebObs submissions (photometry/aavso.py, `aavso <dso>`): the
         # owner's observer code, issued 2026-10-31. Not a secret.
         "aavso": {"obscode": "THCA"},

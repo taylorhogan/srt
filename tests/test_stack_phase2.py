@@ -60,8 +60,13 @@ def _star_field(rng, shape, stars, dx, dy, sky=200.0):
     return (img + rng.normal(0, 2.0, shape)).astype(np.float32)
 
 
-def test_register_many_pool_gives_the_serial_answers(tmp_path):
+def test_register_many_pool_gives_the_serial_answers(tmp_path, monkeypatch):
     pytest.importorskip("astroalign")
+    # both paths on the CPU warp: a spawned worker whose CUDA start fails under
+    # GPU load would otherwise warp with the other kernel (flaky under load)
+    monkeypatch.setenv("SRT_NO_GPU", "1")
+    from stacking import gpu_accel
+    monkeypatch.setattr(gpu_accel, "_TORCH", None)
     from astropy.io import fits
     rng = np.random.default_rng(3)
     shape = (240, 300)

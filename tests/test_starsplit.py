@@ -112,3 +112,45 @@ def test_bright_star_fill_removes_a_compact_nub_and_leaves_the_rest():
     faint = (frame - star).astype(np.float32); faint[50, 50] += 400
     _, n2 = starsplit.fill_bright_residuals(faint, faint.copy(), log=lambda s: None)
     assert n2 == 0
+
+
+def test_arm_fill_takes_the_far_arms_off_a_bright_star():
+    pytest.importorskip("sep")
+    from nn import starsplit
+    rng = np.random.default_rng(11)
+    h, w = 400, 400
+    frame = rng.normal(100, 1.0, (h, w)).astype(np.float32)
+    yy, xx = np.mgrid[:h, :w]
+    star = 6000.0 * np.exp(-((yy - 200) ** 2 + (xx - 200) ** 2) / (2 * 2.5 ** 2))
+    frame += star.astype(np.float32)
+    # the network's output: the star gone, but two bars (the far arms) of 6 ADU along 45 deg
+    starless = frame - star.astype(np.float32)
+    u = (xx - 200) * np.cos(np.radians(45)) + (yy - 200) * np.sin(np.radians(45))
+    v = -(xx - 200) * np.sin(np.radians(45)) + (yy - 200) * np.cos(np.radians(45))
+    bars = ((np.abs(v) < 2) | (np.abs(u) < 2)) & (np.hypot(u, v) < 70) & (np.hypot(u, v) > 12)
+    starless += np.where(bars, 6.0, 0.0).astype(np.float32)
+    before = float(starless[bars].mean() - 100.0)
+    out, n = starsplit.fill_bright_residuals(frame, starless, arms=[(200.0, 200.0, 45.0, 80.0)], log=lambda s: None)
+    after = float(out[bars].mean() - 100.0)
+    assert before > 5.0 and after < 1.0
+    far = np.hypot(u, v) > 120
+    np.testing.assert_array_equal(out[far], starless[far])
+
+
+def test_starless_product_is_for_palette_recipes_only(tmp_path):
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
+    import n2n_lrgb_render as R
+    msgs = []
+    got = R.starless_product(None, tmp_path, {}, {}, {}, {}, {"L": "L", "R": "R", "G": "G", "B": "B"}, {}, msgs.append)
+    assert got is None and "palette recipes only" in msgs[0]
+
+
+def test_the_routine_writes_the_starless_beside_palette_renders_in_shadow():
+    import inspect
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
+    import n2n_lrgb_render as R
+    src = inspect.getsource(R.routine)
+    assert 'starless_product(args, out_dir, raw, raw_info, routine, opts, mapping, meta, log)' in src
+    assert '!= "off" and not getattr(args, "final", False)' in src
+    assert src.index("push_render(args, out_dir, written, meta, log, crops=crops)") < src.index("push_starless(args, out_dir, starless_path, log)")
+    assert '"starless"' in inspect.getsource(R.starless_product)

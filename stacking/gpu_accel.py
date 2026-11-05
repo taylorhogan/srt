@@ -29,6 +29,14 @@ _TORCH = None
 def _torch():
     global _TORCH
     if _TORCH is None:
+        import os
+        if os.environ.get("SRT_NO_GPU"):
+            # The CPU paths, on purpose: a test that compares a spawned
+            # worker's warp with the parent's bit for bit sets this, since a
+            # worker whose CUDA start fails under GPU load falls back to the
+            # CPU warp and the two kernels differ (2026-11-05, flaky twice).
+            _TORCH = False
+            return _TORCH
         try:
             import torch
             if torch.cuda.is_available():

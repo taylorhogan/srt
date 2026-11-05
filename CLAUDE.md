@@ -226,10 +226,20 @@ Since 2026-09-25 the conductor decides both invariants (ADR 0014): every roof fi
   `nn/starsplit`, `nn/starsplit_data`, `scripts/starsplit_train.py`): a UNet
   trained on real backgrounds with the field's own PSF injected as known
   stars; it returns the starless plane, the star layer being the difference.
-  Nothing in the render uses it yet; v1 cleans a held-out field but for the
-  two or three brightest stars, and the plan's log has each recipe's numbers.
-  Its product is a starless render beside the palette composites, and in
-  time the replacement of the hand-rule stars above.**
+  v1 is the model (`local/starsplit/models/starsplit_default.pt`); four
+  recipes were judged on the held-out Trunk and the plan's log has each one's
+  numbers; the network's one defect, a compact nub and the far arms at the
+  two or three brightest stars per field, is filled from the surroundings
+  (`starsplit.fill_bright_residuals`). **The morning render writes
+  `<dso>_<recipe>_starless.jpg` beside every palette composite, in SHADOW
+  (`publish.starless`, since 2026-11-05):** each narrowband plane split, the
+  bright stars and arms filled, the starless planes denoised, composed on the
+  routine's own white, blacks and palette gain measured on the planes with
+  stars, no star discs pinned; pushed after the crop; recorded in the meta as
+  `starless`; palette recipes only, never in final mode. A chat `stars=none`
+  cannot run on the PC (no GPU, no model), so the Spark's morning file is the
+  product. Next: `apply_palette_gain(star_source="learned")` judged by eye
+  beside the hand rules.**
 
   **The morning render cuts every channel to the common footprint (since
   2026-10-28).** The stacker crops a lone stack to where 80 % of its frames

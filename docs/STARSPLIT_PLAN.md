@@ -157,3 +157,12 @@ teacher-student net reproduces the teacher (LEARNED_DEBLUR_PLAN).
   along the measured axis out to the palette's length rule) before the
   render integration. Product on the desktop: ic410_SHO_starless_v1.jpg,
   with those crosses as its one blemish.
+- 2026-11-05 18:30, **product integrated, shadow:** `fill_bright_residuals`
+  takes the far arms too (the palette's measured arms when the render has
+  them, else the axis measured on the bright discs); `n2n_lrgb_render.
+  starless_product` writes `<dso>_<recipe>_starless.jpg` beside every
+  palette composite (denoised starless planes, routine stretch and gain from
+  the planes with stars, no discs pinned), `push_starless` after the crop,
+  `publish.starless` = shadow, meta `starless`. Palette recipes only, not in
+  final mode. No chat `stars=none`: the PC has no GPU or model.
+
