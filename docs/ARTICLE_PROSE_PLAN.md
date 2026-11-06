@@ -29,7 +29,7 @@ new draft (`generate_writeup` is now a thin wrapper), with three backends in
   the writer starts `ollama serve` itself when the port is silent and the
   model unloads 15 minutes after the last call, so the GPU is the morning
   render's again). Nothing in SUCCESSION.md can take it away. Provisional
-  model `gemma4:31b-it-q8_0` (34 GB, Apache 2.0, image input); the bench
+  model `gemma4:31b-it-q8_0` (34 GB, Google's Gemma terms of use, image input); the bench
   below decides between it and `qwen3-vl:32b-instruct-q8_0` (36 GB).
 - **api**: the Anthropic SDK with `cfg["anthropic"]["api_key"]`, the
   original D2 design, kept for when the owner wants Opus.
