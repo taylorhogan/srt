@@ -111,3 +111,11 @@ Models live in `~/.ollama/models` (70 GB for the two; 2.2 TB free).
   verified end to end on the M76 crop (reads the picture, answers JSON).
   The Ollama install and the model pulls are the owner's; the bench runs
   after them.
+- 2026-11-05 (late), the loop end to end on a copy of the M76 folder with the
+  cli backend (Opus through Claude Code), 95 s: the first draft put the
+  light's departure at "AD 500"; the reviewer caught it (2,500 light years
+  is 500 BC), the rewrite placed it right and the second review passed.
+  Five claims listed (the white dwarf's temperature and the discovery came
+  from the Wikipedia block, so not among them). The owner's copy:
+  ~/Desktop/m76_article_trial_claude_cli.json. The local model's turn is
+  the bench, after the pulls.
