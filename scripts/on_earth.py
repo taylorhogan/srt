@@ -185,10 +185,13 @@ def cmd_site(a) -> int:
     after = with_timeline(before, timeline_html())
     if after == before:
         print("timeline already current:", p)
+    else:
+        p.write_text(after, encoding="utf-8")
+        print(f"timeline written into {p} ({len(load())} eras)")
+    if a.push and not ao._git("status", "--porcelain", "--", "index.html"):
+        print("nothing to push")
         return 0
-    p.write_text(after, encoding="utf-8")
-    print(f"timeline written into {p} ({len(load())} eras)")
-    if a.push:
+    if a.push:   # whatever index.html holds, current or just written (2026-11-06: a current file with an uncommitted diff was left unpushed)
         ao._git("add", "index.html")
         ao._git("commit", "-m", "Gallery: the 'When the light left' timeline, one section per era (scripts/on_earth.py)")
         ao._git("push")
