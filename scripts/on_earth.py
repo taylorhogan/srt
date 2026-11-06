@@ -63,7 +63,7 @@ def era_for(years_ago: float, eras: Optional[list[dict]] = None) -> Optional[dic
 def phase(years_ago: float, era: dict) -> str:
     """'early' / 'middle' / 'late' within a geological era, by thirds; '' for a
     historical one (a dated span reads better without it)."""
-    if era["to"] < 11700:
+    if era["to"] < 11700 or era.get("phased") is False:
         return ""
     f = (float(years_ago) - era["from"]) / max(1.0, era["to"] - era["from"])
     return "late" if f < 1 / 3 else ("middle" if f < 2 / 3 else "early")   # fewer years ago = later

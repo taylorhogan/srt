@@ -256,3 +256,17 @@ together (~70 GB of the 121) and unload 15 minutes after the last call.
   925 at 30 Myr with "terror birds"): they stay as the owner wrote them;
   new entries take the table. The timeline sits in the local site checkout
   uncommitted until the owner says push.
+- 2026-11-06 evening, the timeline live on the site (site commit b52a4eb;
+  `site --push` fixed to push a current file with an uncommitted diff).
+  Eras whose name is not a period word take no early/middle/late
+  (`phased: false`: "the late last ice age" read wrongly). **First entry
+  through the whole pipeline**: IC 410 on a scratch copy, gemma4 writing,
+  qwen reviewing, 125 s, one claim, no notes, no spelling to fix, the box
+  from the table. One fault the critic cannot see: "the learned
+  deconvolution network described in [Two decisions...]", the wrong
+  content attributed to a linked note (the writer was told to link and not
+  to describe; it did both). Next rule: a linked note is introduced by its
+  title only, never "described in". The owner's pages:
+  ~/Desktop/local_article_prose.html (the note, revised with the day's
+  findings) and ~/Desktop/ic410_machine_article.html (the entry in the
+  site's markup beside a link to the hand-written one).

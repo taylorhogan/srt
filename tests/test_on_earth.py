@@ -41,6 +41,8 @@ def test_words_and_titles():
     assert oe.title_for(25000) == "On Earth: ~25,000 Years Ago" and oe.title_for(70e6) == "On Earth: ~70 Million Years Ago"
     assert oe.phase(25e6, oe.era_for(25e6)) == "late" and oe.phase(33e6, oe.era_for(33e6)) == "early"
     assert oe.phase(2500, oe.era_for(2500)) == ""
+    assert oe.phase(12000, oe.era_for(12000)) == "" and "in [the last ice age](#era-last-glacial)" in oe.box_for("IC 410", 12000)["time_travel"]
+    assert "in [the first galaxies](#era-first-galaxies)" in oe.box_for("x", 13e9)["time_travel"]
 
 
 def test_box_links_the_era_and_says_when():
