@@ -281,7 +281,10 @@ AMERICAN = {"color": "colour", "colors": "colours", "colorful": "colourful", "co
             "kilometers": "kilometres", "liters": "litres", "harbor": "harbour", "behavior": "behaviour", "vapor": "vapour",
             "ionized": "ionised", "ionizes": "ionises", "ionization": "ionisation", "ionizing": "ionising",
             "analyze": "analyse", "analyzed": "analysed", "recognize": "recognise", "recognized": "recognised",
-            "vaporized": "vaporised", "skeptical": "sceptical", "theater": "theatre"}
+            "vaporized": "vaporised", "skeptical": "sceptical", "theater": "theatre", "totaling": "totalling",
+            "funneling": "funnelling", "ionize": "ionise", "modeling": "modelling", "signaling": "signalling",
+            "labeling": "labelling", "centre": "centre"}
+_LINK_RE = re.compile(r"\[[^\]]+\]\(#[^)]+\)")
 _AMERICAN_RE = re.compile(r"\b(" + "|".join(sorted(AMERICAN, key=len, reverse=True)) + r")\b", re.I)
 
 
@@ -291,13 +294,18 @@ def britishise(text: str) -> tuple[str, list[str]]:
     sentence is a name ("Center for Astrophysics") and is left alone;
     "meter" (the instrument), "program", "practice" are not in the list."""
     changed = []
+    links = [m.span() for m in _LINK_RE.finditer(text)]   # a note's title is the site's, spelt as it is
 
     def sub(m):
         w = m.group(1)
+        if any(a <= m.start() < b for a, b in links):
+            return w
         before = text[:m.start()].rstrip()
         if w[0].isupper() and before and before[-1] not in ".!?":
             return w
         b = AMERICAN[w.lower()]
+        if b == w.lower():
+            return w
         changed.append(w)
         return b.capitalize() if w[0].isupper() else b
     return _AMERICAN_RE.sub(sub, text), changed
@@ -360,8 +368,9 @@ def write_prompt(facts: dict, examples: list[str]) -> tuple[str, str]:
         '  "type_text": upper case, e.g. "STARBURST BARRED SPIRAL GALAXY"\n'
         '  "alt": one sentence describing what is visible in this picture, for a blind reader\n'
         '  "paragraphs": a list of exactly two paragraphs (strings); when "related_notes" lists '
-        'science notes on the site that used this target, the second paragraph links to each as '
-        '[its title](#its id), the way the examples link to theirs\n'
+        'science notes on the site that used this target, the second paragraph links the one to three '
+        'whose titles concern this picture or this object, as [its title](#its id), the way the examples '
+        'link to theirs; never a long list, and never a sentence about what a note found\n'
         '  "time_travel_title": e.g. "On Earth: ~70 Million Years Ago"\n'
         '  "time_travel": one paragraph\n'
         '  "claims": a list of short strings, each a statement about the object in your text that is '
@@ -390,7 +399,8 @@ def review_prompt(facts: dict, article: dict) -> tuple[str, str]:
         "3. a style break: markdown, HTML, an exclamation mark, an em-dash, hedging, a bullet list, "
         "more or fewer than two paragraphs, American spelling (color, center, catalog, sulfur), a title "
         "not of the form 'NGC2146 - The Dusty Hand' (the catalogue id without a space, a dash, the name);\n"
-        "4. a related note listed in the facts that the second paragraph does not link as [title](#id).\n"
+        "4. the facts list related notes and the second paragraph links none of them as [title](#id) "
+        "(one to three links is right; a note left unlinked is not a defect).\n"
         "Answer with ONE JSON object and nothing else: {\"problems\": [{\"class\": 1, \"quote\": "
         "\"the draft's exact words at fault\", \"problem\": \"what is wrong and what it should be\", "
         "\"must_change\": true}, ...]}, or {\"problems\": []}. An item whose must_change is false, or "

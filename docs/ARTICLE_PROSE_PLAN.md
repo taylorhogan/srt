@@ -211,3 +211,26 @@ together (~70 GB of the 121) and unload 15 minutes after the last call.
   Pattern so far: qwen as critic passed every gemma draft in 2-6 s with no
   notes but Melotte 15's; gemma as critic found something in every qwen
   draft (title, em-dashes, unlinked notes), once wrongly.
+- 2026-11-06 13:00, **the bench, run 4, complete** (bench/bench.md; the
+  owner's review page ~/Desktop/prose_bench_review.html, every entry under
+  the hand's with errors, doubts, spellings and the reviewer's catches
+  marked). My reading, the owner's to overrule: gemma4 4 errors / 15
+  doubts / 15 American spellings over six entries, approvable with one or
+  two edits on five of six; qwen3-vl 15 / 19 / 17, approvable with three
+  edits on four of six; Melotte 15 fails for both on the inputs (no
+  reference, no type; fixed). Of qwen's 15 errors, four were titles its
+  reviewer broke and five were invented purposes for M1's nine related
+  notes; the rest and all of gemma's are in the 'On Earth' boxes (Uruk
+  writing at 4500 BC, the Triassic at 180 Myr, no polar ice in the
+  Oligocene), which no reference covers and neither reviewer checks. As
+  critics: gemma finds something real in every qwen draft in ~20 s but
+  misread the title rule every time; qwen passes gemma's drafts in 2-6 s
+  with no notes, except Melotte 15 where it caught all nine inventions.
+  Timing: gemma ~110 s a loop with no rewrite, qwen ~330 s with one.
+  Recommendation: gemma4 writes, qwen3-vl reviews (the current default).
+  Second-round fixes: `britishise` leaves a linked note's title alone (the
+  hr-diagram note's own title is "color-magnitude"), more words; the note
+  rule is one to three links whose titles concern the picture or the
+  object, and the reviewer's class 4 is "none linked", not "one unlinked".
+  Open: the 'On Earth' box needs a check of its own; the writer should be
+  told to describe what it sees (qwen's picture paragraphs were the better).

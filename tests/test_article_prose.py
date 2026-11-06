@@ -219,3 +219,18 @@ def test_the_prompts_carry_the_new_rules():
     assert "British spelling" in system and "never describe what it found" in system
     rs, _ = ap.review_prompt(FACTS, GOOD)
     assert "American spelling" in rs and "NGC2146 - The Dusty Hand" in rs and "span of dates" in rs and "what the observatory did" in rs
+
+
+def test_britishise_leaves_a_linked_note_title_alone():
+    text = "See [Weighing a star cluster's age with a color\u2013magnitude diagram](#hr-diagram) for the color of the center."
+    out, w = ap.britishise(text)
+    assert "color\u2013magnitude diagram](#hr-diagram)" in out and out.endswith("the colour of the centre.")
+    assert w == ["color", "center"]
+    assert ap.britishise("totaling 8.4 hours, funneling gas")[0] == "totalling 8.4 hours, funnelling gas"
+
+
+def test_the_note_rule_is_capped():
+    _, user = ap.write_prompt(FACTS, [])
+    assert "one to three" in user and "never a long list" in user
+    rs, _ = ap.review_prompt(FACTS, GOOD)
+    assert "links none of them" in rs and "a note left unlinked is not a defect" in rs
