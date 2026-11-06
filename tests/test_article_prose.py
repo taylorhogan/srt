@@ -145,12 +145,16 @@ def test_problem_lines_keep_defects_and_drop_praise():
              {"class": 1, "quote": "~500 AD", "problem": "2,500 light years is about 500 BC, not AD 500"},
              {"class": 2, "quote": "the Soap Bubble entry", "problem": "refers to an entry the facts do not list; should be dropped"},
              {"class": 3, "quote": "", "problem": ""},
-             "The draft correctly attributes the discovery to Messier."]
+             "The draft correctly attributes the discovery to Messier.",
+             {"class": 2, "quote": "two dense structures", "problem": "The reference block confirms this description. No defect."},
+             {"class": 2, "quote": "radiation erodes", "problem": "A plausible explanation not contradicted by the reference, commonly accepted."},
+             {"class": 1, "quote": "82 frames", "problem": "The frame count is right.", "must_change": False},
+             {"class": 2, "quote": "ten light years", "problem": "the reference says each tadpole is about 10 light years long, which this confirms, but the draft says ten parsecs instead", "must_change": True}]
     notes, dropped = ap.problem_lines(probs)
-    assert dropped == 3
+    assert dropped == 6
     assert notes[0] == "the hours are wrong"
     assert notes[1].startswith("2,500 light years is about 500 BC") and '(draft: "~500 AD")' in notes[1]
-    assert len(notes) == 3
+    assert len(notes) == 4 and notes[3].startswith("the reference says each tadpole")
     assert ap.problem_lines("nonsense") == ([], 0)
 
 

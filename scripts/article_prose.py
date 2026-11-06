@@ -306,8 +306,10 @@ def review_prompt(facts: dict, article: dict) -> tuple[str, str]:
         "more or fewer than two paragraphs, a title not of the form 'ID - Name';\n"
         "4. a related note listed in the facts that the second paragraph does not link as [title](#id).\n"
         "Answer with ONE JSON object and nothing else: {\"problems\": [{\"class\": 1, \"quote\": "
-        "\"the draft's exact words at fault\", \"problem\": \"what is wrong and what it should be\"}, "
-        "...]}, or {\"problems\": []}. Do not rewrite the draft."
+        "\"the draft's exact words at fault\", \"problem\": \"what is wrong and what it should be\", "
+        "\"must_change\": true}, ...]}, or {\"problems\": []}. An item whose must_change is false, or "
+        "whose problem says the draft is right, confirmed, plausible or has no defect, does not belong "
+        "in the list. Do not rewrite the draft."
     )
     art = {k: article.get(k) for k in ARTICLE_FIELDS + EXTRA_FIELDS if k in article}
     user = ("Facts (JSON):\n" + json.dumps(facts, indent=1, ensure_ascii=False) +
@@ -546,9 +548,11 @@ def reviewer_for(name: str, st: dict) -> tuple[str, dict]:
     return rb, rst
 
 
-PRAISE_RE = re.compile(r"\b(is|are|was|were)\s+(correct|consistent|accurate|appropriate|fine|as required|present)\b"
-                       r"|\bmatches\b|\bno (contradiction|problem|issue|change)\b|\bnot a (problem|defect|contradiction)\b"
-                       r"|\bcorrectly\b|\bconsistent with\b|\bas required\b|\bnothing to fix\b", re.I)
+PRAISE_RE = re.compile(r"\b(is|are|was|were)\s+(correct|consistent|accurate|appropriate|fine|as required|present|plausible)\b"
+                       r"|\bmatches\b|\bno (contradiction|problem|issue|change|defect)s?\b|\bnot a (problem|defect|contradiction)\b"
+                       r"|\bcorrectly\b|\bconsistent with\b|\bas required\b|\bnothing to fix\b|\bconfirms?\b"
+                       r"|\bnot contradicted\b|\bcommonly accepted\b|\bwell[- ]established\b|\bsupported by\b", re.I)
+DEFECT_RE = re.compile(r"\b(should|must|wrong|contradicts?|invent(ed|s)?|missing|not in the (facts|reference)|instead|remove|drop|replace)\b", re.I)
 
 
 def problem_lines(probs) -> tuple[list[str], int]:
@@ -563,6 +567,9 @@ def problem_lines(probs) -> tuple[list[str], int]:
     out, dropped = [], 0
     for p in probs:
         if isinstance(p, dict):
+            if p.get("must_change") is False:          # the reviewer's own verdict first
+                dropped += 1
+                continue
             text = str(p.get("problem") or p.get("what") or "").strip()
             quote = str(p.get("quote") or "").strip()
             if quote and quote.lower() not in text.lower():
@@ -571,7 +578,7 @@ def problem_lines(probs) -> tuple[list[str], int]:
             text = str(p).strip()
         if not text:
             continue
-        if PRAISE_RE.search(text) and not re.search(r"\b(should|must|wrong|contradict|invent|missing|not in|instead)\b", text, re.I):
+        if PRAISE_RE.search(text) and not DEFECT_RE.search(text):
             dropped += 1
             continue
         out.append(text)
