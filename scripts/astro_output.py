@@ -31,9 +31,9 @@ name starts with the target as the frames know it (`ngc2146_LRGB_learned_sat3_cr
    title, picture or text names it, by its own name or any SIMBAD alias --
    NGC 7320 is found through "HCG 92a" and the Quintet's text), an article is
    made: the facts go to `article_request.json`, the write-up comes back as
-   `article.json` (from the Claude API when the `anthropic` package and a
-   credential are present, otherwise whoever runs this fills it in -- a Claude
-   session can), and `article.json` is rendered as a gallery entry in the
+   `article.json` (from a model on this machine through scripts/article_prose:
+   the local Ollama model, the API with a key, or `claude -p`; otherwise
+   whoever runs this fills it in -- a Claude session can), and `article.json` is rendered as a gallery entry in the
    site's own markup, the picture copied to `images/<id>.jpg`, committed and
    pushed (live within 5 minutes; scripts/site_push.py announces). A folder
    holding an `article.json` that is not yet published is picked up on the
@@ -45,9 +45,7 @@ the data here, never by the model.
 from __future__ import annotations
 
 import argparse
-import base64
 import html as _html
-import io
 import json
 import logging
 import os
@@ -77,11 +75,7 @@ RECIPES = ("LRGB", "HALRGB", "HOO", "SHO", "HSO")
 # Defaults of stacking.stacker.stack(): the gate every stacking path runs.
 GATE_FWHM_MULT = 1.25
 GATE_STAR_FRAC = 0.5
-# The write-up model. Opus 5.5 with the server-side refusal fallback; thinking
-# is adaptive by default on it, so no thinking parameter is sent.
-WRITEUP_MODEL = "claude-opus-5-5"
 SITE_IMAGE_MAX_PX = 2400
-PROMPT_IMAGE_MAX_PX = 1600
 
 NUMBER_WORDS = {1: "one", 2: "two", 3: "three", 4: "four", 5: "five", 6: "six",
                 7: "seven", 8: "eight", 9: "nine", 10: "ten", 11: "eleven", 12: "twelve"}
@@ -398,7 +392,7 @@ def stats_picture(dso_dir: Path, out_path: Path) -> Optional[Path]:
 # ---------------------------------------------------------------------------
 
 _ARTICLE_RE = re.compile(
-    r'<article\s+id="(?P<id>[^"]+)"\s+class="dso-section"[^>]*>(?P<body>.*?)</article>',
+    r'<article\s+id="(?P<id>[^"]+)"\s+class="dso-section"(?P<attrs>[^>]*)>(?P<body>.*?)</article>',
     re.S)
 
 
@@ -410,8 +404,10 @@ def gallery_articles(html: str) -> list[dict]:
         t = re.search(r'<h2 class="dso-title">(.*?)</h2>', body, re.S)
         img = re.search(r'<img[^>]+src="([^"?]+)', body)
         text = _html.unescape(re.sub(r"<[^>]+>", " ", body))
+        added = re.search(r'data-added="([^"]*)"', m.group("attrs") or "")
         out.append({"id": m.group("id"), "title": _html.unescape(t.group(1)).strip() if t else "",
                     "image": Path(img.group(1)).name if img else "", "text": text,
+                    "added": added.group(1) if added else "",
                     "span": (m.start(), m.end())})
     return out
 
@@ -481,11 +477,14 @@ def site_notes(html: str, dso: str) -> list[dict]:
 
 
 def article_facts(dso: str, recipe: Optional[str], image: Path, subs: dict,
-                  aliases: list[str], notes: Optional[list[dict]] = None) -> dict:
+                  aliases: list[str], notes: Optional[list[dict]] = None,
+                  reference: Optional[dict] = None, distances: Optional[dict] = None) -> dict:
     s = subs_summary(subs)
     return {
         "dso": dso, "name": display_name(dso), "aliases": aliases,
         "related_notes": notes or [],
+        "reference": reference or {"wikipedia": None, "tried": []},
+        "distance_ly_on_record": known_distance(dso, distances),
         "object_type": object_type(dso), "recipe": recipe,
         "processing": processing_from_name(image.name),
         "filters": {f: [{"exptime": g["exptime"], "used": g["used"], "hours": g["hours"],
@@ -573,115 +572,40 @@ def draft_hash(article: dict, image_bytes: bytes) -> str:
     return h.hexdigest()
 
 
-def writeup_prompt(facts: dict, examples: list[str]) -> tuple[str, str]:
-    """(system, user) for the write-up. The examples are two live gallery
-    entries, so the voice and the shape are the site's own."""
-    system = (
-        "You write the gallery entries for irisscience.org, the lab notes of a small robotic "
-        "observatory. Each entry is two paragraphs for a college-educated reader who is not an "
-        "astronomer: the first about the object itself (what it is, where, why it looks the way it "
-        "does, with the distance), the second about this picture (the filters and processing given "
-        "in the facts, in plain words), then a short 'On Earth' box about what was happening on "
-        "Earth when the light left. Plain prose, no markdown, no HTML, no hedging, no exclamation "
-        "marks, no em-dashes. Only state facts about the object that are well established; the "
-        "frame counts, hours and nights in the facts are measured and must not be changed. "
-        "Two entries from the site follow as examples of the voice and length.\n\n"
-        + "\n\n".join(examples)
-    )
-    user = (
-        "Facts for the new entry (JSON):\n" + json.dumps(facts, indent=1) +
-        "\n\nThe picture itself is attached. Answer with ONE JSON object and nothing else, with "
-        "exactly these keys:\n"
-        '  "title": like "NGC2146 - The Dusty Hand" (catalogue id without a space, a dash, the common name or type)\n'
-        '  "distance_ly": integer light years (approximate is fine)\n'
-        '  "distance_text": as in the meta line, e.g. "~70 MILLION LIGHT YEARS"\n'
-        '  "type_text": upper case, e.g. "STARBURST BARRED SPIRAL GALAXY"\n'
-        '  "alt": one sentence describing what is visible in this picture, for a blind reader\n'
-        '  "paragraphs": a list of exactly two paragraphs (strings); when "related_notes" lists '
-        'science notes on the site that used this target, the second paragraph links to each as '
-        '[its title](#its id), the way the examples link to theirs\n'
-        '  "time_travel_title": e.g. "On Earth: ~70 Million Years Ago"\n'
-        '  "time_travel": one paragraph\n'
-    )
-    return system, user
-
-
-def _prompt_image(image: Path) -> tuple[str, str]:
-    """(media_type, base64) of the picture, shrunk for the request."""
-    from PIL import Image
-    Image.MAX_IMAGE_PIXELS = None
-    im = Image.open(image).convert("RGB")
-    im.thumbnail((PROMPT_IMAGE_MAX_PX, PROMPT_IMAGE_MAX_PX))
-    buf = io.BytesIO()
-    im.save(buf, format="JPEG", quality=85)
-    return "image/jpeg", base64.standard_b64encode(buf.getvalue()).decode("ascii")
-
-
-def _credentials_present() -> bool:
-    return bool(os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN")
-                or (Path.home() / ".config" / "anthropic").exists())
-
-
 def generate_writeup(facts: dict, image: Path, examples: list[str],
                      log: Callable[[str], None] = print) -> Optional[dict]:
-    """The write-up from the Claude API, or None (with the reason logged) when
-    the package or a credential is missing, the request fails, or the answer
-    is not the JSON asked for."""
+    """The write-up from a model on this machine (scripts/article_prose: the
+    local Ollama model, the API with a key, or `claude -p`, in cfg["prose"]
+    order; written, reviewed, rewritten once), or None with the reasons
+    logged, in which case fallback_writeup is the draft."""
+    from scripts import article_prose
     try:
-        import anthropic
-    except ImportError:
-        log("  write-up: the anthropic package is not installed (uv pip install anthropic)")
-        return None
-    if not _credentials_present():
-        log("  write-up: no ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN and no `ant auth login` profile")
-        return None
-    system, user = writeup_prompt(facts, examples)
-    media, data = _prompt_image(image)
-    try:
-        client = anthropic.Anthropic()
-        resp = client.beta.messages.create(
-            model=WRITEUP_MODEL, max_tokens=16000,
-            betas=["server-side-fallback-2026-07-01"], fallbacks="default",
-            system=system,
-            messages=[{"role": "user", "content": [
-                {"type": "image", "source": {"type": "base64", "media_type": media, "data": data}},
-                {"type": "text", "text": user}]}],
-        )
-    except anthropic.RateLimitError as e:
-        log(f"  write-up: rate limited ({e.message}); next run tries again")
-        return None
-    except anthropic.APIStatusError as e:
-        log(f"  write-up: API error {e.status_code}: {e.message}")
-        return None
-    except anthropic.APIConnectionError as e:
-        log(f"  write-up: no connection to the API ({e})")
-        return None
-    if resp.stop_reason == "refusal":
-        why = resp.stop_details.explanation if resp.stop_details else "?"
-        log(f"  write-up: the model declined ({why})")
-        return None
-    text = "".join(b.text for b in resp.content if b.type == "text").strip()
-    text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text)
-    try:
-        art = json.loads(text)
-    except json.JSONDecodeError:
-        log("  write-up: the answer was not JSON; left in article_request.json as 'raw_answer'")
-        facts["raw_answer"] = text
-        return None
-    missing = [k for k in ARTICLE_FIELDS if k not in art]
-    if missing or not isinstance(art.get("paragraphs"), list):
-        log(f"  write-up: answer lacks {missing or 'a paragraphs list'}")
-        return None
-    return art
+        from configs import config
+        cfg = config.data()
+    except Exception:  # noqa: BLE001
+        cfg = None
+    return article_prose.compose(facts, image, examples, cfg=cfg, log=log)
 
 
-def site_examples(html: str, ids=("ngc2146", "stephans-quintet")) -> list[str]:
-    """The text of two live entries, as the voice to match."""
-    out = []
-    for a in gallery_articles(html):
-        if a["id"] in ids:
-            out.append(re.sub(r"\s+", " ", a["text"]).strip())
-    return out
+def article_reference(dso: str, aliases: list[str], log: Callable[[str], None] = print) -> dict:
+    """The reference block for the writer (article_prose.dossier); never raises."""
+    try:
+        from scripts import article_prose
+        return article_prose.dossier(dso, aliases, log)
+    except Exception as e:  # noqa: BLE001
+        log(f"  reference block unavailable: {e}")
+        return {"wikipedia": None, "tried": []}
+
+
+def site_examples(html: str, ids=("ngc2146", "stephans-quintet"), newest: int = 4) -> list[str]:
+    """The text of live entries, as the voice to match: *ids* and the
+    *newest* others by data-added (the hand-written entries since 2026-10-22
+    are the standard the machine's prose is judged against)."""
+    arts = gallery_articles(html)
+    pick = [a for a in arts if a["id"] in ids]
+    rest = sorted((a for a in arts if a["id"] not in ids), key=lambda a: a.get("added") or "", reverse=True)
+    pick += rest[:max(0, newest)]
+    return [re.sub(r"\s+", " ", a["text"]).strip() for a in pick]
 
 
 def article_id(dso: str, title: str) -> str:
@@ -900,11 +824,12 @@ def handle_image(image: Path, folder: Path, publish: bool = True, push: bool = T
         result["site"] = {"id": a["id"], "match": how}
         log(f"  on the site already: '{a['title']}' (#{a['id']}, matched by {how}); no article")
         return result
-    facts = article_facts(dso, recipe, dest, subs, aliases, site_notes(html, dso))
+    facts = article_facts(dso, recipe, dest, subs, aliases, site_notes(html, dso),
+                          reference=article_reference(dso, aliases, log))
     (out_dir / "article_request.json").write_text(json.dumps(facts, indent=1))
     art = generate_writeup(facts, dest, site_examples(html), log)
     if draft_only:
-        source = "api"
+        source = (art or {}).get("source") or "model"
         if art is None:
             art = fallback_writeup(facts)
             source = "fallback"

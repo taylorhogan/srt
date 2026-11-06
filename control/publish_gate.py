@@ -63,7 +63,11 @@ def card_text(rec: dict, article: dict, facts: dict, gate: str = DEFAULT_GATE) -
     if (article.get("time_travel") or "").strip():
         lines.append(f"{article.get('time_travel_title', 'On Earth')}: {str(article['time_travel']).strip()}")
     src = rec.get("article_source") or article.get("source") or "?"
-    lines.append("Written by: " + ("the model" if src == "api" else "facts only (no model; the key will replace it)"))
+    lines.append("Written by: " + writer_words(src, article.get("model")))
+    if article.get("claims"):
+        lines.append("Claims from general knowledge, check before approving: " + "; ".join(map(str, article["claims"])))
+    if article.get("review_notes"):
+        lines.append("Reviewer's notes: " + "; ".join(map(str, article["review_notes"])))
     tail = f"Reply `approve {dso}` or `reject {dso} [why]`."
     if rec.get("auto_publish_on"):
         if gate == "live":
@@ -72,6 +76,16 @@ def card_text(rec: dict, article: dict, facts: dict, gate: str = DEFAULT_GATE) -
             tail += f" Would auto-publish {rec['auto_publish_on']} (gate: {gate}; nothing publishes yet)."
     lines.append(tail)
     return "\n".join(line for line in lines if line)
+
+
+def writer_words(source: str, model=None) -> str:
+    """Who wrote the draft, for the card (scripts/article_prose sources)."""
+    words = {"local": "the model on the Spark", "api": "the model through the API",
+             "cli": "the model through Claude Code on the Spark", "model": "the model"}
+    if source == "fallback":
+        return "facts only (no model answered; scripts/article_prose.py write <dso> tries again)"
+    w = words.get(source, source or "?")
+    return f"{w} ({model})" if model else w
 
 
 def fail_card_text(dso: str, recipe: str, qc: dict) -> str:

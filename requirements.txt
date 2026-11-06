@@ -113,3 +113,5 @@ pyserial
 skyfield
 markdown          # push_mm.py renders the maintenance manual for /mm/ (was only transitive via tensorboard)
 imageio-ffmpeg
+# the gallery prose's optional API backend (scripts/article_prose)
+anthropic==2.6.0

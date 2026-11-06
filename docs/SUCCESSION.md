@@ -22,7 +22,7 @@ owner's password manager; this page says which exist and what each is for.
 | Pushover | the phone app and one application token | every alert | `cfg["pushover"]` in config_private.py |
 | Open-Meteo / NWS | no account | nothing: the forecast has no key | - |
 | `cfg["weather"]["api_key"]` | a legacy weather-service key still in config_private.py; nothing reads it (checked 2026-10-30) | nothing | may be left blank |
-| Anthropic API key | writes the gallery prose on the Spark (D2) | the cards say "facts only"; nothing stops | `cfg["anthropic"]` in the Spark's config_private.py (not yet present on 2026-10-30; the `anthropic` package in the Spark's venv) |
+| Anthropic API key | the optional "api" backend of the gallery prose (scripts/article_prose) | nothing: since 2026-11-05 the prose is written by the local model on the Spark (Ollama under `~/.local/ollama`, model in `~/.ollama/models`, no account); with neither, the cards say "facts only" and nothing stops | `cfg["anthropic"]["api_key"]` in the Spark's config_private.py (never present so far) |
 | Mastodon | optional mirror, off | nothing | `cfg["mastodon"]` |
 | OneDrive | IrisBackup: the daily zip of the irreplaceable state (scripts/backup_state.py) | restores after a disk loss | the owner's Microsoft account |
 | Electricity and internet at the observatory | the house | everything | - |

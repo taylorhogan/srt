@@ -7,6 +7,12 @@ class PrivateConfig(object):
         "weather": {
             "api_key": "",
         },
+        # Optional: the Anthropic key for the gallery prose "api" backend
+        # (scripts/article_prose). The Spark writes with its local model
+        # without one.
+        "anthropic": {
+            "api_key": "",
+        },
         "pushover": {
             "token": "",
             "user": "",

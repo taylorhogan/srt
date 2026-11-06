@@ -55,7 +55,7 @@ Every phase ships beside the legacy path, shadows first where a decision changes
 
 ### Three implementation decisions proposed here (owner may override)
 
-1. **Article prose on the Spark via an Anthropic API key** in `config_private.py` (`cfg["anthropic"]["api_key"]`), with a facts-only fallback article when the key is absent or fails. A Claude Code session is free but is an interactive tool an heir may not have (ADR 0011 "heir-operable"); a key is one line in SUCCESSION.md and the pipeline degrades instead of blocking.
+1. **Article prose on the Spark via an Anthropic API key** in `config_private.py` (`cfg["anthropic"]["api_key"]`), with a facts-only fallback article when the key is absent or fails. *Superseded 2026-11-05 (docs/ARTICLE_PROSE_PLAN.md): the key never arrived, so the prose is written by a local open-weight model on the Spark; the key is now an optional backend.* A Claude Code session is free but is an interactive tool an heir may not have (ADR 0011 "heir-operable"); a key is one line in SUCCESSION.md and the pipeline degrades instead of blocking.
 2. **Approval by reply command** (`approve <dso>` / `reject <dso> [why]`), not a button: the chat has no action cards, and `publish` is already taken (it renders a sweep variant, `super_user_commands.publish_cmd`).
 3. **Spark → PC via the existing ssh** (`morning_trigger._ps`) for both the conductor events (`RENDER_DONE`, `PUBLISH_DONE`) and the subscriber announce (`site_push.py --yes` on the PC, which holds the host key). The conductor allowlist stays loopback-only and the host key stays on one machine.
 

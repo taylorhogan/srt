@@ -106,8 +106,12 @@ check, a card appears in the chat: the picture, the entry's text, who wrote
 it, and the auto-publish date. `approve <dso>` publishes it on the Spark's
 next 15-minute poll and announces to subscribers; `reject <dso> why` drops
 it. Silence publishes after `publish.auto_approve_days` once
-`publish.gate` is `live`. A card marked "facts only" was written without
-the language model: approve it or wait for the key (SUCCESSION.md).
+`publish.gate` is `live`. The entry's text is written by the model on the
+Spark (docs/ARTICLE_PROSE_PLAN.md); the card lists the claims it made from
+general knowledge and what its reviewer still objected to: read those before
+`approve`. A card marked "facts only" was written with no model answering
+(Ollama down or the model not pulled): `scripts/article_prose.py write <dso>
+--announce` on the Spark tries again and re-cards it.
 
 ## 5. Hands on the hardware
 

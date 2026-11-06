@@ -6,7 +6,7 @@ class PublicConfig():
 
         },
         "version": {
-            "date": "2026.11.5.14"
+            "date": "2026.11.5.15"
         },
 
         "logger": {
@@ -601,6 +601,14 @@ class PublicConfig():
                     # (nn/starsplit, docs/STARSPLIT_PLAN.md): "shadow" writes
                     # and pushes it, nothing downstream reads it; "off"
                     "starless": "shadow"},
+        # The gallery prose (scripts/article_prose.py, docs/ARTICLE_PROSE_PLAN.md,
+        # 2026-11-05). "auto" tries the local Ollama model on the Spark, then
+        # the API with cfg["anthropic"]["api_key"], then `claude -p` with the
+        # owner's login; "local" / "api" / "cli" pin one; "off" is the
+        # facts-only fallback. The writer starts `ollama serve` itself.
+        "prose": {"writer": "auto", "local_url": "http://127.0.0.1:11434",
+                  "local_model": "gemma4:31b-it-q8_0", "local_start": True,
+                  "api_model": "claude-opus-5-5", "cli_model": "opus", "review": True},
         # AAVSO WebObs submissions (photometry/aavso.py, `aavso <dso>`): the
         # owner's observer code, issued 2026-10-31. Not a secret.
         "aavso": {"obscode": "THCA"},
