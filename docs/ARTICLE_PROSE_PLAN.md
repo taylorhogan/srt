@@ -270,3 +270,15 @@ together (~70 GB of the 121) and unload 15 minutes after the last call.
   ~/Desktop/local_article_prose.html (the note, revised with the day's
   findings) and ~/Desktop/ic410_machine_article.html (the entry in the
   site's markup beside a link to the hand-written one).
+- 2026-11-06 night, **published as a lab note**: "Who writes the caption"
+  (irisscience.org/#machine-caption, site commit d8f0d1b): what the
+  telescope decides already, the two sources of truth, the flow diagram,
+  why two models, the bench table and what the errors were made of, the
+  era table, IC 410 by hand and by machine, what it is not yet. The
+  subscriber announcement is the owner's `scripts/site_push.py --yes` on
+  the PC (the web-host key is not on the Spark). The timeline section
+  moved OUT of the gallery panel (site d5c7742): the gallery sort
+  re-appends the entry cards to the panel, so the section sat above the
+  images ("the history text is before the images"); it is now a sibling
+  between the panels, shown with the gallery tab by its own rule, and
+  `with_timeline` migrates an old in-panel block.

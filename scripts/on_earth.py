@@ -130,9 +130,14 @@ def timeline_html(eras: Optional[list[dict]] = None) -> str:
         f'                <p class="era-text">{e(era["paragraph"])}</p>\n'
         f'            </article>' for era in eras)
     return f"""{START}
-        <section class="on-earth" id="on-earth" aria-labelledby="on-earth-title">
+    <section class="container on-earth" id="on-earth" aria-labelledby="on-earth-title">
             <style>
-                .on-earth {{ margin: 3rem auto 1rem; max-width: 70ch; padding-top: 2rem; border-top: 1px solid rgba(128,128,128,.35); }}
+                /* A sibling of the gallery panel, not inside it: the gallery sort re-appends
+                   the entry cards to the panel, so anything else in it ends up ABOVE them
+                   (2026-11-06, the owner: "the history text is before the images"). Shown with
+                   the gallery tab only. */
+                .on-earth {{ display: none; margin: 3rem auto 1rem; max-width: 70ch; padding-top: 2rem; border-top: 1px solid rgba(128,128,128,.35); }}
+                body[data-mode="gallery"] .on-earth {{ display: block; }}
                 .on-earth h2 {{ margin: 0 0 .4rem; }}
                 .on-earth .on-earth-lede {{ opacity: .8; margin: 0 0 1.4rem; }}
                 .on-earth .era {{ margin: 0 0 1.2rem; }}
@@ -145,10 +150,11 @@ def timeline_html(eras: Optional[list[dict]] = None) -> str:
             <p class="on-earth-lede">Every picture on this page is a look into the past: the light that made it left its object as many years ago as the object is light years away. The box under each picture names the era it set out in; these are the eras, nearest first, from the last century to the first galaxies.</p>
 {blocks}
             <script>
-                // A deep link to an era (#era-oligocene) lands on the gallery tab
-                // with that era in view; the page's own deep-link code knows only
-                // the entry cards (their _deck), so an era anchor would otherwise
-                // leave a visitor on the Live tab.
+                // The section is outside the gallery panel (see the style above), so it
+                // shows with the gallery tab. A deep link to an era (#era-oligocene)
+                // lands on that tab with the era in view; the page's own deep-link
+                // code knows only the entry cards (their _deck), so an era anchor
+                // would otherwise leave a visitor on the Live tab.
                 (function () {{
                     if (location.hash.indexOf('#era-') !== 0) {{ return; }}
                     var target = document.getElementById(location.hash.slice(1));
@@ -160,22 +166,24 @@ def timeline_html(eras: Optional[list[dict]] = None) -> str:
                     window.requestAnimationFrame(function () {{ target.scrollIntoView({{ block: 'start' }}); }});
                 }})();
             </script>
-        </section>
-        {END}"""
+    </section>
+    {END}"""
 
 
 def with_timeline(index_html: str, section: str) -> str:
-    """*index_html* with the timeline section in place: replacing the one between
-    the markers, else inserted at the end of the gallery panel (before the notes
-    panel). Idempotent."""
+    """*index_html* with the timeline section in place: any marked block removed
+    (wherever an earlier version put it), the section inserted between the
+    gallery panel and the notes panel as a sibling of both. Idempotent."""
     a, b = index_html.find(START), index_html.find(END)
     if a >= 0 and b > a:
-        return index_html[:a] + section + index_html[b + len(END):]
-    m = re.search(r"\n(\s*)</div>\s*\n\s*<div class=\"container\" id=\"notes-panel\"", index_html)
+        head = index_html[:a].rstrip(" \t").rstrip("\n")
+        tail = index_html[b + len(END):].lstrip("\n")
+        index_html = re.sub(r"\n{3,}", "\n\n", head + "\n\n" + tail)
+    m = re.search(r"</div>\n(\s*\n)*(?P<indent>[ \t]*)<div class=\"container\" id=\"notes-panel\"", index_html)
     if not m:
         raise ValueError("gallery panel's end not found in index.html")
-    indent = m.group(1)
-    return index_html[:m.start()] + "\n\n" + indent + "    " + section + "\n" + index_html[m.start():]
+    at = m.start() + len("</div>\n")
+    return index_html[:at] + "\n" + section + "\n\n" + index_html[at:].lstrip("\n")
 
 
 def cmd_site(a) -> int:

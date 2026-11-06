@@ -81,7 +81,9 @@ def test_timeline_section_round_trips_into_the_page():
             '    </div>\n\n    <div class="container" id="notes-panel">\n    </div>\n</body>')
     out = oe.with_timeline(page, oe.timeline_html())
     assert out.count(oe.START) == 1 and out.count(oe.END) == 1
-    assert out.index(oe.START) < out.index('id="notes-panel"') and out.index(oe.START) > out.index('id="m1"')
+    gallery_close = out.index("</div>", out.index('id="m1"'))
+    assert gallery_close < out.index(oe.START) < out.index('id="notes-panel"')     # a sibling between the panels
+    assert 'body[data-mode="gallery"] .on-earth { display: block; }' in out
     for e in oe.load():
         assert f'id="era-{e["id"]}"' in out
     assert "location.hash.indexOf('#era-')" in out and "dataset.mode = 'gallery'" in out   # a deep link opens the gallery tab
@@ -89,6 +91,11 @@ def test_timeline_section_round_trips_into_the_page():
     assert again == out                                       # idempotent
     changed = oe.with_timeline(out, oe.timeline_html().replace("When the light left", "When the light set out"))
     assert changed.count("When the light set out") == 1 and "When the light left</h2>" not in changed
+    assert changed.count(oe.START) == 1 and changed.count('id="notes-panel"') == 1
+    # an earlier version put the block INSIDE the gallery panel; it is moved out
+    inside = page.replace('</article>\n\n', '</article>\n\n' + oe.timeline_html() + '\n', 1)
+    moved = oe.with_timeline(inside, oe.timeline_html())
+    assert moved.count(oe.START) == 1 and moved == out
 
 
 def test_the_gallery_box_renders_the_era_link():
