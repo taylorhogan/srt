@@ -605,7 +605,12 @@ def cmd_write(a) -> int:
 
 def cmd_dossier(a) -> int:
     from scripts import astro_output as ao
-    d = dossier(a.dso, ao.simbad_aliases(a.dso))
+    try:   # SIMBAD can hang for minutes (2026-11-05); the block is useful without it
+        from utils.bounded import call_bounded
+        aliases = call_bounded(ao.simbad_aliases, 20, a.dso) or []
+    except Exception:  # noqa: BLE001
+        aliases = []
+    d = dossier(a.dso, aliases)
     print(json.dumps(d, indent=1, ensure_ascii=False))
     return 0
 
