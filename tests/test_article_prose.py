@@ -54,18 +54,49 @@ def test_compose_writes_reviews_rewrites_and_labels(tmp_path):
     calls = []
 
     def ask(name, system, user, image, st, log):
-        calls.append((name, "review" if "Draft (JSON)" in user else "write", user))
+        calls.append((name, "review" if "Draft (JSON)" in user else "write", user, st["local_model"]))
         if "Draft (JSON)" in user:
             return json.dumps({"problems": [] if len(calls) > 2 else ["the hours are wrong"]})
         return json.dumps(GOOD)
-    st = dict(ap.DEFAULTS, writer="local", local_model="m:1")
+    st = dict(ap.DEFAULTS, writer="local", local_model="m:1", review_model="r:1")
     art = ap.compose(FACTS, None, ["example one"], log=lambda m: None, ask=ask, st=st)
-    kinds = [(c[0], c[1]) for c in calls]
-    assert kinds == [("local", "write"), ("local", "review"), ("local", "write"), ("local", "review")]
+    kinds = [(c[0], c[1], c[3]) for c in calls]
+    assert kinds == [("local", "write", "m:1"), ("local", "review", "r:1"),
+                     ("local", "write", "m:1"), ("local", "review", "r:1")]   # the other model reviews
     assert "the hours are wrong" in calls[2][2]                       # the rewrite carries the problem
     assert art["source"] == "local" and art["model"] == "m:1" and art["review_notes"] == []
+    assert art["reviewer"] == "r:1"
     assert art["claims"] == ["the Tadpoles are ten light years long"]
-    assert "reference" in calls[0][2] and "example one" in ask.__code__.co_names or True
+    assert "reference" in calls[0][2]
+
+
+def test_reviewer_is_the_other_model_and_falls_back_to_the_writer():
+    st = dict(ap.DEFAULTS, local_model="m:1", review_model="r:1", review_backend="local")
+    assert ap.reviewer_for("local", st)[1]["local_model"] == "r:1"
+    assert ap.reviewer_for("local", dict(st, review_backend="same"))[1]["local_model"] == "m:1"
+    assert ap.reviewer_for("api", st) == ("local", dict(st, local_model="r:1"))      # an API draft, a local check
+    assert ap.reviewer_for("local", dict(st, review_backend="cli"))[0] == "cli"
+
+    seen = []
+
+    def ask(name, system, user, image, st_, log):
+        if "Draft (JSON)" in user:
+            seen.append(st_["local_model"])
+            if st_["local_model"] == "r:1":
+                raise ap.ProseError("model r:1 is not pulled")
+            return json.dumps({"problems": []})
+        return json.dumps(GOOD)
+    logs = []
+    art = ap.compose(FACTS, None, [], log=logs.append, ask=ask, st=dict(st, writer="local"))
+    assert seen == ["r:1", "m:1"] and art["reviewer"] == "m:1"
+    assert any("the writer reviews its own draft" in m for m in logs)
+
+    def mute(name, system, user, image, st_, log):
+        if "Draft (JSON)" in user:
+            raise ap.ProseError("down")
+        return json.dumps(GOOD)
+    art = ap.compose(FACTS, None, [], log=lambda m: None, ask=mute, st=dict(st, writer="local"))
+    assert art["reviewer"] == "" and art["review_notes"] == []
 
 
 def test_compose_falls_through_a_failing_backend_and_reports_none_when_all_fail():
@@ -91,6 +122,7 @@ def test_the_prompt_carries_the_rules_the_reference_and_the_claims_key():
     assert "IC 410 is an emission nebula" in user and "auto-stop-filters" in user
     rs, ru = ap.review_prompt(FACTS, GOOD)
     assert "problems" in rs and "Draft (JSON)" in ru and "Tadpoles" in ru
+    assert "written by another model" in rs
 
 
 def test_cli_result_reads_the_envelope():

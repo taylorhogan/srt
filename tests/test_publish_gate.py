@@ -23,7 +23,10 @@ def test_card_text_shows_the_draft_and_the_reply():
     assert "First.\nSecond." in t and "On Earth" not in t
     assert "facts only" in t and "Reply `approve ic410` or `reject ic410 [why]`." in t
     assert "Would auto-publish 2026-11-09 (gate: shadow; nothing publishes yet)." in t
-    live = G.card_text(dict(REC, article_source="api"), dict(ART, time_travel="Light left.", time_travel_title="On Earth: then"), FACTS, "live")
+    live = G.card_text(dict(REC, article_source="api"), dict(ART, time_travel="Light left.", time_travel_title="On Earth: then",
+                                                             model="w:1", reviewer="r:1"), FACTS, "live")
+    assert "Reviewed by: r:1" in live
+    assert "Reviewed by: the writer itself" in G.card_text(REC, dict(ART, model="w:1", reviewer="w:1"), FACTS, "live")
     assert "Written by: the model" in live and "On Earth: then: Light left." in live and "Auto-publishes 2026-11-09." in live
     f = G.fail_card_text("ic410", "SHO", {"pass": False, "reasons": ["sky at 0.3% grey"]})
     assert f.startswith("FINAL RENDER NEEDS A HAND: ic410 SHO -- QC FAIL: sky at 0.3% grey") and "no timer" in f

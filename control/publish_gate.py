@@ -64,6 +64,9 @@ def card_text(rec: dict, article: dict, facts: dict, gate: str = DEFAULT_GATE) -
         lines.append(f"{article.get('time_travel_title', 'On Earth')}: {str(article['time_travel']).strip()}")
     src = rec.get("article_source") or article.get("source") or "?"
     lines.append("Written by: " + writer_words(src, article.get("model")))
+    if article.get("reviewer"):
+        lines.append("Reviewed by: " + ("the writer itself" if article["reviewer"] == article.get("model")
+                                        else str(article["reviewer"])))
     if article.get("claims"):
         lines.append("Claims from general knowledge, check before approving: " + "; ".join(map(str, article["claims"])))
     if article.get("review_notes"):

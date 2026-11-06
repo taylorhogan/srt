@@ -56,8 +56,21 @@ The same prompt and the same loop for all three:
    a measured number contradicted, a statement the reference does not
    support, a style break, a missing note link. One rewrite with the list,
    one more review. What remains is `review_notes` on the article.
+   **The reviewer is the other model** (owner, 2026-11-06: "Let's try the 2
+   model adversarial approach"): `cfg["prose"]["review_backend"]` (local |
+   api | cli | same) and `review_model` (qwen3-vl checks gemma4 by
+   default); the reviewer is told the draft is another model's and to
+   trust only the facts and the reference. A model checking its own draft
+   tends to agree with itself; the M76 trial's "AD 500" was caught because
+   arithmetic against a stated fact is easy, an invented detail it believed
+   while writing it would believe again. A reviewer that cannot answer (not
+   pulled, server down, no key) hands the review back to the writer, the
+   log says so, and the article's `reviewer` names who did it. On the
+   bench each writer is reviewed by the other model on the bench, so the
+   two runs are mirror images and the review notes say how each does as a
+   critic.
 4. **The card** (`publish_gate.card_text`) shows who wrote it and the
-   model, the claims to check, and the reviewer's notes. The owner's
+   model, who reviewed it, the claims to check, and the reviewer's notes. The owner's
    `approve` is the last check; the meta line's numbers are written from
    the data, never from the article.
 
@@ -99,7 +112,9 @@ User-level, no sudo:
     cd ~/Documents/srt && .venv/bin/python scripts/article_prose.py bench \
         --models gemma4:31b-it-q8_0,qwen3-vl:32b-instruct-q8_0
 
-Models live in `~/.ollama/models` (70 GB for the two; 2.2 TB free).
+Models live in `~/.ollama/models` (70 GB for the two; 2.2 TB free). Both
+are needed for the two-model review: the writer and its critic sit loaded
+together (~70 GB of the 121) and unload 15 minutes after the last call.
 
 ## Log
 
@@ -119,3 +134,12 @@ Models live in `~/.ollama/models` (70 GB for the two; 2.2 TB free).
   from the Wikipedia block, so not among them). The owner's copy:
   ~/Desktop/m76_article_trial_claude_cli.json. The local model's turn is
   the bench, after the pulls.
+- 2026-11-06, **two-model review**: the owner asked what the problem with
+  two models would be (memory, two things to keep pulled, a critic's taste
+  leaking into the prose, against a self-review that agrees with itself)
+  and chose the adversarial pair. `reviewer_for` / `reviewed` in
+  article_prose: the review call goes to `review_backend` / `review_model`,
+  falls back to the writer when that model cannot answer, and the article
+  carries `reviewer`; the card prints "Reviewed by"; `write --reviewer`,
+  `bench --reviewer`, and the bench pairs each writer with the other model
+  by default. Still waiting on the pulls.

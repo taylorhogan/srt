@@ -35,6 +35,16 @@ and the writer's own list of statements from general knowledge as `claims`;
 the card shows both, since the owner's `approve` is the last check and the
 site is read by subscribers.
 
+The reviewer is a DIFFERENT model when there is one (the owner's call,
+2026-11-06, "the 2 model adversarial approach"): cfg["prose"]["review_backend"]
+(local | api | cli | same) and cfg["prose"]["review_model"] (the local
+reviewer's tag; qwen3-vl against the gemma4 writer by default). A model
+asked to check its own draft tends to agree with itself; a second one has
+no stake in the sentences. The reviewer sees the facts, the reference and
+the draft, never the picture, so it judges against the record. A reviewer
+that cannot answer (not pulled, no server, no key) hands the review back to
+the writer and the log says so; the article records `reviewer`.
+
 The reference block (dossier()): the Wikipedia intro for the object (by its
 name, then its catalogue aliases), the object type, the distance on record
 in local/dso_distances.json, the related notes. A local model is told to say
@@ -74,6 +84,8 @@ DEFAULTS = {
     "api_model": "claude-opus-5-5",
     "cli_model": "opus",
     "review": True,
+    "review_backend": "local",        # who checks the draft: local | api | cli | same (the writer)
+    "review_model": "qwen3-vl:32b-instruct-q8_0",   # the local reviewer; the writer when it is not pulled
     "timeout_s": 900,
 }
 OLLAMA_CANDIDATES = (Path.home() / ".local" / "ollama" / "bin" / "ollama",)
@@ -250,8 +262,10 @@ def review_prompt(facts: dict, article: dict) -> tuple[str, str]:
     """(system, user) for the check. Text only; the reviewer lists problems and never rewrites."""
     system = (
         "You check a draft gallery entry for irisscience.org before it is published to subscribers. "
-        "You are given the measured facts, a reference block about the object, and the draft. List "
-        "only real problems, each as one short sentence:\n"
+        "The draft was written by another model; trust the measured facts and the reference block, "
+        "never the draft. You are given the facts, the reference and the draft. List only real "
+        "problems, each as one short sentence, and nothing you cannot point to in the facts, the "
+        "reference or the draft's own text:\n"
         "1. a measured number or date in the draft that contradicts the facts (frame counts, hours, "
         "nights, filters, exposure, recipe, dates);\n"
         "2. a statement about the object that contradicts the reference block, or that is not in it "
@@ -456,19 +470,45 @@ def _model_name(name: str, st: dict) -> str:
     return {"local": st["local_model"], "api": st["api_model"], "cli": f"claude-code:{st['cli_model']}"}[name]
 
 
+def reviewer_for(name: str, st: dict) -> tuple[str, dict]:
+    """(backend, settings) of the reviewer for a draft written by *name*: the
+    configured one (review_backend / review_model), the writer itself when
+    the setting is "same" or names the writer's own model. Pure."""
+    rb = str(st.get("review_backend") or "same").lower()
+    if rb not in ASK:
+        return name, st
+    rst = dict(st)
+    if rb == "local" and st.get("review_model"):
+        rst["local_model"] = str(st["review_model"])
+    return rb, rst
+
+
 def review(name: str, facts: dict, article: dict, st: dict, ask, log: Callable[[str], None]) -> list[str]:
-    """The reviewer's problems (empty when fine); a reviewer that fails is logged and ignored."""
+    """The reviewer's problems (empty when fine). ProseError when it cannot answer."""
     system, user = review_prompt(facts, article)
-    try:
-        text = ask(name, system, user, None, st, log)
-    except ProseError as e:
-        log(f"  review skipped: {e}")
-        return []
+    text = ask(name, system, user, None, st, log)
     d = parse_answer(text) or {}
     probs = d.get("problems") if isinstance(d, dict) else None
     out = [str(p).strip() for p in (probs or []) if str(p).strip()] if isinstance(probs, list) else []
-    log(f"  review: {len(out)} problem(s)" + (": " + " | ".join(out) if out else ""))
+    log(f"  review ({_model_name(name, st)}): {len(out)} problem(s)" + (": " + " | ".join(out) if out else ""))
     return out
+
+
+def reviewed(name: str, facts: dict, article: dict, st: dict, ask, log: Callable[[str], None]) -> tuple[list[str], str]:
+    """(problems, who reviewed): the other model when it answers, else the
+    writer on its own draft, else nothing (logged, never fatal)."""
+    rname, rst = reviewer_for(name, st)
+    own = (rname, _model_name(rname, rst)) == (name, _model_name(name, st))
+    if not own:
+        try:
+            return review(rname, facts, article, rst, ask, log), _model_name(rname, rst)
+        except ProseError as e:
+            log(f"  reviewer {_model_name(rname, rst)} cannot answer ({e}); the writer reviews its own draft")
+    try:
+        return review(name, facts, article, st, ask, log), _model_name(name, st)
+    except ProseError as e:
+        log(f"  review skipped: {e}")
+        return [], ""
 
 
 def _write_once(name: str, system: str, user: str, image: Optional[Path], st: dict, ask, log) -> dict:
@@ -514,24 +554,26 @@ def compose(facts: dict, image: Optional[Path], examples: list[str], cfg: Option
         try:
             art = _write_once(name, system, user, image, st, _ask, log)
             notes: list[str] = []
+            who = ""
             if st.get("review", True):
-                notes = review(name, facts, art, st, _ask, log)
+                notes, who = reviewed(name, facts, art, st, _ask, log)
                 if notes:
                     fix = user + "\n\nA reviewer found these problems in a previous draft; write a new draft " \
                         "that fixes every one of them:\n- " + "\n- ".join(notes)
                     art = _write_once(name, system, fix, image, st, _ask, log)
-                    notes = review(name, facts, art, st, _ask, log)
+                    notes, who = reviewed(name, facts, art, st, _ask, log)
         except ProseError as e:
             log(f"  write-up ({name}): {e}")
             continue
         claims = art.get("claims")
         art["claims"] = [str(c).strip() for c in claims if str(c).strip()] if isinstance(claims, list) else []
         art["review_notes"] = notes
+        art["reviewer"] = who
         art["source"] = name
         art["model"] = _model_name(name, st)
         art["seconds"] = round(time.time() - t0, 1)
         log(f"  write-up: {name} ({art['model']}) in {art['seconds']} s, {len(art['claims'])} claim(s), "
-            f"{len(notes)} reviewer note(s)")
+            f"{len(notes)} reviewer note(s)" + (f" from {who}" if who else ""))
         return art
     return None
 
@@ -575,6 +617,9 @@ def cmd_write(a) -> int:
         st["writer"] = a.writer
     if a.model:
         st["local_model"] = a.model
+    if a.reviewer:
+        st["review_model"] = a.reviewer
+        st["review_backend"] = "same" if a.reviewer == "same" else "local"
     art = compose(facts, img, examples, cfg, st=st)
     if art is None:
         print("no article written (see the reasons above)")
@@ -631,7 +676,7 @@ def cmd_bench(a) -> int:
     out_root.mkdir(parents=True, exist_ok=True)
     report = [f"# Article prose bench ({time.strftime('%Y-%m-%d %H:%M')})\n",
               f"Models: {', '.join(models)}; writer: {a.writer or 'local'}\n"]
-    table = ["| target | model | seconds | claims | reviewer notes |", "|---|---|---|---|---|"]
+    table = ["| target | model | reviewer | seconds | claims | reviewer notes |", "|---|---|---|---|---|---|"]
     for dso in dsos:
         out_dir = root / dso
         try:
@@ -650,6 +695,11 @@ def cmd_bench(a) -> int:
                           + "*: " + str(hand.get("time_travel")) + "\n")
         for m in models:
             st = dict(base, writer=a.writer or "local", local_model=m)
+            if a.reviewer:
+                st["review_model"] = a.reviewer
+                st["review_backend"] = "same" if a.reviewer == "same" else "local"
+            elif st.get("review_model") == m:      # the other model on the bench checks this one
+                st["review_model"] = next((x for x in models if x != m), m)
             logs: list[str] = []
             art = compose(facts, img, examples, cfg, log=lambda s: (logs.append(s), print(s)), st=st)
             mdir = out_root / re.sub(r"[^A-Za-z0-9_.-]", "_", m)
@@ -658,15 +708,17 @@ def cmd_bench(a) -> int:
             (mdir / f"{dso}.log").write_text("\n".join(logs))
             if art is None:
                 report.append(f"### {m}\n\nfailed: {logs[-1] if logs else '?'}\n")
-                table.append(f"| {dso} | {m} | - | - | failed |")
+                table.append(f"| {dso} | {m} | - | - | - | failed |")
                 continue
-            report.append(f"### {m} ({art['seconds']} s)\n\n**{art.get('title')}**  \n"
+            report.append(f"### {m} ({art['seconds']} s; reviewed by {art.get('reviewer') or 'nobody'})\n\n"
+                          f"**{art.get('title')}**  \n"
                           f"{art.get('distance_text')} | {art.get('type_text')}\n\n"
                           + "\n\n".join(art.get("paragraphs") or []) + f"\n\n*{art.get('time_travel_title')}*: "
                           f"{art.get('time_travel')}\n\n*Alt:* {art.get('alt')}\n\n"
                           f"*Claims:* {'; '.join(art['claims']) or 'none'}  \n"
                           f"*Reviewer:* {'; '.join(art['review_notes']) or 'no objections'}\n")
-            table.append(f"| {dso} | {m} | {art['seconds']} | {len(art['claims'])} | {len(art['review_notes'])} |")
+            table.append(f"| {dso} | {m} | {art.get('reviewer') or '-'} | {art['seconds']} | {len(art['claims'])} | "
+                         f"{len(art['review_notes'])} |")
     report.insert(2, "\n".join(table) + "\n")
     out = Path(a.out) if a.out else out_root / "bench.md"
     out.write_text("\n".join(report))
@@ -690,6 +742,7 @@ def main(argv=None) -> int:
     w.add_argument("--folder")
     w.add_argument("--writer", choices=["auto", "local", "api", "cli"])
     w.add_argument("--model", help="the local model to use")
+    w.add_argument("--reviewer", help="the local model that reviews (default cfg prose.review_model; `same` = the writer)")
     w.add_argument("--refresh-reference", action="store_true")
     w.add_argument("--announce", action="store_true", help="re-card a queued draft with its new hash")
     w.set_defaults(fn=cmd_write)
@@ -698,6 +751,7 @@ def main(argv=None) -> int:
     d.set_defaults(fn=cmd_dossier)
     b = sub.add_parser("bench", help="every model on every hand-written entry, one report")
     b.add_argument("--models", help="comma-separated local model tags")
+    b.add_argument("--reviewer", help="one local model that reviews every writer (default: the other model on the bench)")
     b.add_argument("--dsos", help="comma-separated folder names (default: all with a hand-written article)")
     b.add_argument("--folder")
     b.add_argument("--writer", choices=["local", "api", "cli"])

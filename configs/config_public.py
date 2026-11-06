@@ -6,7 +6,7 @@ class PublicConfig():
 
         },
         "version": {
-            "date": "2026.11.5.17"
+            "date": "2026.11.6.1"
         },
 
         "logger": {
@@ -608,7 +608,10 @@ class PublicConfig():
         # facts-only fallback. The writer starts `ollama serve` itself.
         "prose": {"writer": "auto", "local_url": "http://127.0.0.1:11434",
                   "local_model": "gemma4:31b-it-q8_0", "local_start": True,
-                  "api_model": "claude-opus-5-5", "cli_model": "opus", "review": True},
+                  "api_model": "claude-opus-5-5", "cli_model": "opus", "review": True,
+                  # The reviewer is the OTHER model (2026-11-06, owner: "the 2 model
+                  # adversarial approach"); the writer checks itself when it is not pulled.
+                  "review_backend": "local", "review_model": "qwen3-vl:32b-instruct-q8_0"},
         # AAVSO WebObs submissions (photometry/aavso.py, `aavso <dso>`): the
         # owner's observer code, issued 2026-10-31. Not a secret.
         "aavso": {"obscode": "THCA"},
