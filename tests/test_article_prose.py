@@ -205,28 +205,28 @@ def test_dossier_falls_back_to_search_when_the_intro_names_the_object():
     assert miss["wikipedia"] is None                      # a result that does not name the object is no reference
 
 
-def test_britishise_replaces_the_unambiguous_words_and_keeps_names():
-    t, w = ap.britishise("The colorful center of the catalog, in gray, 300 meters from the Center for Astrophysics. Color is key.")
-    assert t == "The colourful centre of the catalogue, in grey, 300 metres from the Center for Astrophysics. Colour is key."
-    assert w == ["colorful", "center", "catalog", "gray", "meters", "Color"]
-    assert ap.britishise("a program of practice with a meter")[1] == []
-    art = {"title": "x", "alt": "A colorful nebula", "paragraphs": ["ionized gas", "fine"], "time_travel": "ok", "time_travel_title": "On Earth"}
-    assert ap.apply_spelling(art) == ["colorful", "ionized"] and art["alt"] == "A colourful nebula" and art["paragraphs"][0] == "ionised gas"
+def test_house_spelling_replaces_the_unambiguous_words_and_keeps_names():
+    t, w = ap.house_spelling("The colourful centre of the catalogue, in grey, 300 metres from the Greenwich Centre. Colour is key.")
+    assert t == "The colorful center of the catalog, in gray, 300 meters from the Greenwich Centre. Color is key."
+    assert w == ["colourful", "centre", "catalogue", "grey", "metres", "Colour"]
+    assert ap.house_spelling("a programme of practise with a licence")[1] == []
+    art = {"title": "x", "alt": "A colourful nebula", "paragraphs": ["ionised gas", "fine"], "time_travel": "ok", "time_travel_title": "On Earth"}
+    assert ap.apply_spelling(art) == ["colourful", "ionised"] and art["alt"] == "A colorful nebula" and art["paragraphs"][0] == "ionized gas"
 
 
 def test_the_prompts_carry_the_new_rules():
     system, _ = ap.write_prompt(FACTS, [])
-    assert "British spelling" in system and "never describe what it found" in system
+    assert "American spelling" in system and "never describe what it found" in system
     rs, _ = ap.review_prompt(FACTS, GOOD)
-    assert "American spelling" in rs and "NGC2146 - The Dusty Hand" in rs and "span of dates" in rs and "what the observatory did" in rs
+    assert "British spelling" in rs and "NGC2146 - The Dusty Hand" in rs and "span of dates" in rs and "what the observatory did" in rs
 
 
-def test_britishise_leaves_a_linked_note_title_alone():
-    text = "See [Weighing a star cluster's age with a color\u2013magnitude diagram](#hr-diagram) for the color of the center."
-    out, w = ap.britishise(text)
-    assert "color\u2013magnitude diagram](#hr-diagram)" in out and out.endswith("the colour of the centre.")
-    assert w == ["color", "center"]
-    assert ap.britishise("totaling 8.4 hours, funneling gas")[0] == "totalling 8.4 hours, funnelling gas"
+def test_house_spelling_leaves_a_linked_note_title_alone():
+    text = "See [The colour of a star's centre](#some-note) for the colour of the centre."
+    out, w = ap.house_spelling(text)
+    assert "[The colour of a star's centre](#some-note)" in out and out.endswith("the color of the center.")
+    assert w == ["colour", "centre"]
+    assert ap.house_spelling("totalling 8.4 hours, funnelling gas")[0] == "totaling 8.4 hours, funneling gas"
 
 
 def test_the_note_rule_is_capped():

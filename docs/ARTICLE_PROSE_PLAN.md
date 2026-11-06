@@ -194,10 +194,9 @@ together (~70 GB of the 121) and unload 15 minutes after the last call.
   Heart Nebula's does), and `astro_output.object_type` reads the cropper's
   offline chain (queue obj_type, candidates kind) when the classifier has
   nothing: Melotte 15 now reads "nebula" with the Heart Nebula's page.
-  (2) American spellings in both models' drafts (center, color, catalog):
-  a British-spelling line in the writer's rules, American spelling as a
-  class-3 defect for the reviewer, and `britishise` on the final text as
-  the backstop (unambiguous words only, a capitalised mid-sentence word
+  (2) [WRONG WAY ROUND, corrected the same night, see below] a
+  British-spelling line in the writer's rules, American spelling as a
+  class-3 defect for the reviewer, and a backstop on the final text (unambiguous words only, a capitalised mid-sentence word
   left as a name; the words changed ride the article as `spelling_fixed`
   and the log). (3) Gemma read 'ID - Name' as "IC 410 - ..." and qwen
   obeyed, so the reviewer gets the writer's example title. (4) Qwen's
@@ -282,3 +281,16 @@ together (~70 GB of the 121) and unload 15 minutes after the last call.
   images ("the history text is before the images"); it is now a sibling
   between the panels, shown with the gallery tab by its own rule, and
   `with_timeline` migrates an old in-panel block.
+- 2026-11-06 late, **the spelling convention is AMERICAN, not British**
+  (owner: "i want american spelling"; measured over the site's prose:
+  color 70 to colour 24, catalog 39 to 8, sulfur 32 to 14, ionized 28 to
+  1, neighbor 15 to 0; the British minority was this autumn's hand-written
+  entries, mine). I had assumed British from those entries and built the
+  rule backwards. Flipped: the writer is told American, the reviewer flags
+  British forms as class 3, `house_spelling` (was `britishise`) maps the
+  British forms to the site's (`SPELLING`), the bench's Spellings column
+  recounted (gemma 2/0/1/2/1/0, qwen 3/1/2/4/2/1), the lab note's three
+  sentences corrected (site 83dbeef), the IC 410 run's backstop would have
+  changed sulphur x3 and colourful. The hand-written entries I wrote
+  (IC 410, M1, M76, Melotte 15, NGC 1961, NGC 6946, the starless note) are
+  still British on the site; the owner's older ones are American.

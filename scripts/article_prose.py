@@ -277,27 +277,31 @@ def light_left_words(distance_ly) -> str:
     return f"about AD {year}" if year > 0 else f"about {-year:,} BC"
 
 
-AMERICAN = {"color": "colour", "colors": "colours", "colorful": "colourful", "colored": "coloured", "colorless": "colourless",
-            "center": "centre", "centered": "centred", "centers": "centres", "catalog": "catalogue", "cataloged": "catalogued",
-            "catalogs": "catalogues", "gray": "grey", "grays": "greys", "sulfur": "sulphur", "artifact": "artefact",
-            "artifacts": "artefacts", "neighbor": "neighbour", "neighbors": "neighbours", "neighboring": "neighbouring",
-            "favorite": "favourite", "traveled": "travelled", "traveling": "travelling", "modeled": "modelled",
-            "labeled": "labelled", "fiber": "fibre", "fibers": "fibres", "honor": "honour", "meters": "metres",
-            "kilometers": "kilometres", "liters": "litres", "harbor": "harbour", "behavior": "behaviour", "vapor": "vapour",
-            "ionized": "ionised", "ionizes": "ionises", "ionization": "ionisation", "ionizing": "ionising",
-            "analyze": "analyse", "analyzed": "analysed", "recognize": "recognise", "recognized": "recognised",
-            "vaporized": "vaporised", "skeptical": "sceptical", "theater": "theatre", "totaling": "totalling",
-            "funneling": "funnelling", "ionize": "ionise", "modeling": "modelling", "signaling": "signalling",
-            "labeling": "labelling", "centre": "centre"}
+# The site's spelling is American (measured 2026-11-06 over its prose: color 70
+# to colour 24, catalog 39 to 8, sulfur 32 to 14, ionized 28 to 1; the British
+# minority was this autumn's hand-written entries). British form -> the site's.
+SPELLING = {"colour": "color", "colours": "colors", "colourful": "colorful", "coloured": "colored", "colourless": "colorless",
+            "centre": "center", "centred": "centered", "centres": "centers", "catalogue": "catalog", "catalogued": "cataloged",
+            "catalogues": "catalogs", "grey": "gray", "greys": "grays", "sulphur": "sulfur", "artefact": "artifact",
+            "artefacts": "artifacts", "neighbour": "neighbor", "neighbours": "neighbors", "neighbouring": "neighboring",
+            "favourite": "favorite", "travelled": "traveled", "travelling": "traveling", "modelled": "modeled",
+            "labelled": "labeled", "fibre": "fiber", "fibres": "fibers", "honour": "honor", "metres": "meters",
+            "kilometres": "kilometers", "litres": "liters", "harbour": "harbor", "behaviour": "behavior", "vapour": "vapor",
+            "ionised": "ionized", "ionises": "ionizes", "ionisation": "ionization", "ionising": "ionizing", "ionise": "ionize",
+            "analyse": "analyze", "analysed": "analyzed", "recognise": "recognize", "recognised": "recognized",
+            "vaporised": "vaporized", "sceptical": "skeptical", "theatre": "theater", "totalling": "totaling",
+            "funnelling": "funneling", "modelling": "modeling", "signalling": "signaling", "labelling": "labeling",
+            "defence": "defense", "aluminium": "aluminum", "mould": "mold", "plough": "plow"}
+_SPELLING_RE = re.compile(r"\b(" + "|".join(sorted(SPELLING, key=len, reverse=True)) + r")\b", re.I)
 _LINK_RE = re.compile(r"\[[^\]]+\]\(#[^)]+\)")
-_AMERICAN_RE = re.compile(r"\b(" + "|".join(sorted(AMERICAN, key=len, reverse=True)) + r")\b", re.I)
 
 
-def britishise(text: str) -> tuple[str, list[str]]:
-    """*text* with the unambiguous American spellings replaced (case kept
-    for a capital), and the words changed. A capitalised word inside a
-    sentence is a name ("Center for Astrophysics") and is left alone;
-    "meter" (the instrument), "program", "practice" are not in the list."""
+def house_spelling(text: str) -> tuple[str, list[str]]:
+    """*text* with the unambiguous British spellings replaced by the site's
+    American ones (case kept for a capital), and the words changed. A
+    capitalised word inside a sentence is a name ("Royal Greenwich
+    Observatory's Centre") and is left alone; "programme", "licence" and
+    "practise" are not in the list on purpose."""
     changed = []
     links = [m.span() for m in _LINK_RE.finditer(text)]   # a note's title is the site's, spelt as it is
 
@@ -308,24 +312,22 @@ def britishise(text: str) -> tuple[str, list[str]]:
         before = text[:m.start()].rstrip()
         if w[0].isupper() and before and before[-1] not in ".!?":
             return w
-        b = AMERICAN[w.lower()]
-        if b == w.lower():
-            return w
+        b = SPELLING[w.lower()]
         changed.append(w)
         return b.capitalize() if w[0].isupper() else b
-    return _AMERICAN_RE.sub(sub, text), changed
+    return _SPELLING_RE.sub(sub, text), changed
 
 
 def apply_spelling(art: dict) -> list[str]:
-    """British spelling on every prose field of *art*, in place; the words changed."""
+    """The site's spelling on every prose field of *art*, in place; the words changed."""
     words: list[str] = []
     for k in ("title", "alt", "time_travel", "time_travel_title"):
         if isinstance(art.get(k), str):
-            art[k], w = britishise(art[k]); words += w
+            art[k], w = house_spelling(art[k]); words += w
     if isinstance(art.get("paragraphs"), list):
         out = []
         for ptxt in art["paragraphs"]:
-            t, w = britishise(str(ptxt)); out.append(t); words += w
+            t, w = house_spelling(str(ptxt)); out.append(t); words += w
         art["paragraphs"] = out
     return words
 
@@ -345,8 +347,8 @@ def write_prompt(facts: dict, examples: list[str]) -> tuple[str, str]:
         "does, with the distance), the second about this picture (the filters and processing given "
         "in the facts, in plain words, and what is visible in it), then a short 'On Earth' box about "
         "what was happening on Earth when the light left. Plain prose, no markdown, no HTML, no "
-        "hedging, no exclamation marks, no em-dashes, no bullet points. British spelling throughout "
-        "(colour, centre, catalogue, sulphur, artefact, grey, metres, ionised).\n\n"
+        "hedging, no exclamation marks, no em-dashes, no bullet points. American spelling throughout "
+        "(color, center, catalog, sulfur, artifact, gray, meters, ionized), as the site uses.\n\n"
         "Rules about truth. The facts carry a reference block (a Wikipedia introduction when one "
         "exists, the object type, a distance on record when the owner has recorded one). Everything "
         "you say about the object must come from that reference or be a fact you are certain is well "
@@ -402,7 +404,7 @@ def review_prompt(facts: dict, article: dict) -> tuple[str, str]:
         "what the observatory did with this target (why it was chosen, what a note found) that the facts "
         "do not state;\n"
         "3. a style break: markdown, HTML, an exclamation mark, an em-dash, hedging, a bullet list, "
-        "more or fewer than two paragraphs, American spelling (color, center, catalog, sulfur), a title "
+        "more or fewer than two paragraphs, British spelling (colour, centre, catalogue, sulphur), a title "
         "not of the form 'NGC2146 - The Dusty Hand' (the catalogue id without a space, a dash, the name);\n"
         "4. the facts list related notes and the second paragraph links none of them as [title](#id) "
         "(one to three links is right; a note left unlinked is not a defect).\n"
@@ -791,7 +793,7 @@ def compose(facts: dict, image: Optional[Path], examples: list[str], cfg: Option
         art["claims"] = [str(c).strip() for c in claims if str(c).strip()] if isinstance(claims, list) else []
         art["spelling_fixed"] = apply_spelling(art)
         if art["spelling_fixed"]:
-            log(f"  spelling: {len(art['spelling_fixed'])} American spelling(s) replaced: {', '.join(art['spelling_fixed'])}")
+            log(f"  spelling: {len(art['spelling_fixed'])} British spelling(s) replaced: {', '.join(art['spelling_fixed'])}")
         box = on_earth_box(facts, art)
         if box:
             art.update(box)
