@@ -60,3 +60,21 @@ def test_a_catalogue_name_gets_its_kind_when_the_classifier_cannot_say(monkeypat
     posted, added = _world(monkeypatch, "?")
     ss.image_cmd(["", "image", "ngc99999"], 1, None, "taylor")
     assert added[0][1]["obj_type"] is None
+
+
+def test_the_reply_says_when_the_position_is_not_simbads(monkeypatch):
+    posted, added = _world(monkeypatch, "N")
+    monkeypatch.setattr(ss.astro_dso_visibility, "resolved_by", lambda n: "wikipedia")
+    ss.image_cmd(["", "image", "ngc7008"], 1, None, "taylor")
+    assert "added to the queue" in posted[-1] and "position from Wikipedia" in posted[-1]
+    posted, added = _world(monkeypatch, "N")
+    monkeypatch.setattr(ss.astro_dso_visibility, "resolved_by", lambda n: "catalogue")
+    ss.image_cmd(["", "image", "ic1795"], 1, None, "taylor")
+    assert "APPROXIMATE" in posted[-1]
+    posted, added = _world(monkeypatch, "N")
+    monkeypatch.setattr(ss.astro_dso_visibility, "resolved_by", lambda n: "simbad")
+    ss.image_cmd(["", "image", "m1"], 1, None, "taylor")
+    assert "SIMBAD down" not in posted[-1]
+    monkeypatch.setattr(ss.astro_dso_visibility, "is_a_dso_object", lambda n: None)
+    ss.image_cmd(["", "image", "nothing"], 1, None, "taylor")
+    assert "Not a known object" in posted[-1]

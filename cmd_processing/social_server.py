@@ -75,11 +75,26 @@ def image_cmd(words: list[str], index: int, m: Mastodon, account: str) -> None:
                     ra_deg=round(float(object.coord.ra.deg), 5),
                     dec_deg=round(float(object.coord.dec.deg), 5),
                     obj_type=obj_type):
-                post_social_message(dso_name + " added to the queue " + type_note(obj_type) + "\n")
+                post_social_message(dso_name + " added to the queue " + type_note(obj_type) + resolver_note(dso_name) + "\n")
             else:
                 post_social_message(dso_name + " Already in the queue\n")
         else:
-            post_social_message(dso_name + " Not a known object\n")
+            post_social_message(dso_name + " Not a known object (SIMBAD, Wikipedia and the catalogue)\n")
+
+
+def resolver_note(dso_name: str) -> str:
+    """'' when SIMBAD resolved the name; otherwise which fallback did, so the owner
+    knows the position came from Wikipedia's infobox or the catalogue's rounded
+    coordinates (2026-11-06, SIMBAD down for days)."""
+    try:
+        by = astro_dso_visibility.resolved_by(dso_name)
+    except Exception:                          # noqa: BLE001
+        return ""
+    if by == "wikipedia":
+        return " [SIMBAD down: position from Wikipedia]"
+    if by == "catalogue":
+        return " [SIMBAD down: APPROXIMATE position from the candidates catalogue, 0.1 deg]"
+    return ""
 
 
 def queued_type(dso_name: str) -> Optional[str]:

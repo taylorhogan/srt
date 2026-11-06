@@ -242,7 +242,7 @@ def get_dso_type(name: str) -> str:
         return _letter_for_otype(cached)
     simbad = _get_simbad()
     if simbad is None:
-        return "?"
+        return _fallback_letter(name)
     try:
         result = call_bounded(simbad.query_object, _SIMBAD_TIMEOUT_S + 2, name)
         # An unresolvable name yields an empty table, not None; indexing it
@@ -266,17 +266,65 @@ def get_dso_type(name: str) -> str:
         LOGGER.warning("SIMBAD lookup failed for %s (%s: %s); not retrying "
                        "for %d s", name, type(e).__name__, e,
                        _SIMBAD_RETRY_COOLDOWN_S)
+        return _fallback_letter(name)
+
+
+def _fallback_letter(name: str) -> str:
+    """The grid's letter when SIMBAD cannot type a name: the family word on the
+    object's Wikipedia page, or the suggestion catalogue's kind, else "?"
+    (`iris_astronomy.name_fallback`, 2026-11-06). Not written to the type
+    cache: SIMBAD's answer is the one to keep, when it is back."""
+    try:
+        from iris_astronomy import name_fallback
+        return name_fallback.letter_for(name)
+    except Exception as e:  # noqa: BLE001
+        LOGGER.warning("name fallback failed for %s: %s", name, e)
         return "?"
 
 
+_resolved_by: dict = {}
+_sesame_retry_after = 0.0
+
+
+def resolved_by(name: str) -> Optional[str]:
+    """Which service answered the last `is_a_dso_object(name)`: 'simbad',
+    'wikipedia', 'catalogue', or None."""
+    return _resolved_by.get(name.strip().lower().replace(" ", ""))
+
+
 def is_a_dso_object(name: str) -> Optional[FixedTarget]:
+    """A FixedTarget for a name, or None. SIMBAD's Sesame first; when it cannot
+    answer (2026-11-06: both Sesame servers down for days, every `image`
+    refused), `iris_astronomy.name_fallback` reads the position from the
+    object's own Wikipedia page, then the suggestion catalogue. `resolved_by`
+    says which, so the chat can say so."""
+    global _sesame_retry_after
+    from astropy.coordinates import SkyCoord
+    import astropy.units as u
+    key = name.strip().lower().replace(" ", "")
+    if time.monotonic() >= _sesame_retry_after:
+        try:
+            coord = SkyCoord.from_name(name, cache=False)
+            _resolved_by[key] = "simbad"
+            return FixedTarget(coord=coord, name=name)
+        except Exception as e:
+            print(f"DEBUG is_a_dso_object({name}): {type(e).__name__}: {e}")
+            if "timed out" in str(e) or "longer than" in str(e) or "failed" in str(e).lower() and "Unable to retrieve" in str(e):
+                # every server timed out: an outage, not an unknown name. The
+                # same cooldown as the otype lookup, or every `image` pays 20 s.
+                _sesame_retry_after = time.monotonic() + _SIMBAD_RETRY_COOLDOWN_S
     try:
-        from astropy.coordinates import SkyCoord
-        coord = SkyCoord.from_name(name, cache=False)
-        return FixedTarget(coord=coord, name=name)
-    except Exception as e:
-        print(f"DEBUG is_a_dso_object({name}): {type(e).__name__}: {e}")
+        from iris_astronomy import name_fallback
+        hit = name_fallback.resolve(name)
+    except Exception as e:  # noqa: BLE001 -- the fallback must never raise into the chat
+        LOGGER.warning("name fallback failed for %s: %s", name, e)
+        hit = None
+    if hit is None:
+        _resolved_by.pop(key, None)
         return None
+    LOGGER.warning("%s resolved by %s (%s), not SIMBAD", name, hit["source"], hit.get("title"))
+    _resolved_by[key] = hit["source"]
+    return FixedTarget(coord=SkyCoord(hit["ra_deg"] * u.deg, hit["dec_deg"] * u.deg), name=name)
 
 
 def resolve_target(instruction: dict) -> Optional[FixedTarget]:

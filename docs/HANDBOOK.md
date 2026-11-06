@@ -79,7 +79,7 @@ silence the push.
 
 | Command | Use |
 |---|---|
-| `image <dso>` | queue a target (type stored from the catalogue) |
+| `image <dso>` | queue a target (type stored from the catalogue). With SIMBAD down the position comes from the object's Wikipedia page, then the candidates catalogue (approximate), and the reply says which; "Not a known object" means all three failed |
 | `db` | the queue; `dbc <id>` marks one completed by hand |
 | `tonight` | tonight's grid |
 | `filters <dso> Ha=1 O-III=2 for 2` | a filter ratio for N nights; `filters <dso>` shows; `clear` removes |
