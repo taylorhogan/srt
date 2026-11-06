@@ -144,6 +144,22 @@ def timeline_html(eras: Optional[list[dict]] = None) -> str:
             <h2 id="on-earth-title">When the light left</h2>
             <p class="on-earth-lede">Every picture on this page is a look into the past: the light that made it left its object as many years ago as the object is light years away. The box under each picture names the era it set out in; these are the eras, nearest first, from the last century to the first galaxies.</p>
 {blocks}
+            <script>
+                // A deep link to an era (#era-oligocene) lands on the gallery tab
+                // with that era in view; the page's own deep-link code knows only
+                // the entry cards (their _deck), so an era anchor would otherwise
+                // leave a visitor on the Live tab.
+                (function () {{
+                    if (location.hash.indexOf('#era-') !== 0) {{ return; }}
+                    var target = document.getElementById(location.hash.slice(1));
+                    if (!target) {{ return; }}
+                    document.body.dataset.mode = 'gallery';
+                    document.querySelectorAll('.mode-btn').forEach(function (btn) {{
+                        btn.setAttribute('aria-selected', btn.dataset.target === 'gallery');
+                    }});
+                    window.requestAnimationFrame(function () {{ target.scrollIntoView({{ block: 'start' }}); }});
+                }})();
+            </script>
         </section>
         {END}"""
 

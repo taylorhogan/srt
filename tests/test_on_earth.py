@@ -82,6 +82,7 @@ def test_timeline_section_round_trips_into_the_page():
     assert out.index(oe.START) < out.index('id="notes-panel"') and out.index(oe.START) > out.index('id="m1"')
     for e in oe.load():
         assert f'id="era-{e["id"]}"' in out
+    assert "location.hash.indexOf('#era-')" in out and "dataset.mode = 'gallery'" in out   # a deep link opens the gallery tab
     again = oe.with_timeline(out, oe.timeline_html())
     assert again == out                                       # idempotent
     changed = oe.with_timeline(out, oe.timeline_html().replace("When the light left", "When the light set out"))
