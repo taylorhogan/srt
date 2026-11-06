@@ -312,7 +312,10 @@ def review_prompt(facts: dict, article: dict) -> tuple[str, str]:
         "in the list. Do not rewrite the draft."
     )
     art = {k: article.get(k) for k in ARTICLE_FIELDS + EXTRA_FIELDS if k in article}
+    when = light_left_words(facts.get("distance_ly_on_record"))
     user = ("Facts (JSON):\n" + json.dumps(facts, indent=1, ensure_ascii=False) +
+            (f"\n\nThe light in this picture left the object {when}; an 'On Earth' box set there is right."
+             if when else "") +
             "\n\nDraft (JSON):\n" + json.dumps(art, indent=1, ensure_ascii=False))
     return system, user
 
@@ -660,8 +663,9 @@ def compose(facts: dict, image: Optional[Path], examples: list[str], cfg: Option
             if st.get("review", True):
                 notes, who = reviewed(name, facts, art, st, _ask, log)
                 if notes:
-                    fix = user + "\n\nA reviewer found these problems in a previous draft; write a new draft " \
-                        "that fixes every one of them:\n- " + "\n- ".join(notes)
+                    fix = user + "\n\nA reviewer found these problems in a previous draft. Write a new draft " \
+                        "that fixes every one that is real. The facts above and the year given with them outrank " \
+                        "the reviewer: where a note contradicts them, keep the draft as it was.\n- " + "\n- ".join(notes)
                     art = _write_once(name, system, fix, image, st, _ask, log)
                     notes, who = reviewed(name, facts, art, st, _ask, log)
         except ProseError as e:

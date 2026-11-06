@@ -64,6 +64,7 @@ def test_compose_writes_reviews_rewrites_and_labels(tmp_path):
     assert kinds == [("local", "write", "m:1"), ("local", "review", "r:1"),
                      ("local", "write", "m:1"), ("local", "review", "r:1")]   # the other model reviews
     assert "the hours are wrong" in calls[2][2]                       # the rewrite carries the problem
+    assert "outrank the reviewer" in calls[2][2]                      # and the facts beat a wrong note
     assert art["source"] == "local" and art["model"] == "m:1" and art["review_notes"] == []
     assert art["reviewer"] == "r:1"
     assert art["claims"] == ["the Tadpoles are ten light years long"]
@@ -126,6 +127,8 @@ def test_the_prompt_carries_the_rules_the_reference_and_the_claims_key():
     assert "500 BC" in system and "about 12,000 years ago" not in user and "about 10 thousand years ago" not in user
     _, u2 = ap.write_prompt(dict(FACTS, distance_ly_on_record=2500), [])
     assert "left the object about 500 BC" in u2
+    _, r2 = ap.review_prompt(dict(FACTS, distance_ly_on_record=12000), GOOD)
+    assert "left the object about 10,000 BC" in r2                    # the critic gets the same arithmetic
 
 
 def test_light_left_words():
