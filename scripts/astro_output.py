@@ -454,6 +454,13 @@ def object_type(dso: str) -> str:
     except Exception:  # noqa: BLE001
         letter = "?"
     kind = {"G": "galaxy", "N": "nebula", "C": "star cluster"}.get(letter, "unknown")
+    if kind == "unknown":
+        try:   # the cropper's offline chain: the queue mirror's obj_type, the candidates catalogue
+            from stacking import auto_crop
+            t = auto_crop.type_for(dso, str(_ROOT))
+            kind = {"galaxy": "galaxy", "nebula": "nebula", "cluster": "star cluster"}.get(t, "unknown")
+        except Exception:  # noqa: BLE001
+            pass
     try:
         raw = json.loads((_ROOT / "local" / "dso_types.json").read_text()).get(dso.lower())
     except Exception:  # noqa: BLE001

@@ -199,10 +199,29 @@ def _wiki_intro(title: str, timeout: float = 15.0) -> Optional[dict]:
     return None
 
 
+def _wiki_search(name: str, timeout: float = 15.0, limit: int = 3) -> list[str]:
+    """Page titles Wikipedia's search returns for *name*, lists and catalogues left out."""
+    q = urllib.parse.urlencode({"action": "query", "list": "search", "srsearch": name, "srlimit": limit, "format": "json"})
+    req = urllib.request.Request("https://en.wikipedia.org/w/api.php?" + q, headers={"User-Agent": WIKI_UA})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            d = json.loads(r.read().decode("utf-8"))
+    except (urllib.error.URLError, OSError, ValueError):
+        return []
+    out = []
+    for hit in ((d.get("query") or {}).get("search") or []):
+        t = str(hit.get("title") or "")
+        if t and not re.match(r"(List of|Lists of)\b", t) and "catalogue" not in t.lower() and "catalog" not in t.lower():
+            out.append(t)
+    return out
+
+
 def dossier(dso: str, aliases: Optional[list[str]] = None, log: Callable[[str], None] = print,
-            fetch=_wiki_intro) -> dict:
+            fetch=_wiki_intro, search=_wiki_search) -> dict:
     """The reference block for the writer: {wikipedia: {...} | None, tried: [...]}.
-    Best effort; never raises."""
+    The page by name, then by alias, then (2026-11-06, Melotte 15 with no
+    aliases on file: no page of its own, the Heart Nebula's is the one) the
+    top search results whose intro names the object. Best effort; never raises."""
     tried = []
     for t in _wiki_title_candidates(dso, aliases or []):
         tried.append(t)
@@ -213,6 +232,22 @@ def dossier(dso: str, aliases: Optional[list[str]] = None, log: Callable[[str], 
         if hit:
             log(f"  reference: Wikipedia '{hit['title']}' ({len(hit['extract'])} chars)")
             return {"wikipedia": hit, "tried": tried}
+    name = tried[0] if tried else dso
+    try:
+        found = search(name)
+    except Exception:  # noqa: BLE001
+        found = []
+    for t in found:
+        if t in tried:
+            continue
+        tried.append(t)
+        try:
+            hit = fetch(t)
+        except Exception:  # noqa: BLE001
+            hit = None
+        if hit and name.lower() in (hit.get("extract") or "").lower():
+            log(f"  reference: Wikipedia '{hit['title']}' by search for '{name}' ({len(hit['extract'])} chars)")
+            return {"wikipedia": hit, "tried": tried, "by_search": name}
     log(f"  reference: no Wikipedia intro for {', '.join(tried) or dso}; the writer has the facts only")
     return {"wikipedia": None, "tried": tried}
 
@@ -237,6 +272,51 @@ def light_left_words(distance_ly) -> str:
     return f"about AD {year}" if year > 0 else f"about {-year:,} BC"
 
 
+AMERICAN = {"color": "colour", "colors": "colours", "colorful": "colourful", "colored": "coloured", "colorless": "colourless",
+            "center": "centre", "centered": "centred", "centers": "centres", "catalog": "catalogue", "cataloged": "catalogued",
+            "catalogs": "catalogues", "gray": "grey", "grays": "greys", "sulfur": "sulphur", "artifact": "artefact",
+            "artifacts": "artefacts", "neighbor": "neighbour", "neighbors": "neighbours", "neighboring": "neighbouring",
+            "favorite": "favourite", "traveled": "travelled", "traveling": "travelling", "modeled": "modelled",
+            "labeled": "labelled", "fiber": "fibre", "fibers": "fibres", "honor": "honour", "meters": "metres",
+            "kilometers": "kilometres", "liters": "litres", "harbor": "harbour", "behavior": "behaviour", "vapor": "vapour",
+            "ionized": "ionised", "ionizes": "ionises", "ionization": "ionisation", "ionizing": "ionising",
+            "analyze": "analyse", "analyzed": "analysed", "recognize": "recognise", "recognized": "recognised",
+            "vaporized": "vaporised", "skeptical": "sceptical", "theater": "theatre"}
+_AMERICAN_RE = re.compile(r"\b(" + "|".join(sorted(AMERICAN, key=len, reverse=True)) + r")\b", re.I)
+
+
+def britishise(text: str) -> tuple[str, list[str]]:
+    """*text* with the unambiguous American spellings replaced (case kept
+    for a capital), and the words changed. A capitalised word inside a
+    sentence is a name ("Center for Astrophysics") and is left alone;
+    "meter" (the instrument), "program", "practice" are not in the list."""
+    changed = []
+
+    def sub(m):
+        w = m.group(1)
+        before = text[:m.start()].rstrip()
+        if w[0].isupper() and before and before[-1] not in ".!?":
+            return w
+        b = AMERICAN[w.lower()]
+        changed.append(w)
+        return b.capitalize() if w[0].isupper() else b
+    return _AMERICAN_RE.sub(sub, text), changed
+
+
+def apply_spelling(art: dict) -> list[str]:
+    """British spelling on every prose field of *art*, in place; the words changed."""
+    words: list[str] = []
+    for k in ("title", "alt", "time_travel", "time_travel_title"):
+        if isinstance(art.get(k), str):
+            art[k], w = britishise(art[k]); words += w
+    if isinstance(art.get("paragraphs"), list):
+        out = []
+        for ptxt in art["paragraphs"]:
+            t, w = britishise(str(ptxt)); out.append(t); words += w
+        art["paragraphs"] = out
+    return words
+
+
 YEAR_RULE = ("The 'On Earth' box is set at the year the light left, which is the distance in light years "
              "counted back from 2026: 2,500 light years is about 500 BC (not AD 500), 1,500 light years "
              "is about AD 500, 70 million light years is 70 million years ago.")
@@ -252,7 +332,8 @@ def write_prompt(facts: dict, examples: list[str]) -> tuple[str, str]:
         "does, with the distance), the second about this picture (the filters and processing given "
         "in the facts, in plain words, and what is visible in it), then a short 'On Earth' box about "
         "what was happening on Earth when the light left. Plain prose, no markdown, no HTML, no "
-        "hedging, no exclamation marks, no em-dashes, no bullet points.\n\n"
+        "hedging, no exclamation marks, no em-dashes, no bullet points. British spelling throughout "
+        "(colour, centre, catalogue, sulphur, artefact, grey, metres, ionised).\n\n"
         "Rules about truth. The facts carry a reference block (a Wikipedia introduction when one "
         "exists, the object type, a distance on record when the owner has recorded one). Everything "
         "you say about the object must come from that reference or be a fact you are certain is well "
@@ -261,7 +342,9 @@ def write_prompt(facts: dict, examples: list[str]) -> tuple[str, str]:
         "that is NOT in the reference block in \"claims\", so a human can check them before the entry "
         "is published. The frame counts, hours, nights, filters and exposure in the facts are measured "
         "and must not be changed or rounded. Use the distance on record when there is one. "
-        + YEAR_RULE + "\n\n"
+        + YEAR_RULE + " Nothing about the observatory's own work with this target may be invented either: "
+        "the processing in the facts and the titles of the related notes are all you know of it; link a "
+        "note, never describe what it found or why the target was chosen.\n\n"
         "Entries from the site follow as examples of the voice and length.\n\n"
         + "\n\n".join(examples)
     )
@@ -301,15 +384,19 @@ def review_prompt(facts: dict, article: dict) -> tuple[str, str]:
         "distance (" + YEAR_RULE + ");\n"
         "2. a statement about the object that contradicts the reference block, or that is not in it "
         "and not well established (a wrong distance, an invented common name, feature, size, age or "
-        "discovery), or a reference to a note or an entry that the facts do not list;\n"
+        "discovery), a reference to a note or an entry that the facts do not list, or a statement about "
+        "what the observatory did with this target (why it was chosen, what a note found) that the facts "
+        "do not state;\n"
         "3. a style break: markdown, HTML, an exclamation mark, an em-dash, hedging, a bullet list, "
-        "more or fewer than two paragraphs, a title not of the form 'ID - Name';\n"
+        "more or fewer than two paragraphs, American spelling (color, center, catalog, sulfur), a title "
+        "not of the form 'NGC2146 - The Dusty Hand' (the catalogue id without a space, a dash, the name);\n"
         "4. a related note listed in the facts that the second paragraph does not link as [title](#id).\n"
         "Answer with ONE JSON object and nothing else: {\"problems\": [{\"class\": 1, \"quote\": "
         "\"the draft's exact words at fault\", \"problem\": \"what is wrong and what it should be\", "
         "\"must_change\": true}, ...]}, or {\"problems\": []}. An item whose must_change is false, or "
         "whose problem says the draft is right, confirmed, plausible or has no defect, does not belong "
-        "in the list. Do not rewrite the draft."
+        "in the list. A span of dates ('five nights between 27 October and 1 November') states the first "
+        "and last night, not that every night between was used; it is not a defect. Do not rewrite the draft."
     )
     art = {k: article.get(k) for k in ARTICLE_FIELDS + EXTRA_FIELDS if k in article}
     when = light_left_words(facts.get("distance_ly_on_record"))
@@ -673,6 +760,9 @@ def compose(facts: dict, image: Optional[Path], examples: list[str], cfg: Option
             continue
         claims = art.get("claims")
         art["claims"] = [str(c).strip() for c in claims if str(c).strip()] if isinstance(claims, list) else []
+        art["spelling_fixed"] = apply_spelling(art)
+        if art["spelling_fixed"]:
+            log(f"  spelling: {len(art['spelling_fixed'])} American spelling(s) replaced: {', '.join(art['spelling_fixed'])}")
         art["review_notes"] = notes
         art["reviewer"] = who
         art["source"] = name

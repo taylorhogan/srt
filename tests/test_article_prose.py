@@ -66,7 +66,7 @@ def test_compose_writes_reviews_rewrites_and_labels(tmp_path):
     assert "the hours are wrong" in calls[2][2]                       # the rewrite carries the problem
     assert "outrank the reviewer" in calls[2][2]                      # and the facts beat a wrong note
     assert art["source"] == "local" and art["model"] == "m:1" and art["review_notes"] == []
-    assert art["reviewer"] == "r:1"
+    assert art["reviewer"] == "r:1" and art["spelling_fixed"] == []
     assert art["claims"] == ["the Tadpoles are ten light years long"]
     assert "reference" in calls[0][2]
 
@@ -179,7 +179,7 @@ def test_dossier_tries_the_name_then_the_aliases_and_skips_disambiguation():
     d = ap.dossier("melotte15", ["Cl Melotte 15", "NAME Heart Nebula Cluster", "IC 1805"], log=lambda m: None, fetch=fetch)
     assert d["wikipedia"]["title"] == "IC 1805"
     assert seen[0] == "Melotte 15" and "Heart Nebula Cluster" in seen and "IC 1805" in seen
-    none = ap.dossier("ngc1", [], log=lambda m: None, fetch=lambda t: None)
+    none = ap.dossier("ngc1", [], log=lambda m: None, fetch=lambda t: None, search=lambda n: [])
     assert none["wikipedia"] is None and none["tried"] == ["NGC 1"]
     assert ap._wiki_title_candidates("m1", [])[0] == "Messier 1"
 
@@ -191,3 +191,31 @@ def test_local_payload_turns_thinking_off_only_where_it_exists():
     assert "think" not in ap.local_payload(st, "sys", "usr", [], ["completion", "vision"])
     assert ap.local_payload(dict(st, local_think=True), "s", "u", [], ["thinking"])["think"] is True
     assert ap.local_payload(dict(st, local_temperature=0.2), "s", "u", [], [])["options"]["temperature"] == 0.2
+
+
+def test_dossier_falls_back_to_search_when_the_intro_names_the_object():
+    pages = {"Heart Nebula": {"title": "Heart Nebula", "extract": "The Heart Nebula ... its core cluster Melotte 15 ...", "description": "", "url": "u"},
+             "Melotte catalogue": {"title": "Melotte catalogue", "extract": "A list.", "description": "", "url": "u"}}
+    d = ap.dossier("melotte15", [], log=lambda m: None, fetch=lambda t: pages.get(t),
+                   search=lambda n: ["Heart Nebula", "Wolf-Lundmark-Melotte"])
+    assert d["wikipedia"]["title"] == "Heart Nebula" and d["by_search"] == "Melotte 15"
+    assert d["tried"] == ["Melotte 15", "Heart Nebula"]
+    miss = ap.dossier("melotte15", [], log=lambda m: None, fetch=lambda t: pages.get(t),
+                      search=lambda n: ["Wolf-Lundmark-Melotte"])
+    assert miss["wikipedia"] is None                      # a result that does not name the object is no reference
+
+
+def test_britishise_replaces_the_unambiguous_words_and_keeps_names():
+    t, w = ap.britishise("The colorful center of the catalog, in gray, 300 meters from the Center for Astrophysics. Color is key.")
+    assert t == "The colourful centre of the catalogue, in grey, 300 metres from the Center for Astrophysics. Colour is key."
+    assert w == ["colorful", "center", "catalog", "gray", "meters", "Color"]
+    assert ap.britishise("a program of practice with a meter")[1] == []
+    art = {"title": "x", "alt": "A colorful nebula", "paragraphs": ["ionized gas", "fine"], "time_travel": "ok", "time_travel_title": "On Earth"}
+    assert ap.apply_spelling(art) == ["colorful", "ionized"] and art["alt"] == "A colourful nebula" and art["paragraphs"][0] == "ionised gas"
+
+
+def test_the_prompts_carry_the_new_rules():
+    system, _ = ap.write_prompt(FACTS, [])
+    assert "British spelling" in system and "never describe what it found" in system
+    rs, _ = ap.review_prompt(FACTS, GOOD)
+    assert "American spelling" in rs and "NGC2146 - The Dusty Hand" in rs and "span of dates" in rs and "what the observatory did" in rs

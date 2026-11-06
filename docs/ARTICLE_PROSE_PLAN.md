@@ -183,3 +183,31 @@ together (~70 GB of the 121) and unload 15 minutes after the last call.
   the record for a target already in the gallery (every bench target, and
   a re-render), the file still first. Bench restarted with thinking off;
   the thinking-on log is bench/bench_run_thinking_on.log.
+- 2026-11-06 11:30, **from the bench's first eight entries** (run 4, both
+  models writing, each reviewed by the other; the bench itself untouched,
+  these land for the next run): (1) Melotte 15 had no aliases on file and
+  no page of its own, so the writer had no reference; gemma's first draft
+  put it "in Aquila" with invented gas physics, qwen's review caught all
+  nine statements, and the rewrite retreated to "Deep Space Object /
+  UNKNOWN", honest and unpublishable. `dossier` now falls back to
+  Wikipedia's search and takes a result whose intro names the object (the
+  Heart Nebula's does), and `astro_output.object_type` reads the cropper's
+  offline chain (queue obj_type, candidates kind) when the classifier has
+  nothing: Melotte 15 now reads "nebula" with the Heart Nebula's page.
+  (2) American spellings in both models' drafts (center, color, catalog):
+  a British-spelling line in the writer's rules, American spelling as a
+  class-3 defect for the reviewer, and `britishise` on the final text as
+  the backstop (unambiguous words only, a capitalised mid-sentence word
+  left as a name; the words changed ride the article as `spelling_fixed`
+  and the log). (3) Gemma read 'ID - Name' as "IC 410 - ..." and qwen
+  obeyed, so the reviewer gets the writer's example title. (4) Qwen's
+  "retired when it reached the frame cap" (false; the two tests) was a
+  statement about the observatory, which the claims rule does not cover:
+  the writer may link a note but never describe what it found or why the
+  target was chosen, and the reviewer treats such a statement as class 2.
+  (5) Qwen flagged "seven nights between 25 October and 1 November" three
+  times as implying the 30th, and one rewrite obeyed with "excluding 30
+  October": a span of dates is not a defect, says the reviewer prompt.
+  Pattern so far: qwen as critic passed every gemma draft in 2-6 s with no
+  notes but Melotte 15's; gemma as critic found something in every qwen
+  draft (title, em-dashes, unlinked notes), once wrongly.
