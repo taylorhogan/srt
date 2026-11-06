@@ -74,7 +74,7 @@ def test_reviewer_is_the_other_model_and_falls_back_to_the_writer():
     st = dict(ap.DEFAULTS, local_model="m:1", review_model="r:1", review_backend="local")
     assert ap.reviewer_for("local", st)[1]["local_model"] == "r:1"
     assert ap.reviewer_for("local", dict(st, review_backend="same"))[1]["local_model"] == "m:1"
-    assert ap.reviewer_for("api", st) == ("local", dict(st, local_model="r:1"))      # an API draft, a local check
+    assert ap.reviewer_for("api", st) == ("local", dict(st, local_model="r:1", local_temperature=ap.REVIEW_TEMPERATURE))
     assert ap.reviewer_for("local", dict(st, review_backend="cli"))[0] == "cli"
 
     seen = []
@@ -122,7 +122,36 @@ def test_the_prompt_carries_the_rules_the_reference_and_the_claims_key():
     assert "IC 410 is an emission nebula" in user and "auto-stop-filters" in user
     rs, ru = ap.review_prompt(FACTS, GOOD)
     assert "problems" in rs and "Draft (JSON)" in ru and "Tadpoles" in ru
-    assert "written by another model" in rs
+    assert "written by another model" in rs and "500 BC" in rs
+    assert "500 BC" in system and "about 12,000 years ago" not in user and "about 10 thousand years ago" not in user
+    _, u2 = ap.write_prompt(dict(FACTS, distance_ly_on_record=2500), [])
+    assert "left the object about 500 BC" in u2
+
+
+def test_light_left_words():
+    assert ap.light_left_words(2500) == "about 500 BC"
+    assert ap.light_left_words(1500) == "about AD 500"
+    assert ap.light_left_words(640) == "about AD 1390"
+    assert ap.light_left_words(70e6) == "about 70 million years ago"
+    assert ap.light_left_words(12000) == "about 10,000 BC"
+    assert ap.light_left_words(25000) == "about 25 thousand years ago"
+    assert ap.light_left_words(None) == "" and ap.light_left_words("x") == ""
+
+
+def test_problem_lines_keep_defects_and_drop_praise():
+    probs = ["the hours are wrong",
+             "The draft's title 'M76 - Little Dumbbell Nebula' matches the required format.",
+             "The distance of 2500 light years matches the reference.",
+             {"class": 1, "quote": "~500 AD", "problem": "2,500 light years is about 500 BC, not AD 500"},
+             {"class": 2, "quote": "the Soap Bubble entry", "problem": "refers to an entry the facts do not list; should be dropped"},
+             {"class": 3, "quote": "", "problem": ""},
+             "The draft correctly attributes the discovery to Messier."]
+    notes, dropped = ap.problem_lines(probs)
+    assert dropped == 3
+    assert notes[0] == "the hours are wrong"
+    assert notes[1].startswith("2,500 light years is about 500 BC") and '(draft: "~500 AD")' in notes[1]
+    assert len(notes) == 3
+    assert ap.problem_lines("nonsense") == ([], 0)
 
 
 def test_cli_result_reads_the_envelope():

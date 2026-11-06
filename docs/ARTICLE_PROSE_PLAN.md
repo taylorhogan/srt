@@ -145,3 +145,25 @@ together (~70 GB of the 121) and unload 15 minutes after the last call.
   carries `reviewer`; the card prints "Reviewed by"; `write --reviewer`,
   `bench --reviewer`, and the bench pairs each writer with the other model
   by default. Still waiting on the pulls.
+- 2026-11-06 08:40, **the first local drafts** (qwen3-vl q8 alone, reviewing
+  itself, on the M76 copy; Ollama 0.40.15 user-level, the model 100 % on the
+  GPU, 43 GB resident with the 32k context). Three lessons from the first
+  run, each fixed before the second: (1) the writer was shown M76's OWN site
+  entry among the voice examples (it was one of the newest four) and
+  paraphrased it, cross-references to other entries included; a draft like
+  that is no test of anything, so `site_examples(exclude=)` drops the
+  target's own id and `_inputs` passes it. (2) The reviewer answered in
+  checklist mode: 23 "problems", every one a sentence saying the draft was
+  right, and the rewrite was asked to fix them; the review prompt now asks
+  for defects only as {class, quote, problem} objects, `problem_lines`
+  drops praise, and the reviewer runs at temperature 0.2. (3) The 'On
+  Earth' box said AD 500 for 2,500 light years, the same slip Opus made on
+  11-05; `light_left_words` puts the year in the prompt when the distance
+  is on record and `YEAR_RULE` with the arithmetic is in both prompts.
+  Second run: 166 s for write + review, 0 problems, 0 claims (every object
+  fact in the Wikipedia block; the frames, nights and processing as
+  measured), the year right, no leak. Paragraph 1 reads as an encyclopaedia
+  digest (temperature, magnitude, size in one breath) and "Hubble palette"
+  is the wrong name for HOO: the owner's call on the bench. Decode is ~4-6
+  tokens/s at q8 on the GB10 (memory-bound), ~3 min a write with the
+  picture, which is fine for a weekly job.

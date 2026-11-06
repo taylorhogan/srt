@@ -90,6 +90,8 @@ DEFAULTS = {
 }
 OLLAMA_CANDIDATES = (Path.home() / ".local" / "ollama" / "bin" / "ollama",)
 PROMPT_IMAGE_MAX_PX = {"local": 1024, "api": 1600, "cli": 1600}
+WRITE_TEMPERATURE = 0.5
+REVIEW_TEMPERATURE = 0.2
 WIKI_UA = "IrisObservatory/1.0 (irisscience.org; gallery prose) python-urllib"
 WIKI_MAX_CHARS = 2500
 ARTICLE_FIELDS = ("title", "distance_ly", "distance_text", "type_text", "alt",
@@ -216,6 +218,29 @@ def dossier(dso: str, aliases: Optional[list[str]] = None, log: Callable[[str], 
 
 # ------------------------------------------------------------------ prompts
 
+def light_left_words(distance_ly) -> str:
+    """When the light left, from a distance in light years: "about 500 BC",
+    "about AD 1500", "about 70 million years ago". "" when unknown."""
+    try:
+        d = float(distance_ly)
+    except (TypeError, ValueError):
+        return ""
+    if d <= 0:
+        return ""
+    if d >= 1e6:
+        return f"about {d / 1e6:g} million years ago"
+    if d >= 20000:
+        return f"about {round(d / 1000):,} thousand years ago"
+    step = 100 if d >= 1000 else 10                 # the box says "about"; a round figure reads right
+    year = int(round((2026 - d) / step) * step)
+    return f"about AD {year}" if year > 0 else f"about {-year:,} BC"
+
+
+YEAR_RULE = ("The 'On Earth' box is set at the year the light left, which is the distance in light years "
+             "counted back from 2026: 2,500 light years is about 500 BC (not AD 500), 1,500 light years "
+             "is about AD 500, 70 million light years is 70 million years ago.")
+
+
 def write_prompt(facts: dict, examples: list[str]) -> tuple[str, str]:
     """(system, user) for the write-up. The examples are live gallery entries,
     so the voice and the shape are the site's own."""
@@ -234,12 +259,15 @@ def write_prompt(facts: dict, examples: list[str]) -> tuple[str, str]:
         "name, a discovery story, a size, an age or a number. List every statement about the object "
         "that is NOT in the reference block in \"claims\", so a human can check them before the entry "
         "is published. The frame counts, hours, nights, filters and exposure in the facts are measured "
-        "and must not be changed or rounded. Use the distance on record when there is one.\n\n"
+        "and must not be changed or rounded. Use the distance on record when there is one. "
+        + YEAR_RULE + "\n\n"
         "Entries from the site follow as examples of the voice and length.\n\n"
         + "\n\n".join(examples)
     )
+    when = light_left_words(facts.get("distance_ly_on_record"))
     user = (
         "Facts for the new entry (JSON):\n" + json.dumps(facts, indent=1, ensure_ascii=False) +
+        (f"\n\nThe light in this picture left the object {when}." if when else "") +
         "\n\nThe picture itself is attached. Answer with ONE JSON object and nothing else, with "
         "exactly these keys:\n"
         '  "title": like "NGC2146 - The Dusty Hand" (catalogue id without a space, a dash, the common name or type)\n'
@@ -263,19 +291,22 @@ def review_prompt(facts: dict, article: dict) -> tuple[str, str]:
     system = (
         "You check a draft gallery entry for irisscience.org before it is published to subscribers. "
         "The draft was written by another model; trust the measured facts and the reference block, "
-        "never the draft. You are given the facts, the reference and the draft. List only real "
-        "problems, each as one short sentence, and nothing you cannot point to in the facts, the "
-        "reference or the draft's own text:\n"
+        "never the draft. You are given the facts, the reference and the draft. Your answer is a list "
+        "of DEFECTS the writer must fix, and nothing else: no checklist of what the draft does right, "
+        "no sentence that says something is correct, consistent, matches or is as required. If the "
+        "draft is fine the list is empty. A defect is one of:\n"
         "1. a measured number or date in the draft that contradicts the facts (frame counts, hours, "
-        "nights, filters, exposure, recipe, dates);\n"
+        "nights, filters, exposure, recipe, dates), or an 'On Earth' year that does not fit the "
+        "distance (" + YEAR_RULE + ");\n"
         "2. a statement about the object that contradicts the reference block, or that is not in it "
         "and not well established (a wrong distance, an invented common name, feature, size, age or "
-        "discovery);\n"
+        "discovery), or a reference to a note or an entry that the facts do not list;\n"
         "3. a style break: markdown, HTML, an exclamation mark, an em-dash, hedging, a bullet list, "
         "more or fewer than two paragraphs, a title not of the form 'ID - Name';\n"
         "4. a related note listed in the facts that the second paragraph does not link as [title](#id).\n"
-        "Answer with ONE JSON object and nothing else: {\"problems\": [\"...\", ...]}; an empty list "
-        "when the draft is fine. Do not rewrite the draft, do not praise it."
+        "Answer with ONE JSON object and nothing else: {\"problems\": [{\"class\": 1, \"quote\": "
+        "\"the draft's exact words at fault\", \"problem\": \"what is wrong and what it should be\"}, "
+        "...]}, or {\"problems\": []}. Do not rewrite the draft."
     )
     art = {k: article.get(k) for k in ARTICLE_FIELDS + EXTRA_FIELDS if k in article}
     user = ("Facts (JSON):\n" + json.dumps(facts, indent=1, ensure_ascii=False) +
@@ -378,7 +409,8 @@ def ask_local(system: str, user: str, image: Optional[Path], st: dict, log: Call
     if image is not None:
         msg["images"] = [_image_b64(image, PROMPT_IMAGE_MAX_PX["local"])[1]]
     payload = {"model": st["local_model"], "stream": False, "format": "json", "keep_alive": "15m",
-               "options": {"temperature": 0.5, "num_ctx": int(st.get("local_num_ctx") or 32768)},
+               "options": {"temperature": float(st.get("local_temperature", WRITE_TEMPERATURE)),
+                           "num_ctx": int(st.get("local_num_ctx") or 32768)},
                "messages": [{"role": "system", "content": system}, msg]}
     try:
         d = _http_json(st["local_url"].rstrip("/") + "/api/chat", payload, timeout=float(st.get("timeout_s") or 900))
@@ -475,12 +507,44 @@ def reviewer_for(name: str, st: dict) -> tuple[str, dict]:
     configured one (review_backend / review_model), the writer itself when
     the setting is "same" or names the writer's own model. Pure."""
     rb = str(st.get("review_backend") or "same").lower()
+    rst = dict(st, local_temperature=REVIEW_TEMPERATURE)
     if rb not in ASK:
-        return name, st
-    rst = dict(st)
+        return name, rst
     if rb == "local" and st.get("review_model"):
         rst["local_model"] = str(st["review_model"])
     return rb, rst
+
+
+PRAISE_RE = re.compile(r"\b(is|are|was|were)\s+(correct|consistent|accurate|appropriate|fine|as required|present)\b"
+                       r"|\bmatches\b|\bno (contradiction|problem|issue|change)\b|\bnot a (problem|defect|contradiction)\b"
+                       r"|\bcorrectly\b|\bconsistent with\b|\bas required\b|\bnothing to fix\b", re.I)
+
+
+def problem_lines(probs) -> tuple[list[str], int]:
+    """The reviewer's list as note strings, praise dropped: (notes, dropped).
+    An item is a string or {"class", "quote", "problem"}; a model in
+    checklist mode (qwen3-vl, 2026-11-06: 23 "problems", every one a
+    sentence saying the draft was right) reports what the draft does well,
+    and a note like that sent to the writer as a problem makes it change
+    what was right."""
+    if not isinstance(probs, list):
+        return [], 0
+    out, dropped = [], 0
+    for p in probs:
+        if isinstance(p, dict):
+            text = str(p.get("problem") or p.get("what") or "").strip()
+            quote = str(p.get("quote") or "").strip()
+            if quote and quote.lower() not in text.lower():
+                text = f"{text} (draft: \"{quote[:120]}\")" if text else ""
+        else:
+            text = str(p).strip()
+        if not text:
+            continue
+        if PRAISE_RE.search(text) and not re.search(r"\b(should|must|wrong|contradict|invent|missing|not in|instead)\b", text, re.I):
+            dropped += 1
+            continue
+        out.append(text)
+    return out, dropped
 
 
 def review(name: str, facts: dict, article: dict, st: dict, ask, log: Callable[[str], None]) -> list[str]:
@@ -488,9 +552,9 @@ def review(name: str, facts: dict, article: dict, st: dict, ask, log: Callable[[
     system, user = review_prompt(facts, article)
     text = ask(name, system, user, None, st, log)
     d = parse_answer(text) or {}
-    probs = d.get("problems") if isinstance(d, dict) else None
-    out = [str(p).strip() for p in (probs or []) if str(p).strip()] if isinstance(probs, list) else []
-    log(f"  review ({_model_name(name, st)}): {len(out)} problem(s)" + (": " + " | ".join(out) if out else ""))
+    out, dropped = problem_lines(d.get("problems") if isinstance(d, dict) else None)
+    log(f"  review ({_model_name(name, st)}): {len(out)} problem(s)" + (f", {dropped} non-problem(s) dropped" if dropped else "")
+        + (": " + " | ".join(out) if out else ""))
     return out
 
 
@@ -600,7 +664,8 @@ def _inputs(out_dir: Path) -> tuple[dict, Path, list[str]]:
             raise SystemExit(f"no picture in {out_dir}")
         img = pics[0]
     html = (ao.SITE / "index.html").read_text(encoding="utf-8") if (ao.SITE / "index.html").exists() else ""
-    return facts, img, ao.site_examples(html) if html else []
+    me = ao.squash(str(facts.get("dso") or out_dir.name))
+    return facts, img, ao.site_examples(html, exclude=(me,)) if html else []
 
 
 def cmd_write(a) -> int:

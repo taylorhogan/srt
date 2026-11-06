@@ -597,11 +597,14 @@ def article_reference(dso: str, aliases: list[str], log: Callable[[str], None] =
         return {"wikipedia": None, "tried": []}
 
 
-def site_examples(html: str, ids=("ngc2146", "stephans-quintet"), newest: int = 4) -> list[str]:
+def site_examples(html: str, ids=("ngc2146", "stephans-quintet"), newest: int = 4, exclude=()) -> list[str]:
     """The text of live entries, as the voice to match: *ids* and the
     *newest* others by data-added (the hand-written entries since 2026-10-22
-    are the standard the machine's prose is judged against)."""
-    arts = gallery_articles(html)
+    are the standard the machine's prose is judged against). *exclude*: ids
+    never shown, the target's own entry above all (2026-11-06: shown its
+    own M76 entry as an example, the first local draft paraphrased it,
+    references to other entries and all, which is no test of the model)."""
+    arts = [a for a in gallery_articles(html) if a["id"] not in set(exclude)]
     pick = [a for a in arts if a["id"] in ids]
     rest = sorted((a for a in arts if a["id"] not in ids), key=lambda a: a.get("added") or "", reverse=True)
     pick += rest[:max(0, newest)]
@@ -827,7 +830,7 @@ def handle_image(image: Path, folder: Path, publish: bool = True, push: bool = T
     facts = article_facts(dso, recipe, dest, subs, aliases, site_notes(html, dso),
                           reference=article_reference(dso, aliases, log))
     (out_dir / "article_request.json").write_text(json.dumps(facts, indent=1))
-    art = generate_writeup(facts, dest, site_examples(html), log)
+    art = generate_writeup(facts, dest, site_examples(html, exclude=(squash(dso),)), log)
     if draft_only:
         source = (art or {}).get("source") or "model"
         if art is None:
