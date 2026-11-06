@@ -123,7 +123,7 @@ def test_the_prompt_carries_the_rules_the_reference_and_the_claims_key():
     assert "IC 410 is an emission nebula" in user and "auto-stop-filters" in user
     rs, ru = ap.review_prompt(FACTS, GOOD)
     assert "problems" in rs and "Draft (JSON)" in ru and "Tadpoles" in ru
-    assert "written by another model" in rs and "500 BC" in rs
+    assert "written by another model" in rs
     assert "500 BC" in system and "about 12,000 years ago" not in user and "about 10 thousand years ago" not in user
     _, u2 = ap.write_prompt(dict(FACTS, distance_ly_on_record=2500), [])
     assert "left the object about 500 BC" in u2

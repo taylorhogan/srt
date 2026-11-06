@@ -658,7 +658,7 @@ def build_fragment(art: dict, facts: dict, image_name: str, date: str) -> str:
                 <div class="time-travel-box">
                     <span class="time-travel-title">{e(art['time_travel_title'])}</span>
                     <p>
-                        {e(art['time_travel'].strip())}
+                        {md_links(e(art['time_travel'].strip()))}
                     </p>
                 </div>""" if (art.get("time_travel") or "").strip() else "")
     return f"""{anchor(aid, "start")}

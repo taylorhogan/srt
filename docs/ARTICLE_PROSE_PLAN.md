@@ -234,3 +234,25 @@ together (~70 GB of the 121) and unload 15 minutes after the last call.
   object, and the reviewer's class 4 is "none linked", not "one unlinked".
   Open: the 'On Earth' box needs a check of its own; the writer should be
   told to describe what it sees (qwen's picture paragraphs were the better).
+- 2026-11-06 14:30, **the 'On Earth' box is a table, not the model's**
+  (owner: "all the new objects and their basic times have been covered by
+  other objects, it might be better to write a standard template for all
+  the geological times, and have it point to the item in the template",
+  and: cover the far ones too). `configs/on_earth.json`: 43 eras,
+  contiguous from the last hundred years to the first galaxies (14
+  billion), historical by AD/BC span, geological by the ICS chart, each
+  with a name, a span, a one-line summary and a paragraph written to be
+  true and dull. `scripts/on_earth.py`: `era_for(years_ago)`, the box
+  ("This light left NGC 6946 about 25 million years ago, in [the late
+  Oligocene](#era-oligocene): the world cooling, ..."), and the site's
+  "When the light left" section, one anchored block per era, inserted at
+  the end of the gallery panel between markers (`on_earth.py site`,
+  `--push` to publish). `article_prose.compose` replaces the writer's box
+  with the table's whenever a distance is known (the record, else the
+  writer's own distance_ly); the writer is told one sentence, the
+  reviewer that the box is not its concern; `build_fragment` renders the
+  link. The harvested site boxes (scratch site_boxes.json) have slips of
+  their own (NGC 6339 at 94 Myr with Tyrannosaurus, which is 68-66; NGC
+  925 at 30 Myr with "terror birds"): they stay as the owner wrote them;
+  new entries take the table. The timeline sits in the local site checkout
+  uncommitted until the owner says push.

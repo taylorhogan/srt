@@ -35,6 +35,11 @@ and the writer's own list of statements from general knowledge as `claims`;
 the card shows both, since the owner's `approve` is the last check and the
 site is read by subscribers.
 
+The 'On Earth' box is not the model's (2026-11-06): scripts/on_earth picks
+the era from the year the light left and the box is one sentence linking
+the era's section of the site's timeline (configs/on_earth.json, written
+once); the writer's own sentence stands only when no distance is known.
+
 The reviewer is a DIFFERENT model when there is one (the owner's call,
 2026-11-06, "the 2 model adversarial approach"): cfg["prose"]["review_backend"]
 (local | api | cli | same) and cfg["prose"]["review_model"] (the local
@@ -372,7 +377,8 @@ def write_prompt(facts: dict, examples: list[str]) -> tuple[str, str]:
         'whose titles concern this picture or this object, as [its title](#its id), the way the examples '
         'link to theirs; never a long list, and never a sentence about what a note found\n'
         '  "time_travel_title": e.g. "On Earth: ~70 Million Years Ago"\n'
-        '  "time_travel": one paragraph\n'
+        '  "time_travel": ONE sentence saying when the light left; the site supplies the rest of this '
+        'box from its own timeline of eras, so write nothing about history here\n'
         '  "claims": a list of short strings, each a statement about the object in your text that is '
         'not in the reference block (empty when every statement is)\n'
     )
@@ -389,8 +395,7 @@ def review_prompt(facts: dict, article: dict) -> tuple[str, str]:
         "no sentence that says something is correct, consistent, matches or is as required. If the "
         "draft is fine the list is empty. A defect is one of:\n"
         "1. a measured number or date in the draft that contradicts the facts (frame counts, hours, "
-        "nights, filters, exposure, recipe, dates), or an 'On Earth' year that does not fit the "
-        "distance (" + YEAR_RULE + ");\n"
+        "nights, filters, exposure, recipe, dates);\n"
         "2. a statement about the object that contradicts the reference block, or that is not in it "
         "and not well established (a wrong distance, an invented common name, feature, size, age or "
         "discovery), a reference to a note or an entry that the facts do not list, or a statement about "
@@ -406,13 +411,14 @@ def review_prompt(facts: dict, article: dict) -> tuple[str, str]:
         "\"must_change\": true}, ...]}, or {\"problems\": []}. An item whose must_change is false, or "
         "whose problem says the draft is right, confirmed, plausible or has no defect, does not belong "
         "in the list. A span of dates ('five nights between 27 October and 1 November') states the first "
-        "and last night, not that every night between was used; it is not a defect. Do not rewrite the draft."
+        "and last night, not that every night between was used; it is not a defect. The 'On Earth' box "
+        "(time_travel) is replaced by the site's own timeline before publication: do not review it. Do not "
+        "rewrite the draft."
     )
     art = {k: article.get(k) for k in ARTICLE_FIELDS + EXTRA_FIELDS if k in article}
     when = light_left_words(facts.get("distance_ly_on_record"))
     user = ("Facts (JSON):\n" + json.dumps(facts, indent=1, ensure_ascii=False) +
-            (f"\n\nThe light in this picture left the object {when}; an 'On Earth' box set there is right."
-             if when else "") +
+            (f"\n\nThe light in this picture left the object {when}." if when else "") +
             "\n\nDraft (JSON):\n" + json.dumps(art, indent=1, ensure_ascii=False))
     return system, user
 
@@ -727,6 +733,19 @@ def _write_once(name: str, system: str, user: str, image: Optional[Path], st: di
     raise ProseError(f"{name}: no complete article in two tries")
 
 
+def on_earth_box(facts: dict, art: dict) -> Optional[dict]:
+    """The 'On Earth' box from the era table (scripts/on_earth, 2026-11-06):
+    the distance on record first, else the distance the writer gave (which is
+    then a claim of its own); None when neither is a number."""
+    from scripts import on_earth
+    name = facts.get("name") or facts.get("dso") or "the object"
+    for ly in (facts.get("distance_ly_on_record"), art.get("distance_ly")):
+        box = on_earth.box_for(str(name), ly)
+        if box:
+            return box
+    return None
+
+
 def compose(facts: dict, image: Optional[Path], examples: list[str], cfg: Optional[dict] = None,
             log: Callable[[str], None] = print, ask=None, st: Optional[dict] = None) -> Optional[dict]:
     """The article from the first backend that answers (write, review, one
@@ -773,6 +792,12 @@ def compose(facts: dict, image: Optional[Path], examples: list[str], cfg: Option
         art["spelling_fixed"] = apply_spelling(art)
         if art["spelling_fixed"]:
             log(f"  spelling: {len(art['spelling_fixed'])} American spelling(s) replaced: {', '.join(art['spelling_fixed'])}")
+        box = on_earth_box(facts, art)
+        if box:
+            art.update(box)
+            log(f"  On Earth: {box['on_earth_era']} ({box['time_travel_title']}) from the era table")
+        else:
+            log("  On Earth: no distance known; the writer's sentence stands")
         art["review_notes"] = notes
         art["reviewer"] = who
         art["source"] = name
