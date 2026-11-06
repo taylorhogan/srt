@@ -81,6 +81,7 @@ DEFAULTS = {
     "local_model": "gemma4:31b-it-q8_0",
     "local_start": True,              # start `ollama serve` when the port is silent
     "local_num_ctx": 32768,           # the examples alone are ~10k tokens; Ollama's default is 4k
+    "local_think": False,             # a thinking model's private reasoning pass (gemma4: 3,000 tokens, 13 min a call)
     "api_model": "claude-opus-5-5",
     "cli_model": "opus",
     "review": True,
@@ -402,16 +403,44 @@ def ensure_local(st: dict, log: Callable[[str], None] = print, wait_s: float = 4
     return models
 
 
-def ask_local(system: str, user: str, image: Optional[Path], st: dict, log: Callable[[str], None] = print) -> str:
-    """One answer from the Ollama chat API, JSON-formatted, the picture attached."""
-    ensure_local(st, log)
+_CAPS: dict[tuple[str, str], list[str]] = {}
+
+
+def local_capabilities(url: str, model: str) -> list[str]:
+    """What the server says the model can do ("vision", "thinking", ...); cached; [] when unknown."""
+    key = (url, model)
+    if key not in _CAPS:
+        try:
+            d = _http_json(url.rstrip("/") + "/api/show", {"model": model}, timeout=20)
+            _CAPS[key] = [str(c) for c in d.get("capabilities") or []]
+        except (urllib.error.URLError, OSError, ValueError):
+            return []
+    return _CAPS[key]
+
+
+def local_payload(st: dict, system: str, user: str, images: list[str], caps: list[str]) -> dict:
+    """The /api/chat request. A thinking model (gemma4) reasons to itself
+    before the answer unless told not to: 3,566 tokens and 797 s for a 600
+    token article on 2026-11-06, at the same tokens per second as qwen. The
+    `think` key is sent only to a model that has the capability; Ollama
+    refuses it on one that does not."""
     msg: dict = {"role": "user", "content": user}
-    if image is not None:
-        msg["images"] = [_image_b64(image, PROMPT_IMAGE_MAX_PX["local"])[1]]
+    if images:
+        msg["images"] = images
     payload = {"model": st["local_model"], "stream": False, "format": "json", "keep_alive": "15m",
                "options": {"temperature": float(st.get("local_temperature", WRITE_TEMPERATURE)),
                            "num_ctx": int(st.get("local_num_ctx") or 32768)},
                "messages": [{"role": "system", "content": system}, msg]}
+    if "thinking" in caps:
+        payload["think"] = bool(st.get("local_think", False))
+    return payload
+
+
+def ask_local(system: str, user: str, image: Optional[Path], st: dict, log: Callable[[str], None] = print) -> str:
+    """One answer from the Ollama chat API, JSON-formatted, the picture attached."""
+    ensure_local(st, log)
+    images = [_image_b64(image, PROMPT_IMAGE_MAX_PX["local"])[1]] if image is not None else []
+    payload = local_payload(st, system, user, images, local_capabilities(st["local_url"], st["local_model"]))
     try:
         d = _http_json(st["local_url"].rstrip("/") + "/api/chat", payload, timeout=float(st.get("timeout_s") or 900))
     except urllib.error.HTTPError as e:
@@ -422,7 +451,9 @@ def ask_local(system: str, user: str, image: Optional[Path], st: dict, log: Call
         raise ProseError(f"local model: {d['error']}")
     text = ((d.get("message") or {}).get("content") or "").strip()
     secs = (d.get("total_duration") or 0) / 1e9
-    log(f"  local model {st['local_model']}: {d.get('eval_count', '?')} tokens in {secs:.0f} s")
+    thought = len((d.get("message") or {}).get("thinking") or "")
+    log(f"  local model {st['local_model']}: {d.get('eval_count', '?')} tokens in {secs:.0f} s"
+        + (f" ({thought} chars of thinking)" if thought else ""))
     if not text:
         raise ProseError("local model returned an empty answer")
     return text
@@ -663,9 +694,15 @@ def _inputs(out_dir: Path) -> tuple[dict, Path, list[str]]:
         if not pics:
             raise SystemExit(f"no picture in {out_dir}")
         img = pics[0]
-    html = (ao.SITE / "index.html").read_text(encoding="utf-8") if (ao.SITE / "index.html").exists() else ""
+    html = _site_html()
     me = ao.squash(str(facts.get("dso") or out_dir.name))
     return facts, img, ao.site_examples(html, exclude=(me,)) if html else []
+
+
+def _site_html() -> str:
+    from scripts import astro_output as ao
+    p = ao.SITE / "index.html"
+    return p.read_text(encoding="utf-8") if p.exists() else ""
 
 
 def cmd_write(a) -> int:
@@ -674,7 +711,7 @@ def cmd_write(a) -> int:
     facts, img, examples = _inputs(out_dir)
     if "reference" not in facts or a.refresh_reference:
         facts["reference"] = dossier(facts.get("dso", ""), facts.get("aliases") or [])
-        facts["distance_ly_on_record"] = ao.known_distance(facts.get("dso", ""))
+        facts["distance_ly_on_record"] = ao.known_distance(facts.get("dso", ""), html=_site_html())
         (out_dir / "article_request.json").write_text(json.dumps(facts, indent=1))
     cfg = _cfg()
     st = settings(cfg)
@@ -751,7 +788,7 @@ def cmd_bench(a) -> int:
             continue
         if "reference" not in facts:
             facts["reference"] = dossier(facts.get("dso", dso), facts.get("aliases") or [])
-            facts["distance_ly_on_record"] = ao.known_distance(facts.get("dso", dso))
+        facts["distance_ly_on_record"] = ao.known_distance(facts.get("dso", dso), html=_site_html())
         hand = json.loads((out_dir / "article.json").read_text()) if (out_dir / "article.json").exists() else None
         report.append(f"\n## {dso}\n")
         if hand:

@@ -167,3 +167,19 @@ together (~70 GB of the 121) and unload 15 minutes after the last call.
   is the wrong name for HOO: the owner's call on the bench. Decode is ~4-6
   tokens/s at q8 on the GB10 (memory-bound), ~3 min a write with the
   picture, which is fine for a weekly job.
+- 2026-11-06 09:35, **the bench's first run stopped after one call**: gemma4
+  answered IC 410's first write in 797 s with 3,566 tokens, at qwen's
+  tokens per second. Gemma 4 is a thinking model and Ollama has it on by
+  default: a private reasoning pass before the answer, ~3,000 tokens of it.
+  Probed on a one-line question: think off 9 tokens in 4 s, think on 383
+  tokens in 89 s, the same answer. `local_think` (False) is sent as the
+  chat API's `think` to a model whose `/api/show` capabilities include
+  thinking (`local_capabilities`, `local_payload`); the log prints the
+  thinking length when there is any. Also from that one call: with no
+  distance on record and a 424-char Wikipedia block, gemma said "about
+  10,000 light years" (the site says 12,000) and qwen's review flagged it
+  five ways as unsupported, which is the adversarial pair doing its job;
+  `known_distance(html=)` now takes the site's own `data-distance-ly` as
+  the record for a target already in the gallery (every bench target, and
+  a re-render), the file still first. Bench restarted with thinking off;
+  the thinking-on log is bench/bench_run_thinking_on.log.

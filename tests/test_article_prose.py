@@ -175,3 +175,12 @@ def test_dossier_tries_the_name_then_the_aliases_and_skips_disambiguation():
     none = ap.dossier("ngc1", [], log=lambda m: None, fetch=lambda t: None)
     assert none["wikipedia"] is None and none["tried"] == ["NGC 1"]
     assert ap._wiki_title_candidates("m1", [])[0] == "Messier 1"
+
+
+def test_local_payload_turns_thinking_off_only_where_it_exists():
+    st = dict(ap.DEFAULTS, local_model="g:1")
+    pl = ap.local_payload(st, "sys", "usr", ["b64"], ["completion", "vision", "thinking"])
+    assert pl["think"] is False and pl["messages"][1]["images"] == ["b64"] and pl["format"] == "json"
+    assert "think" not in ap.local_payload(st, "sys", "usr", [], ["completion", "vision"])
+    assert ap.local_payload(dict(st, local_think=True), "s", "u", [], ["thinking"])["think"] is True
+    assert ap.local_payload(dict(st, local_temperature=0.2), "s", "u", [], [])["options"]["temperature"] == 0.2

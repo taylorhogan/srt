@@ -145,3 +145,15 @@ def test_fragment_is_the_site_markup_with_measured_numbers():
     ids = [a["id"] for a in ao.gallery_articles(html)]
     assert ids == ["ngc2146", "stephans-quintet", "ngc2146"]
     assert html.index('id="notes-panel"') > html.index('data-added="2026-10-22"')
+
+
+def test_known_distance_falls_back_to_the_site_entry(tmp_path, monkeypatch):
+    from scripts import astro_output as ao
+    monkeypatch.setattr(ao, "DISTANCES_FILE", tmp_path / "none.json")
+    html = ('<article id="ic410" class="dso-section" data-added="2026-11-02" data-distance-ly="12000">'
+            '<h2 class="dso-title">IC410 - The Tadpoles</h2><p>x</p></article>')
+    assert ao.gallery_articles(html)[0]["distance_ly"] == 12000
+    assert ao.known_distance("ic410", html=html) == 12000
+    assert ao.known_distance("IC 410", html=html) == 12000
+    assert ao.known_distance("m1", html=html) is None
+    assert ao.known_distance("ic410", {"ic410": 11000}, html=html) == 11000      # the file wins

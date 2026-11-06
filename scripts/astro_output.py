@@ -405,9 +405,11 @@ def gallery_articles(html: str) -> list[dict]:
         img = re.search(r'<img[^>]+src="([^"?]+)', body)
         text = _html.unescape(re.sub(r"<[^>]+>", " ", body))
         added = re.search(r'data-added="([^"]*)"', m.group("attrs") or "")
+        ly = re.search(r'data-distance-ly="(\d+)"', m.group("attrs") or "")
         out.append({"id": m.group("id"), "title": _html.unescape(t.group(1)).strip() if t else "",
                     "image": Path(img.group(1)).name if img else "", "text": text,
                     "added": added.group(1) if added else "",
+                    "distance_ly": int(ly.group(1)) if ly else None,
                     "span": (m.start(), m.end())})
     return out
 
@@ -478,13 +480,14 @@ def site_notes(html: str, dso: str) -> list[dict]:
 
 def article_facts(dso: str, recipe: Optional[str], image: Path, subs: dict,
                   aliases: list[str], notes: Optional[list[dict]] = None,
-                  reference: Optional[dict] = None, distances: Optional[dict] = None) -> dict:
+                  reference: Optional[dict] = None, distances: Optional[dict] = None,
+                  site_html: Optional[str] = None) -> dict:
     s = subs_summary(subs)
     return {
         "dso": dso, "name": display_name(dso), "aliases": aliases,
         "related_notes": notes or [],
         "reference": reference or {"wikipedia": None, "tried": []},
-        "distance_ly_on_record": known_distance(dso, distances),
+        "distance_ly_on_record": known_distance(dso, distances, site_html),
         "object_type": object_type(dso), "recipe": recipe,
         "processing": processing_from_name(image.name),
         "filters": {f: [{"exptime": g["exptime"], "used": g["used"], "hours": g["hours"],
@@ -499,14 +502,24 @@ ARTICLE_FIELDS = ("title", "distance_ly", "distance_text", "type_text", "alt",
 DISTANCES_FILE = _ROOT / "local" / "dso_distances.json"     # {dso: light years}, hand-kept
 
 
-def known_distance(dso: str, distances: Optional[dict] = None) -> Optional[int]:
-    """A light-year distance from local/dso_distances.json (or *distances*), else None."""
+def known_distance(dso: str, distances: Optional[dict] = None, html: Optional[str] = None) -> Optional[int]:
+    """A light-year distance on record: local/dso_distances.json (or *distances*),
+    else the site's own entry for the target (its data-distance-ly, the owner's
+    published figure; 2026-11-06, so a re-render or the bench carries the
+    distance the gallery already states), else None."""
     try:
         table = distances if distances is not None else json.loads(DISTANCES_FILE.read_text())
         v = table.get(squash(dso)) or table.get(dso.lower())
-        return int(v) if v else None
+        if v:
+            return int(v)
     except (OSError, ValueError, TypeError, AttributeError):
-        return None
+        pass
+    if html:
+        me = squash(dso)
+        for a in gallery_articles(html):
+            if a["id"] == me and a.get("distance_ly"):
+                return int(a["distance_ly"])
+    return None
 
 
 def distance_text(ly: Optional[int]) -> str:
@@ -828,7 +841,7 @@ def handle_image(image: Path, folder: Path, publish: bool = True, push: bool = T
         log(f"  on the site already: '{a['title']}' (#{a['id']}, matched by {how}); no article")
         return result
     facts = article_facts(dso, recipe, dest, subs, aliases, site_notes(html, dso),
-                          reference=article_reference(dso, aliases, log))
+                          reference=article_reference(dso, aliases, log), site_html=html)
     (out_dir / "article_request.json").write_text(json.dumps(facts, indent=1))
     art = generate_writeup(facts, dest, site_examples(html, exclude=(squash(dso),)), log)
     if draft_only:
