@@ -105,7 +105,9 @@ The download of an executable is the one thing this session may not do.
 User-level, no sudo:
 
     mkdir -p ~/.local/ollama && cd ~/.local/ollama
-    curl -fsSL https://ollama.com/download/ollama-linux-arm64.tgz | tar -xz
+    curl -fL https://github.com/ollama/ollama/releases/latest/download/ollama-linux-arm64.tar.zst | tar --zstd -x
+    # (2026-11-06: the ollama.com/download/...tgz link 404s since the release
+    #  moved to .tar.zst; `tar --zstd` needs zstd, which the Spark has)
     ~/.local/ollama/bin/ollama serve &            # or let the writer start it
     ~/.local/ollama/bin/ollama pull gemma4:31b-it-q8_0
     ~/.local/ollama/bin/ollama pull qwen3-vl:32b-instruct-q8_0
