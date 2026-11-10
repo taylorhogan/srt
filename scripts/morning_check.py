@@ -37,13 +37,17 @@ the box's 12 V supply outlet is cycled to bring it back (owner, 2026-10-01; see
 recover_pegasus). The mount is expected to be unpowered, so PWI4 has no
 park state to offer and is not asked; the tag is the park sensor.
 
-SCOPE TAG HEALTH. The trigger for this check was the scope tag's corner starting
-to peel (2026-09-16). A peeling tag does not fail all at once. It decodes in
-fewer frames, and a lifted corner shows up as a growing worst-corner offset
-while the other corners stay still. So each morning's decode count and
+SCOPE TAG HEALTH. The trigger for this check was the first (vinyl) scope tag's
+corner starting to peel (2026-09-16). The tag is 3D printed since, so a lifted
+corner is no longer the failure to watch for (owner, 2026-11-10), but the
+reading is still the health signal: a tag going bad decodes in fewer frames
+morning after morning, while a single undecoded frame is the camera (a frame
+caught in the IR/colour swap, glare). So each morning's decode count and
 per-corner offsets go to local/morning_check_log.jsonl, and a scope tag missing
 from any frame of a daylight read is pushed as a warning even when the verdict
-still says parked.
+still says parked. The offset also records where the scope sits: a hand move
+after a park shows as a step (99 px on 2026-11-05) that holds until the next
+powered park.
 
 A hung check is itself a problem worth hearing about. A watchdog pushes and
 exits if the whole run passes HARD_TIMEOUT_S.
@@ -191,8 +195,8 @@ def evaluate(vision, kasa, pegasus, speed=NOT_MEASURED, speed_history=(),
                             % vision.get("scope_verdict", "unknown"))
         seen, n = vision.get("scope_tag_frames", 0), vision.get("frames", 0)
         if n and seen < n:
-            warnings.append("scope tag decoded in only %d/%d frames -- check the tag "
-                            "(peeling?)" % (seen, n))
+            warnings.append("scope tag decoded in only %d/%d frames -- one bad frame is "
+                            "the camera; fewer frames every morning is the tag" % (seen, n))
 
     if kasa.get("error"):
         problems.append("Kasa discovery failed (%s)" % kasa["error"])
