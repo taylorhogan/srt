@@ -184,3 +184,27 @@ def test_status_posts_iris_cams_picture_after_the_north_frame(tmp_path, monkeypa
     north.write_bytes(b"iris cam")                       # _picture_from_cam copied it: one picture, not two
     assert end.iris_cam_picture(cfg, lm) is None
     assert end.iris_cam_picture({"camera safety": {"cam_view": str(tmp_path / "missing.jpg"), "scope_view": str(north)}}, lm) is None
+
+
+def test_status_report_puts_each_camera_on_its_own_line(monkeypatch):
+    """2026-11-10 (owner): the scope line stands alone, never run into the picture date."""
+    end = pytest.importorskip("end_points.end")
+    import logging
+    posted = []
+    monkeypatch.setattr(end.vision_safety, "visual_status", lambda: (True, True, False, "Tue Nov 10 02:16:14 2026"))
+    monkeypatch.setattr(end.vision_safety, "last_match", {
+        "source": "kasa", "roof_source": "north", "is_parked": True, "accuracy": 187.0, "rungs": 3, "scope_frames": 3,
+        "parked": {"error": 95.2, "verdict": "ok"},
+        "north": {"state": "shut", "verdicts": ["shut"] * 3, "off_shut_px": 4.1, "off_open_px": 640.0}})
+    monkeypatch.setattr(end.config, "data", lambda: {"logger": {"logging": logging.getLogger("t")}, "Super Users": [],
+                                                     "camera safety": {"scope_view": "/nonexistent/n.jpg", "cam_view": "/nonexistent/c.jpg"}})
+    monkeypatch.setattr(end.social_server, "post_social_message", lambda msg, *a, **k: posted.append(msg))
+    end.determine_roof_state_visually("someone")
+    lines = posted[0].split("\n")
+    assert lines[:3] == ["Scope is Parked", "Roof is closed", "Roof is not open"]
+    assert lines[3] == ""                                               # the cameras are their own block
+    assert lines[4].startswith("North camera: roof SHUT, tag 4 px off")
+    assert lines[5] == "Iris cam: scope PARKED, tag 95 px off its park pose, limit 187 (3/3 frames)"
+    assert lines[6] == "" and lines[7] == "Picture Date: Tue Nov 10 02:16:14 2026"
+    for line in lines:
+        assert not ("Iris cam" in line and "Picture Date" in line)

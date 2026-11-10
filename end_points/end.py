@@ -49,7 +49,10 @@ def determine_roof_state_visually(account):
         # The operator is told the roof from the north camera ONLY (operator
         # decision 2026-10-02); Iris cam's tag offsets stay in iris.log.
         from sentry import north_roof
-        reply += "\n" + north_roof.user_line(lm.get("north"))
+        # The cameras as their own block, one per line, a blank line either
+        # side (owner, 2026-11-10: the scope line must stand on its own, never
+        # run into the picture date).
+        reply += "\n\n" + north_roof.user_line(lm.get("north"))
         if lm.get("roof_source") not in ("north", "north+cam"):
             reply += "\n⚠ Roof not confirmed by the north camera"
         # The scope is Iris cam's reading (the park sensor); shown with its
@@ -67,7 +70,7 @@ def determine_roof_state_visually(account):
         # the "not parked" above means "couldn't see", not a confirmed state.
         reply += f"\n⚠ Vision unavailable: {lm['error']}"
 
-    reply += "\nPicture Date:" + mod_date + "\n"
+    reply += "\n\nPicture Date: " + mod_date + "\n"
     logger = cfg["logger"]["logging"]
     logger.info(account)
     if account in cfg["Super Users"]:
