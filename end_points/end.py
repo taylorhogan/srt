@@ -52,6 +52,9 @@ def determine_roof_state_visually(account):
         reply += "\n" + north_roof.user_line(lm.get("north"))
         if lm.get("roof_source") not in ("north", "north+cam"):
             reply += "\n⚠ Roof not confirmed by the north camera"
+        # The scope is Iris cam's reading (the park sensor); shown with its
+        # picture since 2026-11-10 (owner), the roof still the north camera's.
+        reply += "\n" + north_roof.scope_line(lm)
     elif lm and "min_conf" in lm:
         reply += (
             f"\n━━ Match confidence (≥ {lm['min_conf']:.2f}) ━━\n"
@@ -69,8 +72,31 @@ def determine_roof_state_visually(account):
     logger.info(account)
     if account in cfg["Super Users"]:
         social_server.post_social_message(reply, cfg["camera safety"]["scope_view"])
+        cam = iris_cam_picture(cfg, lm)
+        if cam:
+            social_server.post_social_message("Iris cam: the scope tag against its park pose", cam)
     else:
         social_server.post_social_message(reply)
+
+
+def iris_cam_picture(cfg, lm):
+    """Iris cam's annotated decision picture to post after the north frame, or
+    None: no kasa read, no file, or the north camera gave no frame and Iris
+    cam's picture is already the one in scope_view (_picture_from_cam). Pure
+    but for the file reads."""
+    import filecmp
+    if not lm or lm.get("source") != "kasa":
+        return None
+    cs = cfg.get("camera safety", {})
+    cam, north = cs.get("cam_view"), cs.get("scope_view")
+    if not cam or not os.path.exists(cam):
+        return None
+    try:
+        if north and os.path.exists(north) and filecmp.cmp(cam, north, shallow=False):
+            return None
+    except OSError:
+        pass
+    return cam
 
 
 def _post_imaging_summary(imaging_start: datetime, dso: "str | None" = None) -> None:

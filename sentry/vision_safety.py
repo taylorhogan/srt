@@ -731,6 +731,7 @@ def _match_from_detail(det, parked, closed, is_open):
                   "closed": sum(1 for f in per if f.get("roof") == "shut"),
                   "open": sum(1 for f in per if f.get("roof") == "open")},
         "pose_verified": bool(det.get("pose_verified")),
+        "scope_frames": sum(1 for f in per if 0 in (f.get("tags") or [])),
         "is_parked": bool(parked),
         "is_closed": bool(closed),
         "is_open": bool(is_open),

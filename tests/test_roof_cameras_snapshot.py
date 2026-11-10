@@ -168,3 +168,19 @@ def test_client_posts_both_roof_cameras_from_a_fresh_vision_read(monkeypatch):
     assert "roof_north" not in client.evidence_from_vision(True, False, True)
     monkeypatch.delitem(sys.modules, "sentry.vision_safety")
     assert "roof_north" not in client.evidence_from_vision(True, False, True)
+
+
+def test_status_posts_iris_cams_picture_after_the_north_frame(tmp_path, monkeypatch):
+    """2026-11-10: `status` shows Iris cam's annotated view and the scope tag's offset
+    beside the north camera's; not when Iris cam's picture IS the north slot's."""
+    end = pytest.importorskip("end_points.end")       # the observatory's import stack: venv only
+    cam, north = tmp_path / "cam_view.jpg", tmp_path / "scope_view.jpg"
+    cam.write_bytes(b"iris cam"); north.write_bytes(b"north frame")
+    cfg = {"camera safety": {"cam_view": str(cam), "scope_view": str(north)}}
+    lm = {"source": "kasa"}
+    assert end.iris_cam_picture(cfg, lm) == str(cam)
+    assert end.iris_cam_picture(cfg, {"source": "webcam"}) is None
+    assert end.iris_cam_picture(cfg, None) is None
+    north.write_bytes(b"iris cam")                       # _picture_from_cam copied it: one picture, not two
+    assert end.iris_cam_picture(cfg, lm) is None
+    assert end.iris_cam_picture({"camera safety": {"cam_view": str(tmp_path / "missing.jpg"), "scope_view": str(north)}}, lm) is None

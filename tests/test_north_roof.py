@@ -139,3 +139,27 @@ def test_user_line_unknown_says_why():
         {"state": "unknown", "verdicts": ["absent"] * 3})
     assert "camera not at" in user_line({"state": "unknown", "why": "camera not at (102, -9)"})
     assert user_line(None) == "North camera: no reading"
+
+
+# --- the scope line (Iris cam's tag against the park pose, 2026-11-10) ------
+
+from sentry.north_roof import scope_line
+
+
+def test_scope_line_reports_iris_cams_tag_and_the_limit():
+    m = {"source": "kasa", "is_parked": True, "parked": {"error": 98.9, "verdict": "ok"}, "accuracy": 187.0,
+         "rungs": 3, "scope_frames": 3}
+    assert scope_line(m) == "Iris cam: scope PARKED, tag 99 px off its park pose, limit 187 (3/3 frames)"
+    m = {"source": "kasa", "is_parked": False, "parked": {"error": 1076.0, "verdict": "position"}, "accuracy": 187.0,
+         "rungs": 3, "scope_frames": 3}
+    assert scope_line(m) == "Iris cam: scope NOT PARKED, tag 1076 px off its park pose, limit 187 (3/3 frames)"
+    m = {"source": "kasa", "is_parked": True, "parked": {"error": 9.4, "verdict": "ok"}, "accuracy": 187.0, "rungs": 3, "scope_frames": 2}
+    assert scope_line(m).endswith("(2/3 frames)")
+
+
+def test_scope_line_says_when_there_is_no_tag_or_no_read():
+    assert scope_line(None) == "Iris cam: no reading"
+    assert scope_line({"source": "webcam"}) == "Iris cam: no reading"
+    assert scope_line({"source": "kasa", "is_parked": False, "parked": {"error": 0.0, "verdict": "not seen"},
+                       "rungs": 3, "scope_frames": 0}) == "Iris cam: scope tag not decoded (0/3 frames)"
+    assert "not at its reference pose" in scope_line({"source": "kasa", "is_parked": False, "parked": {"verdict": "pose"}})

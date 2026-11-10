@@ -122,6 +122,35 @@ def decide(north_state, cam_closed, cam_open):
     return False, False, "none"
 
 
+def scope_line(match):
+    """The scope as the operator is told it: Iris cam's tag against the recorded
+    park pose, with the limit beside it (owner, 2026-11-10: "also show the iris
+    cams view of the scope tag and pixels off"). The roof stays the north
+    camera's to report (user_line); the scope tag is Iris cam's own reading and
+    the park sensor, so this is not the 2026-10-02 contradiction. Pure.
+
+    *match* is vision_safety.last_match: {"source", "is_parked", "parked":
+    {"error", "verdict"}, "accuracy", "rungs", "scope_frames"}.
+    """
+    if not match or match.get("source") != "kasa":
+        return "Iris cam: no reading"
+    p = match.get("parked") or {}
+    n = int(match.get("rungs") or 0)
+    seen = match.get("scope_frames")
+    frames = (" (%d/%d frames)" % (int(seen), n)) if n and seen is not None else ""
+    limit = float(match.get("accuracy") or 0)
+    lim = (", limit %.0f" % limit) if limit else ""
+    off = float(p.get("error") or 0.0)
+    if match.get("is_parked"):
+        return "Iris cam: scope PARKED, tag %.0f px off its park pose%s%s" % (off, lim, frames)
+    v = p.get("verdict")
+    if v == "position":
+        return "Iris cam: scope NOT PARKED, tag %.0f px off its park pose%s%s" % (off, lim, frames)
+    if v == "pose":
+        return "Iris cam: camera not at its reference pose; scope tag not judged"
+    return "Iris cam: scope tag not decoded%s" % frames
+
+
 def user_line(north):
     """The roof as the OPERATOR is told it: the north camera only. Pure.
 
