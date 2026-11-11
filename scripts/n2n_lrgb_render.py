@@ -259,8 +259,11 @@ def build(args) -> int:
                 register=True, progress_cb=lambda s: None)
         else:
             log(f"[{filt}] stacking {len(paths)} frames onto the {lum} reference")
+            # min_frames=1: a lone frame comes back calibrated on its own
+            # grid, so a target with one Ha frame still gets its palette.
             img = stacks.stack_paths(paths, filt, progress_cb=lambda s: None,
-                                     shared_reference=ref, meta_out=m)
+                                     shared_reference=ref, meta_out=m,
+                                     min_frames=1)
         if img is None:
             log(f"[{filt}] stacking failed")
             continue

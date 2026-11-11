@@ -218,8 +218,16 @@ def stack_paths(
     shared_reference: Optional[tuple] = None,
     meta_out: Optional[dict] = None,
     keep_frames_dir: Optional[Path] = None,
+    min_frames: int = 2,
 ) -> Optional[np.ndarray]:
     """Stack *paths* with the project stacker, calibrated where masters exist.
+
+    Fewer than *min_frames* paths returns None. The training splits keep the
+    default of 2, since a one-frame "stack" would pair with a real one. A
+    render may pass 1: the stacker calibrates a lone frame and returns it on
+    its own grid (no registration, no clipping), which is what a target with
+    a single Ha frame beside its O-III and S-II stacks needs to get a
+    palette picture at all (IC 405, 2026-11-11).
 
     `meta_out`, if given, is updated with the stacker's own info dict — most
     usefully `n_frames`, the count that survived the quality gate. That is not
@@ -231,7 +239,7 @@ def stack_paths(
     """
     from stacking import stacker
 
-    if len(paths) < 2:
+    if len(paths) < max(1, int(min_frames)):
         return None
     bias, dark, flat = stacker.calibration_paths_from_config(filter_name, like=Path(paths[0]))
     if not bias and not dark:
