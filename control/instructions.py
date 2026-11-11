@@ -423,7 +423,19 @@ def add_dso_object_instruction(dso_name, recipe, requestor, priority=5,
     return True
 
 
-def set_filter_plan_db(dso_name: str, plan, until=None) -> bool:
+def _set_limit(instruction: dict, until, count) -> None:
+    """Write (or drop) the plan's cap date and imaged-night count on one row."""
+    if until:
+        instruction[_fp.UNTIL_KEY] = str(until)[:10]
+    else:
+        instruction.pop(_fp.UNTIL_KEY, None)
+    if count:
+        instruction[_fp.COUNT_KEY] = dict(count)
+    else:
+        instruction.pop(_fp.COUNT_KEY, None)
+
+
+def set_filter_plan_db(dso_name: str, plan, until=None, count=None) -> bool:
     """Store (or with a falsy plan, remove) an explicit filter plan on a DSO.
 
     plan is {filter_name: exposure_count}, e.g. {"O-III": 40, "Ha": 10}. The
@@ -431,8 +443,9 @@ def set_filter_plan_db(dso_name: str, plan, until=None) -> bool:
     non-completed instruction for the name.
 
     *until* (C2, 2026-10-30) is the last night the plan applies, an ISO date
-    (control/filter_plan.until_for); None = no limit. Clearing the plan
-    clears the limit with it.
+    (control/filter_plan.until_for); None = no limit. *count* (2026-11-11)
+    is the imaged-night record from filter_plan.limit_for, with *until* as
+    its cap. Clearing the plan clears both.
     """
     normalized = _normalize_dso(dso_name)
     with open(_INSTRUCTIONS_PATH, 'r') as f:
@@ -442,21 +455,18 @@ def set_filter_plan_db(dso_name: str, plan, until=None) -> bool:
                 and instruction["status"] != "completed"):
             if plan:
                 instruction["filter_plan"] = dict(plan)
-                if until:
-                    instruction[_fp.UNTIL_KEY] = str(until)[:10]
-                else:
-                    instruction.pop(_fp.UNTIL_KEY, None)
+                _set_limit(instruction, until, count)
             else:
                 instruction.pop("filter_plan", None)
-                instruction.pop(_fp.UNTIL_KEY, None)
+                _set_limit(instruction, None, None)
             with open(_INSTRUCTIONS_PATH, 'w') as f:
                 f.writelines(json.dumps(instructions, indent=4))
             return True
     return False
 
 
-def set_filter_plan_until_db(dso_name: str, until) -> bool:
-    """Put a last night on a DSO's EXISTING plan (`filters <dso> for N`); None lifts it.
+def set_filter_plan_until_db(dso_name: str, until, count=None) -> bool:
+    """Put a limit on a DSO's EXISTING plan (`filters <dso> for N`); None lifts it.
     False when the DSO has no plan to limit."""
     normalized = _normalize_dso(dso_name)
     with open(_INSTRUCTIONS_PATH, 'r') as f:
@@ -466,33 +476,64 @@ def set_filter_plan_until_db(dso_name: str, until) -> bool:
                 and instruction["status"] != "completed"):
             if not instruction.get("filter_plan"):
                 return False
-            if until:
-                instruction[_fp.UNTIL_KEY] = str(until)[:10]
-            else:
-                instruction.pop(_fp.UNTIL_KEY, None)
+            _set_limit(instruction, until, count)
             with open(_INSTRUCTIONS_PATH, 'w') as f:
                 f.writelines(json.dumps(instructions, indent=4))
             return True
     return False
 
 
-def expire_filter_plans(night=None) -> list:
-    """Drop every explicit plan whose last night is before *night* (default:
+def _target_dir(dso: str):
+    """The target's frame folder under the N.I.N.A image dir, matched without case or spaces; None if absent."""
+    try:
+        root = config.data()["nina"]["image_dir"]
+        key = _normalize_dso(dso)
+        for e in os.scandir(root):
+            if e.is_dir() and _normalize_dso(e.name) == key:
+                return e.path
+    except Exception:  # noqa: BLE001
+        logging.getLogger(__name__).exception("could not look for %s's frame folder", dso)
+    return None
+
+
+def expire_filter_plans(night=None, frame_nights=None) -> list:
+    """Drop every explicit plan that has run out before *night* (default:
     the night a sequence written now is for). -> [{dso, plan, until}] removed.
-    The noon queue refresh calls this before the ranking (control/night_plan)."""
+    The noon queue refresh calls this before the ranking (control/night_plan).
+
+    An imaged-night plan is recounted first from the frames on disk
+    (filter_plan.count_imaged), so it runs out after its Nth imaged night.
+    *frame_nights* is {dso: set of nights} for tests; else each target's
+    folder is read (filter_plan.nights_with_frames)."""
     night = night or _fp.night_for(datetime.now())
     with open(_INSTRUCTIONS_PATH, 'r') as f:
         instructions = json.load(f)
+    changed = False
+    for row in instructions:
+        if not row.get("filter_plan") or row.get("status") == "completed" \
+                or not isinstance(row.get(_fp.COUNT_KEY), dict):
+            continue
+        if frame_nights is not None:
+            have = frame_nights.get(row.get("dso"), set())
+        else:
+            folder = _target_dir(str(row.get("dso", "")))
+            have = _fp.nights_with_frames(folder) if folder else set()
+        imaged = _fp.count_imaged(row, have, night)
+        if imaged is not None and imaged != row[_fp.COUNT_KEY].get("imaged"):
+            row[_fp.COUNT_KEY]["imaged"] = imaged
+            changed = True
     gone = []
-    for row, plan, until in _fp.expired_rows(instructions, night):
+    for row, plan, until in _fp.expired_rows(
+            [r for r in instructions if r.get("status") != "completed"], night):
         gone.append({"dso": row.get("dso"), "plan": plan, "until": until})
         row.pop("filter_plan", None)
         row.pop(_fp.UNTIL_KEY, None)
+        row.pop(_fp.COUNT_KEY, None)
         hist = row.setdefault("status_history", []) if isinstance(row.get("status_history"), list) \
             else row.setdefault("status_history", [])
         hist.append({"filter_plan_expired": plan, "until": until,
                      "at": datetime.now().isoformat(timespec="minutes"), "by": "noon refresh"})
-    if gone:
+    if gone or changed:
         with open(_INSTRUCTIONS_PATH, 'w') as f:
             f.writelines(json.dumps(instructions, indent=4))
     return gone

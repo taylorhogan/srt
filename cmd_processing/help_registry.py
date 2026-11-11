@@ -207,9 +207,11 @@ HELP: dict[str, dict] = {
                      "filters bubble", "filters bubble clear"],
         "notes": ["Counts are a RATIO over each night's good hours (one pass fits the "
                   "window); only a hand-made sequence with no hours takes them literally.",
-                  "`for N`: the plan covers N nights counting tonight, then expires at the "
-                  "noon refresh and the filter advisor decides again. Without it the plan "
-                  "stands until cleared. `filters <dso> for N` limits an existing plan.",
+                  "`for N`: the plan covers N nights the target is IMAGED (a cloudy night or "
+                  "a night it gets no slot does not count; at most max(30, 2N) calendar "
+                  "nights), then expires at the noon refresh and the filter advisor decides "
+                  "again. Without it the plan stands until cleared. `filters <dso> for N` "
+                  "limits an existing plan.",
                   "Filters: L, R, G, B, S-II, O-III, Ha. Up to 3 per night.",
                   "Without a plan the filter advisor decides from the frames on disk, the "
                   "seeing and the moon (nina.filter_advisor), else the split by object type."],

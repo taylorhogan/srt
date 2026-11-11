@@ -11,6 +11,20 @@ noon plan's own decision (control/night_plan), the moon judge -- goes through
 active_plan() here, so an expired plan is no plan everywhere at once. The
 noon queue refresh drops the expired ones from the file and says so.
 
+N counts IMAGED nights (owner, 2026-11-11: "cloudy nights with no imaging
+should not count"). A plan set with `for N` since then also carries
+`filter_plan_count` = {"nights": N, "from": first night, "imaged": [nights]}:
+a night counts once the target's folder holds a frame for it
+(<image_dir>/<target>/<camera>/<night>/LIGHT/*.fits), so a cloudy night, a
+night the target got no slot and a night it lost to another target are all
+free. The noon refresh recounts from disk (count_imaged) before it expires
+anything, and the plan applies while fewer than N nights are counted; the
+Nth imaged night is still the plan's, the next noon drops it. A night with
+one frame counts. `filter_plan_until` stays as the CAP: max(CAP_DAYS, 2 N)
+calendar nights, so a plan for a target that is out of season or never
+scheduled cannot stand forever. A row with an until and no count (set
+before) expires on its date as it always did.
+
 Night dates. A night is named after the evening it starts. The first night a
 new plan can affect is today's date whatever the hour: typed at 14:00 it
 reaches tonight's sequence (the sunset check regenerates on a plan change);
@@ -22,12 +36,15 @@ for the night in progress, which is yesterday's date (night_for). Only
 Pure and stdlib-only: control/instructions needs astropy and the chat server,
 and this must be testable on the pytest-only CI runner.
 """
+import os
 from datetime import date, datetime, timedelta
 from typing import Optional
 
 UNTIL_KEY = "filter_plan_until"
+COUNT_KEY = "filter_plan_count"
 NIGHT_STARTS_HOUR = 6      # before this a generated sequence is for the night in progress
 MAX_NIGHTS = 60
+CAP_DAYS = 30              # an imaged-night plan ends by this many calendar nights (or 2 N) regardless
 
 
 def night_for(now: datetime) -> date:
@@ -46,6 +63,13 @@ def until_for(now: datetime, nights: int) -> str:
     return (first_night(now) + timedelta(days=max(1, int(nights)) - 1)).isoformat()
 
 
+def limit_for(now: datetime, nights: int) -> tuple:
+    """`for N` set at *now*: (cap until ISO, count record) for the row."""
+    n = max(1, int(nights))
+    cap = until_for(now, max(CAP_DAYS, 2 * n))
+    return cap, {"nights": n, "from": first_night(now).isoformat(), "imaged": []}
+
+
 def _until(row) -> Optional[date]:
     raw = (row or {}).get(UNTIL_KEY)
     if not raw:
@@ -56,10 +80,79 @@ def _until(row) -> Optional[date]:
         return None          # a malformed date never applies: an unreadable "until" is no limit
 
 
+def _count(row) -> Optional[dict]:
+    """The row's imaged-night record {nights, from, imaged}, or None (no count, or unreadable)."""
+    c = (row or {}).get(COUNT_KEY)
+    if not isinstance(c, dict):
+        return None
+    try:
+        n = int(c.get("nights"))
+        start = date.fromisoformat(str(c.get("from"))[:10])
+    except (TypeError, ValueError):
+        return None
+    if n < 1:
+        return None
+    imaged = [str(d)[:10] for d in (c.get("imaged") or []) if d]
+    return {"nights": n, "from": start, "imaged": imaged}
+
+
+def imaged_used(row) -> Optional[tuple]:
+    """(imaged nights counted, N) for an imaged-night plan, else None."""
+    c = _count(row)
+    return (len(c["imaged"]), c["nights"]) if c else None
+
+
 def is_expired(row, night: date) -> bool:
-    """Has the row's plan run out before *night*? False without a limit."""
+    """Has the row's plan run out before *night*? False without a limit.
+
+    Out when the cap date is behind *night*, or (an imaged-night plan) when
+    N imaged nights are already counted."""
     u = _until(row)
-    return u is not None and u < night
+    if u is not None and u < night:
+        return True
+    used = imaged_used(row)
+    return used is not None and used[0] >= used[1]
+
+
+def nights_with_frames(target_dir) -> set:
+    """The nights a target folder holds light frames for: <camera>/<YYYY-MM-DD>/LIGHT/*.fits.
+
+    A frame marked `bad` (.fits.bad) is not a frame. Stdlib only; a missing
+    or unreadable folder is no nights."""
+    out = set()
+    try:
+        cams = [e for e in os.scandir(target_dir) if e.is_dir()]
+    except OSError:
+        return out
+    for cam in cams:
+        try:
+            nights = [e for e in os.scandir(cam.path) if e.is_dir()]
+        except OSError:
+            continue
+        for n in nights:
+            try:
+                d = date.fromisoformat(n.name[:10])
+            except ValueError:
+                continue
+            try:
+                if any(f.name.lower().endswith(".fits")
+                       for f in os.scandir(os.path.join(n.path, "LIGHT"))):
+                    out.add(d)
+            except OSError:
+                continue
+    return out
+
+
+def count_imaged(row, frame_nights, night: date) -> Optional[list]:
+    """The nights that count against the row's plan, given the nights with frames. Pure.
+
+    Nights from the plan's first night up to, not including, *night* (the
+    night being planned; its frames do not exist yet). None for a row
+    without an imaged-night plan."""
+    c = _count(row)
+    if c is None:
+        return None
+    return sorted(d.isoformat() for d in (frame_nights or ()) if c["from"] <= d < night)
 
 
 def active_plan(row, night: date) -> Optional[dict]:
@@ -93,8 +186,19 @@ def nights_left(row, now: datetime) -> Optional[int]:
 
 
 def describe_until(row, now: datetime) -> str:
-    """' (until 2026-10-31, 2 more nights)' or '' for a plan with no limit."""
+    """' (until 2026-10-31, 2 more nights)' or '' for a plan with no limit.
+
+    An imaged-night plan: ' (1 of 5 imaged nights used; ends by 2026-12-10 regardless)'."""
     u = _until(row)
+    used = imaged_used(row)
+    if used is not None:
+        k, n = used
+        if k >= n:
+            return " (expired: %d imaged night%s)" % (n, "" if n == 1 else "s")
+        if u is not None and u < first_night(now):
+            return " (expired %s, %d of %d imaged nights used)" % (u.isoformat(), k, n)
+        cap = "; ends by %s regardless" % u.isoformat() if u is not None else ""
+        return " (%d of %d imaged night%s used%s)" % (k, n, "" if n == 1 else "s", cap)
     if u is None:
         return ""
     n = nights_left(row, now)
@@ -128,18 +232,28 @@ def expired_rows(rows, night: date) -> list:
     for r in rows or []:
         plan = (r or {}).get("filter_plan")
         if isinstance(plan, dict) and plan and is_expired(r, night):
-            out.append((r, dict(plan), str(r.get(UNTIL_KEY))[:10]))
+            used = imaged_used(r)
+            if used is not None and used[0] >= used[1]:
+                c = _count(r)
+                when = "%d imaged night%s, %s" % (used[1], "" if used[1] == 1 else "s",
+                                                  " ".join(c["imaged"][-used[1]:]))
+            else:
+                when = str(r.get(UNTIL_KEY))[:10]
+            out.append((r, dict(plan), when))
     return out
 
 
 def describe_expired(expired: list) -> str:
     """The noon chat line for plans that ran out, '' when none.
 
-    *expired* is the plan record's list: [{dso, plan, until}]."""
+    *expired* is the plan record's list: [{dso, plan, until}]; *until* is
+    the last night's date, or for an imaged-night plan the nights it used."""
     if not expired:
         return ""
     lines = ["Filter plans expired (the advisor decides for them again):"]
     for e in expired:
         ratio = " ".join("%s=%s" % kv for kv in (e.get("plan") or {}).items()) or "-"
-        lines.append("  %s -- %s, last night %s" % (e.get("dso"), ratio, e.get("until")))
+        until = str(e.get("until"))
+        when = ("last night %s" % until) if until[:4].isdigit() and until[4:5] == "-" else "after %s" % until
+        lines.append("  %s -- %s, %s" % (e.get("dso"), ratio, when))
     return "\n".join(lines)

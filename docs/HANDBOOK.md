@@ -82,7 +82,7 @@ silence the push.
 | `image <dso>` | queue a target (type stored from the catalogue). With SIMBAD down the position comes from the object's Wikipedia page, then the candidates catalogue (approximate), and the reply says which; "Not a known object" means all three failed |
 | `db` | the queue; `dbc <id>` marks one completed by hand |
 | `tonight` | tonight's grid |
-| `filters <dso> Ha=1 O-III=2 for 2` | a filter ratio for N nights; `filters <dso>` shows; `clear` removes |
+| `filters <dso> Ha=1 O-III=2 for 2` | a filter ratio for N imaged nights (cloudy nights do not count; capped at max(30, 2N) calendar nights); `filters <dso>` shows; `clear` removes |
 | `hold <dso>` / `hold <dso> off` | keep the planner off a target |
 | `moon <dso> any|avoid|dark` | the moon rule |
 | `maxhours <dso> N` | a short block a night (monitors) |

@@ -237,7 +237,10 @@ def slot_filters(dso, row, advice, night=None) -> dict:
         until = row.get(filter_plan.UNTIL_KEY)
         why = ("monitor target (lightcurve): its own fixed plan" if src == "monitor"
                else "the queue's `filters` plan (explicit plans always win)")
-        if until:
+        used = filter_plan.imaged_used(row)
+        if used is not None:
+            why += " -- imaged night %d of %d" % (used[0] + 1, used[1])
+        elif until:
             why += " -- last night %s" % str(until)[:10]
         return {"filters": explicit, "filter_source": src, "filter_reasons": [why]}
     advice = advice or {}

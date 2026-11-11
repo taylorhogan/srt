@@ -2324,9 +2324,11 @@ def filters_cmd(words: list[str], account: str) -> None:
     literal when the hours are unknown (a hand-made sequence for a target
     that is not in tonight's ranking).
 
-    `for N` (C2, 2026-10-30): the plan applies for N nights counting tonight
-    and then the advisor decides again (control/filter_plan; the noon queue
-    refresh drops it and says so). Without it the plan stands until cleared.
+    `for N` (C2, 2026-10-30): the plan applies for N nights and then the
+    advisor decides again (control/filter_plan; the noon queue refresh drops
+    it and says so). Since 2026-11-11 N counts nights the target was IMAGED,
+    so a cloudy night is free, with a cap of max(30, 2 N) calendar nights.
+    Without it the plan stands until cleared.
     """
     cfg = config.data()
     wheel = cfg.get("nina", {}).get("filter_wheel", {}) or {}
@@ -2350,13 +2352,14 @@ def filters_cmd(words: list[str], account: str) -> None:
         if err or not dso_name:
             social_server.post_social_message(err or "Usage: filters <dso> for N")
             return
-        until = filter_plan.until_for(now, nights)
+        until, count = filter_plan.limit_for(now, nights)
         row = instructions.get_instruction_by_dso(dso_name) or {}
-        if not instructions.set_filter_plan_until_db(dso_name, until):
+        if not instructions.set_filter_plan_until_db(dso_name, until, count=count):
             social_server.post_social_message(
                 f"{dso_name} has no filter plan to limit (set one: filters {dso_name} <FILTER>=<count> ... for {nights})")
             return
         row[filter_plan.UNTIL_KEY] = until
+        row[filter_plan.COUNT_KEY] = count
         social_server.post_social_message(
             f"{dso_name} filter plan {_ratio_text(row.get('filter_plan'))}"
             f"{filter_plan.describe_until(row, now)}; then the advisor decides.")
@@ -2432,12 +2435,13 @@ def filters_cmd(words: list[str], account: str) -> None:
             f"{limit} blocks whose filter can be set. Got {len(plan)}.")
         return
 
-    until = filter_plan.until_for(now, nights) if nights else None
-    if not instructions.set_filter_plan_db(dso_name, plan, until=until):
+    until, count = filter_plan.limit_for(now, nights) if nights else (None, None)
+    if not instructions.set_filter_plan_db(dso_name, plan, until=until, count=count):
         social_server.post_social_message(f"{dso_name} not found in waiting instructions")
         return
 
-    tail = (filter_plan.describe_until({filter_plan.UNTIL_KEY: until}, now) + "; then the advisor decides."
+    tail = (filter_plan.describe_until({filter_plan.UNTIL_KEY: until, filter_plan.COUNT_KEY: count}, now)
+            + "; cloudy nights do not count; then the advisor decides."
             if until else ". Stands until `filters %s clear`." % dso_name)
     social_server.post_social_message(
         f"{dso_name} filter plan set: {_ratio_text(plan)} -- a ratio over each night's hours"

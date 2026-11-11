@@ -83,6 +83,67 @@ def test_expired_rows_and_the_chat_line():
     assert FP.describe_expired([]) == ""
 
 
+# ------------------------------------------------------------ imaged nights (2026-11-11)
+
+def _counted(n, imaged=(), until="2026-12-09"):
+    return {"filter_plan": {"Ha": 3, "O-III": 2}, "filter_plan_until": until,
+            "filter_plan_count": {"nights": n, "from": "2026-11-11", "imaged": list(imaged)}}
+
+
+def test_limit_for_caps_at_30_nights_or_twice_n():
+    now = datetime(2026, 11, 11, 9, 0)
+    assert FP.limit_for(now, 5) == ("2026-12-10", {"nights": 5, "from": "2026-11-11", "imaged": []})
+    assert FP.limit_for(now, 20)[0] == "2026-12-20"                    # 2 N = 40 nights beats 30
+
+
+def test_cloudy_nights_do_not_count():
+    row = _counted(2)
+    frames = {date(2026, 11, 10), date(2026, 11, 11), date(2026, 11, 14)}   # 11-10 is before the plan
+    # planning 11-12: 11-11 imaged; 11-12 not yet; one used
+    assert FP.count_imaged(row, frames, date(2026, 11, 12)) == ["2026-11-11"]
+    # 11-12 and 11-13 cloudy: still one used on 11-14, the plan stands
+    row["filter_plan_count"]["imaged"] = FP.count_imaged(row, frames, date(2026, 11, 14))
+    assert row["filter_plan_count"]["imaged"] == ["2026-11-11"]
+    assert FP.active_plan(row, date(2026, 11, 14)) == {"Ha": 3, "O-III": 2}
+    assert FP.describe_until(row, datetime(2026, 11, 14, 12)) == \
+        " (1 of 2 imaged nights used; ends by 2026-12-09 regardless)"
+    # 11-14 imaged: two used by 11-15, out
+    row["filter_plan_count"]["imaged"] = FP.count_imaged(row, frames, date(2026, 11, 15))
+    assert FP.is_expired(row, date(2026, 11, 15)) and FP.active_plan(row, date(2026, 11, 15)) is None
+    assert FP.describe_until(row, datetime(2026, 11, 15, 12)) == " (expired: 2 imaged nights)"
+    gone = FP.expired_rows([dict(row, dso="ic405")], date(2026, 11, 15))
+    assert gone[0][2] == "2 imaged nights, 2026-11-11 2026-11-14"
+    text = FP.describe_expired([{"dso": "ic405", "plan": {"Ha": 3}, "until": gone[0][2]}])
+    assert "ic405 -- Ha=3, after 2 imaged nights, 2026-11-11 2026-11-14" in text
+
+
+def test_the_cap_still_ends_a_plan_that_never_images():
+    row = _counted(3, until="2026-12-10")
+    assert FP.active_plan(row, date(2026, 12, 10)) is not None
+    assert FP.is_expired(row, date(2026, 12, 11))
+    assert FP.count_imaged({"filter_plan": {"L": 1}}, {date(2026, 11, 12)}, date(2026, 11, 13)) is None
+    # an unreadable count is no count: the date rule alone
+    bad = dict(_counted(1), filter_plan_count={"nights": "x"})
+    assert FP.imaged_used(bad) is None and not FP.is_expired(bad, date(2026, 11, 20))
+
+
+def test_nights_with_frames_reads_the_light_folders(tmp_path):
+    for night, name in (("2026-11-10", "a.fits"), ("2026-11-11", "b.fits.bad"), ("2026-11-12", "c.FITS")):
+        d = tmp_path / "cdk17" / night / "LIGHT"
+        d.mkdir(parents=True)
+        (d / name).write_text("")
+    (tmp_path / "cdk17" / "2026-11-13" / "FLAT").mkdir(parents=True)
+    (tmp_path / "cdk17" / "notadate" / "LIGHT").mkdir(parents=True)
+    (tmp_path / "frame_stats.json").write_text("[]")
+    assert FP.nights_with_frames(tmp_path) == {date(2026, 11, 10), date(2026, 11, 12)}
+    assert FP.nights_with_frames(tmp_path / "missing") == set()
+
+
+def test_the_noon_reason_names_the_imaged_night():
+    out = NP.slot_filters("ic405", _counted(5, ["2026-11-11"]), None, night=date(2026, 11, 12))
+    assert out["filter_source"] == "explicit" and out["filter_reasons"][0].endswith("imaged night 2 of 5")
+
+
 # ------------------------------------------------------------ the noon plan's decision
 
 SLOTS = [{"dso": "ngc1961", "start": "2026-11-01T21:00-04:00", "end": "2026-11-02T01:00-04:00", "hours": 4}]
@@ -151,6 +212,25 @@ def test_set_get_and_expire_round_trip(queue):
     assert all(k not in json.loads(p.read_text())[2] for k in ("filter_plan", "filter_plan_until"))
 
 
+def test_the_noon_refresh_counts_then_expires(queue):
+    instr, p = queue
+    until, count = FP.limit_for(datetime(2026, 11, 11, 9), 2)
+    assert instr.set_filter_plan_db("ngc1961", {"Ha": 3}, until=until, count=count)
+    # 11-11 cloudy: nothing counted, nothing written
+    assert instr.expire_filter_plans(night=date(2026, 11, 12), frame_nights={}) == []
+    assert json.loads(p.read_text())[0]["filter_plan_count"]["imaged"] == []
+    # 11-12 imaged: one counted, still standing on 11-13
+    assert instr.expire_filter_plans(night=date(2026, 11, 13), frame_nights={"ngc1961": {date(2026, 11, 12)}}) == []
+    assert json.loads(p.read_text())[0]["filter_plan_count"]["imaged"] == ["2026-11-12"]
+    assert instr.get_filter_plan("ngc1961", night=date(2026, 11, 13)) == {"Ha": 3}
+    # 11-13 imaged too: out at the next noon, every key with it
+    gone = instr.expire_filter_plans(night=date(2026, 11, 14),
+                                     frame_nights={"ngc1961": {date(2026, 11, 12), date(2026, 11, 13)}})
+    assert gone == [{"dso": "ngc1961", "plan": {"Ha": 3}, "until": "2 imaged nights, 2026-11-12 2026-11-13"}]
+    row = json.loads(p.read_text())[0]
+    assert not any(k in row for k in ("filter_plan", "filter_plan_until", "filter_plan_count"))
+
+
 # ------------------------------------------------------------ the chat command (venv)
 
 def test_filters_cmd_for_n(monkeypatch):
@@ -162,26 +242,30 @@ def test_filters_cmd_for_n(monkeypatch):
     monkeypatch.setattr(suc.instructions, "get_instruction_by_dso", lambda d: rows.get(d.lower().replace(" ", "")))
     monkeypatch.setattr(suc.instructions, "get_filter_plan", lambda d, night=None: rows.get(d, {}).get("filter_plan"))
     monkeypatch.setattr(suc.instructions, "set_filter_plan_db",
-                        lambda d, p, until=None: saved.append((d, p, until)) or True)
+                        lambda d, p, until=None, count=None: saved.append((d, p, until, count)) or True)
     monkeypatch.setattr(suc.instructions, "set_filter_plan_until_db",
-                        lambda d, u: limited.append((d, u)) or bool(rows.get(d, {}).get("filter_plan")))
+                        lambda d, u, count=None: limited.append((d, u, count)) or bool(rows.get(d, {}).get("filter_plan")))
     monkeypatch.setattr(suc, "datetime", type("D", (), {"now": staticmethod(lambda: datetime(2026, 10, 30, 14, 0))}))
 
+    # `for N` counts imaged nights from tonight, capped at 30 calendar nights
     suc.filters_cmd(["", "filters", "ngc1961", "L=2", "R=1", "for", "2"], "iris")
-    assert saved == [("ngc1961", {"L": 2, "R": 1}, "2026-10-31")]
-    assert "until 2026-10-31, 2 more nights" in posted[-1] and "then the advisor decides" in posted[-1]
+    assert saved == [("ngc1961", {"L": 2, "R": 1}, "2026-11-28",
+                      {"nights": 2, "from": "2026-10-30", "imaged": []})]
+    assert "0 of 2 imaged nights used; ends by 2026-11-28 regardless" in posted[-1]
+    assert "cloudy nights do not count" in posted[-1] and "then the advisor decides" in posted[-1]
     suc.filters_cmd(["", "filters", "ngc1961", "L=2", "R=1"], "iris")
-    assert saved[-1] == ("ngc1961", {"L": 2, "R": 1}, None) and "until `filters ngc1961 clear`" in posted[-1]
+    assert saved[-1] == ("ngc1961", {"L": 2, "R": 1}, None, None) and "until `filters ngc1961 clear`" in posted[-1]
     suc.filters_cmd(["", "filters", "ngc1961", "L=2", "for", "x"], "iris")
     assert "whole number" in posted[-1] and len(saved) == 2
     # limit an existing plan; refuse where there is none
     suc.filters_cmd(["", "filters", "ngc1961", "for", "3"], "iris")
-    assert limited == [("ngc1961", "2026-11-01")] and "no filter plan to limit" in posted[-1]
+    assert limited == [("ngc1961", "2026-11-28", {"nights": 3, "from": "2026-10-30", "imaged": []})]
+    assert "no filter plan to limit" in posted[-1]
     rows["ngc1961"]["filter_plan"] = {"L": 2, "R": 1}
     suc.filters_cmd(["", "filters", "ngc1961", "for", "3"], "iris")
-    assert "L=2, R=1 (until 2026-11-01, 3 more nights)" in posted[-1]
-    # show
+    assert "L=2, R=1 (0 of 3 imaged nights used; ends by 2026-11-28 regardless)" in posted[-1]
+    # show: past the cap
     rows["ngc1961"]["filter_plan_until"] = "2026-10-29"
     monkeypatch.setattr(suc.instructions, "get_filter_plan", lambda d, night=None: None)
     suc.filters_cmd(["", "filters", "ngc1961"], "iris")
-    assert "(expired 2026-10-29) -- no longer applies" in posted[-1]
+    assert "(expired 2026-10-29, 0 of 3 imaged nights used) -- no longer applies" in posted[-1]
