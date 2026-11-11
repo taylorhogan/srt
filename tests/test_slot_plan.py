@@ -309,3 +309,33 @@ def test_two_capped_targets_share_a_two_hour_gap_on_a_four_slot_night():
     for x, y in zip(s4, s4[1:]):
         assert x.end <= y.start
 
+
+
+# Astronomical dawn ends the night (2026-11-11). The grid admits an hour with
+# half an hour of dark left, and the slot that straddles dawn ends at the
+# dawn minute: on 11-10/11 dawn fell at 05:00:30, the 05:00 hour was in, and
+# NGC 2276 ran to 06:00 with the sky rising from 460 to 4600 ADU a frame.
+def test_the_grid_ends_with_the_last_half_dark_hour():
+    from control.slot_plan import dark_hour_grid
+    dusk = datetime(2026, 11, 10, 18, 10)
+    assert dark_hour_grid(dusk, datetime(2026, 11, 11, 5, 0, 30))[-1] == datetime(2026, 11, 11, 4, 0)
+    assert dark_hour_grid(dusk, datetime(2026, 11, 11, 5, 29))[-1] == datetime(2026, 11, 11, 4, 0)
+    assert dark_hour_grid(dusk, datetime(2026, 11, 11, 5, 30))[-1] == datetime(2026, 11, 11, 5, 0)
+    assert dark_hour_grid(dusk, datetime(2026, 11, 11, 4, 59))[-1] == datetime(2026, 11, 11, 4, 0)
+    assert dark_hour_grid(dusk, datetime(2026, 11, 11, 5, 0, 30))[0] == datetime(2026, 11, 10, 19, 0)
+    assert dark_hour_grid(datetime(2026, 6, 21, 23, 50), datetime(2026, 6, 22, 0, 10)) == []
+
+
+def test_the_last_slot_ends_at_the_dawn_minute():
+    dawn = HOURS[-1] + timedelta(minutes=40)                   # 04:40: the 04:00 hour is in
+    rows = [row("a", "++++----"), row("b", "----++++")]
+    s = plan_slots(rows, HOURS, WX_ALL, min_slot_hours=2, dark_end=dawn)
+    assert [x.name for x in s] == ["a", "b"]
+    assert s[0].end == HOURS[4]                                # an inner slot is untouched
+    assert s[1].end == dawn and s[1].good_hours == 4
+    assert window_for(rows[1], HOURS, WX_ALL, dark_end=dawn).end == dawn
+    assert window_for(rows[1], HOURS, WX_ALL).end == HOURS[-1] + timedelta(hours=1)
+    # a capped block reserved at the dawn edge ends there too
+    s = plan_slots([row("v1", "++++++++", priority=9), row("a", "++++++++")], HOURS, WX_ALL,
+                   min_slot_hours=2, max_slots=3, max_hours={"v1": 1}, dark_end=dawn)
+    assert max(x.end for x in s) == dawn

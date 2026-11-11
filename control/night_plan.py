@@ -75,13 +75,16 @@ def read_queue_caps(instructions_path) -> dict:
         return {}
 
 
-def slots_for(rows, dark_hours, weather_by_hour, caps: dict, nina_cfg: dict) -> list:
-    """The night's slots from a ranking. Same call the scheduler always made."""
+def slots_for(rows, dark_hours, weather_by_hour, caps: dict, nina_cfg: dict,
+              dark_end=None) -> list:
+    """The night's slots from a ranking. Same call the scheduler always made.
+    *dark_end* is astronomical dawn: the last slot ends there, not at the top
+    of the hour after it (2026-11-11)."""
     from control import slot_plan
     return slot_plan.plan_slots(rows, dark_hours, weather_by_hour,
                                 min_slot_hours=float(nina_cfg.get("min_slot_hours", 2.0)),
                                 max_slots=int(nina_cfg.get("max_slots", 2)),
-                                max_hours=caps)
+                                max_hours=caps, dark_end=dark_end)
 
 
 def slots_record(slots) -> list:
@@ -411,8 +414,9 @@ def plan_tonight(instructions_path: Optional[str] = None) -> dict:
     path = instructions_path or os.path.join(
         os.path.abspath(os.path.join(os.path.dirname(__file__), "..")), cfg["location"]["instructions"])
     rows, dark_hours, weather_by_hour = v.rank_targets_tonight(path, verbose=False)
+    dark_end = getattr(v, "last_dark_window", (None, None))[1]
     slots = slots_for(rows, dark_hours, weather_by_hour, read_queue_caps(path),
-                      cfg.get("nina", {})) if rows and dark_hours else []
+                      cfg.get("nina", {}), dark_end=dark_end) if rows and dark_hours else []
     plan = decide(rows, slots)
     try:
         plan = apply_disk(plan, read_disk(cfg))

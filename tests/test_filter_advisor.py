@@ -29,11 +29,26 @@ def test_a_soft_luminance_still_needs_time():
 
 def test_ha_joins_a_galaxy_that_has_ha_and_the_fifth_filter_sits_out():
     adv = fa.advise(frames({"L": [2.1] * 20, "R": [2.3] * 20, "G": [2.3] * 20,
-                            "B": [2.3] * 22, "Ha": [2.7] * 18}), "galaxy")
+                            "B": [2.3] * 22, "Ha": [2.7] * 18}), "galaxy", ha_gain_set=True)
     assert "Ha" in adv["plan"]
     assert len(adv["plan"]) <= fa.MAX_FILTERS
     assert "B" not in adv["plan"]                     # the smallest need waits a night
     assert any("sits out" in r for r in adv["reasons"])
+
+
+def test_ha_sits_out_of_a_galaxy_until_the_narrowband_gain_is_on():
+    # NGC 2276, 2026-11-11: 21 Hα frames at gain 0 recorded 0.45 ADU a frame,
+    # nothing, and the advisor had given Hα half the slot. Without an Hα entry
+    # in nina.gain the galaxy's set is LRGB however the entry or the frames
+    # on disk ask for Hα; the nebula rule is untouched.
+    have = frames({"L": [2.1] * 20, "R": [2.3] * 20, "G": [2.3] * 20, "B": [2.3] * 10, "Ha": [2.7] * 21})
+    adv = fa.advise(have, "galaxy", {"recipe": "HALRGB"})
+    assert "Ha" not in adv["plan"] and "Ha" not in adv["need"]
+    assert any("sits out" in r and "gain" in r for r in adv["reasons"])
+    assert "Ha" in fa.advise(have, "galaxy", {"recipe": "HALRGB"}, ha_gain_set=True)["need"]
+    assert "Ha" in fa.advise(have, "galaxy", {"recipe": "HALRGB"}, galaxy_ha_needs_gain=False)["need"]
+    neb = fa.advise(frames({"Ha": [2.4] * 10, "O-III": [2.6] * 10, "S-II": [2.6] * 10}), "nebula")
+    assert "Ha" in neb["need"]
 
 
 def test_a_monitor_target_keeps_its_own_plan():
@@ -138,10 +153,14 @@ def test_a_weak_line_can_finish_a_target():
 
 
 def test_advisor_settings_read_the_config():
-    assert fa.advisor_settings({}) == {"weak_line_ratio": fa.WEAK_LINE_RATIO,
-                                       "weak_line_min_frames": fa.WEAK_LINE_MIN_FRAMES}
+    base = {"weak_line_ratio": fa.WEAK_LINE_RATIO, "weak_line_min_frames": fa.WEAK_LINE_MIN_FRAMES,
+            "galaxy_ha_needs_gain": True, "ha_gain_set": False}
+    assert fa.advisor_settings({}) == base
     assert fa.advisor_settings({"nina": {"advisor": {"weak_line_ratio": 0.2, "weak_line_min_frames": 9}}}) \
-        == {"weak_line_ratio": 0.2, "weak_line_min_frames": 9}
+        == dict(base, weak_line_ratio=0.2, weak_line_min_frames=9)
+    # The narrowband gain switch is read from the gain table, the rule's own flag from advisor
+    assert fa.advisor_settings({"nina": {"gain": {"Ha": [26, 10]}}})["ha_gain_set"] is True
+    assert fa.advisor_settings({"nina": {"advisor": {"galaxy_ha_needs_gain": False}}})["galaxy_ha_needs_gain"] is False
 
 
 # The curve (2026-11-01): stack SNR weights a shortfall; with every goal met

@@ -49,6 +49,39 @@ from datetime import datetime, timedelta
 from typing import Optional
 
 
+# An hour of the grid is dark when at least this much of it is before
+# astronomical dawn (dark_hour_grid, 2026-11-11). The grid used to admit any
+# hour that STARTED before dawn: with dawn at 05:00:30 the 05:00 hour was in,
+# the last slot ended 06:00, and NGC 2276's final hour on 11-10/11 was shot
+# with the sky rising from 460 to 4600 ADU a frame. Now the hour is in when
+# half of it is dark, and the slot's end is clipped to the dawn minute
+# (plan_slots dark_end), so nothing is planned past astronomical dawn.
+MIN_DARK_MINUTES = 30
+
+
+def dark_hour_grid(start_of_dark: datetime, end_of_dark: datetime,
+                   min_dark_minutes: int = MIN_DARK_MINUTES) -> list:
+    """The night's planning hours: whole clock hours from the first one that
+    begins after astronomical dusk to the last with *min_dark_minutes* of dark
+    left before astronomical dawn. Pure."""
+    t = start_of_dark.replace(minute=0, second=0, microsecond=0)
+    if t < start_of_dark:
+        t += timedelta(hours=1)
+    out = []
+    while t + timedelta(minutes=min_dark_minutes) <= end_of_dark:
+        out.append(t)
+        t += timedelta(hours=1)
+    return out
+
+
+def _clip_end(slot: "Slot", dark_end) -> "Slot":
+    """The slot ended at astronomical dawn when its hour runs past it."""
+    if dark_end is None or slot.end <= dark_end or slot.start >= dark_end:
+        return slot
+    return Slot(slot.name, slot.start, dark_end, slot.good_hours, slot.priority,
+                getattr(slot, "filters", None))
+
+
 @dataclass(frozen=True)
 class Slot:
     name: str
@@ -86,25 +119,30 @@ def _window(flags, dark_hours, lo=None, hi=None):
     return start, end, len(idx)
 
 
-def window_for(row, dark_hours, weather_by_hour) -> Optional[Slot]:
+def window_for(row, dark_hours, weather_by_hour, dark_end=None) -> Optional[Slot]:
     """One target's whole usable window tonight as a Slot, or None.
 
     The end is the hour after the last GOOD hour -- above the treeline, inside
     the dark hours and forecast clear -- so it is the earliest of horizon,
     dawn and weather. This is the hard end a sequence gets for that target
-    whether it runs alone or last in a two-slot night.
+    whether it runs alone or last in a two-slot night. *dark_end* is
+    astronomical dawn: a window whose last hour straddles it ends there.
     """
     if not dark_hours:
         return None
     w = _window(_good_flags(row, dark_hours, weather_by_hour), dark_hours)
     if w is None:
         return None
-    return Slot(row[0], w[0], w[1], w[2], int(row[6]))
+    return _clip_end(Slot(row[0], w[0], w[1], w[2], int(row[6])), dark_end)
 
 
 def plan_slots(rows, dark_hours, weather_by_hour, min_slot_hours: float = 2.0,
-               max_slots: int = 2, max_hours: Optional[dict] = None) -> list:
+               max_slots: int = 2, max_hours: Optional[dict] = None,
+               dark_end: Optional[datetime] = None) -> list:
     """The night's slots, in the order they run. Empty if nothing is usable.
+
+    *dark_end* is astronomical dawn (2026-11-11): the slot whose last planning
+    hour straddles it ends at that minute, not at the top of the next hour.
 
     *max_hours* is {dso_name: hours} for targets that want only a short
     block a night (the instruction's ``max_hours``; 2026-10-08, for the M31
@@ -173,7 +211,7 @@ def plan_slots(rows, dark_hours, weather_by_hour, min_slot_hours: float = 2.0,
             others = [x for x in rows if x[0] not in names]
             rest = _plan_main_and_gaps(others, dark_hours, wx, min_slot_hours, max_slots - len(reserved), caps)
             plan = sorted(rest + reserved, key=lambda x: x.start)
-    return plan
+    return [_clip_end(s, dark_end) for s in plan]
 
 
 def _plan_main_and_gaps(rows, dark_hours, weather_by_hour, min_slot_hours, max_slots, caps) -> list:

@@ -1287,14 +1287,16 @@ def rank_targets_tonight(instructions_path: Path | str, verbose: bool = False):
     for k in range(len(aq_hours)):
         if aq_hours[k] not in pm25_aqi_by_hour:
             pm25_aqi_by_hour[aq_hours[k]] = aq_pm25_aqi[k]
-    # Build the list of full hours within the dark window
-    t = start_of_dark.replace(minute=0, second=0, microsecond=0)
-    if t < start_of_dark:
-        t += datetime.timedelta(hours=1)
-    dark_hours: list[datetime.datetime] = []
-    while t <= end_of_dark:
-        dark_hours.append(t)
-        t += datetime.timedelta(hours=1)
+    # The planning hours: whole clock hours from the first after astronomical
+    # dusk to the last with half an hour of dark before astronomical dawn
+    # (control/slot_plan.dark_hour_grid, 2026-11-11; before, an hour that
+    # merely STARTED before dawn was in, and the last slot ran to the top of
+    # the hour after it). The window itself is kept for the slot planner,
+    # which ends the last slot at the dawn minute.
+    from control.slot_plan import dark_hour_grid
+    dark_hours: list[datetime.datetime] = dark_hour_grid(start_of_dark, end_of_dark)
+    global last_dark_window
+    last_dark_window = (start_of_dark, end_of_dark)
 
     if not dark_hours:
         if verbose:
@@ -1399,6 +1401,10 @@ last_slots: list = []
 # {dso: {"held": hours, "worst": worth, "mode"}} from the last ranking: the
 # hours the moon rule held, for the `tonight` report.
 last_moon_notes: dict = {}
+# (astronomical dusk, astronomical dawn) of the night rank_targets_tonight
+# last planned, kept beside the return so its chat callers are untouched;
+# control/night_plan reads the dawn to end the last slot there (2026-11-11).
+last_dark_window: tuple = (None, None)
 
 
 def moon_note_lines(notes: dict) -> list:
@@ -1428,7 +1434,7 @@ def window_tonight(instructions_path: Path | str, dso_name: str):
     rows, dark_hours, weather_by_hour = rank_targets_tonight(instructions_path, verbose=False)
     for r in rows:
         if _same_target(r[0], dso_name):
-            return _sp.window_for(r, dark_hours, weather_by_hour)
+            return _sp.window_for(r, dark_hours, weather_by_hour, dark_end=last_dark_window[1])
     return None
 
 
@@ -1459,7 +1465,8 @@ def best_object_tonight(instructions_path: Path | str) -> tuple[str, Optional[da
         from control import night_plan as _np
         last_slots = _np.slots_for(rows, dark_hours, weather_by_hour,
                                    _np.read_queue_caps(instructions_path),
-                                   config.data().get("nina", {}))
+                                   config.data().get("nina", {}),
+                                   dark_end=last_dark_window[1])
     except Exception:
         LOGGER.exception("slot plan failed; single slot")
         last_slots = []

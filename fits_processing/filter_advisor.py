@@ -66,6 +66,17 @@ WEAK_LINES = ("S-II", "O-III")
 # (stacker._fib_counts moves the fitted points); it is smooth otherwise, so it
 # can weigh a ratio rounded to whole numbers but is not read as a fine number.
 SNR_WEIGHT_CAP = 4.0
+# Hα on a GALAXY needs the narrowband gain (2026-11-11). At gain 0 a 300 s
+# frame of a galaxy's HII regions records below one count a pixel: NGC 2276's
+# 21 Hα frames of 11-10/11 measured 0.45 ADU a frame against the broadband
+# channels' 2.6-12.5, the HALRGB and LRGB composites differed by a third of a
+# grey level, and the advisor had given Hα half the slot. A nebula at gain 0
+# is fine (IC 410 Hα 3.6 ADU a frame), so this is the galaxy rule only: Hα
+# joins a galaxy's set when cfg["nina"]["gain"] carries an entry for it, the
+# switch to the high-conversion-gain mode that nebulae do not need. The
+# measured level cannot be the test: IC 410's S-II, worth having, sits at
+# 0.68 ADU a frame and SNR 0.92 beside NGC 2276's Hα at 0.45 and 0.83.
+GALAXY_HA_NEEDS_GAIN = True
 
 _CANON = {"l": "L", "lum": "L", "luminance": "L", "r": "R", "red": "R", "g": "G", "green": "G",
           "b": "B", "blue": "B", "ha": "Ha", "halpha": "Ha", "h-alpha": "Ha",
@@ -125,7 +136,9 @@ def advise(frames: list, obj_type: str, entry: Optional[dict] = None,
            emission: Optional[dict] = None,
            weak_line_ratio: float = WEAK_LINE_RATIO,
            weak_line_min_frames: int = WEAK_LINE_MIN_FRAMES,
-           curve: Optional[dict] = None) -> dict:
+           curve: Optional[dict] = None,
+           ha_gain_set: bool = False,
+           galaxy_ha_needs_gain: bool = GALAXY_HA_NEEDS_GAIN) -> dict:
     """Tonight's filter ratio for one target, with the reasons. Pure.
 
     obj_type: "galaxy" / "nebula" / anything else (treated as galaxy: broadband).
@@ -140,6 +153,10 @@ def advise(frames: list, obj_type: str, entry: Optional[dict] = None,
            weights a shortfall by stack SNR, and with every goal met sends
            the night to the filters whose curve is not flat. Never changes
            "need" or "action", which auto-stop and the board read.
+    ha_gain_set: cfg["nina"]["gain"] carries Hα (the narrowband gain is on).
+           With *galaxy_ha_needs_gain* and no entry, Hα sits out of a galaxy's
+           set however the entry or the frames on disk ask for it
+           (GALAXY_HA_NEEDS_GAIN); a nebula is unaffected.
     -> {"dso", "plan": {filter: ratio} or None, "reasons": [str], "need": {...},
         "have": tally, "action": "plan"|"monitor"|"done", "emission": {...}}
     """
@@ -161,9 +178,14 @@ def advise(frames: list, obj_type: str, entry: Optional[dict] = None,
 
     fset = list(BASE_SET[kind])
     if kind == "galaxy" and ("Ha" in have or str(entry.get("recipe", "")).upper() == "HALRGB"):
-        fset.append("Ha")
-        reasons.append("Hα joins: %s" % ("%d Hα frames already" % have["Ha"]["frames"]
-                                          if "Ha" in have else "the entry asks for HALRGB"))
+        if galaxy_ha_needs_gain and not ha_gain_set:
+            reasons.append("Hα sits out: at gain 0 a galaxy's HII regions record below one count "
+                           "a frame (NGC 2276, 21 frames at 0.45 ADU, 2026-11-11); it joins when "
+                           "nina.gain carries Ha")
+        else:
+            fset.append("Ha")
+            reasons.append("Hα joins: %s" % ("%d Hα frames already" % have["Ha"]["frames"]
+                                              if "Ha" in have else "the entry asks for HALRGB"))
     detail = DETAIL[kind]
     goals = GOALS[kind]
     need = {}
@@ -339,11 +361,15 @@ def advisor_settings(cfg: Optional[dict] = None) -> dict:
         if cfg is None:
             from configs import config
             cfg = config.data()
-        a = ((cfg or {}).get("nina") or {}).get("advisor") or {}
+        nina = (cfg or {}).get("nina") or {}
+        a = nina.get("advisor") or {}
         return {"weak_line_ratio": float(a.get("weak_line_ratio", WEAK_LINE_RATIO)),
-                "weak_line_min_frames": int(a.get("weak_line_min_frames", WEAK_LINE_MIN_FRAMES))}
+                "weak_line_min_frames": int(a.get("weak_line_min_frames", WEAK_LINE_MIN_FRAMES)),
+                "galaxy_ha_needs_gain": bool(a.get("galaxy_ha_needs_gain", GALAXY_HA_NEEDS_GAIN)),
+                "ha_gain_set": "Ha" in (nina.get("gain") or {})}
     except Exception:  # noqa: BLE001
-        return {"weak_line_ratio": WEAK_LINE_RATIO, "weak_line_min_frames": WEAK_LINE_MIN_FRAMES}
+        return {"weak_line_ratio": WEAK_LINE_RATIO, "weak_line_min_frames": WEAK_LINE_MIN_FRAMES,
+                "galaxy_ha_needs_gain": GALAXY_HA_NEEDS_GAIN, "ha_gain_set": False}
 
 
 def emission_for(dso: str) -> dict:
