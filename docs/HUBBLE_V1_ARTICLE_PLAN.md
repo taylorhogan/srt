@@ -98,6 +98,15 @@ for different readers. Design decisions, in the order they matter:
   decide where the line goes?", and the top level answers with the
   Fourier terms and the weights. Every section at every level but the
   top ends on such a question, with the step up beside it.
+- **The peek.** The owner's aim for the youngest reader is that she sees
+  there is more beneath the story even if she never climbs: the three
+  dots by every heading and the one question at the end of each section
+  are that peek, and they are the only signs of depth on the page.
+- **A whole section at one level, never a dive per sentence** (owner,
+  2026-11-12: hyperlinks get difficult; this is what the owner has always wanted
+  books to do). No in-line links to deeper text, no footnotes, no terms
+  that open on hover. The unit of depth is the section, the handle is
+  the one question at its end, and the text swaps as a block.
 - **Curiosity is local, so the step up is per section.** A reader who
   wants more about why the star pulsates should be able to climb that
   section alone and stay at the story level everywhere else. The switch
@@ -114,8 +123,14 @@ for different readers. Design decisions, in the order they matter:
 - **Three readers, named by what they are about to do, not by grade.**
   Grade labels make adults choose the top one out of pride and stop
   reading; staircase labels invite the climb. Working names: *The
-  story*, *How we know*, *All of it*. The readers behind them: one
-  curious twelve-year-old; someone who has had a physics class (inverse
+  story*, *How we know*, *Show the work* (the owner's choice, 2026-11-12:
+  each name says what the reader gets, and the third answers the "yes,
+  but how exactly" the second leaves hanging). The readers behind them: a first
+  grader being read to by a grandparent (the owner's granddaughter is the
+  first reader, 2026-11-12), so the story level is written to be read
+  aloud: short sentences, the pictures carrying the telling, one big
+  number per section kept because children like big numbers, and the
+  closing question is the kind a child asks; someone who has had a physics class (inverse
   square law, magnitudes as a log scale, what a relation with a zero
   point is, what an error bar means; equations shown once, not
   derived); and the present text (Fourier fit, weighted least squares,
@@ -136,6 +151,10 @@ for different readers. Design decisions, in the order they matter:
   up.
 - **Gallery cards are unchanged.** The two-paragraph entry on the site is
   one voice. The staircase belongs to the science article.
+
+**Replace, not append** (owner, 2026-11-12): stepping up swaps the
+section's text in place; the simpler text does not stay above the deeper
+one, since each level is a complete telling of the same facts.
 
 Mechanics on the page: three `<div data-level>` blocks per section; a
 three-step switch at the top of `<main>` that sets every section; a
