@@ -3,6 +3,7 @@
 Read-only by construction; these pin down what the small screen is told,
 above all that it never says SHUT or OPEN on a read the gate would not trust.
 """
+import pytest
 from datetime import datetime
 from types import SimpleNamespace
 
@@ -288,6 +289,7 @@ def test_chart_draws_a_star_where_the_photo_crop_puts_it():
 
 
 def test_twilight_is_the_next_astronomical_dawn_or_dusk():
+    pytest.importorskip("astral")      # not on the bare CI runner
     lat, lon, tz = 41.8096, -72.2, "America/New_York"
     night = dash.next_twilight(datetime(2026, 11, 14, 23, 0), lat, lon, tz)
     assert night["k"] == "dawn" and night["at"].startswith("05:")      # ~05:2x EST
@@ -333,6 +335,7 @@ def test_cloud_strip_falls_back_to_best_match_and_says_no_clear_hours():
 
 
 def test_night_window_is_the_night_in_progress_before_dawn():
+    pytest.importorskip("astral")      # not on the bare CI runner
     lat, lon, tz = 41.8096, -72.2, "America/New_York"
     dusk, dawn = dash.night_window(datetime(2026, 11, 15, 3, 0), lat, lon, tz)
     assert dusk.day == 14 and dawn.day == 15
