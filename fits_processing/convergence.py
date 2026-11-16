@@ -508,7 +508,7 @@ def progress_summary(
     return " ".join(parts)
 
 
-def is_dso_done(dso_name: str) -> bool:
+def is_dso_done(dso_name: str, ignore=()) -> bool:
     """True if every imaged filter has a flat tail AND low absolute RMSE AND min frames.
 
     Entries without ``calibrated: true`` were measured on the old uncalibrated
@@ -517,6 +517,12 @@ def is_dso_done(dso_name: str) -> bool:
     thresholds would call almost anything done, so they count as not-yet-known
     and the target gets re-measured. That errs toward imaging a target twice
     rather than abandoning one early.
+
+    *ignore* names filters left out of the judgement: the ones the filter
+    advisor has taken out of the target's set (advise()["sat_out"]), whose
+    frames on disk would otherwise hold the verdict forever -- NGC 2276's 21
+    gain-0 Hα frames, a curve that can never flatten, kept its converged LRGB
+    in the queue (2026-11-16). Every filter ignored is not done.
     """
     data = load_convergence()
     key = dso_name.lower().replace(" ", "")
@@ -526,7 +532,11 @@ def is_dso_done(dso_name: str) -> bool:
     slope_threshold = _threshold()
     rmse_threshold = _rmse_threshold()
     min_frames = _min_frames()
-    for info in filters.values():
+    skip = {str(f).lower() for f in ignore or ()}
+    judged = {f: i for f, i in filters.items() if str(f).lower() not in skip}
+    if not judged:
+        return False
+    for info in judged.values():
         if not info.get("calibrated"):
             return False
         if info.get("frame_count", 0) < min_frames:

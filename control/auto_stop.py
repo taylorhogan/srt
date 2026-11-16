@@ -219,15 +219,18 @@ def candidates(rows: list, is_done_fn: Callable[[str], bool],
                 out.append(v)
             continue
         try:
-            done = bool(is_done_fn(dso))
-        except Exception:                      # noqa: BLE001
-            _logger.exception("auto-stop: convergence verdict failed for %s", dso)
-            done = False
-        try:
             adv = advise_fn(dso, row)
         except Exception:                      # noqa: BLE001
             _logger.exception("auto-stop: advisor verdict failed for %s", dso)
             adv = None
+        # Filters the advisor left out of the set (gain-0 Hα on a galaxy) are
+        # left out of the curve verdict too (2026-11-16, NGC 2276).
+        sat_out = list((adv or {}).get("sat_out") or ())
+        try:
+            done = bool(is_done_fn(dso, ignore=sat_out) if sat_out else is_done_fn(dso))
+        except Exception:                      # noqa: BLE001
+            _logger.exception("auto-stop: convergence verdict failed for %s", dso)
+            done = False
         v = verdict(dso, done, adv)
         if not v["done"] and cap > 0:
             c = cap_verdict(dso, adv, cap)
@@ -366,7 +369,8 @@ def is_finished(dso: str, row: Optional[dict] = None, cfg: Optional[dict] = None
             from configs import config
             cfg = config.data()
         adv = advise_offline(dso, row or {})
-        v = verdict(dso, bool(is_dso_done(dso)), adv)
+        sat_out = list((adv or {}).get("sat_out") or ())
+        v = verdict(dso, bool(is_dso_done(dso, ignore=sat_out) if sat_out else is_dso_done(dso)), adv)
         if v["done"]:
             return True
         return cap_verdict(dso, adv, cap_factor(cfg)) is not None

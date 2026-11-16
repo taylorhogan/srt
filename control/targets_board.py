@@ -241,7 +241,8 @@ def gather(root, cfg: dict, now: Optional[datetime] = None) -> dict:
                         (d / "frame_stats.json").read_text(encoding="utf-8")) if isinstance(r, dict))
             except Exception:  # noqa: BLE001
                 nights = 0
-            return progress(advice, conv_mod.is_dso_done(dso), nights, auto_stop.cap_factor(cfg))
+            return progress(advice, conv_mod.is_dso_done(dso, ignore=(advice or {}).get("sat_out") or ()),
+                            nights, auto_stop.cap_factor(cfg))
         except Exception:  # noqa: BLE001
             return None
     return build(registry, rows, conv, plan, drafts, decisions, site, flags, now, progress_fn=_progress)

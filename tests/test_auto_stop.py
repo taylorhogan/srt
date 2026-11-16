@@ -251,3 +251,28 @@ def test_a_converged_target_in_the_gallery_is_published():
             {"dso": "hcg92", "status": "waiting"},         # on the site but still being imaged
             {"dso": "melotte15", "status": "converged"}]   # not on the site
     assert auto_stop.published(rows, arts) == [("ic410", "ic410")]
+
+
+def test_a_filter_the_advisor_sat_out_does_not_hold_the_curve_verdict():
+    """NGC 2276, 2026-11-16: converged LRGB held in the queue by 21 gain-0 Hα
+    frames whose curve can never flatten, a filter the advisor had already
+    taken out of the set."""
+    seen = {}
+
+    def is_done(d, ignore=()):
+        seen["ignore"] = list(ignore)
+        return "Ha" in ignore
+    adv = dict(DONE_ADVICE, sat_out=["Ha"])
+    rows = [{"dso": "ngc2276", "status": "waiting"}]
+    found = A.candidates(rows, is_done, lambda d, r: adv)
+    assert seen["ignore"] == ["Ha"] and [v["dso"] for v in found] == ["ngc2276"]
+
+
+def test_is_dso_done_skips_ignored_filters(monkeypatch):
+    from fits_processing import convergence as C
+    flat = {"calibrated": True, "frame_count": 30, "tail_slope_pct": 0.1, "final_rmse_pct": 2.0}
+    steep = {"calibrated": True, "frame_count": 21, "tail_slope_pct": 4.8, "final_rmse_pct": 28.0}
+    monkeypatch.setattr(C, "load_convergence", lambda: {"g": {"L": flat, "R": flat, "Ha": steep}})
+    assert not C.is_dso_done("g")
+    assert C.is_dso_done("g", ignore=["Ha"])
+    assert not C.is_dso_done("g", ignore=["L", "R", "Ha"])     # nothing left to judge

@@ -158,7 +158,8 @@ def advise(frames: list, obj_type: str, entry: Optional[dict] = None,
            set however the entry or the frames on disk ask for it
            (GALAXY_HA_NEEDS_GAIN); a nebula is unaffected.
     -> {"dso", "plan": {filter: ratio} or None, "reasons": [str], "need": {...},
-        "have": tally, "action": "plan"|"monitor"|"done", "emission": {...}}
+        "have": tally, "action": "plan"|"monitor"|"done", "emission": {...},
+        "sat_out": [filters on disk this target's set leaves out]}
     """
     entry = entry or {}
     tonight = tonight or {}
@@ -168,7 +169,8 @@ def advise(frames: list, obj_type: str, entry: Optional[dict] = None,
     have = tally(frames, entry.get("exposure_s"))
     reasons = []
     res = {"dso": dso or entry.get("dso", ""), "kind": kind, "have": have, "need": {},
-           "plan": None, "reasons": reasons, "tonight": tonight, "emission": emission}
+           "plan": None, "reasons": reasons, "tonight": tonight, "emission": emission,
+           "sat_out": []}
 
     if entry.get("lightcurve"):
         reasons.append("monitor target (lightcurve): its own fixed plan stands")
@@ -179,6 +181,10 @@ def advise(frames: list, obj_type: str, entry: Optional[dict] = None,
     fset = list(BASE_SET[kind])
     if kind == "galaxy" and ("Ha" in have or str(entry.get("recipe", "")).upper() == "HALRGB"):
         if galaxy_ha_needs_gain and not ha_gain_set:
+            # Named in the result, so the convergence verdict skips it too
+            # (auto_stop.is_finished): 21 Hα frames that can never flatten kept
+            # NGC 2276's LRGB from retiring (2026-11-16).
+            res["sat_out"] = ["Ha"]
             reasons.append("Hα sits out: at gain 0 a galaxy's HII regions record below one count "
                            "a frame (NGC 2276, 21 frames at 0.45 ADU, 2026-11-11); it joins when "
                            "nina.gain carries Ha")

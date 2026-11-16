@@ -45,6 +45,8 @@ def test_ha_sits_out_of_a_galaxy_until_the_narrowband_gain_is_on():
     adv = fa.advise(have, "galaxy", {"recipe": "HALRGB"})
     assert "Ha" not in adv["plan"] and "Ha" not in adv["need"]
     assert any("sits out" in r and "gain" in r for r in adv["reasons"])
+    assert adv["sat_out"] == ["Ha"]
+    assert fa.advise(have, "galaxy", {"recipe": "HALRGB"}, ha_gain_set=True)["sat_out"] == []
     assert "Ha" in fa.advise(have, "galaxy", {"recipe": "HALRGB"}, ha_gain_set=True)["need"]
     assert "Ha" in fa.advise(have, "galaxy", {"recipe": "HALRGB"}, galaxy_ha_needs_gain=False)["need"]
     neb = fa.advise(frames({"Ha": [2.4] * 10, "O-III": [2.6] * 10, "S-II": [2.6] * 10}), "nebula")
