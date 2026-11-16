@@ -285,3 +285,82 @@ def test_chart_draws_a_star_where_the_photo_crop_puts_it():
     assert a.shape == (240, 240)
     assert a[int(0.6 * 240), int(0.3 * 240)] < 50                          # black star, there
     assert a[120, 120] > 200 and a[2:10, 2:10].min() > 200                 # white; corner star clipped
+
+
+def test_twilight_is_the_next_astronomical_dawn_or_dusk():
+    lat, lon, tz = 41.8096, -72.2, "America/New_York"
+    night = dash.next_twilight(datetime(2026, 11, 14, 23, 0), lat, lon, tz)
+    assert night["k"] == "dawn" and night["at"].startswith("05:")      # ~05:2x EST
+    assert 5 * 3600 < night["s"] < 7 * 3600
+    day = dash.next_twilight(datetime(2026, 11, 14, 12, 0), lat, lon, tz)
+    assert day["k"] == "dusk" and day["at"].startswith("18:")          # ~18:0x EST
+    morning = dash.next_twilight(datetime(2026, 11, 14, 6, 30), lat, lon, tz)   # after dawn
+    assert morning["k"] == "dusk"
+
+
+def _hours(*hh):
+    from zoneinfo import ZoneInfo
+    from datetime import timedelta
+    tz = ZoneInfo("America/New_York")
+    base = datetime(2026, 11, 14, 0, tzinfo=tz)
+    return [base + timedelta(hours=h if h >= 12 else h + 24) for h in hh]
+
+
+def test_cloud_strip_marks_splits_and_the_longest_clear_run():
+    from datetime import timezone
+    hours = _hours(23, 0, 2, 3, 4)
+    nws = {h.astimezone(timezone.utc): c for h, c in zip(hours, (48, 38, 18, 10, 13))}
+    key = lambda h: h.strftime("%Y-%m-%dT%H:00")
+    models = {"best_match": dict(zip(map(key, hours), (100, 100, 87, 9, 37))),
+              "ecmwf_ifs025": dict(zip(map(key, hours), (25, 19, 20, 29, 33))),
+              "icon_seamless": dict(zip(map(key, hours), (100, 100, 50, 53, 63))),
+              "gem_seamless": dict(zip(map(key, hours), (0, 0, 0, 0, 0))),
+              "ncep_nbm_conus": dict(zip(map(key, hours), (55, 57, 44, 31, 39)))}
+    s = dash.cloud_strip(hours, nws, models, 40, hours[3])
+    by = {r["h"]: r for r in s["h"]}
+    assert by[0]["x"] is True                    # NWS, ECMWF, GEM clear; three cloudy
+    assert by[3]["x"] is False and by[3]["now"] is True
+    assert by[23]["c"] == 48 and s["lim"] == 40
+    assert s["clear"] == "00-05"                 # 00, 02, 03, 04: the hour gap is not a cloud
+
+
+def test_cloud_strip_falls_back_to_best_match_and_says_no_clear_hours():
+    hours = _hours(20, 21)
+    key = lambda h: h.strftime("%Y-%m-%dT%H:00")
+    s = dash.cloud_strip(hours, {}, {"best_match": {key(hours[0]): 90, key(hours[1]): 95}}, 40, hours[0])
+    assert [r["c"] for r in s["h"]] == [90, 95] and s["clear"] == ""
+    assert dash.cloud_strip(hours, {}, {}, 40, hours[0]) is None
+
+
+def test_night_window_is_the_night_in_progress_before_dawn():
+    lat, lon, tz = 41.8096, -72.2, "America/New_York"
+    dusk, dawn = dash.night_window(datetime(2026, 11, 15, 3, 0), lat, lon, tz)
+    assert dusk.day == 14 and dawn.day == 15
+    dusk, dawn = dash.night_window(datetime(2026, 11, 15, 12, 0), lat, lon, tz)
+    assert dusk.day == 15 and dawn.day == 16
+
+
+# --------------------------------------------- the real slot times (11-16)
+
+def test_real_slot_times_replace_the_plans_when_the_timeline_matches():
+    from cmd_processing import dash
+    now = datetime(2026, 11, 16, 13, 0)
+    plan = [{"dso": "a", "start": "2026-11-16T19:00-05:00", "end": "2026-11-16T20:00-05:00"},
+            {"dso": "b", "start": "2026-11-16T21:00-05:00", "end": "2026-11-16T22:00-05:00"}]
+    tl = {"written": "2026-11-16T12:05:00-05:00",
+          "slots": [{"dso": "a", "start": "2026-11-16T18:13-05:00", "end": "2026-11-16T18:43-05:00"},
+                    {"dso": "b", "start": "2026-11-16T18:43-05:00", "end": "2026-11-16T19:43-05:00"}]}
+    got = dash.real_slot_times(plan, tl, now)
+    assert [g["start"][11:16] for g in got] == ["18:13", "18:43"]
+    assert dash.next_slot(got, now) == {"dso": "a", "at": "18:13"}
+
+
+def test_real_slot_times_ignore_a_stale_or_different_timeline():
+    from cmd_processing import dash
+    now = datetime(2026, 11, 16, 13, 0)
+    plan = [{"dso": "a", "start": "2026-11-16T19:00-05:00"}]
+    other = {"written": "2026-11-16T12:05:00-05:00", "slots": [{"dso": "z", "start": "x"}]}
+    stale = {"written": "2026-11-14T12:05:00-05:00", "slots": [{"dso": "a", "start": "x"}]}
+    assert dash.real_slot_times(plan, other, now) is None
+    assert dash.real_slot_times(plan, stale, now) is None
+    assert dash.real_slot_times(plan, None, now) is None

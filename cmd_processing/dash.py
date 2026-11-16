@@ -94,6 +94,30 @@ def _plus(hhmm: str, minutes: int) -> str:
     return "%02d:%02d" % (t // 60, t % 60)
 
 
+TIMELINE_MAX_AGE_H = 20
+
+
+def real_slot_times(slots, timeline, now: datetime) -> Optional[list]:
+    """*slots* with "start"/"end" replaced by the sequence's simulated ones
+    (local/sequence_timeline.json, written at generation: the first slot at
+    astronomical dusk, a capped slot cut at its real start + cap), or None
+    when the timeline is missing, older than TIMELINE_MAX_AGE_H, or names
+    other targets than the plan. Pure (2026-11-16: 11-15's plan said 19:00
+    and the first frame came at 17:56)."""
+    try:
+        rows = (timeline or {}).get("slots") or []
+        written = datetime.fromisoformat(timeline["written"])
+    except Exception:
+        return None
+    age_h = (now.replace(tzinfo=None) - written.replace(tzinfo=None)).total_seconds() / 3600.0
+    if not rows or age_h > TIMELINE_MAX_AGE_H or age_h < -1:
+        return None
+    if [r.get("dso") for r in rows] != [s.get("dso") for s in slots or []]:
+        return None
+    return [dict(s, start=r.get("start") or s.get("start"), end=r.get("end") or s.get("end"))
+            for s, r in zip(slots, rows)]
+
+
 def next_slot(slots, now: datetime) -> Optional[dict]:
     """{"dso", "at"} of the first slot that has not started yet. Pure."""
     for s in slots or []:
@@ -105,7 +129,7 @@ def next_slot(slots, now: datetime) -> Optional[dict]:
 
 def summarize(now: datetime, roof: Optional[dict], scope: str, conductor: Optional[dict],
               plan: Optional[dict], night_summary: str, live: Optional[dict],
-              disk_gb: Optional[float]) -> dict:
+              disk_gb: Optional[float], timeline: Optional[dict] = None) -> dict:
     """The display's whole payload, colors decided. Pure.
 
     *conductor* is /v1/state, *plan* /v1/plan, *live* {"dso", "filter", "n",
@@ -155,6 +179,7 @@ def summarize(now: datetime, roof: Optional[dict], scope: str, conductor: Option
     rec = (plan or {}).get("sunset") or (plan or {}).get("noon") or {}
     p = rec.get("plan") or {}
     slots = p.get("slots") or []
+    slots = real_slot_times(slots, timeline, now) or slots
     tonight = {"image": bool(p.get("will_image")),
                "slots": [{"dso": s["dso"], "at": datetime.fromisoformat(s["start"]).strftime("%H:%M")}
                          for s in slots][:4],
@@ -637,6 +662,165 @@ def read_dew() -> Optional[dict]:
         return None
 
 
+# The twilight page (2026-11-14): the next astronomical (sun at -18 deg) dawn
+# while it is dark, the next astronomical dusk otherwise. Shown always, imaging
+# or not (owner).
+ASTRO_DEPRESSION = 18.0
+
+
+def next_twilight(now: datetime, lat: float, lon: float, tz: str) -> Optional[dict]:
+    """{"k": "dawn"|"dusk", "at": "HH:MM", "s": seconds to it}: the first
+    astronomical dawn or dusk after `now` (tz-aware, or naive local). Pure."""
+    from zoneinfo import ZoneInfo
+    from astral import Observer
+    from astral.sun import dawn, dusk
+    zone = ZoneInfo(tz)
+    now = now.replace(tzinfo=zone) if now.tzinfo is None else now.astimezone(zone)
+    obs = Observer(latitude=lat, longitude=lon)
+    events = []
+    for d in range(3):
+        day = (now + timedelta(days=d)).date()
+        for kind, fn in (("dawn", dawn), ("dusk", dusk)):
+            try:
+                events.append((fn(obs, date=day, tzinfo=zone, depression=ASTRO_DEPRESSION), kind))
+            except ValueError:                      # the sun never reaches -18 that day
+                pass
+    for at, kind in sorted(events):
+        if at > now:
+            return {"k": kind, "at": at.strftime("%H:%M"), "s": int((at - now).total_seconds())}
+    return None
+
+
+def night_window(now: datetime, lat: float, lon: float, tz: str) -> Optional[tuple]:
+    """(astronomical dusk, dawn), tz-aware, of the night in progress, or of
+    tonight once this morning's dawn has passed. Pure."""
+    from zoneinfo import ZoneInfo
+    from astral import Observer
+    from astral.sun import dawn, dusk
+    zone = ZoneInfo(tz)
+    now = now.replace(tzinfo=zone) if now.tzinfo is None else now.astimezone(zone)
+    obs = Observer(latitude=lat, longitude=lon)
+    try:
+        today = now.date()
+        if now < dawn(obs, date=today, tzinfo=zone, depression=ASTRO_DEPRESSION):
+            return (dusk(obs, date=today - timedelta(days=1), tzinfo=zone, depression=ASTRO_DEPRESSION),
+                    dawn(obs, date=today, tzinfo=zone, depression=ASTRO_DEPRESSION))
+        return (dusk(obs, date=today, tzinfo=zone, depression=ASTRO_DEPRESSION),
+                dawn(obs, date=today + timedelta(days=1), tzinfo=zone, depression=ASTRO_DEPRESSION))
+    except ValueError:                              # no astronomical night
+        return None
+
+
+# The cloud page (2026-11-15, owner): the night's planning hours, each with the
+# NWS sky cover the planner uses (Open-Meteo's best match where NWS is silent),
+# judged at the planner's limit, and marked "split" where the other models do
+# not back that verdict: fewer than 2 in 3 of all the sources on its side
+# (2026-11-14/15 00-02 h: NWS, ECMWF and GEM clear; HRRR, ICON and NBM cloudy).
+# HRRR, GFS and best_match come back identical from Open-Meteo, so best_match
+# stands for all three.
+CLOUD_MODELS = ("best_match", "ecmwf_ifs025", "icon_seamless", "gem_seamless", "ncep_nbm_conus")
+SPLIT_AGREE = 2 / 3
+
+
+def cloud_strip(hours: list, nws: dict, models: dict, limit: float, now: datetime) -> Optional[dict]:
+    """{"lim", "h": [{"h": hour, "c": %, "x": split, "now": bool}], "clear": "02-05"}.
+
+    *hours* are tz-aware local hour starts; *nws* {UTC hour: %}; *models*
+    {model: {local "YYYY-mm-ddTHH:00": %}}. An hour no source answers is
+    left out. "clear" is the longest run of hours at or under the limit. Pure."""
+    from datetime import timezone as _tz
+    rows = []
+    for h in hours:
+        key = h.strftime("%Y-%m-%dT%H:00")
+        others = [m[key] for m in models.values() if m.get(key) is not None]
+        c = nws.get(h.astimezone(_tz.utc).replace(minute=0, second=0, microsecond=0))
+        if c is None:
+            c = (models.get("best_match") or {}).get(key)
+        if c is None:
+            continue
+        votes = [c] + others
+        same = sum((v <= limit) == (c <= limit) for v in votes)
+        rows.append({"h": h.hour, "c": int(round(c)), "x": len(votes) > 1 and same / len(votes) < SPLIT_AGREE,
+                     "now": h <= now < h + timedelta(hours=1)})
+    if not rows:
+        return None
+    best = (0, 0)                                   # [start, end) of the longest clear run
+    start = None
+    for i, r in enumerate(rows + [None]):
+        if r is not None and r["c"] <= limit:
+            start = i if start is None else start
+        elif start is not None:
+            if i - start > best[1] - best[0]:
+                best = (start, i)
+            start = None
+    clear = ("%02d-%02d" % (rows[best[0]]["h"], (rows[best[1] - 1]["h"] + 1) % 24)
+             if best[1] > best[0] else "")
+    return {"lim": int(limit), "h": rows, "clear": clear}
+
+
+_cloud_cache: dict = {}
+CLOUD_CACHE_S = 30 * 60
+
+
+def _open_meteo_models(lat: float, lon: float, tz: str) -> dict:
+    """{model: {local hour key: cloud %}} from Open-Meteo, cached 30 min."""
+    import time
+    import requests
+    hit = _cloud_cache.get("om")
+    if hit and time.monotonic() - hit[0] < CLOUD_CACHE_S:
+        return hit[1]
+    r = requests.get("https://api.open-meteo.com/v1/forecast", timeout=10, params={
+        "latitude": lat, "longitude": lon, "hourly": "cloud_cover", "timezone": tz,
+        "models": ",".join(CLOUD_MODELS), "forecast_days": 2, "past_days": 1})
+    r.raise_for_status()
+    hourly = r.json()["hourly"]
+    out = {}
+    for m in CLOUD_MODELS:
+        vals = hourly.get("cloud_cover_" + m)
+        if vals:
+            out[m] = {t: v for t, v in zip(hourly["time"], vals) if v is not None}
+    _cloud_cache["om"] = (time.monotonic(), out)
+    return out
+
+
+def read_clouds(cfg: dict, now: datetime) -> Optional[dict]:
+    try:
+        from zoneinfo import ZoneInfo
+        from control.slot_plan import dark_hour_grid
+        from iris_astronomy import weather
+        loc = cfg["location"]
+        lat, lon, tz = float(loc["latitude"]), float(loc["longitude"]), loc["timezone"]
+        win = night_window(now, lat, lon, tz)
+        if win is None:
+            return None
+        hours = dark_hour_grid(*win)
+        try:
+            nws = weather.get_nws_sky_cover(lat, lon)[1]
+        except Exception:  # noqa: BLE001 -- Open-Meteo alone is still a strip
+            _logger.debug("dash: NWS sky cover failed", exc_info=True)
+            nws = {}
+        try:
+            models = _open_meteo_models(lat, lon, tz)
+        except Exception:  # noqa: BLE001
+            _logger.debug("dash: Open-Meteo models failed", exc_info=True)
+            models = {}
+        limit = float((cfg.get("weather") or {}).get("max_cloud_pct", 40))
+        local = now.replace(tzinfo=ZoneInfo(tz)) if now.tzinfo is None else now
+        return cloud_strip(hours, nws, models, limit, local)
+    except Exception:  # noqa: BLE001 -- no page is a normal answer
+        _logger.debug("dash clouds failed", exc_info=True)
+        return None
+
+
+def read_twilight(cfg: dict, now: datetime) -> Optional[dict]:
+    try:
+        loc = cfg["location"]
+        return next_twilight(now, float(loc["latitude"]), float(loc["longitude"]), loc["timezone"])
+    except Exception:  # noqa: BLE001 -- no page is a normal answer
+        _logger.debug("dash twilight failed", exc_info=True)
+        return None
+
+
 def build(cfg: dict) -> dict:
     """Gather everything and summarize. Blocking: call it off the event loop."""
     from iris import client as conductor
@@ -654,8 +838,14 @@ def build(cfg: dict) -> dict:
     # so at 02:00 the display still shows the plan that started the night.
     night_of = (now - timedelta(hours=12)).strftime("%Y-%m-%d")
     live = read_live(cfg)
+    try:
+        timeline = json.load(open(ROOT / "local" / "sequence_timeline.json",
+                                  encoding="utf-8"))
+    except Exception:  # noqa: BLE001 -- no timeline: the plan's own times
+        timeline = None
     out = summarize(now, read_roof(), read_scope(), conductor.state(2.0),
-                    conductor.get_plan(night_of, 3.0), plan_text, live, disk_gb)
+                    conductor.get_plan(night_of, 3.0), plan_text, live, disk_gb,
+                    timeline=timeline)
     night, frames = read_night(cfg, now)
     out["fwhm"] = fwhm_series(frames)
     # While imaging, the display switches to three big-type pages: the time
@@ -686,6 +876,8 @@ def build(cfg: dict) -> dict:
     out["img"] = ({k: f[k] for k in ("id", "dso", "filter", "fwhm", "at")} if f else None)
     out["sky"] = read_sky()
     out["dew"] = read_dew()
+    out["tw"] = read_twilight(cfg, now)
+    out["cl"] = read_clouds(cfg, now)
     # The sky camera's newest frame (?part=view); the display fetches the
     # picture only when this id changes.
     out["view"] = sky_view_info(view_frame(newest_sky_frame(_capture_dir(cfg)), read_seen())[0])

@@ -84,6 +84,18 @@ SAMPLES       = 7      # points along the track compared with the TLE
 # (real 3-18 deg against false 26-62) because that one also carries the
 # straight-line model's own error on a near-zenith pass.
 MIN_DEG_PER_S = 0.30
+# Look where the TLE says first (2026-11-16). The global consensus asks which
+# straight path the MOST detections agree with, and on a pass that only clips
+# a corner of the frame the station's ~30 s of detections lose to anything
+# longer: 11-14's ISS crossed the top-left corner 18:01:33-18:02:05 while the
+# fit took a 430-frame mover in the south, 59 deg away, and 11-12 went the
+# same way. So the detections within GUIDE_RADIUS_PX of the predicted path at
+# their own time are fitted first, and the whole field only when that finds
+# nothing. 150 px is ~6 deg at the centre of the fisheye: room for a few
+# seconds of clock offset at 20-30 px/s and a day-old TLE, and still a sliver
+# of the frame. The TLE, speed and sunlight checks below judge either fit.
+GUIDE_RADIUS_PX = 150.0
+GUIDE_STEP_S    = 1.0
 
 
 def detect(video, fps, downscale=1, verbose=True):
@@ -173,6 +185,71 @@ def where_was_it(sat_name, times, tle=None):
         return None
 
 
+def predicted_path_px(sat_name, t0, t1, tle=None, step_s=GUIDE_STEP_S, sol=None):
+    """[(t_s, x, y)] where the TLE puts *sat_name* in the camera's pixels,
+    every *step_s* from t0 to t1 (t_s from t0), or None when the plate
+    solution or the TLE is unavailable."""
+    try:
+        if sol is None:
+            from sentry import plate_solve
+            sol = plate_solve.load()
+        if sol is None:
+            return None
+        from sentry import plate_solve
+        span = (t1 - t0).total_seconds()
+        n = max(2, int(span // step_s) + 1)
+        ts_s = [span * k / (n - 1.0) for k in range(n)]
+        pred = where_was_it(sat_name, [t0 + timedelta(seconds=t) for t in ts_s], tle=tle)
+        if pred is None:
+            return None
+        out = []
+        for t, (alt, az, _lit) in zip(ts_s, pred):
+            if alt <= 0:
+                continue
+            x, y = plate_solve.altaz_to_pixel(sol, alt, az)
+            out.append((t, float(np.ravel(x)[0]), float(np.ravel(y)[0])))
+        return out or None
+    except Exception as exc:              # noqa: BLE001
+        print("  (no predicted path: %s: %s)" % (type(exc).__name__, exc))
+        return None
+
+
+def near_path(dets, path, radius=GUIDE_RADIUS_PX):
+    """Indices of *dets* [(t, x, y, ...)] within *radius* px of *path*
+    [(t, x, y)] at their own time (linear interpolation; nothing outside the
+    path's time span). Pure."""
+    if not path or not dets:
+        return []
+    pt = np.array([q[0] for q in path])
+    px = np.array([q[1] for q in path])
+    py = np.array([q[2] for q in path])
+    keep = []
+    for i, d in enumerate(dets):
+        t = d[0]
+        if t < pt[0] or t > pt[-1]:
+            continue
+        ex, ey = np.interp(t, pt, px), np.interp(t, pt, py)
+        if math.hypot(d[1] - ex, d[2] - ey) <= radius:
+            keep.append(i)
+    return keep
+
+
+def guided_consensus(dets, path, tol=TOL_PX, radius=GUIDE_RADIUS_PX):
+    """consensus() on the detections near the predicted path, its mask mapped
+    back onto the whole *dets* list; None when they agree on nothing."""
+    idx = near_path(dets, path, radius)
+    if len(idx) < MIN_INLIERS:
+        return None
+    fit = consensus([dets[i] for i in idx], tol=tol)
+    if fit is None:
+        return None
+    full = np.zeros(len(dets), dtype=bool)
+    full[np.array(idx)[fit["mask"]]] = True
+    fit["mask"] = full
+    fit["guided"] = True
+    return fit
+
+
 def consensus(dets, iters=ITERS, tol=TOL_PX, seed=7):
     """The straight constant-speed path the most detections agree with."""
     if len(dets) < MIN_INLIERS:
@@ -225,6 +302,10 @@ def analyse(recording, downscale=2, tol=TOL_PX, refresh=False):
     base = os.path.splitext(recording)[0]
     meta = json.load(open(base + ".json"))
     video = base + ".h264"
+    # Two passes sharing one burst (station_watch.burst_segments): the second
+    # pass's sidecar names the first's video.
+    if not os.path.exists(video) and meta.get("burst") and os.path.exists(meta["burst"]):
+        video = meta["burst"]
     t0 = datetime.fromisoformat(meta["capture_start"])
     t1 = datetime.fromisoformat(meta["capture_end"])
     p = meta["pass"]
@@ -254,8 +335,16 @@ def analyse(recording, downscale=2, tol=TOL_PX, refresh=False):
         dets, _ = detect(video, fps, downscale=downscale)
         np.savez_compressed(cache, dets=np.array(dets))
         print("cached %d candidates -> %s" % (len(dets), cache))
-    print("finding the consensus track...")
-    fit = consensus(dets, tol=tol)
+    fit = None
+    path = predicted_path_px(p["sat"], t0, t1, tle=meta.get("tle"))
+    if path:
+        print("looking along the predicted path first...")
+        fit = guided_consensus(dets, path, tol=tol)
+        if fit is None:
+            print("  nothing coherent near the predicted path")
+    if fit is None:
+        print("finding the consensus track over the whole frame...")
+        fit = consensus(dets, tol=tol)
     if fit is None:
         print("NO TRACK: no straight constant-speed path collected "
               "%d agreeing frames." % MIN_INLIERS)
@@ -281,7 +370,8 @@ def analyse(recording, downscale=2, tol=TOL_PX, refresh=False):
            "peak": p["peak"], "frames_agreeing": fit["n_inliers"],
            "track_seconds": round(span, 1),
            "speed_px_s": round(speed_px, 2),
-           "candidates": len(dets)}
+           "candidates": len(dets),
+           "guided": bool(fit.get("guided"))}
     try:
         from sentry import plate_solve
         sol = plate_solve.load()

@@ -222,7 +222,8 @@ def test_singleton_providers_are_referenced_not_duplicated(tmp_path):
     walk(seq)
     # one NauticalDuskProvider definition (the template's), the clone refers to it;
     # plus exactly one TimeProvider definition shared by both slots' hard ends
-    assert providers.count("60") == 1 and len(providers) == 2
+    # and one DuskProvider shared by both slots' astronomical-dusk waits
+    assert providers.count("60") == 1 and len(providers) == 3
     assert refs_to_60 == 1
 
 
@@ -374,7 +375,8 @@ def _slots(gap_minutes, monkeypatch):
     from datetime import timedelta
     a_end = datetime(2026, 10, 9, 22, 0)
     monkeypatch.setattr(g, "horizon_rise",
-                        lambda name, ra, dec, after: a_end + timedelta(minutes=gap_minutes))
+                        lambda name, ra, dec, after: (a_end + timedelta(minutes=gap_minutes)
+                                                      if name == "slot two" else after))
     return [
         {"name": "slot one", "ra_hours": 22.79, "dec_degrees": 58.13, "seconds": 7200,
          "start": datetime(2026, 10, 9, 20, 0), "end": a_end},
@@ -748,3 +750,59 @@ def test_a_hard_end_after_the_clocks_fall_back_is_written_in_the_new_wall_clock(
     assert (g.wall_clock(summer).hour, g.wall_clock(summer).minute) == (3, 30)
     naive = datetime(2026, 11, 1, 6, 0)
     assert g.wall_clock(naive) is naive and g.wall_clock(None) is None
+
+
+# ------------------------------- the real timeline and astronomical dusk (11-16)
+
+def test_the_first_exposure_waits_for_astronomical_dusk_after_the_autofocus(tmp_path):
+    seq, _ = _gen(tmp_path, SLOTS)
+    area = g._find_target_area(seq)
+    dsos = [i for i in g._items_of(area) if g._short_type(i) == "DeepSkyObjectContainer"]
+    for dso in dsos:
+        setup = g._setup_of(dso)
+        items = g._items_of(setup)
+        waits = [i for i in items if g._short_type(i) == "WaitForTime"]
+        dusk = waits[-1]
+        prov = dusk["SelectedProvider"]
+        # the first slot defines the provider, the second refers to it
+        assert "DuskProvider" in prov.get("$type", "") or "$ref" in prov
+        assert dusk["MinutesOffset"] == 0
+        kinds = [g._short_type(i) for i in items]
+        if "RunAutofocus" in kinds:
+            assert kinds.index("RunAutofocus") + 1 == items.index(dusk)
+
+
+def test_a_capped_slot_ending_early_parks_across_the_real_gap(tmp_path, monkeypatch):
+    """2026-11-15: hubblev1 capped at 1 h ended at 19:25 on its TimeSpan, not
+    its planned 22:00, and ngc1055 rose at 20:45: 80 minutes tracking a dead
+    field, roof open, because the gap was judged from 22:00."""
+    from datetime import timedelta
+    monkeypatch.setattr(g, "astro_dusk", lambda near: datetime(2026, 11, 15, 18, 13))
+    monkeypatch.setattr(g, "_max_seconds_for", lambda name: 3600 if name == "capped" else None)
+    rise2 = datetime(2026, 11, 15, 20, 45)
+    monkeypatch.setattr(g, "horizon_rise",
+                        lambda name, ra, dec, after: max(after, rise2) if name == "late riser" else after)
+    slots = [
+        {"name": "capped", "ra_hours": 0.71, "dec_degrees": 41.3, "seconds": 3600,
+         "start": datetime(2026, 11, 15, 21, 0), "end": datetime(2026, 11, 15, 22, 0)},
+        {"name": "late riser", "ra_hours": 2.7, "dec_degrees": 0.4, "seconds": 7200,
+         "start": datetime(2026, 11, 15, 22, 0), "end": datetime(2026, 11, 16, 0, 0)},
+    ]
+    out = _generate(tmp_path, slots)
+    assert "ParkScope" in _setup_items(out, 1)
+
+
+def test_simulated_timeline_starts_at_dusk_and_caps_from_the_real_start():
+    from datetime import timedelta
+    dusk = datetime(2026, 11, 15, 18, 13)
+    slots = [{"name": "a", "start": datetime(2026, 11, 15, 19)},
+             {"name": "b", "start": datetime(2026, 11, 15, 21)},
+             {"name": "c", "start": datetime(2026, 11, 15, 22)}]
+    ends = [datetime(2026, 11, 15, 19, 30), datetime(2026, 11, 15, 22), datetime(2026, 11, 16)]
+    caps = [1800, 3600, None]
+    rises = {"a": None, "b": None, "c": datetime(2026, 11, 15, 20, 45)}
+    tl = g.simulate_timeline(slots, ends, caps, dusk,
+                             lambda sl, after: max(after, rises[sl["name"]]) if rises[sl["name"]] else None)
+    assert tl[0] == (dusk, dusk + timedelta(minutes=30), 0.0)
+    assert tl[1][0] == dusk + timedelta(minutes=30) and tl[1][1] == dusk + timedelta(minutes=90)
+    assert tl[2][0] == rises["c"] and tl[2][2] == (rises["c"] - tl[1][1]).total_seconds()

@@ -344,8 +344,11 @@ def _timeline_rows(dso_name: str, best_start, output_path, slots, plans) -> tupl
     sunset = weather.get_sunrise_sunset()[1]
     back = nina_sequence_gen.read_back(output_path)        # [(name, counts, exposures)]
     if slots and len(back) == len(slots):
-        rows = [night_timeline.SlotPlan(s.name, s.start, s.end, counts, exposures)
-                for s, (_name, counts, exposures) in zip(slots, back)]
+        # The real start and end (the sequence's own timeline: astronomical
+        # dusk, caps from the real start), not the planner's grid hours.
+        times = _real_times(slots)
+        rows = [night_timeline.SlotPlan(s.name, a, b, counts, exposures)
+                for s, (a, b), (_name, counts, exposures) in zip(slots, times, back)]
     else:
         start = best_start if best_start is None or getattr(best_start, "tzinfo", None) \
             else best_start.replace(tzinfo=tz)
@@ -563,7 +566,48 @@ def _generate_nina_slots_sequence(slots, plan_filters: bool = False):
                                                       state_script=state_script)
     LOGGER.info("Generated %d-slot Nina sequence: %s", len(slots),
                 "; ".join("%s %s" % (s.name, p) for s, p in zip(slots, plans)))
+    _save_timeline(nina_sequence_gen.LAST_TIMELINE)
     return plans, output_path
+
+
+TIMELINE_PATH = os.path.join(_PROJECT_ROOT, "local", "sequence_timeline.json")
+
+
+def _save_timeline(timeline) -> None:
+    """Write the sequence's simulated timeline (nina_sequence_gen.LAST_TIMELINE)
+    for the announcement and the Core2: each slot's REAL start and end, the
+    first at astronomical dusk and a capped one cut at start + cap (2026-11-16).
+    Never raises."""
+    try:
+        def iso(t):
+            if t is None:
+                return None
+            return (t if getattr(t, "tzinfo", None) else t.astimezone()).isoformat(timespec="minutes")
+        doc = {"written": datetime.now().astimezone().isoformat(timespec="seconds"),
+               "slots": [{"dso": r["dso"], "start": iso(r["start"]), "end": iso(r["end"])}
+                         for r in timeline or []]}
+        with open(TIMELINE_PATH, "w", encoding="utf-8") as fh:
+            json.dump(doc, fh, indent=1)
+    except Exception:
+        LOGGER.exception("could not save the sequence timeline")
+
+
+def _real_times(slots) -> list:
+    """[(start, end)] per slot from the saved timeline when it is today's and
+    names the same targets in the same order, else each slot's planned
+    times. Never raises."""
+    planned = [(s.start, s.end) for s in slots or []]
+    try:
+        from cmd_processing import dash
+        doc = json.load(open(TIMELINE_PATH, encoding="utf-8"))
+        real = dash.real_slot_times([{"dso": s.name} for s in slots], doc, datetime.now().astimezone())
+        if real:
+            return [(datetime.fromisoformat(r["start"]) if r.get("start") else p[0],
+                     datetime.fromisoformat(r["end"]) if r.get("end") else p[1])
+                    for r, p in zip(real, planned)]
+    except Exception:
+        pass
+    return planned
 
 
 def _generate_nina_sequence(dso_name: str, good_hours: float = 0.0, end=None, filters=None):

@@ -62,6 +62,11 @@ GENERATOR_TYPES = {
     # Park / unpark across a long gap between slots (park_across_gap).
     "NINA.Sequencer.SequenceItem.Telescope.ParkScope, NINA.Sequencer",
     "NINA.Sequencer.SequenceItem.Telescope.UnparkScope, NINA.Sequencer",
+    # The first exposure waits for astronomical dusk (wait_for_astro_dusk,
+    # 2026-11-16): N.I.N.A's DuskProvider, used by sequences on this PC since
+    # 2025.
+    "NINA.Sequencer.SequenceItem.Utility.WaitForTime, NINA.Sequencer",
+    "NINA.Sequencer.Utility.DateTimeProvider.DuskProvider, NINA.Sequencer",
 }
 
 

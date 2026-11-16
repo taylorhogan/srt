@@ -76,9 +76,13 @@ static bool haveData = false;
 // the digits are as large as the counts page's (owner 2026-10-28: too small).
 // The FWHM chart, newest-frame and night-summary pages were dropped 2026-10-29.
 // The dew page (2026-10-29): air minus dew point inside the observatory.
-enum Page { PG_STATUS, PG_BIG_TIME, PG_BIG_VIEW, PG_BIG_COUNT, PG_BIG_FWHM, PG_BIG_LAST,
+// The twilight page (2026-11-14): time to astronomical dawn while dark, to
+// astronomical dusk otherwise, imaging or not. Every page 5 s (owner 2026-11-14).
+// The cloud page (2026-11-15): the night's hours, the forecast cover the
+// planner uses, a split mark where the models disagree.
+enum Page { PG_STATUS, PG_BIG_TIME, PG_BIG_TWI, PG_BIG_CLOUD, PG_BIG_VIEW, PG_BIG_COUNT, PG_BIG_FWHM, PG_BIG_LAST,
             PG_BIG_SKY, PG_BIG_DEW, PG_NPAGES };
-static const uint32_t PAGE_MS[PG_NPAGES] = {20000, 10000, 10000, 7000, 7000, 7000, 7000, 7000};
+static const uint32_t PAGE_MS[PG_NPAGES] = {5000, 5000, 5000, 5000, 5000, 5000, 5000, 5000, 5000, 5000};
 static long serverSec = -1;                    // seconds since local midnight at the last good reply
 static int page = PG_STATUS;
 static uint32_t pageStart = 0;
@@ -428,6 +432,68 @@ static void paintBigTime() {
   plainFont();
 }
 
+// The next astronomical dawn or dusk: "DAWN in", the hours:minutes left
+// (counted down here between polls from the server's seconds), and its clock time.
+static String twiLeft() {
+  long s = (long)(doc["tw"]["s"] | 0) - (long)((millis() - lastOk) / 1000);
+  if (s <= 0) return String("now");
+  long m = (s + 59) / 60;                        // round up: "0:01" until it is here
+  char b[12];
+  snprintf(b, sizeof(b), "%ld:%02ld", m / 60, m % 60);
+  return String(b);
+}
+
+static void paintBigTwilight() {
+  JsonObject t = doc["tw"];
+  bool dawn = String((const char*)(t["k"] | "")) == "dawn";
+  uint16_t c = dawn ? TFT_ORANGE : TFT_SKYBLUE;
+  fitText(dawn ? "DAWN in" : "DUSK in", 120, 34, 228, 50, &fonts::FreeSansBold24pt7b, TFT_LIGHTGREY);
+  String left = twiLeft();                       // Font7 is digits and ':' only
+  fitText(left, 120, 160, 228, 140, left == "now" ? (const lgfx::IFont*)&fonts::FreeSansBold24pt7b
+                                                  : (const lgfx::IFont*)&fonts::Font7, c);
+  fitText("at " + String((const char*)(t["at"] | "--:--")), 120, 282, 228, 56,
+          &fonts::FreeSansBold24pt7b, c);
+  plainFont();
+}
+
+// One row per dark hour: the hour, a bar as long as the cloud cover (green at
+// or under the planner's limit, grey over it, darker over 70 %), the number,
+// and a yellow "?" where the forecasts split. The limit is a yellow tick on
+// every row; the hour under way is boxed.
+static void paintBigCloud() {
+  auto& d = M5.Display;
+  JsonObject cl = doc["cl"];
+  JsonArray hs = cl["h"];
+  int lim = cl["lim"] | 40;
+  String clear = String((const char*)(cl["clear"] | ""));
+  fitText("CLOUDS", 120, 18, 228, 30, &fonts::FreeSansBold24pt7b, TFT_LIGHTGREY);
+  fitText(clear.length() ? "clear " + clear : String("no clear hours"), 120, 46, 228, 22,
+          &fonts::FreeSansBold24pt7b, clear.length() ? TFT_GREEN : TFT_DARKGREY);
+  int n = max(1, (int)hs.size());
+  int top = 62, rowH = min(30, (320 - top) / n);
+  const int barX = 34, barW = 150;
+  d.setFont(&fonts::FreeSansBold12pt7b);
+  d.setTextSize(rowH >= 24 ? 0.8f : 0.65f);
+  int i = 0;
+  for (JsonObject h : hs) {
+    int y = top + rowH * i, c = h["c"] | 0;
+    uint16_t col = c <= lim ? TFT_GREEN : (c > 70 ? TFT_DARKGREY : TFT_LIGHTGREY);
+    char hb[4]; snprintf(hb, sizeof(hb), "%02d", (int)(h["h"] | 0));
+    d.setTextDatum(middle_left);
+    d.setTextColor(TFT_WHITE, TFT_BLACK);
+    d.drawString(hb, 2, y + rowH / 2);
+    d.fillRect(barX, y + 3, max(2, barW * c / 100), rowH - 6, col);
+    d.drawFastVLine(barX + barW * lim / 100, y + 1, rowH - 2, TFT_YELLOW);
+    d.setTextDatum(middle_right);
+    d.setTextColor(col, TFT_BLACK);
+    d.drawString(String(c), 222, y + rowH / 2);
+    if (h["x"] | false) { d.setTextColor(TFT_YELLOW, TFT_BLACK); d.drawString("?", 238, y + rowH / 2); }
+    if (h["now"] | false) d.drawRect(0, y, 240, rowH, TFT_WHITE);
+    i++;
+  }
+  plainFont();
+}
+
 // Page B: the target, then one line per filter: "Ha: 12".
 static void paintBigCount() {
   JsonObject im = doc["im"];
@@ -516,6 +582,8 @@ static bool pageHasData(int p) {
   switch (p) {
     case PG_STATUS:    return haveData && String(doc["level"] | "g") == "r";   // alerts in words
     case PG_BIG_TIME:  return haveData;
+    case PG_BIG_TWI:   return haveData && !doc["tw"].isNull();
+    case PG_BIG_CLOUD: return haveData && doc["cl"]["h"].size() > 0;
     case PG_BIG_VIEW:  return jpgLen > 0 && !doc["view"].isNull();
     case PG_BIG_COUNT:
     case PG_BIG_FWHM:
@@ -593,6 +661,8 @@ static void paint() {
   M5.Display.startWrite();
   M5.Display.fillScreen(TFT_BLACK);
   if (page == PG_BIG_TIME) paintBigTime();
+  else if (page == PG_BIG_TWI) paintBigTwilight();
+  else if (page == PG_BIG_CLOUD) paintBigCloud();
   else if (page == PG_BIG_VIEW) paintBigView();
   else if (page == PG_BIG_DEW) paintBigDew();
   else if (page == PG_BIG_COUNT) paintBigCount();

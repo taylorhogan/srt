@@ -1070,6 +1070,107 @@ def park_across_gap(setup: dict, next_id: list) -> bool:
     return True
 
 
+# THE FIRST EXPOSURE WAITS FOR ASTRONOMICAL DUSK (2026-11-16, owner). The
+# template's target wait is nautical dusk + 5, which the planner never meant:
+# its first grid hour is the first whole hour after ASTRONOMICAL dusk. On
+# 2026-11-15 the plan's first hour was 19:00 and the first frame was 17:56,
+# the sun at -16 deg; with every capped slot ending on its TimeSpan from its
+# real start the whole night ran 2.5 h ahead of the plan. So the setup keeps
+# its nautical wait (roof, tracking and the autofocus run in the last of the
+# twilight, where a CDK still finds stars) and a second WaitForTime at
+# astronomical dusk goes after the autofocus, right before the imaging loop.
+# For a later slot it has long passed and costs nothing. DuskProvider is
+# N.I.N.A's astronomical dusk: a July 2025 sequence on this PC computed it as
+# 22:45 with a +5 offset, when nautical dusk was ~21:50.
+ASTRO_DUSK_TYPE = "NINA.Sequencer.Utility.DateTimeProvider.DuskProvider, NINA.Sequencer"
+WAIT_FOR_TIME_TYPE = "NINA.Sequencer.SequenceItem.Utility.WaitForTime, NINA.Sequencer"
+
+
+def astro_dusk(near):
+    """Astronomical dusk (sun -18) of the evening that *near* belongs to, as
+    an aware datetime in the site's zone; a time before noon belongs to the
+    previous evening; naive when *near* is naive (site wall clock). None
+    when it cannot be computed."""
+    if near is None:
+        return None
+    try:
+        from datetime import timedelta
+        from zoneinfo import ZoneInfo
+        from astral import Observer
+        from astral.sun import dusk
+        from configs import config
+        loc = config.data()["location"]
+        tz = ZoneInfo(loc.get("timezone") or "America/New_York")
+        local = near.astimezone(tz) if getattr(near, "tzinfo", None) else near.replace(tzinfo=tz)
+        day = (local - timedelta(hours=12)).date() if local.hour < 12 else local.date()
+        obs = Observer(latitude=loc["latitude"], longitude=loc["longitude"])
+        d = dusk(obs, date=day, tzinfo=tz, depression=18.0)
+        # Naive in, naive out: slots carry whatever the caller gave them.
+        return d if getattr(near, "tzinfo", None) else d.replace(tzinfo=None)
+    except Exception:  # noqa: BLE001 -- the sky must not break generation
+        logging.getLogger(__name__).warning("astronomical dusk unavailable", exc_info=True)
+        return None
+
+
+def wait_for_astro_dusk(setup: dict, next_id: list, shown=None) -> bool:
+    """Put a WaitForTime at astronomical dusk after *setup*'s autofocus (or
+    at its end when it has none). *shown* fills the display-only clock
+    fields. True when inserted."""
+    items = _items_of(setup)
+    if not items:
+        return False
+    node = {"$id": str(next_id[0]), "$type": WAIT_FOR_TIME_TYPE,
+            "Hours": shown.hour if shown else 0, "Minutes": shown.minute if shown else 0,
+            "MinutesOffset": 0, "Seconds": shown.second if shown else 0,
+            "SelectedProvider": {"$id": str(next_id[0] + 1), "$type": ASTRO_DUSK_TYPE},
+            "Parent": {"$ref": setup.get("$id")}, "ErrorBehavior": 0, "Attempts": 1}
+    next_id[0] += 2
+    at = next((i + 1 for i, it in enumerate(items) if _short_type(it) == "RunAutofocus"),
+              len(items))
+    items.insert(at, node)
+    return True
+
+
+def _setup_of(container: dict) -> Optional[dict]:
+    """The target's setup ("Wait for object to appear"): its first SequentialContainer."""
+    return next((it for it in _items_of(container)
+                 if _short_type(it) == "SequentialContainer"), None)
+
+
+def simulate_timeline(slots: list, ends: list, caps: list, dusk, rise_fn) -> list:
+    """[(real_start, real_end, wait_s)] per slot: when each slot will REALLY
+    run, as the sequence will execute it, not as the plan drew it. Pure but
+    for *rise_fn(slot, after)* (when the target clears the trees, or None).
+
+    The first slot starts at astronomical dusk or its rise; a later one the
+    moment the one before it ends, or at its rise. A capped slot ends at its
+    real start + cap (its TimeSpanCondition) unless its clock end comes first;
+    every other slot at its clock end. *wait_s* is a later slot's idle time
+    between the previous slot's real end and its rise: what decides a park.
+    Hand-over overheads (slew, centre, ~14 min) are ignored, so the wait is
+    never overstated."""
+    from datetime import timedelta
+    out, prev_end = [], None
+    for k, slot in enumerate(slots):
+        t = (dusk or slot.get("start")) if k == 0 else prev_end
+        if t is None:
+            out.append((None, ends[k], 0.0))
+            prev_end = ends[k]
+            continue
+        rise = rise_fn(slot, t)
+        start = max(t, rise) if rise is not None else t
+        wait = (start - t).total_seconds() if k > 0 else 0.0
+        end = ends[k]
+        if caps[k]:
+            capped = start + timedelta(seconds=caps[k])
+            end = capped if end is None else min(end, capped)
+        if end is not None and end < start:
+            end = start                 # the slot never gets to run
+        out.append((start, end, wait))
+        prev_end = end
+    return out
+
+
 def _script_item(prototype: dict, script: str, parent_id: str, next_id: list) -> dict:
     item = _clone_with_fresh_ids(prototype, next_id)
     item["Script"] = script
@@ -1107,6 +1208,13 @@ UNPARK_TYPE = "NINA.Sequencer.SequenceItem.Telescope.UnparkScope, NINA.Sequencer
 # Parking on the planned gap would have cost two slews for nothing. So the
 # wait is measured from when the next target actually clears the observatory
 # horizon, with the same function the planner ranks by.
+#
+# AND THE PREVIOUS END IS NOT THE PLANNER'S EITHER (2026-11-16). On 11-15 the
+# night started at nautical dusk and the capped hubblev1 slot ended on its
+# TimeSpan at 19:25, not its planned 22:00; ngc1055 cleared the trees at
+# 20:45, and the scope tracked M31 with the roof open for 80 minutes because
+# the park was judged from 22:00. The gap is now measured on the simulated
+# timeline (simulate_timeline): dusk start, caps from the real start.
 GAP_PARK_MIN_S = 20 * 60
 
 
@@ -1529,6 +1637,12 @@ def _write_verified(sequence: Any, output_path: Path, expected: list) -> None:
         "; ".join("%s %s" % (n, p) for n, p, _e in back))
 
 
+# The last generate_slots_sequence's simulated timeline, [{dso, start, end}]
+# (simulate_timeline): what the announcement and the Core2 show as the real
+# start and end of each slot. The scheduler saves it as local/sequence_timeline.json.
+LAST_TIMELINE: list = []
+
+
 def generate_slots_sequence(template_path: Path, slots: list, output_path: Path,
                             state_script: Optional[str] = None,
                             lint_scripts: bool = True) -> list:
@@ -1573,7 +1687,15 @@ def generate_slots_sequence(template_path: Path, slots: list, output_path: Path,
     import copy
     pristine = copy.deepcopy(proto)
 
-    clones, plans, ends = [], [], []
+    clones, plans, ends, caps = [], [], [], []
+    dusk = astro_dusk(slots[0].get("start") if slots else None)
+    _rises = {}
+
+    def rise_of(sl, after):
+        key = (sl["name"], after)
+        if key not in _rises:
+            _rises[key] = horizon_rise(sl["name"], sl["ra_hours"], sl["dec_degrees"], after)
+        return _rises[key]
     for k, slot in enumerate(slots):
         c = proto if k == 0 else _clone_with_fresh_ids(pristine, next_id)
         ra_h, ra_m, ra_s = _decompose_ra(slot["ra_hours"])
@@ -1599,6 +1721,7 @@ def generate_slots_sequence(template_path: Path, slots: list, output_path: Path,
                 "Slot %d (%s): ends at %s, its max_hours, not the slot's %s",
                 k + 1, slot["name"], end.strftime("%H:%M"), slot["end"].strftime("%H:%M"))
         ends.append(end)
+        caps.append(cap)
         _set_hard_end(c, end, next_id)
         if cap:
             # ...and also the cap counted from the slot's REAL start (_add_cap_span).
@@ -1618,23 +1741,24 @@ def generate_slots_sequence(template_path: Path, slots: list, output_path: Path,
             if setup0 is not None:
                 vals = _items_of(setup0)
                 vals[:] = [it for it in vals if _short_type(it) != "RunAutofocus"]
+        setup = _setup_of(c)
+        if setup is not None:
+            wait_for_astro_dusk(setup, next_id, shown=wall_clock(dusk))
         if k > 0:
-            # Park across a long wait (GAP_PARK_MIN_S). The gap is the planned
-            # one: previous slot's hard end to this slot's start. The slot's
-            # own Center re-acquires, so the park costs two slews and nothing
-            # else. Inserted BEFORE the hand-over scripts below, which then
-            # bracket the whole thing.
-            prev_end = ends[k - 1]          # the previous slot's EFFECTIVE end (cap applied)
-            rise = (horizon_rise(slot["name"], slot["ra_hours"], slot["dec_degrees"], prev_end)
-                    if prev_end is not None else None)
-            gap_s = max(0.0, (rise - prev_end).total_seconds()) if rise is not None else 0.0
+            # Park across a long wait (GAP_PARK_MIN_S), judged on the real
+            # timeline: the previous slot's simulated end to this target's
+            # rise. The slot's own Center re-acquires, so the park costs two
+            # slews and nothing else. Inserted BEFORE the hand-over scripts
+            # below, which then bracket the whole thing.
+            timeline = simulate_timeline(slots[:k + 1], ends, caps, dusk, rise_of)
+            gap_s = timeline[k][2]
             if gap_s >= GAP_PARK_MIN_S:
-                setup = next((it for it in _items_of(c)
-                              if _short_type(it) == "SequentialContainer"), None)
                 if setup is not None and park_across_gap(setup, next_id):
                     logging.getLogger(__name__).info(
-                        "Slot %d (%s): parking across a %.0f-minute gap",
-                        k + 1, slot["name"], gap_s / 60.0)
+                        "Slot %d (%s): parking across a %.0f-minute gap (%s to %s)",
+                        k + 1, slot["name"], gap_s / 60.0,
+                        wall_clock(timeline[k - 1][1]).strftime("%H:%M"),
+                        wall_clock(timeline[k][0]).strftime("%H:%M"))
         if k > 0 and state_script and script_proto is not None:
             setup = next((it for it in _items_of(c)
                           if _short_type(it) == "SequentialContainer"), None)
@@ -1646,6 +1770,13 @@ def generate_slots_sequence(template_path: Path, slots: list, output_path: Path,
                 sitems.append(_script_item(script_proto,
                                            '"%s" IN_MAIN' % state_script, pid, next_id))
         clones.append(c)
+    global LAST_TIMELINE
+    try:
+        LAST_TIMELINE = [{"dso": sl["name"], "start": a, "end": b}
+                         for sl, (a, b, _w) in zip(slots, simulate_timeline(slots, ends, caps,
+                                                                            dusk, rise_of))]
+    except Exception:  # noqa: BLE001 -- a display aid, never a reason to fail
+        LAST_TIMELINE = []
     items[idx:idx + 1] = clones
     _dedupe_singletons(sequence)
     _refuse_if_broken(sequence, template, output_path, lint_scripts)
@@ -1717,6 +1848,16 @@ def generate_sequence(
         for t in targets:
             _set_hard_end(t, end, next_id)
         _dedupe_singletons(sequence)
+
+    area = _find_target_area(sequence)
+    nid = [_max_id(sequence) + 1]
+    for t in ([it for it in _items_of(area) if _short_type(it) == "DeepSkyObjectContainer"]
+              if area else []):
+        setup = _setup_of(t)
+        if setup is not None:
+            from datetime import datetime as _dt
+            wait_for_astro_dusk(setup, nid, shown=wall_clock(astro_dusk(end or _dt.now().astimezone())))
+    _dedupe_singletons(sequence)
 
     filter_plan = _plan_for(sequence, dso_name, above_horizon_seconds, preset=filters)
     seed_focus(sequence, _focus_model(), [_max_id(sequence) + 1])

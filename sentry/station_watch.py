@@ -349,8 +349,33 @@ def armed_tracks(step_s=15.0):
     return out
 
 
+def group_passes(passes, now, ahead_s=SPAWN_AHEAD_S, lead_s=15.0):
+    """(launch, keep): the armed passes to hand ONE recorder now, and the rest.
+
+    A pass is launched when it rises within *ahead_s*; every later pass that
+    rises before the group's last set + *ahead_s* goes with it, because the
+    sky camera has one stream and the monitor ticks only every 5 minutes: a
+    second recorder spawned for a pass a few minutes behind (or one
+    overlapping it -- the ISS and Tiangong can share a sky) would fight the
+    first for the stream, or the pass would be dropped by the 2-minute
+    staleness rule before its tick came. Passes that rose more than 2 minutes
+    ago are dropped. Pure (2026-11-16, "record all of them")."""
+    live = sorted((p for p in passes
+                   if datetime.fromisoformat(p["rise"]) >= now - timedelta(minutes=2)),
+                  key=lambda p: p["rise"])
+    if not live or (datetime.fromisoformat(live[0]["rise"]) - now).total_seconds() > ahead_s:
+        return [], live
+    group, end = [live[0]], datetime.fromisoformat(live[0]["set"])
+    for p in live[1:]:
+        rise = datetime.fromisoformat(p["rise"]) - timedelta(seconds=lead_s)
+        if rise <= end + timedelta(seconds=ahead_s):
+            group.append(p)
+            end = max(end, datetime.fromisoformat(p["set"]))
+    return group, [p for p in live if p not in group]
+
+
 def check_and_spawn():
-    """sky_monitor hook: spawn the detached recorder for an imminent armed pass.
+    """sky_monitor hook: spawn the detached recorder for imminent armed passes.
 
     Never raises; a failure here must not touch the monitor's weather work.
     """
@@ -360,18 +385,10 @@ def check_and_spawn():
         data = json.load(open(MARKER))
         passes = data.get("passes") or []
         now = datetime.now().astimezone()
-        keep, launch = [], None
-        for p in passes:
-            rise = datetime.fromisoformat(p["rise"])
-            if rise < now - timedelta(minutes=2):
-                continue                      # missed / already handled
-            if (rise - now).total_seconds() <= SPAWN_AHEAD_S and launch is None:
-                launch = p
-            else:
-                keep.append(p)
+        launch, keep = group_passes(passes, now)
         if launch:
-            _logger.info("%s pass imminent (rise %s) - spawning recorder",
-                         launch.get("sat", "ISS"), launch["rise"])
+            _logger.info("%d station pass(es) imminent (first %s rise %s) - spawning recorder",
+                         len(launch), launch[0].get("sat", "ISS"), launch[0]["rise"])
             subprocess.Popen(
                 [sys.executable, "-m", "sentry.station_watch", "record",
                  json.dumps(launch)],
@@ -408,61 +425,90 @@ def _prune_videos(keep=KEEP_VIDEOS):
         _logger.warning("video prune failed (ignored)", exc_info=True)
 
 
-def record(p):
-    """Capture the pass as one uninterrupted burst and post the outcome.
+RECORD_LEAD_S = 15.0
+MAX_BURST_S = 30 * 60
+
+
+def burst_segments(passes, lead_s=RECORD_LEAD_S):
+    """[(start, end, [passes])]: one camera burst per run of passes whose
+    lead-padded windows overlap, so two stations in the sky at once share
+    one recording. Pure."""
+    segs = []
+    for p in sorted(passes, key=lambda q: q["rise"]):
+        a = datetime.fromisoformat(p["rise"]) - timedelta(seconds=lead_s)
+        b = datetime.fromisoformat(p["set"]) + timedelta(seconds=lead_s)
+        if segs and a <= segs[-1][1]:
+            segs[-1] = (segs[-1][0], max(segs[-1][1], b), segs[-1][2] + [p])
+        else:
+            segs.append((a, b, [p]))
+    return segs
+
+
+def record(passes):
+    """Capture each pass (or run of overlapping passes) as one uninterrupted
+    burst, then analyse and post every pass.
 
     One stream for the whole pass rather than repeated short bursts, for the
     same reason the roof-audio recorder works that way: reconnect gaps land
     in the middle of the event. The stream also carries no timestamps, so
-    the burst is bracketed with wall-clock times in the sidecar.
+    the burst is bracketed with wall-clock times in the sidecar. Every pass
+    gets its own sidecar; passes sharing a burst name it in "burst". All the
+    recording happens before any analysis, which decodes the whole video for
+    minutes and must not make the next pass late.
     """
     from sentry import sky_camera
 
-    rise = datetime.fromisoformat(p["rise"])
-    setts = datetime.fromisoformat(p["set"])
-    lead = 15.0
-    wait = (rise - datetime.now().astimezone()).total_seconds() - lead
-    if wait > 0:
-        time.sleep(wait)
-    seconds = (setts - datetime.now().astimezone()).total_seconds() + lead
-    seconds = max(30.0, min(seconds, 15 * 60))
-
-    # "ISS" default: a marker armed before satellites were tagged has no sat.
-    sat = str(p.get("sat", "ISS")).lower()
+    if isinstance(passes, dict):          # a marker written before 2026-11-16
+        passes = [passes]
     os.makedirs(OUT_DIR, exist_ok=True)
-    stamp = rise.strftime("%Y%m%d_%H%M%S")
-    out = os.path.join(OUT_DIR, "%s_%s.h264" % (sat, stamp))
-    started = datetime.now().astimezone()
-    path, n = sky_camera.capture_burst(seconds=seconds, out_path=out)
-    ended = datetime.now().astimezone()
-    meta = {"pass": p, "burst": str(path), "frames": n,
-            "capture_start": started.isoformat(timespec="seconds"),
-            "capture_end": ended.isoformat(timespec="seconds")}
-    # The elements this pass was predicted from. Elements age: re-checking a
-    # 17-day-old recording against a fresh TLE put Tiangong 20 deg from its
-    # own track, so the cross-check has to use the TLE of the day.
-    try:
-        defn = next(d for d in SATELLITES if d["name"] == p.get("sat", "ISS"))
-        l1, l2 = get_tle(defn)
-        meta["tle"] = {"l1": l1, "l2": l2}
-    except Exception:  # noqa: BLE001
-        _logger.warning("could not attach the TLE to the sidecar", exc_info=True)
-    json.dump(meta, open(os.path.join(OUT_DIR, "%s_%s.json" % (sat, stamp)), "w"),
-              indent=1)
+    sidecars = []
+    for start, end, group in burst_segments(passes):
+        wait = (start - datetime.now().astimezone()).total_seconds()
+        if wait > 0:
+            time.sleep(wait)
+        seconds = (end - datetime.now().astimezone()).total_seconds()
+        seconds = max(30.0, min(seconds, MAX_BURST_S))
+        first = group[0]
+        # "ISS" default: a marker armed before satellites were tagged has no sat.
+        stamp = datetime.fromisoformat(first["rise"]).strftime("%Y%m%d_%H%M%S")
+        out = os.path.join(OUT_DIR, "%s_%s.h264" % (str(first.get("sat", "ISS")).lower(), stamp))
+        started = datetime.now().astimezone()
+        try:
+            path, n = sky_camera.capture_burst(seconds=seconds, out_path=out)
+        except Exception:  # noqa: BLE001 -- the next pass still deserves its try
+            _logger.exception("station burst failed for %s", [p.get("sat") for p in group])
+            continue
+        ended = datetime.now().astimezone()
+        for p in group:
+            sat = str(p.get("sat", "ISS")).lower()
+            pstamp = datetime.fromisoformat(p["rise"]).strftime("%Y%m%d_%H%M%S")
+            meta = {"pass": p, "burst": str(path), "frames": n,
+                    "capture_start": started.isoformat(timespec="seconds"),
+                    "capture_end": ended.isoformat(timespec="seconds")}
+            # The elements this pass was predicted from. Elements age:
+            # re-checking a 17-day-old recording against a fresh TLE put
+            # Tiangong 20 deg from its own track, so the cross-check has to
+            # use the TLE of the day.
+            try:
+                defn = next(d for d in SATELLITES if d["name"] == p.get("sat", "ISS"))
+                l1, l2 = get_tle(defn)
+                meta["tle"] = {"l1": l1, "l2": l2}
+            except Exception:  # noqa: BLE001
+                _logger.warning("could not attach the TLE to the sidecar", exc_info=True)
+            side = os.path.join(OUT_DIR, "%s_%s.json" % (sat, pstamp))
+            json.dump(meta, open(side, "w"), indent=1)
+            sidecars.append(side)
+            msg = ("%s pass recorded: peak alt %.0f deg at %s, %s frames -> %s"
+                   % (p.get("sat", "ISS"), p["peak_alt_deg"], p["peak"][11:19], n, path))
+            _logger.info(msg)
+            try:
+                _post(msg)
+            except Exception:  # noqa: BLE001
+                _logger.warning("could not post station capture notice", exc_info=True)
+        _prune_videos()
 
-    _prune_videos()
-
-    msg = ("%s pass recorded: peak alt %.0f deg at %s, %s frames -> %s"
-           % (p.get("sat", "ISS"), p["peak_alt_deg"], p["peak"][11:19], n, path))
-    _logger.info(msg)
-    try:
-        import requests
-        requests.post("http://127.0.0.1:8095/api/post", data={"message": msg},
-                      timeout=10)
-    except Exception:  # noqa: BLE001
-        _logger.warning("could not post ISS capture notice", exc_info=True)
-
-    _analyse_and_post(os.path.join(OUT_DIR, "%s_%s.json" % (sat, stamp)))
+    for side in sidecars:
+        _analyse_and_post(side)
 
 
 def _post(message, image=None, video=None):

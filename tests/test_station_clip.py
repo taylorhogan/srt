@@ -78,3 +78,37 @@ def test_no_track_dict_is_handled():
     s = st.summary_line({"sat": "ISS", "peak": "2026-09-23T05:10:00-04:00",
                          "peak_alt_deg": 67.0, "is_satellite": False})
     assert "no ISS found -- no track." in s
+
+
+# ------------------------------------------------ the guided search (11-14)
+
+def _line(t0, t1, x0, y0, vx, vy, fps=10.0):
+    n = int((t1 - t0) * fps)
+    return [(t0 + k / fps, x0 + vx * k / fps, y0 + vy * k / fps, 50.0) for k in range(n)]
+
+
+def test_near_path_keeps_detections_close_to_the_prediction_at_their_time():
+    path = [(0.0, 0.0, 0.0), (10.0, 100.0, 0.0)]
+    dets = [(5.0, 52.0, 10.0, 1.0),     # 10 px off the 50,0 point: kept
+            (5.0, 52.0, 400.0, 1.0),    # far: dropped
+            (12.0, 100.0, 0.0, 1.0)]    # outside the path's time span: dropped
+    assert st.near_path(dets, path, radius=50) == [0]
+
+
+def test_a_corner_pass_beats_a_longer_mover_elsewhere_when_guided():
+    # The ISS: 30 s across a corner. The distractor: 120 s in the middle,
+    # four times the detections, which is what the global fit picks.
+    iss = _line(10, 40, 50, 50, 20, 15)
+    plane = _line(0, 120, 900, 700, 8, -3)
+    dets = sorted(iss + plane)
+    path = [(t, x, y) for t, x, y, _ in iss]
+    glob = st.consensus(dets)
+    assert glob["t_last"] - glob["t_first"] > 100          # the long mover
+    fit = st.guided_consensus(dets, path)
+    assert fit["guided"] and abs(fit["vx"] - 20) < 0.5 and abs(fit["vy"] - 15) < 0.5
+    assert len(fit["mask"]) == len(dets) and fit["mask"].sum() >= len(iss) - 1
+
+
+def test_guided_search_with_nothing_near_the_path_is_none():
+    plane = _line(0, 120, 900, 700, 8, -3)
+    assert st.guided_consensus(plane, [(0.0, 10.0, 10.0), (60.0, 20.0, 20.0)]) is None

@@ -39,3 +39,44 @@ def test_frame_test_uses_the_plate_solution_and_its_margin(monkeypatch):
     monkeypatch.setattr(plate_solve, "load", lambda *a, **k: None)   # no solution stored
     flat = sw.frame_test()
     assert flat(sw.MIN_ALT_DEG + 1, 0) and not flat(sw.MIN_ALT_DEG - 1, 0)
+
+
+# ------------------------------------------- every pass of the night (11-16)
+
+from datetime import datetime, timedelta  # noqa: E402
+
+T0 = datetime.fromisoformat("2026-11-20T18:00:00-05:00")
+
+
+def _p(sat, rise_min, dur_min=3):
+    r = T0 + timedelta(minutes=rise_min)
+    return {"sat": sat, "rise": r.isoformat(), "peak": r.isoformat(),
+            "set": (r + timedelta(minutes=dur_min)).isoformat(), "peak_alt_deg": 60}
+
+
+def test_one_imminent_pass_launches_and_the_later_one_waits():
+    passes = [_p("ISS", 4), _p("ISS", 100)]
+    launch, keep = sw.group_passes(passes, T0)
+    assert [p["rise"] for p in launch] == [passes[0]["rise"]]
+    assert keep == [passes[1]]
+
+
+def test_a_pass_minutes_behind_or_overlapping_goes_with_the_first():
+    passes = [_p("ISS", 4), _p("Tiangong", 5), _p("ISS", 11), _p("ISS", 60)]
+    launch, keep = sw.group_passes(passes, T0)
+    assert [p["sat"] for p in launch] == ["ISS", "Tiangong", "ISS"]
+    assert keep == [passes[3]]
+
+
+def test_nothing_imminent_launches_nothing_and_stale_passes_drop():
+    passes = [_p("ISS", -10), _p("ISS", 30)]
+    launch, keep = sw.group_passes(passes, T0)
+    assert launch == [] and keep == [passes[1]]
+
+
+def test_overlapping_passes_share_one_burst_separate_ones_do_not():
+    segs = sw.burst_segments([_p("ISS", 0), _p("Tiangong", 2), _p("ISS", 10)])
+    assert [[p["sat"] for p in g] for _, _, g in segs] == [["ISS", "Tiangong"], ["ISS"]]
+    a, b, _ = segs[0]
+    assert a == T0 - timedelta(seconds=15)
+    assert b == T0 + timedelta(minutes=5, seconds=15)
