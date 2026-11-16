@@ -1,0 +1,394 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Iris Sky Sensor</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@500;600&family=IBM+Plex+Sans:wght@400;500&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: a drafting sheet. One column of running text at 68ch, drawings and tables break wider; cool paper, ink, one teal accent for signals, orange reserved for power and heat. */
+:root{
+  --paper:#f2f4f6; --sheet:#ffffff; --ink:#1b2430; --muted:#5b6774; --line:#c9d1d9; --grid:#e3e8ed;
+  --accent:#0b6e7a; --power:#c2571c; --scl:#6b4fd8; --gnd:#1b2430; --ok:#2e7d4f;
+  --display:"Barlow Semi Condensed",system-ui,sans-serif; --body:"IBM Plex Sans",system-ui,sans-serif; --mono:"IBM Plex Mono",ui-monospace,Menlo,monospace;
+}
+@media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){
+  --paper:#12171c; --sheet:#1a2027; --ink:#e4e9ee; --muted:#9aa6b2; --line:#303a45; --grid:#232b34;
+  --accent:#4ec3cf; --power:#f0905a; --scl:#a898ff; --gnd:#e4e9ee; --ok:#6fcf97; color-scheme:dark } }
+:root[data-theme="dark"]{
+  --paper:#12171c; --sheet:#1a2027; --ink:#e4e9ee; --muted:#9aa6b2; --line:#303a45; --grid:#232b34;
+  --accent:#4ec3cf; --power:#f0905a; --scl:#a898ff; --gnd:#e4e9ee; --ok:#6fcf97; color-scheme:dark }
+
+body{background:var(--paper);color:var(--ink);font-family:var(--body);font-size:16px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:32px 64px}
+main{max-width:980px;margin:0 auto;display:grid;gap:40px}
+h1,h2,h3{font-family:var(--display);text-wrap:balance;margin:0;line-height:1.15}
+h1{font-size:clamp(34px,5vw,48px);font-weight:600;letter-spacing:-.01em}
+h2{font-size:26px;font-weight:600;padding-top:8px;border-top:2px solid var(--ink)}
+h3{font-size:18px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
+p{max-width:68ch;margin:0}
+.lede{color:var(--muted);font-size:18px;max-width:62ch}
+section{display:grid;gap:18px}
+.eyebrow{font-family:var(--mono);font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.sheet{background:var(--sheet);border:1px solid var(--line);padding:18px;overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-size:15px;font-variant-numeric:tabular-nums}
+th{text-align:left;font-family:var(--display);font-weight:600;font-size:14px;letter-spacing:.04em;text-transform:uppercase;color:var(--muted);border-bottom:1px solid var(--ink);padding:8px 10px 8px 0}
+td{padding:9px 10px 9px 0;border-bottom:1px solid var(--line);vertical-align:top}
+td.n,th.n{text-align:right;white-space:nowrap}
+td.pn{font-family:var(--mono);font-size:13.5px;white-space:nowrap}
+tfoot td{border-bottom:0;font-weight:500}
+.note{font-size:14px;color:var(--muted)}
+svg{max-width:100%;height:auto;display:block}
+.legend{display:flex;flex-wrap:wrap;gap:14px 22px;font-family:var(--mono);font-size:13px;color:var(--muted)}
+.legend span::before{content:"";display:inline-block;width:22px;height:3px;margin-right:8px;vertical-align:middle;background:currentColor}
+.legend .pw{color:var(--power)} .legend .sd{color:var(--accent)} .legend .sc{color:var(--scl)} .legend .gn{color:var(--gnd)}
+pre{margin:0;background:var(--sheet);border:1px solid var(--line);padding:16px;overflow-x:auto;font-family:var(--mono);font-size:13px;line-height:1.5}
+code{font-family:var(--mono);font-size:.92em}
+.two{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:18px}
+.two>*{min-width:0}
+ol,ul{margin:0;padding-left:22px;max-width:68ch} li{margin:4px 0}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:6px 18px;font-size:15px}
+.kv dt{font-family:var(--mono);font-size:13px;color:var(--muted);padding-top:2px} .kv dd{margin:0}
+.band{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:1px;background:var(--line);border:1px solid var(--line)}
+.band div{background:var(--sheet);padding:12px 14px} .band b{display:block;font-family:var(--display);font-size:22px;font-weight:600}
+.band small{color:var(--muted)}
+@media (prefers-reduced-motion: no-preference){ a{transition:color .15s} }
+a{color:var(--accent)} a:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+</style>
+</head>
+<body style="margin:0">
+
+<main>
+<header style="display:grid;gap:12px">
+  <div class="eyebrow">Iris observatory · weather sensing · rev A, 2026-11-05</div>
+  <h1>Iris Sky Sensor</h1>
+  <p class="lede">An infrared cloud sensor for the roof: an MLX90614 looking at the zenith, a BME280 for the air, an ESP32 running ESPHome, read over local HTTP like the Shelly relays. Clear sky reads 20–35 °C colder than the air; cloud closes that gap.</p>
+  <div class="band">
+    <div><b>≈ $75</b><small>parts, before the pole</small></div>
+    <div><b>5 V · 0.9 W</b><small>USB, heater on</small></div>
+    <div><b>35°</b><small>field of view at zenith</small></div>
+    <div><b>0 lines</b><small>of firmware to write</small></div>
+  </div>
+</header>
+
+<section>
+  <h2>1 · Parts list</h2>
+  <div class="sheet">
+  <table>
+    <thead><tr><th>#</th><th>Part</th><th>Specification</th><th>Where</th><th class="n">Qty</th><th class="n">≈ Price</th></tr></thead>
+    <tbody>
+      <tr><td>1</td><td class="pn">MLX90614ESF-BCC</td><td>IR thermometer, TO-39 can, 3 V, 35° field of view, gradient compensated. Not the 90° BAA on most breakouts: it sees the roof and trees.</td><td>Mouser / DigiKey</td><td class="n">1</td><td class="n">$25</td></tr>
+      <tr><td>2</td><td class="pn">ESP32-S3-DevKitC-1 (N16R8)</td><td>ESP32-S3-WROOM-1, 44-pin, two USB-C (one marked COM or UART, one USB). Any ESPHome-supported ESP32 works; the pin numbers here are the S3's.</td><td>Adafruit / Amazon</td><td class="n">1</td><td class="n">$10</td></tr>
+      <tr><td>3</td><td class="pn">BME280 breakout</td><td>Temperature, humidity, pressure; 3.3 V I²C, address 0x76. Gives the air temperature and dew point.</td><td>Adafruit / Amazon</td><td class="n">1</td><td class="n">$8</td></tr>
+      <tr><td>4</td><td class="pn">4.7 kΩ ¼ W</td><td>I²C pull-ups, SDA and SCL to 3V3. The bare MLX can has none; most BME280 breakouts have their own, which is fine in parallel.</td><td>any</td><td class="n">2</td><td class="n">$0.10</td></tr>
+      <tr><td>5</td><td class="pn">100 nF ceramic</td><td>Decoupling across the MLX VDD–GND, as close to the can as the leads allow.</td><td>any</td><td class="n">1</td><td class="n">$0.10</td></tr>
+      <tr><td>6</td><td class="pn">47 Ω, 1 W (or four ¼ W 47 Ω, two in series and the pairs in parallel)</td><td>Dew heater, bonded to the can with thermal epoxy. 5 V² / 47 Ω = 0.53 W; warms the can a few degrees above the air.</td><td>any</td><td class="n">1</td><td class="n">$0.50</td></tr>
+      <tr><td>7</td><td class="pn">IRLZ44N</td><td>Logic-level N-channel MOSFET for the heater, with a 220 Ω gate resistor and a 10 kΩ gate pull-down. An AO3400 on a breakout also works.</td><td>any</td><td class="n">1</td><td class="n">$1.50</td></tr>
+      <tr><td>8</td><td class="pn">IP65 enclosure</td><td>ABS, about 100 × 68 × 50 mm, clear or grey lid. The sensor can passes through the lid.</td><td>Amazon / Hammond 1554</td><td class="n">1</td><td class="n">$10</td></tr>
+      <tr><td>9</td><td class="pn">M12 cable gland</td><td>For the USB lead, bottom face.</td><td>any</td><td class="n">1</td><td class="n">$1</td></tr>
+      <tr><td>10</td><td class="pn">Hood</td><td>A 25 mm PVC pipe cap with the end cut off, or a 3D-printed ring, 20 mm tall, inside diameter 20 mm. Keeps rain off the aperture while staying outside the 35° cone.</td><td>hardware store</td><td class="n">1</td><td class="n">$2</td></tr>
+      <tr><td>11</td><td class="pn">Vented cap</td><td>A small PTFE-membrane vent or a drilled cap over the BME280, so it reads the outside air without taking rain.</td><td>Amazon</td><td class="n">1</td><td class="n">$3</td></tr>
+      <tr><td>12</td><td class="pn">5 V 1 A USB supply</td><td>Plugged into a Kasa-switched outlet in the observatory so <code>start.py</code> / <code>end.py</code> can power-cycle it.</td><td>on hand</td><td class="n">1</td><td class="n">$5</td></tr>
+      <tr><td>13</td><td class="pn">Consumables</td><td>Perfboard 50 × 70 mm, Dupont wire or 24 AWG hook-up, silicone sealant, thermal epoxy, conformal-coat spray, stainless M4 screws.</td><td>on hand</td><td class="n">—</td><td class="n">$8</td></tr>
+      <tr><td>14</td><td class="pn">Mast</td><td>1 m aluminium tube or ¾″ conduit with a wall bracket, north side of the roof structure, clear of the roof's travel.</td><td>hardware store</td><td class="n">1</td><td class="n">$15</td></tr>
+    </tbody>
+    <tfoot><tr><td colspan="5">Total, items 1–13</td><td class="n">≈ $75</td></tr></tfoot>
+  </table>
+  </div>
+  <p class="note">Optional: a TSL2591 light sensor on the same I²C bus (~$7) gives sky brightness for a second opinion on twilight and moonlit haze. The off-the-shelf equivalent is an AAG CloudWatcher at about €450 with an ASCOM driver.</p>
+</section>
+
+<section>
+  <h2>2 · Wiring schematic</h2>
+  <div class="legend"><span class="pw">5 V / 3V3</span><span class="gn">GND</span><span class="sd">SDA · GPIO8</span><span class="sc">SCL · GPIO9</span></div>
+  <div class="sheet">
+  <svg viewBox="0 0 940 560" width="940" height="560" role="img" aria-label="Wiring: ESP32-S3 3V3 and GND to the MLX90614 and BME280, I2C on GPIO8 and GPIO9 with 4.7k pull-ups, GPIO10 driving a MOSFET that switches a 47 ohm heater from 5 V" font-family="IBM Plex Mono, monospace" font-size="12">
+    <defs><pattern id="g" width="20" height="20" patternUnits="userSpaceOnUse"><path d="M20 0H0V20" fill="none" stroke="var(--grid)" stroke-width="1"/></pattern></defs>
+    <rect width="940" height="560" fill="url(#g)"/>
+
+    <!-- ESP32-S3 -->
+    <rect x="60" y="80" width="190" height="300" rx="4" fill="var(--sheet)" stroke="var(--ink)" stroke-width="1.5"/>
+    <text x="155" y="104" text-anchor="middle" font-family="Barlow Semi Condensed, sans-serif" font-size="16" font-weight="600" fill="var(--ink)">ESP32-S3-DevKitC-1</text>
+    <text x="155" y="122" text-anchor="middle" fill="var(--muted)">ESPHome · web_server :80</text>
+    <g fill="var(--ink)">
+      <text x="240" y="154" text-anchor="end">5V</text>
+      <text x="240" y="194" text-anchor="end">3V3</text>
+      <text x="240" y="234" text-anchor="end">GPIO8</text>
+      <text x="240" y="274" text-anchor="end">GPIO9</text>
+      <text x="240" y="314" text-anchor="end">GND</text>
+      <text x="240" y="354" text-anchor="end">GPIO10</text>
+    </g>
+    <!-- USB in: 5 V and ground arrive on the lead -->
+    <rect x="56" y="400" width="84" height="26" rx="3" fill="var(--sheet)" stroke="var(--muted)" stroke-width="1"/>
+    <text x="98" y="417" text-anchor="middle" fill="var(--muted)" font-size="11">USB-C (COM)</text>
+    <path d="M140 407 H180" stroke="var(--power)" stroke-width="2"/>
+    <text x="184" y="411" fill="var(--power)" font-size="11">+5 V → 5V pin</text>
+    <path d="M140 419 H180" stroke="var(--gnd)" stroke-width="2"/>
+    <text x="184" y="423" fill="var(--ink)" font-size="11">− → GND</text>
+    <text x="60" y="450" fill="var(--muted)" font-size="11">USB lead in through the M12 gland</text>
+    <text x="60" y="520" fill="var(--muted)" font-size="11">A dot is a joint. Lines that cross without a dot are not connected; the arch on the GPIO10 wire hops the ground.</text>
+
+    <!-- rails: 5 V along the top and down the right edge, the four buses to the right -->
+    <path d="M250 150 H280 V30 H870 V460" fill="none" stroke="var(--power)" stroke-width="2.5"/>
+    <text x="300" y="24" fill="var(--power)">5 V rail (heater only)</text>
+    <path d="M250 190 H770" fill="none" stroke="var(--power)" stroke-width="2.5" stroke-dasharray="6 4"/>
+    <text x="256" y="182" fill="var(--power)">3V3 rail</text>
+    <path d="M250 230 H770" fill="none" stroke="var(--accent)" stroke-width="2.5"/>
+    <text x="256" y="222" fill="var(--accent)">SDA · GPIO8</text>
+    <path d="M250 270 H770" fill="none" stroke="var(--scl)" stroke-width="2.5"/>
+    <text x="256" y="262" fill="var(--scl)">SCL · GPIO9</text>
+    <path d="M250 310 H820 V530 M800 530 H870" fill="none" stroke="var(--gnd)" stroke-width="2.5"/>
+    <text x="256" y="302" fill="var(--ink)">GND</text>
+
+    <!-- pull-ups: 3V3 to SDA, 3V3 to SCL -->
+    <path d="M400 190 V200 M400 220 V230" stroke="var(--ink)" stroke-width="1.5"/>
+    <rect x="393" y="200" width="14" height="20" fill="var(--sheet)" stroke="var(--ink)" stroke-width="1.5"/>
+    <path d="M430 190 V240 M430 260 V270" stroke="var(--ink)" stroke-width="1.5"/>
+    <rect x="423" y="240" width="14" height="20" fill="var(--sheet)" stroke="var(--ink)" stroke-width="1.5"/>
+    <circle cx="400" cy="190" r="3.5" fill="var(--power)"/><circle cx="430" cy="190" r="3.5" fill="var(--power)"/>
+    <circle cx="400" cy="230" r="3.5" fill="var(--accent)"/><circle cx="430" cy="270" r="3.5" fill="var(--scl)"/>
+    <text x="392" y="208" text-anchor="end" fill="var(--ink)">2 × 4.7 kΩ</text>
+
+    <!-- BME280, pins on its bottom edge, each dropping to its own bus -->
+    <rect x="420" y="45" width="160" height="80" rx="4" fill="var(--sheet)" stroke="var(--ink)" stroke-width="1.5"/>
+    <text x="500" y="72" text-anchor="middle" font-family="Barlow Semi Condensed, sans-serif" font-size="16" font-weight="600" fill="var(--ink)">BME280</text>
+    <text x="500" y="90" text-anchor="middle" fill="var(--muted)">I²C 0x76 · air T, RH, p</text>
+    <g fill="var(--ink)" font-size="11" text-anchor="middle"><text x="435" y="117">VIN</text><text x="475" y="117">GND</text><text x="515" y="117">SDA</text><text x="555" y="117">SCL</text></g>
+    <path d="M435 125 V190" stroke="var(--power)" stroke-width="2" stroke-dasharray="6 4"/><circle cx="435" cy="190" r="3.5" fill="var(--power)"/>
+    <path d="M475 125 V310" stroke="var(--gnd)" stroke-width="2"/><circle cx="475" cy="310" r="3.5" fill="var(--gnd)"/>
+    <path d="M515 125 V230" stroke="var(--accent)" stroke-width="2"/><circle cx="515" cy="230" r="3.5" fill="var(--accent)"/>
+    <path d="M555 125 V270" stroke="var(--scl)" stroke-width="2"/><circle cx="555" cy="270" r="3.5" fill="var(--scl)"/>
+
+    <!-- MLX90614, the same four pins -->
+    <rect x="600" y="45" width="160" height="80" rx="40" fill="var(--sheet)" stroke="var(--ink)" stroke-width="1.5"/>
+    <text x="680" y="72" text-anchor="middle" font-family="Barlow Semi Condensed, sans-serif" font-size="16" font-weight="600" fill="var(--ink)">MLX90614-BCC</text>
+    <text x="680" y="90" text-anchor="middle" fill="var(--muted)">I²C 0x5A · TO-39 can</text>
+    <g fill="var(--ink)" font-size="11" text-anchor="middle"><text x="615" y="117">VDD</text><text x="655" y="117">GND</text><text x="695" y="117">SDA</text><text x="735" y="117">SCL</text></g>
+    <path d="M615 125 V190" stroke="var(--power)" stroke-width="2" stroke-dasharray="6 4"/><circle cx="615" cy="190" r="3.5" fill="var(--power)"/>
+    <path d="M655 125 V310" stroke="var(--gnd)" stroke-width="2"/><circle cx="655" cy="310" r="3.5" fill="var(--gnd)"/>
+    <path d="M695 125 V230" stroke="var(--accent)" stroke-width="2"/><circle cx="695" cy="230" r="3.5" fill="var(--accent)"/>
+    <path d="M735 125 V270" stroke="var(--scl)" stroke-width="2"/><circle cx="735" cy="270" r="3.5" fill="var(--scl)"/>
+    <!-- 100 nF across the MLX supply -->
+    <path d="M615 160 H630 M640 160 H655" stroke="var(--ink)" stroke-width="1.5"/>
+    <path d="M630 152 V168 M640 152 V168" stroke="var(--ink)" stroke-width="1.5"/>
+    <circle cx="615" cy="160" r="3" fill="var(--power)"/><circle cx="655" cy="160" r="3" fill="var(--gnd)"/>
+    <text x="635" y="180" text-anchor="middle" fill="var(--muted)" font-size="10">100 nF</text>
+
+    <!-- heater on the 5 V rail, switched to ground by the MOSFET -->
+    <circle cx="870" cy="30" r="0.1" fill="none"/>
+    <rect x="862" y="140" width="16" height="60" fill="var(--sheet)" stroke="var(--power)" stroke-width="1.5"/>
+    <text x="854" y="158" text-anchor="end" fill="var(--power)">47 Ω heater</text>
+    <text x="854" y="172" text-anchor="end" fill="var(--muted)" font-size="11">0.5 W, on the can</text>
+    <!-- gate: GPIO10 through 220 ohm, hopping the ground drop -->
+    <path d="M250 350 H600 M640 350 H812 A8 8 0 0 1 828 350 H840 V470 H842" fill="none" stroke="var(--ink)" stroke-width="2"/>
+    <rect x="600" y="343" width="40" height="14" fill="var(--sheet)" stroke="var(--ink)" stroke-width="1.5"/>
+    <text x="604" y="374" fill="var(--muted)" font-size="11">220 Ω</text>
+    <!-- 10 k gate pull-down -->
+    <circle cx="800" cy="350" r="3.5" fill="var(--ink)"/>
+    <path d="M800 350 V380 M800 420 V530" stroke="var(--ink)" stroke-width="1.5"/>
+    <rect x="793" y="380" width="14" height="40" fill="var(--sheet)" stroke="var(--ink)" stroke-width="1.5"/>
+    <text x="786" y="404" text-anchor="end" fill="var(--muted)" font-size="11">10 kΩ</text>
+    <circle cx="800" cy="530" r="3.5" fill="var(--gnd)"/>
+    <!-- IRLZ44N: gate plate, channel, drain up to the heater, source down to ground -->
+    <g stroke="var(--ink)" stroke-width="2" fill="none">
+      <path d="M842 455 V485"/><path d="M850 450 V490"/><path d="M850 460 H870 M850 480 H870 V530"/>
+    </g>
+    <text x="882" y="466" fill="var(--ink)">IRLZ44N</text>
+    <text x="882" y="480" fill="var(--muted)" font-size="11">G · D · S</text>
+  </svg>
+  </div>
+  <div class="two">
+    <div>
+      <h3>Pin map</h3>
+      <dl class="kv">
+        <dt>3V3</dt><dd>MLX VDD, BME280 VIN, both pull-ups</dd>
+        <dt>GND</dt><dd>MLX, BME280, MOSFET source, 10 kΩ pull-down</dd>
+        <dt>GPIO8</dt><dd>SDA, both sensors</dd>
+        <dt>GPIO9</dt><dd>SCL, both sensors</dd>
+        <dt>GPIO10</dt><dd>heater gate, through 220 Ω</dd>
+        <dt>5V</dt><dd>USB 5 V through the board's diode; feeds the heater only</dd>
+      </dl>
+    </div>
+    <div>
+      <h3>Notes</h3>
+      <ul class="note" style="font-size:15px">
+        <li>These are the ESP32-S3 pins (DevKitC-1, N16R8). GPIO 22 to 25 do not exist on the S3; on a classic ESP32-DevKitC the same wiring is SDA 21, SCL 22, heater 25. Pins 26 to 37 are the S3 module's flash and PSRAM, 19/20 are USB, 0/3/45/46 are strapping pins: leave them all alone.</li>
+        <li>The MLX runs at 3 V; never put its VDD or SDA/SCL on the 5 V rail.</li>
+        <li>Keep the I²C leads under 15 cm. The can sits in the lid, the board underneath.</li>
+        <li>One ground. The heater's 0.1 A returns through the same GND as the sensors; keep that lead short so the drop stays off the I²C ground reference.</li>
+        <li>The MLX reports two temperatures: the object (sky) and its own die. Use the BME280 for the air; the die runs warm once the heater is on.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2>3 · Enclosure</h2>
+  <div class="sheet">
+  <svg viewBox="0 0 900 330" width="900" height="330" role="img" aria-label="Side section of the enclosure: sensor can through the lid tilted 10 degrees under a short hood, BME280 under a vented cap, ESP32 inside, cable gland at the bottom, mast clamp" font-family="IBM Plex Mono, monospace" font-size="12">
+    <rect width="900" height="330" fill="url(#g)"/>
+    <!-- sky cone -->
+    <path d="M330 20 L450 120 L570 20" fill="none" stroke="var(--accent)" stroke-width="1.5" stroke-dasharray="5 5"/>
+    <text x="450" y="16" text-anchor="middle" fill="var(--accent)">35° cone · sky only, no roof or trees in it</text>
+    <!-- box -->
+    <g transform="rotate(-10 450 200)">
+      <rect x="320" y="130" width="260" height="140" rx="6" fill="var(--sheet)" stroke="var(--ink)" stroke-width="1.5"/>
+      <rect x="320" y="124" width="260" height="10" fill="var(--sheet)" stroke="var(--ink)" stroke-width="1.5"/>
+      <!-- can -->
+      <rect x="436" y="104" width="28" height="30" rx="2" fill="var(--sheet)" stroke="var(--ink)" stroke-width="1.5"/>
+      <rect x="440" y="98" width="20" height="6" fill="var(--accent)"/>
+      <!-- hood -->
+      <path d="M426 124 V86 M474 124 V86" stroke="var(--ink)" stroke-width="1.5"/>
+      <!-- heater -->
+      <rect x="464" y="112" width="10" height="16" fill="var(--power)"/>
+      <!-- vent cap -->
+      <rect x="520" y="112" width="34" height="12" rx="3" fill="var(--sheet)" stroke="var(--ink)" stroke-width="1.5"/>
+      <rect x="528" y="134" width="18" height="14" fill="var(--sheet)" stroke="var(--ink)" stroke-width="1"/>
+      <!-- board -->
+      <rect x="340" y="200" width="150" height="40" fill="var(--sheet)" stroke="var(--ink)" stroke-width="1"/>
+      <!-- gland -->
+      <rect x="400" y="270" width="24" height="14" fill="var(--sheet)" stroke="var(--ink)" stroke-width="1.5"/>
+      <path d="M412 284 V310" stroke="var(--ink)" stroke-width="2"/>
+    </g>
+    <!-- labels -->
+    <g fill="var(--ink)">
+      <text x="120" y="110">MLX90614 can through the lid,</text><text x="120" y="126">sealed with silicone, no window</text>
+      <path d="M345 120 H430" stroke="var(--muted)" stroke-width="1"/>
+      <text x="120" y="160">47 Ω heater on the can</text><path d="M300 156 H455" stroke="var(--muted)" stroke-width="1"/>
+      <text x="650" y="100">PVC hood, 20 mm, outside the cone</text><path d="M645 104 H480" stroke="var(--muted)" stroke-width="1"/>
+      <text x="650" y="150">BME280 under a vented cap</text><path d="M645 146 H560" stroke="var(--muted)" stroke-width="1"/>
+      <text x="650" y="215">ESP32 + perfboard</text><path d="M645 211 H500" stroke="var(--muted)" stroke-width="1"/>
+      <text x="650" y="285">M12 gland, USB lead down the mast</text><path d="M645 281 H430" stroke="var(--muted)" stroke-width="1"/>
+      <text x="120" y="250">Tilt 10° so water runs off the can</text>
+    </g>
+    <!-- mast -->
+    <rect x="290" y="150" width="8" height="180" fill="var(--muted)"/>
+    <text x="250" y="320" fill="var(--muted)">mast</text>
+  </svg>
+  </div>
+  <ol>
+    <li>Drill the lid for the can (9 mm) and the vent cap; fit the can from inside with its leads soldered to 10 cm of hook-up wire, seal the rim with silicone, and let it cure before the heater goes on.</li>
+    <li>Bond the heater resistor to the side of the can with thermal epoxy. Conformal-coat the perfboard once it works.</li>
+    <li>Mount the box tilted 10° toward the gland side. Site it where the 35° cone sees only sky: the north side of the roof structure on a short mast, clear of the roof's travel, and not downwind of the dehumidifier's exhaust.</li>
+    <li>Reserve the ESP32's address in DHCP, as for Iris North, so the Python side has a fixed host.</li>
+  </ol>
+</section>
+
+<section>
+  <h2>4 · ESPHome configuration</h2>
+  <p>The whole firmware. Compile and flash it with the ESPHome tool on the observatory PC (the steps are in <code>docs/SKY_IR_PC_PLAN.md</code>), the lead in the port marked COM (or UART) the first time; later edits go over the air. The browser installer alone only writes a generic firmware. The heater switches on when the air is damp or the can is near the dew point.</p>
+<pre>esphome:
+  name: sky-ir
+esp32:
+  board: esp32-s3-devkitc-1
+  variant: esp32s3
+  flash_size: 16MB
+  framework:
+    type: esp-idf
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+web_server:
+  port: 80           # http://sky-ir/sensor/sky_temp -> {"value": -24.3, ...}
+logger:                # logs on the COM port, where esphome run reads them
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+i2c:
+  sda: 8
+  scl: 9
+  frequency: 100kHz
+
+sensor:
+  - platform: mlx90614
+    address: 0x5A
+    update_interval: 10s
+    ambient:
+      name: ir_case_temp          # the die, warm when the heater runs
+      id: case_t
+    object:
+      name: sky_temp
+      id: sky_t
+      filters:
+        - sliding_window_moving_average: {window_size: 6, send_every: 6}
+  - platform: bme280_i2c
+    address: 0x76
+    update_interval: 30s
+    temperature: {name: air_temp, id: air_t}
+    humidity:    {name: humidity, id: rh}
+    pressure:    {name: pressure}
+  - platform: template
+    name: sky_delta               # the cloud metric: sky minus air
+    unit_of_measurement: "°C"
+    update_interval: 30s
+    lambda: return id(sky_t).state - id(air_t).state;
+  - platform: template
+    name: dew_point
+    id: dew
+    unit_of_measurement: "°C"
+    update_interval: 30s
+    lambda: |-
+      float a = 17.62, b = 243.12, t = id(air_t).state, h = id(rh).state;
+      float g = log(h / 100.0) + a * t / (b + t);
+      return b * g / (a - g);
+
+output:
+  - platform: gpio
+    pin: 10
+    id: heater_pin
+switch:
+  - platform: output
+    name: heater
+    id: heater
+    output: heater_pin
+
+interval:
+  - interval: 60s
+    then:
+      - if:
+          condition:
+            lambda: return id(rh).state > 85 || id(case_t).state < id(dew).state + 2;
+          then: [switch.turn_on: heater]
+          else: [switch.turn_off: heater]</pre>
+</section>
+
+<section>
+  <h2>5 · Reading it</h2>
+  <div class="sheet">
+  <table>
+    <thead><tr><th>sky_delta (sky − air)</th><th>Sky</th><th>Confidence</th></tr></thead>
+    <tbody>
+      <tr><td class="pn">−35 … −20 °C</td><td>Clear</td><td>High in dry air; a humid clear night reads a few degrees warmer.</td></tr>
+      <tr><td class="pn">−20 … −10 °C</td><td>Thin cloud or haze</td><td>The band to calibrate against the camera's transparency.</td></tr>
+      <tr><td class="pn">−10 … −3 °C</td><td>Cloud</td><td>High.</td></tr>
+      <tr><td class="pn">−3 … 0 °C</td><td>Overcast, fog, or dew on the can</td><td>Fail-safe either way; the heater and humidity tell fog from dew.</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p>Do not hard-code those thresholds. Log <code>sky_delta</code>, <code>air_temp</code> and <code>humidity</code> for two weeks beside the camera's transparency in <code>local/sky_log.jsonl</code> (plate-solve matches over catalogue stars, V ≤ 5, moon- and twilight-screened) and fit the bands from the data, with humidity and air temperature as terms. That fit is what the commercial units ship as factory constants.</p>
+  <div class="two">
+    <div>
+      <h3>Into SRT</h3>
+      <ul style="font-size:15px">
+        <li><code>hardware_control/sky_ir.py</code>: one HTTP poll a minute of <code>/sensor/sky_delta</code>, <code>/sensor/air_temp</code>, <code>/sensor/humidity</code>, <code>/sensor/dew_point</code>; appended to <code>sky_log.jsonl</code> as a second truth stream.</li>
+        <li>Feeds <code>weather_watch.verdict</code> for the mid-night close (F1), two weeks in shadow first, as planned.</li>
+        <li><code>status</code> shows the delta and the sky word; a drop of more than 10 °C in 15 minutes is a priority-1 push.</li>
+        <li>Day and night labels for the sky-camera cloud classifier, independent of stars and the moon.</li>
+      </ul>
+    </div>
+    <div>
+      <h3>Failure reads</h3>
+      <ul style="font-size:15px">
+        <li>Unreachable: unknown, never clear. The conductor treats unknown as a refusal, as it does for every sensor.</li>
+        <li>Dew on the can reads as overcast. Correct direction; the heater prevents the record from being ruined.</li>
+        <li>A warm roof edge in the cone reads as permanent thin cloud. Move the mast, not the threshold.</li>
+        <li>Snow on the can reads 0 °C delta all day. The BME280 at the same time says the air is below freezing with high humidity; a day of flat delta in that state is a “go and look” push.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+</main>
+</body>
+</html>

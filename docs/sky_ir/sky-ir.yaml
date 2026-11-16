@@ -1,0 +1,74 @@
+esphome:
+  name: sky-ir
+esp32:
+  board: esp32-s3-devkitc-1
+  variant: esp32s3
+  flash_size: 16MB
+  framework:
+    type: esp-idf
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+web_server:
+  port: 80           # http://sky-ir/sensor/sky_temp -> {"value": -24.3, ...}
+logger:                # logs on the COM port, where esphome run reads them
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+i2c:
+  sda: 8
+  scl: 9
+  frequency: 100kHz
+
+sensor:
+  - platform: mlx90614
+    address: 0x5A
+    update_interval: 10s
+    ambient:
+      name: ir_case_temp          # the die, warm when the heater runs
+      id: case_t
+    object:
+      name: sky_temp
+      id: sky_t
+      filters:
+        - sliding_window_moving_average: {window_size: 6, send_every: 6}
+  - platform: bme280_i2c
+    address: 0x76
+    update_interval: 30s
+    temperature: {name: air_temp, id: air_t}
+    humidity:    {name: humidity, id: rh}
+    pressure:    {name: pressure}
+  - platform: template
+    name: sky_delta               # the cloud metric: sky minus air
+    unit_of_measurement: "°C"
+    update_interval: 30s
+    lambda: return id(sky_t).state - id(air_t).state;
+  - platform: template
+    name: dew_point
+    id: dew
+    unit_of_measurement: "°C"
+    update_interval: 30s
+    lambda: |-
+      float a = 17.62, b = 243.12, t = id(air_t).state, h = id(rh).state;
+      float g = log(h / 100.0) + a * t / (b + t);
+      return b * g / (a - g);
+
+output:
+  - platform: gpio
+    pin: 10
+    id: heater_pin
+switch:
+  - platform: output
+    name: heater
+    id: heater
+    output: heater_pin
+
+interval:
+  - interval: 60s
+    then:
+      - if:
+          condition:
+            lambda: return id(rh).state > 85 || id(case_t).state < id(dew).state + 2;
+          then: [switch.turn_on: heater]
+          else: [switch.turn_off: heater]
