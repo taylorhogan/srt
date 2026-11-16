@@ -379,6 +379,16 @@ def log_shared_measurements(raw_info: dict, log) -> None:
     if raw_info.get("ha_ratio") is not None:
         log("Ha continuum ratio from raw: %.4f — pinned on the denoised set"
             % raw_info["ha_ratio"])
+    fm = raw_info.get("fine_mesh") or {}
+    if fm:
+        parts = []
+        for f, fi in fm.items():
+            if fi.get("skipped"):
+                parts.append(f"{f}: skipped ({fi['skipped']})")
+            else:
+                parts.append(f"{f}: {fi.get('amplitude_adu', 0):.2f} ADU p5-p95 on {fi.get('box_px')} px boxes, "
+                             f"{100 * (fi.get('object_fraction') or 0):.0f}% masked")
+        log("residual sky mesh from raw: " + "; ".join(parts))
 
 
 def compose(args) -> int:
@@ -978,6 +988,7 @@ def routine(args) -> int:
         # bright ones on the raw), pinned on every set from here
         palette_quiet=to_channels(den) if den else None)
     log_shared_measurements(raw_info, log)
+    meta["fine_mesh"] = raw_info.get("fine_mesh") or {}
     # The ROUTINE stretch: the shared white from the raw set, sky-anchored
     # blacks, the options' softening. Every morning composite is on it, and
     # so is the crop, in every mode (below).

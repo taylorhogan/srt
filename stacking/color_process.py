@@ -109,6 +109,23 @@ MAX_LUM_BOOST = 3.0
 # big enough that cluster galaxies and nebulosity are not absorbed into it.
 SUBTRACT_BACKGROUND = True
 BG_MESH_FRACTION = 4      # mesh boxes across the short axis
+# The residual mesh (2026-11-16): the sky left at the 100-500 px scale after the
+# surface, the coarse mesh and the edge roll-off -- flat-field residuals and
+# sky glow structure, +/-1.2 ADU on ngc2276 against a black 1.5 ADU under the
+# sky, so patches of the field clipped black and the rest sat on the foot of
+# the stretch as blotches. Fitted on FINE_MESH_PX boxes with the extended
+# light masked out (cores found on the plane smoothed to FINE_MESH_SMOOTH_PX,
+# each grown by its tier's skirt, FINE_MESH_TIERS) and interpolated across the
+# masked boxes, so a galaxy's halo is not read as sky. Skipped, and said so, when the mask covers more
+# than FINE_MESH_MAX_OBJECT of the field, or when the field's median sits
+# FINE_MESH_MAX_ABOVE_FLOOR pixel sigmas above its own sky floor: a nebula
+# filling the frame IS the signal, and a mesh this fine would flatten it.
+FINE_MESH_PX = 256
+FINE_MESH_SMOOTH_PX = 32
+FINE_MESH_STAR_PX = 72            # a median this wide removes the stars from the core-finding plane
+FINE_MESH_TIERS = ((2.0, 64), (5.0, 300), (20.0, 600))   # (pixel sigmas above the sky, skirt grown in px)
+FINE_MESH_MAX_OBJECT = 0.5
+FINE_MESH_MAX_ABOVE_FLOOR = 1.5   # ...or when the smoothed plane's median is this many pixel sigmas above its 2nd percentile
 # Measured trade-off on synthetic fields (dome 40x sky noise, nebula filling the
 # middle third).  Mesh 8 flattens the dome best but absorbs 30-45% of a large
 # nebula; mesh 3 leaves the nebula untouched but barely dents the dome.  Mesh 4
@@ -811,7 +828,90 @@ def _edge_rolloff(resid: np.ndarray, band: float = EDGE_BAND, smooth: int = EDGE
     return out
 
 
-def _remove_gradient(chan: np.ndarray, mesh: int = BG_MESH_FRACTION) -> np.ndarray:
+def fine_residual_background(resid: np.ndarray, box_px: int = FINE_MESH_PX,
+                             max_object: float = FINE_MESH_MAX_OBJECT) -> tuple[Optional[np.ndarray], dict]:
+    """The mid-scale sky left after the surface, the coarse mesh and the edge
+    roll-off: a Background2D on *box_px* boxes with the extended light masked.
+
+    *resid* is a background-subtracted plane (sky near 0). Returns (model,
+    info): the model to subtract, zero-mean over the sky, or None when the
+    stage does not apply, and a record of what it measured. The object mask
+    grows out from the cores on the plane smoothed to FINE_MESH_SMOOTH_PX,
+    in the tiers of FINE_MESH_TIERS; boxes more than half masked are interpolated from their neighbours, so the sky under a galaxy
+    is what the sky around it says, not the halo. A mask over *max_object* of
+    the field means the field is the object (a nebula) and the stage is
+    skipped. Never raises: a failure is returned as a skipped stage.
+    """
+    info: dict = {"box_px": None, "object_fraction": None}
+    try:
+        from astropy.stats import SigmaClip
+        from photutils.background import Background2D, SExtractorBackground
+        from scipy.ndimage import binary_dilation, gaussian_filter
+
+        a = np.asarray(resid, dtype=np.float32)
+        h, w = a.shape
+        k = 8
+        hh, ww = h // k, w // k
+        if hh < 8 or ww < 8:
+            info["skipped"] = "frame too small"
+            return None, info
+        small = np.nanmean(a[: hh * k, : ww * k].reshape(hh, k, ww, k), axis=(1, 3))
+        small = np.where(np.isfinite(small), small, np.nanmedian(small))
+        # Stars go first: a median over FINE_MESH_STAR_PX takes out anything
+        # smaller than a galaxy or a bright star's halo, so the cores found
+        # below are the extended ones and a field of stars is not all skirt.
+        from scipy.ndimage import median_filter
+        sm = median_filter(small, size=max(3, int(round(FINE_MESH_STAR_PX / k))), mode="nearest")
+        sm = gaussian_filter(sm, max(1.0, FINE_MESH_SMOOTH_PX / k))
+        smed = float(np.median(sm))
+        ssig = 1.4826 * float(np.median(np.abs(sm - smed))) + 1e-6
+        # Is the sky the majority of this field? The pixel noise from a
+        # high-pass (structure-free); when the smoothed plane's median sits
+        # well above its own floor, most of the frame is above the sky -- a
+        # nebula filling the field -- and the robust statistics below would
+        # take the nebula for sky and the mesh would flatten it.
+        d = a[:, 1:] - a[:, :-1]
+        noise = 1.4826 * float(np.nanmedian(np.abs(d - np.nanmedian(d)))) / np.sqrt(2.0) + 1e-6
+        above = smed - float(np.percentile(sm, 2))
+        info["pixel_noise_adu"] = round(noise, 3)
+        info["median_above_floor_adu"] = round(above, 3)
+        if above > FINE_MESH_MAX_ABOVE_FLOOR * noise:
+            info["skipped"] = "mostly object: the field's median sits %.1f ADU above its sky floor (%.1f sigma)" % (above, above / noise)
+            return None, info
+        # Objects are the cored things: a galaxy, a bright star, a halo around
+        # either. The sky's own patches have no core. So the mask grows out
+        # from cores in tiers, the brighter the core the wider the skirt it is
+        # allowed (FINE_MESH_TIERS: pixel sigmas above the sky -> grow px), and
+        # a coreless patch at the sky's level is left for the mesh.
+        obj = np.zeros(sm.shape, dtype=bool)
+        for nsig, grow_px in FINE_MESH_TIERS:
+            core = sm > smed + nsig * noise
+            if core.any():
+                obj |= binary_dilation(core, iterations=max(1, int(round(grow_px / k))))
+        frac = float(obj.mean())
+        info["object_fraction"] = round(frac, 3)
+        if frac > max_object:
+            info["skipped"] = "mostly object: extended light covers %.0f %% of the field" % (100 * frac)
+            return None, info
+        mask = np.zeros((h, w), dtype=bool)
+        mask[: hh * k, : ww * k] = np.repeat(np.repeat(obj, k, axis=0), k, axis=1)
+        box = max(64, min(int(box_px), min(h, w) // 6))
+        info["box_px"] = box
+        bkg = Background2D(a, box_size=box, filter_size=1, mask=mask, exclude_percentile=50,
+                           sigma_clip=SigmaClip(sigma=3.0), bkg_estimator=SExtractorBackground())
+        model = bkg.background.astype(np.float32)
+        model -= float(np.median(model[~mask])) if (~mask).any() else float(np.median(model))
+        sky = model[~mask] if (~mask).any() else model
+        info["amplitude_adu"] = round(float(np.percentile(sky, 95) - np.percentile(sky, 5)), 3)
+        return model, info
+    except Exception as exc:  # noqa: BLE001
+        _logger.warning("fine residual background skipped: %s", exc, exc_info=True)
+        info["skipped"] = "failed: %s" % exc
+        return None, info
+
+
+def _remove_gradient(chan: np.ndarray, mesh: int = BG_MESH_FRACTION, fine: bool = True,
+                     info: Optional[dict] = None, name: Optional[str] = None) -> np.ndarray:
     """Subtract a coarse 2-D background model — vignetting and sky gradient.
 
     The sky's smooth surface goes first (sky_plane: a clipped quadratic), the
@@ -837,11 +937,20 @@ def _remove_gradient(chan: np.ndarray, mesh: int = BG_MESH_FRACTION) -> np.ndarr
             flat, box_size=box, filter_size=3,
             sigma_clip=SigmaClip(sigma=3.0), bkg_estimator=SExtractorBackground(),
         )
-        return _edge_rolloff(flat - bkg.background)
+        resid = _edge_rolloff(flat - bkg.background)
     except Exception:
         _logger.warning("Background2D unavailable — leaving the gradient in",
                         exc_info=True)
         return chan - float(np.nanmedian(chan))
+    if fine:
+        # The residual mesh (FINE_MESH_PX): what the three stages above leave
+        # at the 100-500 px scale, with the extended light masked out.
+        model, finfo = fine_residual_background(resid, max_object=FINE_MESH_MAX_OBJECT)
+        if model is not None:
+            resid = resid - model
+        if info is not None:
+            info.setdefault("fine_mesh", {})[name or "?"] = finfo
+    return resid
 
 
 def ha_continuum_ratio(ha: np.ndarray, r: np.ndarray,
@@ -1362,7 +1471,7 @@ def _prepare(channels: dict[str, np.ndarray], subtract_background: bool,
     caller has it, for the gain's faint-star search (join_quiet_stars).
     """
     if subtract_background:
-        subbed = {k: _remove_gradient(v, mesh) for k, v in channels.items()}
+        subbed = {k: _remove_gradient(v, mesh, info=info, name=k) for k, v in channels.items()}
     else:
         subbed = {k: v - float(np.nanmedian(v)) for k, v in channels.items()}
     if "LSYN" in channels and "LSYN_REF" in channels:

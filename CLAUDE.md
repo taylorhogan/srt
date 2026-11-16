@@ -388,6 +388,26 @@ Since 2026-09-25 the conductor decides both invariants (ADR 0014): every roof fi
   saturation turned that into a brown sky (RGB 54/32/25). A balanced set is
   unchanged.
 
+  **The background removal has a fourth stage, the residual mesh (since
+  2026-11-16, `color_process.fine_residual_background`, `FINE_MESH_PX` 256).**
+  The sky surface, the coarse mesh and the edge roll-off leave the sky's
+  100-500 px structure in place (flat-field residuals, sky glow): on NGC 2276
+  +/-1.2 ADU against a black 1.5 ADU under the sky, so patches of the field
+  clipped black and the rest sat on the foot of the stretch as blotches
+  (owner, the full-resolution crop). The stage fits a Background2D on 256 px
+  boxes, no box-to-box filter, with the cored things masked: cores are found
+  on the plane with the stars median-filtered out (`FINE_MESH_STAR_PX` 72)
+  and smoothed to 32 px, and each grows a skirt by its tier
+  (`FINE_MESH_TIERS`: 2 sigma -> 64 px, 5 -> 300, 20 -> 600), because a
+  galaxy's halo has a core and a sky patch does not; masked boxes are
+  interpolated from their neighbours. It stands aside, and the log says so,
+  when the mask covers more than half the field or the field's median sits
+  1.5 pixel sigmas above its own floor (a nebula filling the frame is the
+  signal). Measured on NGC 2276 L: the 340 px residual -1.24..+2.18 ->
+  -0.32..+0.72 ADU, NGC 2300's annuli within 5 %, NGC 2276's disc unchanged.
+  `_prepare` records it per channel in `info["fine_mesh"]`; the morning log
+  prints it and the meta carries it.
+
   **Calibration matches the lights' camera gain (since 2026-10-24).** The
   QHY600M writes GAIN and OFFSET into every frame; the lights' majority
   (GAIN, OFFSET) is the stack's gain (`stacker.select_gain`), lights at any
