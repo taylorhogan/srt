@@ -806,3 +806,20 @@ def test_simulated_timeline_starts_at_dusk_and_caps_from_the_real_start():
     assert tl[0] == (dusk, dusk + timedelta(minutes=30), 0.0)
     assert tl[1][0] == dusk + timedelta(minutes=30) and tl[1][1] == dusk + timedelta(minutes=90)
     assert tl[2][0] == rises["c"] and tl[2][2] == (rises["c"] - tl[1][1]).total_seconds()
+
+
+def test_simulated_timeline_ends_a_slot_when_its_target_sets_behind_the_trees():
+    """2026-11-16: NGC 1055's AboveHorizonCondition ended it at 23:15, behind
+    the south-south-west trees, against a 00:00 clock end; the next slot
+    starts there, and a set after the clock end changes nothing."""
+    slots = [{"name": "ngc1055", "start": datetime(2026, 11, 16, 21)},
+             {"name": "ic405", "start": datetime(2026, 11, 17, 0)}]
+    ends = [datetime(2026, 11, 17, 0), datetime(2026, 11, 17, 4)]
+    sets = {"ngc1055": datetime(2026, 11, 16, 23, 15), "ic405": datetime(2026, 11, 17, 5)}
+    tl = g.simulate_timeline(slots, ends, [None, None], datetime(2026, 11, 16, 20, 41),
+                             lambda sl, after: after, lambda sl, after: sets[sl["name"]])
+    assert tl[0][1] == sets["ngc1055"]
+    assert tl[1][0] == sets["ngc1055"] and tl[1][1] == ends[1]
+    # No set_fn: the clock ends, as before.
+    tl = g.simulate_timeline(slots, ends, [None, None], datetime(2026, 11, 16, 20, 41), lambda sl, after: after)
+    assert tl[0][1] == ends[0]

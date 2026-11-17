@@ -352,3 +352,25 @@ def test_a_refusal_at_sunset_too_is_a_night_off_said_once(monkeypatch):
     pushes = [p[1] for p in w.kinds("push")]
     assert sum("refused again at sunset" in p for p in pushes) == 1
     assert S._NO_SEQUENCE["day"] is not None
+
+
+def test_filters_post_shows_the_sequences_real_slot_times(tmp_path, monkeypatch):
+    """2026-11-16: the "Filters tonight" post said hubblev1 19:00-20:00 for a
+    slot that starts at astronomical dusk; it reads the saved timeline now,
+    and keeps the planned times when the timeline names other targets."""
+    import json
+    from control import night_plan
+    now = datetime.now().astimezone()
+    tl = tmp_path / "sequence_timeline.json"
+    tl.write_text(json.dumps({"written": now.isoformat(), "slots": [
+        {"dso": "hubblev1", "start": "2026-11-16T18:06-05:00", "end": "2026-11-16T19:06-05:00"},
+        {"dso": "ngc1055", "start": "2026-11-16T20:41-05:00", "end": "2026-11-17T00:00-05:00"}]}))
+    monkeypatch.setattr(S, "TIMELINE_PATH", str(tl))
+    slot = lambda d, a, b: {"dso": d, "start": "2026-11-16T%s:00-05:00" % a,  # noqa: E731
+                            "end": "2026-11-16T%s:00-05:00" % b, "filter_source": "advisor", "filters": {"L": 1}}
+    plan = {"filter_mode": "default", "slots": [slot("hubblev1", "19:00", "20:00"), slot("ngc1055", "21:00", "23:59")]}
+    text = night_plan.describe_filters(S._plan_with_real_times(plan))
+    assert "hubblev1 18:06-19:06" in text and "ngc1055 20:41-00:00" in text
+    assert plan["slots"][0]["start"].startswith("2026-11-16T19:00")      # the plan is not touched
+    other = dict(plan, slots=[slot("m31", "19:00", "20:00")])
+    assert S._plan_with_real_times(other) is other

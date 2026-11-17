@@ -1046,6 +1046,45 @@ def horizon_rise(name: str, ra_hours: float, dec_degrees: float, after):
         return None
 
 
+def horizon_set(name: str, ra_hours: float, dec_degrees: float, after):
+    """When *name*, above the observatory horizon at *after*, next drops
+    below it (configs/my.hrz, the file N.I.N.A's AboveHorizonCondition reads),
+    or None when it is not up at *after*, stays up for 12 h, or the sky
+    cannot be computed. Sampled every 2 minutes; the first sample below.
+
+    2026-11-16: NGC 1055 (dec 0) transits at 48.6 deg, and just past the
+    meridian the south-south-west trees climb from 39 to 47-54 deg (azimuth
+    185-199); N.I.N.A ended the slot at 23:15 on 48.39 against 48.4, while
+    the timeline said it ran to its 00:00 hard end."""
+    try:
+        import astropy.units as u
+        from astropy.coordinates import AltAz, EarthLocation, SkyCoord
+        from astropy.time import Time
+        import numpy as np
+        from configs import config
+        from iris_astronomy import astro_dso_visibility as av
+
+        loc = config.data()["location"]
+        site = EarthLocation.from_geodetic(loc["longitude"] * u.deg, loc["latitude"] * u.deg,
+                                           loc["elevation"] * u.m)
+        target = SkyCoord(ra=ra_hours * 15.0 * u.deg, dec=dec_degrees * u.deg)
+        grid = Time(after) + np.linspace(0, 12, 361) * u.hour
+        aa = target.transform_to(AltAz(obstime=grid, location=site))
+        az_h, al_h = av.map_az_to_horizon()
+        up = [alt >= av.get_horizon_from_azimuth(float(az) % 360.0, az_h, al_h)
+              for alt, az in zip(aa.alt.deg, aa.az.deg)]
+        if not up[0]:
+            return None
+        k = next((i for i, u_ in enumerate(up) if not u_), None)
+        if k is None:
+            return None
+        t = grid[k]
+        return t.to_datetime(timezone=after.tzinfo) if getattr(after, "tzinfo", None) else t.to_datetime()
+    except Exception:  # noqa: BLE001 -- never let the sky break generation
+        logging.getLogger(__name__).warning("horizon set for %s unavailable", name, exc_info=True)
+        return None
+
+
 def park_across_gap(setup: dict, next_id: list) -> bool:
     """Park before this slot's wait and unpark after it. True when inserted.
 
@@ -1137,10 +1176,13 @@ def _setup_of(container: dict) -> Optional[dict]:
                  if _short_type(it) == "SequentialContainer"), None)
 
 
-def simulate_timeline(slots: list, ends: list, caps: list, dusk, rise_fn) -> list:
+def simulate_timeline(slots: list, ends: list, caps: list, dusk, rise_fn, set_fn=None) -> list:
     """[(real_start, real_end, wait_s)] per slot: when each slot will REALLY
     run, as the sequence will execute it, not as the plan drew it. Pure but
-    for *rise_fn(slot, after)* (when the target clears the trees, or None).
+    for *rise_fn(slot, after)* (when the target clears the trees, or None)
+    and *set_fn(slot, after)* (when it drops behind them again, or None):
+    the slot's AboveHorizonCondition ends it there, before its clock end
+    when the trees come first (NGC 1055 at 23:15 on 2026-11-16).
 
     The first slot starts at astronomical dusk or its rise; a later one the
     moment the one before it ends, or at its rise. A capped slot ends at its
@@ -1164,6 +1206,9 @@ def simulate_timeline(slots: list, ends: list, caps: list, dusk, rise_fn) -> lis
         if caps[k]:
             capped = start + timedelta(seconds=caps[k])
             end = capped if end is None else min(end, capped)
+        sets = set_fn(slot, start) if set_fn is not None else None
+        if sets is not None:
+            end = sets if end is None else min(end, sets)
         if end is not None and end < start:
             end = start                 # the slot never gets to run
         out.append((start, end, wait))
@@ -1696,6 +1741,13 @@ def generate_slots_sequence(template_path: Path, slots: list, output_path: Path,
         if key not in _rises:
             _rises[key] = horizon_rise(sl["name"], sl["ra_hours"], sl["dec_degrees"], after)
         return _rises[key]
+    _sets = {}
+
+    def set_of(sl, after):
+        key = (sl["name"], after)
+        if key not in _sets:
+            _sets[key] = horizon_set(sl["name"], sl["ra_hours"], sl["dec_degrees"], after)
+        return _sets[key]
     for k, slot in enumerate(slots):
         c = proto if k == 0 else _clone_with_fresh_ids(pristine, next_id)
         ra_h, ra_m, ra_s = _decompose_ra(slot["ra_hours"])
@@ -1750,7 +1802,7 @@ def generate_slots_sequence(template_path: Path, slots: list, output_path: Path,
             # rise. The slot's own Center re-acquires, so the park costs two
             # slews and nothing else. Inserted BEFORE the hand-over scripts
             # below, which then bracket the whole thing.
-            timeline = simulate_timeline(slots[:k + 1], ends, caps, dusk, rise_of)
+            timeline = simulate_timeline(slots[:k + 1], ends, caps, dusk, rise_of, set_of)
             gap_s = timeline[k][2]
             if gap_s >= GAP_PARK_MIN_S:
                 if setup is not None and park_across_gap(setup, next_id):
@@ -1774,7 +1826,7 @@ def generate_slots_sequence(template_path: Path, slots: list, output_path: Path,
     try:
         LAST_TIMELINE = [{"dso": sl["name"], "start": a, "end": b}
                          for sl, (a, b, _w) in zip(slots, simulate_timeline(slots, ends, caps,
-                                                                            dusk, rise_of))]
+                                                                            dusk, rise_of, set_of))]
     except Exception:  # noqa: BLE001 -- a display aid, never a reason to fail
         LAST_TIMELINE = []
     items[idx:idx + 1] = clones

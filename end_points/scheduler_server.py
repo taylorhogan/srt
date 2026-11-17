@@ -610,6 +610,24 @@ def _real_times(slots) -> list:
     return planned
 
 
+def _plan_with_real_times(plan: dict) -> dict:
+    """A copy of the NIGHT_PLAN *plan* whose slots carry the sequence's real
+    start and end (the saved timeline, as `_real_times`), for the "Filters
+    tonight" post: on 2026-11-16 it said hubblev1 19:00-20:00 for a slot that
+    starts at astronomical dusk, 18:06. The plan itself is not touched; a
+    missing, stale or mismatched timeline leaves the planned times. Never raises."""
+    try:
+        from cmd_processing import dash
+        doc = json.load(open(TIMELINE_PATH, encoding="utf-8"))
+        real = dash.real_slot_times((plan or {}).get("slots") or [], doc,
+                                    datetime.now().astimezone())
+        if real:
+            return dict(plan, slots=real)
+    except Exception:
+        pass
+    return plan
+
+
 def _generate_nina_sequence(dso_name: str, good_hours: float = 0.0, end=None, filters=None):
     """Resolve DSO coordinates and write a N.I.N.A sequence file to disk.
 
@@ -1242,8 +1260,9 @@ def _post_filters(plan: dict) -> None:
             LOGGER.exception("filters: could not read the sequence back")
         # The chat gets the table (current sequence beside the advised ratio,
         # owner 2026-10-30); the text form is the journal's and the log's.
-        html = night_plan.describe_filters_html(plan, written)
-        text = night_plan.describe_filters(plan, written)
+        shown = _plan_with_real_times(plan)
+        html = night_plan.describe_filters_html(shown, written)
+        text = night_plan.describe_filters(shown, written)
         if html:
             try:
                 social_server.post_html_message(html)
