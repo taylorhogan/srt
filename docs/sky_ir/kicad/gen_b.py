@@ -5,6 +5,12 @@ S = json.load(open(f"{OUT}/.gen_state.json"))
 ROW, ROOT, SYMU, CONN, NETS, VALUES, FOOTS, DATE = (S[k] for k in ["ROW","ROOT","SYMU","CONN","NETS","VALUES","FOOTS","DATE"])
 def U(): return str(uuid.uuid4())
 NETNO = {n: i+1 for i, n in enumerate(NETS)}
+NAMES44 = S["J1_NAMES"] + S["J3_NAMES"]
+for i in range(44):
+    num = str(i+1)
+    if num not in CONN["U1"]:
+        nm = NAMES44[i]; net = f"unconnected-(U1-Pad{num})" if nm == num else f"unconnected-(U1-{nm}-Pad{num})"
+        CONN["U1"][num] = net; NETNO[net] = len(NETNO) + 1
 W = round(40 + ROW + 8, 2); H = 72.0
 FE = '(effects (font (size 1 1) (thickness 0.15)))'
 
@@ -59,6 +65,7 @@ PLACE = {   # ref: (footprint name, x, y, builder)
  "Q1": ("TO-220-3_Vertical", 20, 62, lambda: fp_to220(CONN["Q1"])),
 }
 ROT = {"R1": 270, "R2": 270, "R3": 180}      # R1/R2 stand vertical (pin 2 at +y); R3 pin 1 on the right
+REFPOS = {"R1": (5.08,2.6), "R2": (5.08,-2.6), "R3": (5.08,-2.6), "R4": (5.08,2.6), "Q1": (0,5.3)}
 HOLES = [(4,4),(W-4,4),(4,H-4),(W-4,H-4)]
 
 def rot(x, y, a):
@@ -71,10 +78,13 @@ for ref, (name, x, y, build) in PLACE.items():
     g, pads = build(); a = ROT.get(ref, 0)
     # KiCad: footprint (at x y a) rotates children by a (counter-clockwise on screen because y is down... KiCad rotates pads by -a in file coords)
     PADS[ref] = [(round(x + rot(px, py, -a)[0], 2), round(y + rot(px, py, -a)[1], 2)) for px, py in pads]
+    import re as _re
+    if a:
+        g = [_re.sub(r'\(pad ("[^"]*") (thru_hole|np_thru_hole) (\w+) \(at ([-\d.]+) ([-\d.]+)\)', lambda m: f'(pad {m.group(1)} {m.group(2)} {m.group(3)} (at {m.group(4)} {m.group(5)} {a})', s) for s in g]
     body = "\n    ".join(g)
     hdr = f'''(footprint "sky_ir:{name}" (layer "F.Cu") (uuid "{U()}") (at {x} {y} {a})
-    (property "Reference" "{ref}" (at 0 -2.4 {-a}) (unlocked yes) (layer "F.SilkS") (uuid "{U()}") {FE})
-    (property "Value" "{VALUES[ref]}" (at 0 2.4 {-a}) (unlocked yes) (layer "F.Fab") (uuid "{U()}") {FE})
+    (property "Reference" "{ref}" (at {REFPOS.get(ref,(0,-2.4))[0]} {REFPOS.get(ref,(0,-2.4))[1]} {a}) (unlocked yes) (layer "F.SilkS") (uuid "{U()}") {FE})
+    (property "Value" "{VALUES[ref]}" (at 0 2.4 {a}) (unlocked yes) (layer "F.Fab") (uuid "{U()}") {FE})
     (property "Footprint" "sky_ir:{name}" (at 0 0 0) (unlocked yes) (layer "F.Fab") hide (uuid "{U()}") {FE})
     (property "Datasheet" "" (at 0 0 0) (unlocked yes) (layer "F.Fab") hide (uuid "{U()}") {FE})
     (property "Description" "" (at 0 0 0) (unlocked yes) (layer "F.Fab") hide (uuid "{U()}") {FE})
@@ -96,7 +106,7 @@ for i, (hx, hy) in enumerate(HOLES):
     fps.append(f'''(footprint "sky_ir:MountingHole_3.2mm" (layer "F.Cu") (uuid "{U()}") (at {hx:.2f} {hy:.2f} 0)
     (property "Reference" "H{i+1}" (at 0 -4 0) (unlocked yes) (layer "F.SilkS") hide (uuid "{U()}") {FE})
     (property "Value" "M3" (at 0 4 0) (unlocked yes) (layer "F.Fab") (uuid "{U()}") {FE})
-    (attr through_hole exclude_from_bom)
+    (attr through_hole board_only exclude_from_bom)
     {chr(10).join(g)})''')
 g, _ = fp_hole()
 MODS["MountingHole_3.2mm"] = f'(footprint "MountingHole_3.2mm" (version 20240108) (generator "pcbnew") (generator_version "8.0") (layer "F.Cu")\n  (property "Reference" "REF**" (at 0 -4 0) (unlocked yes) (layer "F.SilkS") hide (uuid "{U()}") {FE})\n  (property "Value" "MountingHole_3.2mm" (at 0 4 0) (unlocked yes) (layer "F.Fab") (uuid "{U()}") {FE})\n  (attr through_hole exclude_from_bom)\n  {chr(10).join(g)})'
@@ -152,11 +162,11 @@ pcb = f'''(kicad_pcb (version 20240108) (generator "pcbnew") (generator_version 
   {nets}
   {chr(10).join(fps)}
   (gr_rect (start 0 0) (end {W} {H}) (stroke (width 0.1) (type default)) (fill none) (layer "Edge.Cuts") (uuid "{U()}"))
-  (gr_text "SKY IR  Iris  {DATE[:7]}" (at {W/2:.2f} 69 0) (layer "F.SilkS") (uuid "{U()}") (effects (font (size 1.5 1.5) (thickness 0.3))))
+  (gr_text "SKY IR  Iris  {DATE[:7]}" (at {W/2:.2f} 3 0) (layer "F.SilkS") (uuid "{U()}") (effects (font (size 1.5 1.5) (thickness 0.3))))
   (gr_text "MLX" (at 4 10 90) (layer "F.SilkS") (uuid "{U()}") {FE})
   (gr_text "BME" (at 4 25 90) (layer "F.SilkS") (uuid "{U()}") {FE})
-  (gr_text "HEATER 5V/DRN" (at 4 46 90) (layer "F.SilkS") (uuid "{U()}") {FE})
-  (gr_text "VIN GND SCL SDA" (at 8 42 90) (layer "F.SilkS") (uuid "{U()}") {FE})
+  (gr_text "HEATER" (at 4 58 90) (layer "F.SilkS") (uuid "{U()}") {FE})
+  (gr_text "VIN GND SCL SDA" (at 3 42 90) (layer "F.SilkS") (uuid "{U()}") {FE})
   (gr_text "GND pour on the back" (at {W/2:.2f} 3 0) (layer "B.SilkS") (uuid "{U()}") (effects (font (size 1 1) (thickness 0.15)) (justify mirror)))
   {segs}
   {vs}

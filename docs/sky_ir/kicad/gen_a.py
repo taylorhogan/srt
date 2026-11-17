@@ -67,8 +67,9 @@ LIBID = {"U1":"sky_ir:ESP32-S3-DevKitC-1","J2":"sky_ir:MLX90614","J4":"sky_ir:BM
 items = []
 def wire(a, b): items.append(f'(wire (pts (xy {a[0]} {a[1]}) (xy {b[0]} {b[1]})) (stroke (width 0) (type default)) (uuid "{U()}"))')
 def label(txt, p, ang):
-    just = {0:"left bottom",180:"right bottom",90:"left bottom",270:"right bottom"}[ang]
-    items.append(f'(label "{txt}" (at {p[0]} {p[1]} {ang}) (effects {F} (justify {just})) (uuid "{U()}"))')
+    just = {0:"left",180:"right",90:"left",270:"right"}[ang]
+    items.append(f'(global_label "{txt}" (shape passive) (at {p[0]} {p[1]} {ang}) (fields_autoplaced yes) (effects {F} (justify {just})) (uuid "{U()}")'
+                 f' (property "Intersheetrefs" "${{INTERSHEET_REFS}}" (at {p[0]} {p[1]} 0) (effects {F} hide)))')
 def nc(p): items.append(f'(no_connect (at {p[0]} {p[1]}) (uuid "{U()}"))')
 def place(ref, x, y, pins, refpos, valpos):
     pp = "\n  ".join(f'(pin "{n}" (uuid "{U()}"))' for n in pins)
@@ -132,5 +133,5 @@ open(f"{OUT}/sky_ir.kicad_sch","w").write(sch)
 # standalone symbol library too
 open(f"{OUT}/sky_ir.kicad_sym","w").write('(kicad_symbol_lib (version 20231120) (generator "kicad_symbol_editor") (generator_version "8.0")\n' + "\n".join(s.replace('"sky_ir:', '"', 1) for s in LIBSYMS) + "\n)\n")
 open(f"{OUT}/sym-lib-table","w").write('(sym_lib_table (version 7)\n  (lib (name "sky_ir")(type "KiCad")(uri "${KIPRJMOD}/sky_ir.kicad_sym")(options "")(descr "Sky IR sensor symbols"))\n)\n')
-json.dump({"ROW":ROW,"ROOT":ROOT,"SYMU":SYMU,"CONN":CONN,"NETS":NETS,"VALUES":VALUES,"FOOTS":FOOTS,"DATE":DATE}, open(f"{OUT}/.gen_state.json","w"))
+json.dump({"J1_NAMES":J1_NAMES,"J3_NAMES":J3_NAMES,"ROW":ROW,"ROOT":ROOT,"SYMU":SYMU,"CONN":CONN,"NETS":NETS,"VALUES":VALUES,"FOOTS":FOOTS,"DATE":DATE}, open(f"{OUT}/.gen_state.json","w"))
 print("schematic written", len(items), "items")

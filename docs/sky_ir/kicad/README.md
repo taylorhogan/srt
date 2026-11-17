@@ -1,16 +1,20 @@
 # Sky IR sensor carrier board (KiCad)
 
-A KiCad 8 project for the sky IR sensor: the ESP32-S3-DevKitC-1 plugs into two 1x22 sockets on a small carrier that holds the I2C pull-ups, the heater MOSFET and its gate parts, and screw-free pin headers for the three things that live off the board on leads: the MLX90614 (it must see the sky), the BME280 breakout and the 47 ohm window heater. Electrically it is the same circuit as `../sky_ir_wiring_print.html`; the firmware is `../sky-ir.yaml`.
+A KiCad project for the sky IR sensor: the ESP32-S3-DevKitC-1 plugs into two 1x22 sockets on a small carrier that holds the I2C pull-ups, the heater MOSFET and its gate parts, and pin headers for the three things that live off the board on leads: the MLX90614 (it must see the sky), the BME280 breakout and the 47 ohm window heater. Electrically it is the same circuit as `../sky_ir_wiring_print.html`; the firmware is `../sky-ir.yaml`.
+
+Checked with KiCad 10.0.8 on 2026-11-17: ERC 0 violations, DRC 0 violations, 0 unconnected items, 0 schematic parity issues, zones filled. Gerbers and the drill file are in `gerbers/`.
 
 ## Files
 
 | File | What |
 |---|---|
 | `sky_ir.kicad_pro` | project (open this) |
-| `sky_ir.kicad_sch` | schematic, one sheet, nets by label |
+| `sky_ir.kicad_sch` | schematic, one sheet, nets by global label |
 | `sky_ir.kicad_pcb` | board, 70.9 x 72 mm, two layers, routed, GND pour on the back |
 | `sky_ir.kicad_sym`, `sky_ir.pretty/` | the project's own symbols and footprints, wired in by `sym-lib-table` / `fp-lib-table` |
-| `board.png`, `sch.png` | previews drawn from the files |
+| `gerbers/` | F/B copper, mask, silk, edge cuts, Excellon drill, job file |
+| `board.png`, `board_bottom.png`, `sch.png` | KiCad's renders |
+| `gen_a.py`, `gen_b.py` | the generator that wrote the files (`python3 gen_a.py out && python3 gen_b.py out`) |
 
 ## Circuit
 
@@ -30,11 +34,6 @@ Unused DevKit pins are left open on purpose (no-connect flags in the schematic).
 
 ## Before ordering
 
-1. **Socket row spacing.** The two DevKit columns are drawn 22.86 mm (0.9 in) apart. Measure pin 1 of each row on your board and check; if it differs, change `ROW` in the generator or move J3's column in the board editor. Everything this build uses is in the left column, so the right socket is mechanical only.
-2. Open the board, press **B** to fill the GND pour, then run **DRC**. The file was checked here for clearance and connectivity with a script, not with KiCad.
-3. The DevKit's USB-C connectors overhang the socket end marked on the silkscreen; leave that board edge clear in the box.
-4. The IRLZ44N tab is the drain: do not bolt it to a grounded box wall without an insulator.
-
-## How it was made
-
-Written by a generator script without KiCad (none on the Spark); the S-expressions are plain KiCad 8 format and KiCad 9 opens them. Clearance (0.2 mm), net connectivity and label placement were checked with shapely and kiutils, and the previews were plotted from the files.
+1. **Socket row spacing.** The two DevKit columns are drawn 22.86 mm (0.9 in) apart. Measure pin 1 of each row on your board; if it differs, change `ROW` at the top of `gen_a.py`, rerun both generators and re-export, or move J3's column in the board editor. Everything this build uses is in the left column, so the right socket is mechanical only.
+2. The DevKit's USB-C connectors overhang the socket end marked on the silkscreen; leave that board edge clear in the box.
+3. The IRLZ44N tab is the drain: do not bolt it to a grounded box wall without an insulator.
