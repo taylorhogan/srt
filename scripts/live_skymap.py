@@ -378,6 +378,26 @@ def _latest_frame(root: Path, out_dir: Path):
     return Path(str(out)), meta
 
 
+def frame_counts(frames, night=None):
+    """{filter: count} of *frames*, biggest first; with *night* (a date from
+    _night_of) only the frames of that observing night. Pure."""
+    counts: dict = {}
+    for f in frames:
+        if night is not None and _night_of(f.get("time")) != night:
+            continue
+        name = str(f.get("filter", "")).strip()
+        if name:
+            counts[name] = counts.get(name, 0) + 1
+    return dict(sorted(counts.items(), key=lambda kv: -kv[1]))
+
+
+def tonight_night(now=None):
+    """The observing night it is now, in _night_of's terms (the frame cache's
+    times are UTC, so the clock is UTC too)."""
+    now = now or datetime.utcnow()
+    return (now - timedelta(hours=12)).date()
+
+
 def _night_of(ts):
     """The observing night a frame timestamp belongs to, or None.
 
@@ -428,15 +448,17 @@ def _stats_chart(root, out_dir, dso):
         # channel is in the bank -- and it is the same accounting the
         # convergence gate works from. Ordered by count, biggest first, so the
         # dominant channel reads first rather than alphabetically.
-        counts: dict = {}
-        for f in frames:
-            name = str(f.get("filter", "")).strip()
-            if name:
-                counts[name] = counts.get(name, 0) + 1
+        counts = frame_counts(frames)
         if counts:
-            meta["stats_by_filter"] = dict(sorted(counts.items(),
-                                                  key=lambda kv: -kv[1]))
+            meta["stats_by_filter"] = counts
             meta["stats_filters"] = sorted(counts)      # kept: older readers
+        # And tonight's share of them (owner, 2026-11-18: "under that just add
+        # a similar line for just the frames tonight"). Empty when the target
+        # has no frame tonight yet, and the page shows no line.
+        tonight = frame_counts(frames, tonight_night())
+        meta["tonight_frames"] = sum(tonight.values())
+        if tonight:
+            meta["tonight_by_filter"] = tonight
         # Nights, so the caption can say how much history the chart spans.
         # Counted off the frame timestamps rather than the day boundary,
         # because a session that runs past midnight is one night's work and
