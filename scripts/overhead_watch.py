@@ -11,7 +11,8 @@ line each to the Observatory feed through utils/webchat_client, deduped by
 aircraft for half an hour in local/overhead_state.json. A feed or chat
 outage is silence; nothing here raises. `--dry-run` prints the lines and
 posts nothing; `--now` prints what the feed hears right now, like the
-chat's `overhead` command.
+chat's `overhead` command. An airline callsign's scheduled route comes from
+adsbdb (control/overhead.route_for), cached a day in local/overhead_routes.json.
 """
 import argparse
 import json
@@ -30,6 +31,7 @@ from configs import config  # noqa: E402
 from control import overhead  # noqa: E402
 
 STATE = Path(_root) / "local" / "overhead_state.json"
+ROUTES = Path(_root) / "local" / "overhead_routes.json"      # callsign -> route, a day
 
 
 def load_state() -> dict:
@@ -49,14 +51,32 @@ def save_state(state: dict) -> None:
         pass
 
 
+def load_routes() -> dict:
+    try:
+        return dict(json.loads(ROUTES.read_text()))
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def save_routes(routes: dict) -> None:
+    try:
+        tmp = ROUTES.with_suffix(".tmp")
+        tmp.write_text(json.dumps(overhead.prune_routes(routes)))
+        tmp.replace(ROUTES)
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--dry-run", action="store_true", help="print the lines, post nothing, keep no state")
     ap.add_argument("--now", action="store_true", help="print what the feed hears right now and exit")
     args = ap.parse_args()
     cfg = config.data()
+    routes = load_routes()
     if args.now:
-        print(overhead.nearby_report(cfg))
+        print(overhead.nearby_report(cfg, routes=routes))
+        save_routes(routes)
         return 0
     state = {} if args.dry_run else load_state()
     stamp = datetime.now().strftime("%H:%M")
@@ -68,9 +88,10 @@ def main() -> int:
         from utils.webchat_client import post_to_webchat
         post_to_webchat(line)
 
-    lines = overhead.poll_once(cfg, state, post, now=time.time(), when=stamp)
+    lines = overhead.poll_once(cfg, state, post, now=time.time(), when=stamp, routes=routes)
     if not args.dry_run:
         save_state(state)
+    save_routes(routes)
     if not lines and args.dry_run:
         print("nothing passing over")
     return 0

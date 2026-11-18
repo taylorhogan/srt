@@ -106,14 +106,65 @@ def test_nearby_report_lists_the_airborne_nearest_first_and_marks_the_passes():
     feed = {"ac": [_ac(*_offset(20, 0), track=90, hex_="far", flight="DAL22", t="B738"),
                    _ac(*_offset(10, 10), track=225, hex_="coming"),
                    _ac(*_offset(0.5, 0.5), alt="ground", hex_="ground")]}
-    text = oh.nearby_report(cfg, get=lambda url: feed)
+    no_table = lambda url: {"response": "unknown callsign"}            # never the network in a test
+    text = oh.nearby_report(cfg, get=lambda url: feed, routes={}, route_get=no_table)
     lines = text.splitlines()
     assert lines[0].startswith("Overhead now (2 airborne")
     assert "JBU1234 JetBlue" in lines[1] and "passing over" in lines[1]
     assert "DAL22 Delta, Boeing 737-800" in lines[2] and "passing over" not in lines[2]
-    assert "did not answer" in oh.nearby_report(cfg, get=lambda url: {"ac": []})
+    assert "did not answer" in oh.nearby_report(cfg, get=lambda url: {"ac": []}, route_get=no_table)
 
 
 def pytest_approx(value, tol):
     import pytest
     return pytest.approx(value, abs=tol)
+
+
+def test_routes_come_from_the_table_for_airline_callsigns_only_and_are_cached():
+    calls = []
+
+    def table(url):
+        calls.append(url)
+        cs = url.rsplit("/", 1)[-1]
+        if cs == "JBU1234":
+            return {"response": {"flightroute": {"airline": {"name": "JetBlue Airways"},
+                                                 "origin": {"iata_code": "BOS", "municipality": "Boston"},
+                                                 "destination": {"iata_code": "FLL", "municipality": "Fort Lauderdale"}}}}
+        return {"response": "unknown callsign"}
+    routes = {}
+    r = oh.route_for("JBU1234", routes, now=1000.0, get=table)
+    assert r["origin"] == "BOS" and r["destination_city"] == "Fort Lauderdale" and r["airline"] == "JetBlue Airways"
+    assert oh.route_text(r) == "Boston to Fort Lauderdale"
+    assert oh.route_for("JBU1234", routes, now=2000.0, get=table) == r and len(calls) == 1   # cached a day
+    assert oh.route_for("N88QD", routes, now=1000.0, get=table) is None and len(calls) == 1   # a registration: no lookup
+    assert oh.route_for("ZZZ999", routes, now=1000.0, get=table) is None and len(calls) == 2
+    assert oh.route_for("ZZZ999", routes, now=1000.0 + 600, get=table) is None and len(calls) == 2   # a miss cached an hour
+    assert oh.route_for("ZZZ999", routes, now=1000.0 + 7200, get=table) is None and len(calls) == 3
+
+    def broken(url):
+        raise OSError("down")
+    assert oh.route_for("DAL401", {}, get=broken) is None                                   # never raises
+    assert oh.prune_routes({"OLD": {"at": 0.0}, "NEW": {"at": 1000.0}}, now=1000.0 + oh.ROUTE_TTL_S) == {"NEW": {"at": 1000.0}}
+
+
+def test_the_line_and_the_poll_carry_the_route():
+    rec = oh.passes([_ac(*_offset(10, 10), track=225)], *SITE)[0]
+    route = {"origin": "BOS", "origin_city": "Boston", "destination": "FLL", "destination_city": "Fort Lauderdale",
+             "airline": "JetBlue Airways"}
+    line = oh.describe(rec, route=route)
+    assert line.startswith("Overhead: JBU1234 JetBlue Airways, Airbus A320, Boston to Fort Lauderdale, at 30,000 ft")
+    assert "Boston" not in oh.describe(rec)                                               # no route: the old line
+    cfg = {"location": {"latitude": SITE[0], "longitude": SITE[1]}}
+    feed = {"ac": [_ac(*_offset(10, 10), track=225, hex_="x1")]}
+    table = lambda url: {"response": {"flightroute": {"airline": {"name": "JetBlue Airways"},
+                                                      "origin": {"iata_code": "BOS", "municipality": "Boston"},
+                                                      "destination": {"iata_code": "FLL", "municipality": "Fort Lauderdale"}}}}
+    posted, routes = [], {}
+    oh.poll_once(cfg, {}, posted.append, now=1000.0, get=lambda url: feed, routes=routes, route_get=table)
+    assert "Boston to Fort Lauderdale" in posted[0] and "JBU1234" in routes
+    off = {**cfg, "overhead": {"routes": False}}
+    posted2 = []
+    oh.poll_once(off, {}, posted2.append, now=1000.0, get=lambda url: feed, routes={}, route_get=table)
+    assert "Boston" not in posted2[0]
+    text = oh.nearby_report(cfg, get=lambda url: feed, routes={}, route_get=table)
+    assert "JBU1234 JetBlue Airways" in text and "Boston to Fort Lauderdale" in text

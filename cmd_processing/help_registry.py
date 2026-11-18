@@ -595,7 +595,7 @@ HELP: dict[str, dict] = {
     },
     "overhead": {
         "category": "super",
-        "summary": "What is flying over the observatory right now, from the public ADS-B feed (nearest first; the passes over the roof marked).",
+        "summary": "What is flying over the observatory right now, from the public ADS-B feed (nearest first; the passes over the roof marked; airline flights with their scheduled route).",
         "usage": ["overhead"],
         "examples": ["overhead"],
         "notes": ["The Spark logs every pass inside 5 km of the roof in the Observatory feed by itself "

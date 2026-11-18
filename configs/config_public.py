@@ -6,7 +6,7 @@ class PublicConfig():
 
         },
         "version": {
-            "date": "2026.11.18.2"
+            "date": "2026.11.18.3"
         },
 
         "logger": {
@@ -627,7 +627,10 @@ class PublicConfig():
         # how far out the feed is asked (three minutes of warning for a jet),
         # cooldown_min one line per aircraft.
         "overhead": {"enabled": True, "radius_km": 5.0, "query_nm": 15, "horizon_s": 90,
-                     "cooldown_min": 30, "source": "https://api.adsb.lol/v2"},
+                     "cooldown_min": 30, "source": "https://api.adsb.lol/v2",
+                     # an airline callsign's SCHEDULED route (origin, destination,
+                     # airline) from the adsbdb table; False leaves it out
+                     "routes": True, "route_source": "https://api.adsbdb.com/v0/callsign"},
         "conductor": {
             "shadow_enabled": True,
             "port": 8096,

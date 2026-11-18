@@ -93,7 +93,8 @@ The aircraft passing over the roof, logged in the Observatory feed from the
 public ADS-B aggregate (adsb.lol, no key; `control/overhead`). One request a
 minute for everything within 15 nm, the passes picked by their projected
 closest approach inside 5 km of the roof, one line per aircraft per half
-hour. Around the clock by the owner's choice; `overhead.enabled` False in
+hour, an airline flight's scheduled route (adsbdb, cached a day in
+`local/overhead_routes.json`) on the line. Around the clock by the owner's choice; `overhead.enabled` False in
 the config stops it without touching cron.
 
 ```

@@ -41,6 +41,16 @@ QUERY_NM = 15.0          # ask the feed for this radius: three polls of warning 
 HORIZON_S = 90.0         # a closest approach this near in time, either side, counts now
 COOLDOWN_S = 1800.0      # one line per aircraft per half hour
 SOURCE = "https://api.adsb.lol/v2"
+# The route behind an airline callsign (owner, 2026-11-18 02:25). ADS-B carries
+# no route; adsbdb keeps the crowd-maintained table of what a flight number
+# normally flies (origin, destination, airline), free and keyless. SCHEDULED,
+# not flown: a diversion or a reused number comes back wrong with no warning,
+# so the line says "to" and nothing stronger. Airline callsigns only (three
+# letters and a number); a registration has no route. Cached per callsign a
+# day, a miss an hour, so a pass costs one lookup.
+ROUTE_SOURCE = "https://api.adsbdb.com/v0/callsign"
+ROUTE_TTL_S = 24 * 3600.0
+ROUTE_MISS_TTL_S = 3600.0
 KM_PER_NM = 1.852
 FT_PER_M = 3.28084
 
@@ -136,6 +146,69 @@ def carrier(flight: Optional[str], reg: Optional[str] = None) -> tuple[str, Opti
     if cs[0].upper() == "N" and cs[1:2].isdigit():
         return cs, CARRIERS["N"]
     return cs, None
+
+
+def is_airline_callsign(cs: Optional[str]) -> bool:
+    """AAL1062, JBU1: three letters then something with a digit."""
+    cs = (cs or "").strip().upper()
+    return len(cs) > 3 and cs[:3].isalpha() and any(ch.isdigit() for ch in cs[3:])
+
+
+def route_for(callsign: Optional[str], routes: Optional[dict] = None, now: Optional[float] = None,
+              get: Optional[Callable] = None, source: str = ROUTE_SOURCE, timeout: float = 8.0) -> Optional[dict]:
+    """{origin, origin_city, destination, destination_city, airline} for an
+    airline callsign from the route table, or None. *routes* is the cache
+    ({callsign: {"at": epoch, "route": dict | None}}), updated in place; a
+    miss is cached too (ROUTE_MISS_TTL_S) so a plane is not looked up every
+    minute of its pass. Never raises."""
+    cs = (callsign or "").strip().upper()
+    if not is_airline_callsign(cs):
+        return None
+    now = time.time() if now is None else float(now)
+    if routes is not None:
+        hit = routes.get(cs)
+        if hit is not None:
+            ttl = ROUTE_TTL_S if hit.get("route") else ROUTE_MISS_TTL_S
+            if now - float(hit.get("at", 0)) < ttl:
+                return hit.get("route")
+    route = None
+    try:
+        url = f"{source.rstrip('/')}/{cs}"
+        if get is None:
+            import requests
+            resp = requests.get(url, timeout=timeout, headers={"User-Agent": "iris-observatory overhead_watch"})
+            data = resp.json() if resp.status_code == 200 else None
+        else:
+            data = get(url)
+        fr = ((data or {}).get("response") or {}) if isinstance(data, dict) else {}
+        fr = fr.get("flightroute") if isinstance(fr, dict) else None
+        if fr:
+            o, d = fr.get("origin") or {}, fr.get("destination") or {}
+            route = {"origin": o.get("iata_code") or o.get("icao_code"), "origin_city": o.get("municipality") or o.get("name"),
+                     "destination": d.get("iata_code") or d.get("icao_code"),
+                     "destination_city": d.get("municipality") or d.get("name"),
+                     "airline": (fr.get("airline") or {}).get("name")}
+            if not (route["origin"] and route["destination"]):
+                route = None
+    except Exception:  # noqa: BLE001
+        route = None
+    if routes is not None:
+        routes[cs] = {"at": now, "route": route}
+    return route
+
+
+def prune_routes(routes: dict, now: Optional[float] = None) -> dict:
+    now = time.time() if now is None else float(now)
+    return {k: v for k, v in routes.items() if now - float(v.get("at", 0)) <= ROUTE_TTL_S}
+
+
+def route_text(route: Optional[dict]) -> str:
+    """'Boston to Fort Lauderdale' (codes when a city is missing), or ''."""
+    if not route:
+        return ""
+    a = route.get("origin_city") or route.get("origin")
+    b = route.get("destination_city") or route.get("destination")
+    return f"{a} to {b}" if a and b else ""
 
 
 def type_name(code: Optional[str]) -> str:
@@ -235,12 +308,15 @@ def prune(state: dict, now: Optional[float] = None, keep_s: float = 6 * 3600.0) 
     return {k: v for k, v in state.items() if now - float(v) <= keep_s}
 
 
-def describe(rec: dict, when: Optional[str] = None) -> str:
+def describe(rec: dict, when: Optional[str] = None, route: Optional[dict] = None) -> str:
     """One chat line for a pass, e.g.
-    'Overhead: JBU1234 JetBlue, Airbus A320 at 31,000 ft heading SW at 450 kt,
-    68 deg up, closest 1.2 km to the E'."""
+    'Overhead: JBU1234 JetBlue, Airbus A320, Boston to Fort Lauderdale, at
+    31,000 ft heading SW at 450 kt, 68 deg up, closest 1.2 km to the E'."""
     cs, who = carrier(rec.get("flight"), rec.get("reg"))
+    if route and route.get("airline"):
+        who = route["airline"]
     name = f"{cs} {who}" if who else cs
+    leg = route_text(route)
     alt = f"{int(round(rec['alt_ft'], -2)):,} ft"
     heading = f" heading {compass(rec['track'])}" if rec.get("track") is not None else ""
     speed = f" at {int(round(rec['gs_kt']))} kt" if rec.get("gs_kt") else ""
@@ -253,7 +329,8 @@ def describe(rec: dict, when: Optional[str] = None) -> str:
     else:
         where_word = f"closest {int(round(-t))} s ago,"
     side = compass(rec["bearing_from_site"])
-    line = (f"Overhead: {name}, {type_name(rec.get('type'))} at {alt}{heading}{speed}, "
+    line = (f"Overhead: {name}, {type_name(rec.get('type'))}" + (f", {leg}," if leg else "")
+            + f" at {alt}{heading}{speed}, "
             f"{int(round(rec['elevation_deg']))} deg up to the {side}, {where_word} {where}")
     if rec.get("emergency") not in (None, "", "none"):
         line += f" -- squawking {rec.get('squawk')} ({rec.get('emergency')})"
@@ -290,13 +367,17 @@ def settings(cfg: dict) -> dict:
             "horizon_s": float(c.get("horizon_s", HORIZON_S)),
             "cooldown_s": 60.0 * float(c.get("cooldown_min", COOLDOWN_S / 60.0)),
             "source": str(c.get("source", SOURCE)),
+            "routes": bool(c.get("routes", True)),
+            "route_source": str(c.get("route_source", ROUTE_SOURCE)),
             "lat": float(loc.get("latitude")), "lon": float(loc.get("longitude"))}
 
 
 def poll_once(cfg: dict, state: dict, post: Callable[[str], object], now: Optional[float] = None,
-              get: Optional[Callable] = None, when: Optional[str] = None) -> list[str]:
-    """One poll: fetch, pick the passes, post each one that is due; returns
-    the lines posted. *state* is updated in place (the caller persists it)."""
+              get: Optional[Callable] = None, when: Optional[str] = None,
+              routes: Optional[dict] = None, route_get: Optional[Callable] = None) -> list[str]:
+    """One poll: fetch, pick the passes, post each one that is due (its route
+    looked up, *routes* the cache); returns the lines posted. *state* and
+    *routes* are updated in place (the caller persists them)."""
     s = settings(cfg)
     if not s["enabled"]:
         return []
@@ -306,15 +387,19 @@ def poll_once(cfg: dict, state: dict, post: Callable[[str], object], now: Option
         key = rec["hex"] or rec["flight"] or rec.get("reg") or "?"
         if not due(state, key, now, s["cooldown_s"]):
             continue
-        line = describe(rec, when)
+        route = (route_for(rec["flight"], routes, now, get=route_get, source=s["route_source"])
+                 if s["routes"] else None)
+        line = describe(rec, when, route)
         post(line)
         lines.append(line)
     return lines
 
 
-def nearby_report(cfg: dict, get: Optional[Callable] = None, limit: int = 10) -> str:
+def nearby_report(cfg: dict, get: Optional[Callable] = None, limit: int = 10,
+                  routes: Optional[dict] = None, route_get: Optional[Callable] = None) -> str:
     """The `overhead` chat command's answer: every airborne aircraft the
-    feed hears within the query radius, nearest first, the passes marked."""
+    feed hears within the query radius, nearest first, the passes marked,
+    the airline flights with their route."""
     s = settings(cfg)
     ac = fetch(s["lat"], s["lon"], s["query_nm"], source=s["source"], get=get)
     if not ac:
@@ -330,12 +415,19 @@ def nearby_report(cfg: dict, get: Optional[Callable] = None, limit: int = 10) ->
         cs, who = carrier(a.get("flight"), a.get("r"))
         name = f"{cs} {who}" if who else cs
         over = " <- passing over" if d_min <= s["radius_km"] and (t_min is None or abs(t_min) <= s["horizon_s"]) else ""
-        rows.append((d_now, f"{name}, {type_name(a.get('t'))}, {int(round(alt, -2)):,} ft"
+        rows.append((d_now, a.get("flight"), f"{name}, {type_name(a.get('t'))}, {int(round(alt, -2)):,} ft"
                      + (f" heading {compass(a['track'])}" if _num(a.get("track")) is not None else "")
                      + f", {d_now:.1f} km {compass((math.degrees(math.atan2(x, y)) + 360) % 360)}{over}"))
     rows.sort(key=lambda r: r[0])
     if not rows:
         return f"Overhead: {len(ac)} aircraft heard within {s['query_nm']:.0f} nm, none airborne."
     head = f"Overhead now ({len(rows)} airborne within {s['query_nm']:.0f} nm, nearest first):"
-    return "\n".join([head] + [f"  {r[1]}" for r in rows[:limit]]
-                     + ([f"  ... and {len(rows) - limit} more"] if len(rows) > limit else []))
+    out = []
+    for d_now, flight, text in rows[:limit]:
+        route = route_for(flight, routes, get=route_get, source=s["route_source"]) if s["routes"] else None
+        leg = route_text(route)
+        if route and route.get("airline"):
+            cs, _ = carrier(flight)
+            text = text.replace(f"{cs} {CARRIERS.get(cs[:3].upper(), '')}".rstrip(), f"{cs} {route['airline']}", 1)
+        out.append("  " + text + (f", {leg}" if leg else ""))
+    return "\n".join([head] + out + ([f"  ... and {len(rows) - limit} more"] if len(rows) > limit else []))
