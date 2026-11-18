@@ -6,7 +6,7 @@ class PublicConfig():
 
         },
         "version": {
-            "date": "2026.11.18.1"
+            "date": "2026.11.18.2"
         },
 
         "logger": {
@@ -620,6 +620,14 @@ class PublicConfig():
         # configs/candidates.json over the next `nights` nights and posts the
         # `top` on weekday 0 (Monday) at noon; `image <name>` queues one.
         "suggest": {"top": 3, "weekday": 0, "catalogue": "configs/candidates.json", "nights": 30},
+        # The aircraft passing over the roof, logged in the chat from the public
+        # ADS-B feed (control/overhead, scripts/overhead_watch.py on the Spark
+        # every minute, chat `overhead`; 2026-11-18, around the clock by the
+        # owner's choice). radius_km is the circle a pass must enter, query_nm
+        # how far out the feed is asked (three minutes of warning for a jet),
+        # cooldown_min one line per aircraft.
+        "overhead": {"enabled": True, "radius_km": 5.0, "query_nm": 15, "horizon_s": 90,
+                     "cooldown_min": 30, "source": "https://api.adsb.lol/v2"},
         "conductor": {
             "shadow_enabled": True,
             "port": 8096,

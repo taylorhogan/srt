@@ -2169,6 +2169,24 @@ def suggest_cmd(words: list[str], account: str) -> None:
     jobs.spawn(_run)
 
 
+def overhead_cmd(words: list[str], account: str) -> None:
+    """What is flying over the observatory right now. Usage: overhead
+
+    Asks the public ADS-B feed (control/overhead, adsb.lol, no key) for every
+    airborne aircraft within the query radius and lists them nearest first,
+    the ones passing over the roof marked. The Spark's overhead_watch logs
+    the passes by itself; this is the on-demand look.
+    """
+    def _run():
+        try:
+            from control import overhead
+            social_server.post_social_message(overhead.nearby_report(config.data()))
+        except Exception as exc:  # noqa: BLE001
+            _logger.exception("overhead failed")
+            social_server.post_social_message(f"overhead failed: {exc!r}")
+    jobs.spawn(_run)
+
+
 def _queue_field(words: list[str], account: str, cmd: str) -> None:
     """hold / moon / maxhours / type (E3): the queue's hand-set fields as commands."""
     from control import queue_fields
@@ -4098,6 +4116,7 @@ def get_super_user_commands() -> dict[str, Callable]:
         "reject": reject_cmd,
         "drafts": drafts_cmd,
         "suggest": suggest_cmd,
+        "overhead": overhead_cmd,
         "hold": hold_cmd,
         "moon": moon_cmd,
         "maxhours": maxhours_cmd,

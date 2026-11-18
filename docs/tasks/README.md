@@ -87,6 +87,22 @@ once per draft. Add to the Spark's crontab:
 
 `scripts/publish_poll.py --dry-run` prints what it would do and touches nothing.
 
+## overhead_watch (Spark, every minute) -- added 2026-11-18
+
+The aircraft passing over the roof, logged in the Observatory feed from the
+public ADS-B aggregate (adsb.lol, no key; `control/overhead`). One request a
+minute for everything within 15 nm, the passes picked by their projected
+closest approach inside 5 km of the roof, one line per aircraft per half
+hour. Around the clock by the owner's choice; `overhead.enabled` False in
+the config stops it without touching cron.
+
+```
+* * * * * /home/taylor/Documents/srt/scripts/overhead_watch.py >> /tmp/overhead_watch.log 2>&1
+```
+
+`scripts/overhead_watch.py --dry-run` prints the lines and posts nothing;
+`--now` prints what the feed hears, like the chat's `overhead`.
+
 ## suggest_targets (Spark, Mondays 12:30) -- added 2026-10-30
 
 Posts the week's queue suggestions to the web chat (docs/AUTOMATION_PLAN.md

@@ -593,6 +593,14 @@ HELP: dict[str, dict] = {
         "usage": ["type <dso> galaxy|nebula|clear"],
         "examples": ["type sh2-92 nebula"],
     },
+    "overhead": {
+        "category": "super",
+        "summary": "What is flying over the observatory right now, from the public ADS-B feed (nearest first; the passes over the roof marked).",
+        "usage": ["overhead"],
+        "examples": ["overhead"],
+        "notes": ["The Spark logs every pass inside 5 km of the roof in the Observatory feed by itself "
+                  "(scripts/overhead_watch.py, every minute); this is the on-demand look out to 15 nm."],
+    },
     "suggest": {
         "category": "super",
         "summary": "What is worth adding to the queue this month, with reasons; nothing is queued.",

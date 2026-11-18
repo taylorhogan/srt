@@ -89,6 +89,7 @@ silence the push.
 | `type <dso> galaxy|nebula` | the type the filter plan reads |
 | `reopen <dso> [for N]` | undo auto-stop: back to waiting, auto-stop held off N nights |
 | `suggest [N]` | what is worth adding this month |
+| `overhead` | what is flying over the roof now (the Spark logs every pass by itself) |
 | `drafts`, `approve <dso>`, `reject <dso> [why]` | the publish cards (below) |
 | `lightcurve <dso>` | a monitored star's nightly points (runs itself after each night) |
 | `aavso <dso> [filter]` | the AAVSO WebObs file for a monitor, on the PC under `local/lightcurves/aavso/`; upload it by hand at app.aavso.org/webobs (observer code `aavso.obscode`) |

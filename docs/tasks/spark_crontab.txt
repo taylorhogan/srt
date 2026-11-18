@@ -18,3 +18,8 @@
 0 10 * * * /home/taylor/Documents/srt/scripts/morning_watch.py >> /tmp/morning_watch.log 2>&1
 */15 8-22 * * * /home/taylor/Documents/srt/scripts/publish_poll.py >> /tmp/publish_poll.log 2>&1
 30 12 * * 1 /home/taylor/Documents/srt/scripts/suggest_targets.py --post >> /tmp/suggest.log 2>&1
+
+# 2026-11-18: the aircraft passing over the roof, one line each in the Observatory
+# feed, around the clock (owner). One poll of the public ADS-B feed a minute;
+# state in local/overhead_state.json; a feed or chat outage is silence.
+* * * * * /home/taylor/Documents/srt/scripts/overhead_watch.py >> /tmp/overhead_watch.log 2>&1
