@@ -398,6 +398,22 @@ def tonight_night(now=None):
     return (now - timedelta(hours=12)).date()
 
 
+def latest_night_counts(frames, now=None):
+    """("tonight" | "last night", night, {filter: count}) for the Live tab's
+    second row: tonight's frames once there are any, else last night's, so
+    the row stands through the day and hands over at the first frame of the
+    new night. ("tonight", tonight, {}) when neither night has a frame. Pure."""
+    tonight = tonight_night(now)
+    counts = frame_counts(frames, tonight)
+    if counts:
+        return "tonight", tonight, counts
+    last = tonight - timedelta(days=1)
+    counts = frame_counts(frames, last)
+    if counts:
+        return "last night", last, counts
+    return "tonight", tonight, {}
+
+
 def _night_of(ts):
     """The observing night a frame timestamp belongs to, or None.
 
@@ -452,13 +468,18 @@ def _stats_chart(root, out_dir, dso):
         if counts:
             meta["stats_by_filter"] = counts
             meta["stats_filters"] = sorted(counts)      # kept: older readers
-        # And tonight's share of them (owner, 2026-11-18: "under that just add
-        # a similar line for just the frames tonight"). Empty when the target
-        # has no frame tonight yet, and the page shows no line.
-        tonight = frame_counts(frames, tonight_night())
+        # And the latest night's share of them (owner, 2026-11-18: "under
+        # that just add a similar line for just the frames tonight"): tonight
+        # once it has a frame, else last night through the day (the owner
+        # looked at noon and the row was gone: "tonight" had rolled on to the
+        # evening to come). Empty when neither has one, and the page shows
+        # no line.
+        label, night, tonight = latest_night_counts(frames)
         meta["tonight_frames"] = sum(tonight.values())
         if tonight:
             meta["tonight_by_filter"] = tonight
+            meta["tonight_label"] = label
+            meta["tonight_night"] = night.isoformat()
         # Nights, so the caption can say how much history the chart spans.
         # Counted off the frame timestamps rather than the day boundary,
         # because a session that runs past midnight is one night's work and

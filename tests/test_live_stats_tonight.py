@@ -34,3 +34,18 @@ def test_tonight_is_the_twelve_hour_shifted_night():
     assert ls.tonight_night(datetime(2026, 11, 18, 7, 43)) == date(2026, 11, 17)      # 02:43 EST, the 17th's night
     assert ls.tonight_night(datetime(2026, 11, 18, 13, 0)) == date(2026, 11, 18)      # the next evening
     assert ls._night_of("2026-11-18T07:38:01.731000") == date(2026, 11, 17)
+
+
+def test_the_row_shows_last_night_through_the_day_and_hands_over_at_the_first_frame():
+    # 02:43 EST on the 18th: the night of the 17th is in progress and has frames
+    assert ls.latest_night_counts(FRAMES, datetime(2026, 11, 18, 7, 43)) == \
+        ("tonight", date(2026, 11, 17), {"Ha": 1, "O-III": 1})
+    # noon on the 18th: "tonight" is the 18th's night, no frame yet -> last night's row
+    assert ls.latest_night_counts(FRAMES, datetime(2026, 11, 18, 17, 0)) == \
+        ("last night", date(2026, 11, 17), {"Ha": 1, "O-III": 1})
+    # the 18th's first frame hands the row over
+    more = FRAMES + [_f("2026-11-18T23:10:00", "S-II")]
+    assert ls.latest_night_counts(more, datetime(2026, 11, 19, 4, 11)) == \
+        ("tonight", date(2026, 11, 18), {"S-II": 1})
+    # a week of cloud: neither night has a frame, no row
+    assert ls.latest_night_counts(FRAMES, datetime(2026, 11, 25, 17, 0)) == ("tonight", date(2026, 11, 25), {})
