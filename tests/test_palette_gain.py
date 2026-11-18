@@ -458,3 +458,12 @@ def test_options_spelling():
     assert "gain=hubble" in cp.describe_options(cp.effective_options(palette_gain="hubble"))
     assert "gain=G:0.4" in cp.describe_options(cp.effective_options(palette_gain={"G": 0.4}))
     assert cp.describe_palette_gain({"Ha": 0.4, "O-III": 1.5}) == "Ha:0.4/O-III:1.5"
+
+
+def test_hss_is_hoo_with_s_ii_for_o_iii():
+    """HSS (2026-11-18): Ha -> R, S-II -> G and B. A gain on S-II scales both
+    roles like HOO's O-III; the recipe is a palette for gain, tone and stretch."""
+    assert cp.RECIPES["HSS"] == {"R": "Ha", "G": "S-II", "B": "S-II"}
+    assert cp.palette_gain_roles("HSS", "S-II:2") == {"G": 2.0, "B": 2.0}
+    assert cp.palette_gain_roles("HSS", "hubble") == "hubble"
+    assert cp.stretch_class("HSS") == "narrowband"

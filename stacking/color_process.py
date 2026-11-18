@@ -6,6 +6,7 @@ Backs the webchat ``process <dso> <recipe>`` command. Recipes:
     HALRGB  LRGB plus the Ha EXCESS (Ha minus its continuum share of R) added
             into R and L, so HII regions get redder AND brighter (see HA_GAIN)
     HOO     Ha->R, O-III->G and B      (H-alpha region palette)
+    HSS     Ha->R, S-II->G and B       (HOO with S-II for O-III)
     SHO     S-II->R, Ha->G, O-III->B   (the "Hubble" palette)
 
 Two things here are not obvious and were both learned the hard way on sh2-92:
@@ -58,6 +59,10 @@ RECIPES: dict[str, dict[str, str]] = {
     # across channels so their ratio survives — so the choice is which channel
     # you want carrying the image.
     "HSO":  {"R": "Ha", "G": "S-II", "B": "O-III"},
+    # HSS is HOO with S-II in O-III's place (owner, 2026-11-18, IC 405:
+    # "hss forget o"): a two-filter palette for a field whose O-III is
+    # thin. Ha-only light renders red, Ha+S-II toward pink and white.
+    "HSS":  {"R": "Ha", "G": "S-II", "B": "S-II"},
     # HA is a fifth ROLE, not a primary: _prepare turns it into an emission
     # map and folds that into R and L before anything is stretched. The raw
     # Ha stack and the excess map are still exported beside the primaries.
@@ -1961,7 +1966,7 @@ STRETCH_TARGETS = {
 # hardest curve and the median sat at 12-13 %. The owner's published
 # pictures (the routine stretch, softening 0.025) have their median at
 # 5-6 %; 0.08 lets the final go a notch harder and no further.
-NARROWBAND_RECIPES = frozenset({"HOO", "SHO", "HSO"})
+NARROWBAND_RECIPES = frozenset({"HOO", "SHO", "HSO", "HSS"})
 
 
 def stretch_class(recipe: str) -> str:

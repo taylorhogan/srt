@@ -88,7 +88,7 @@ MIN_COLOUR_FRAMES = 3
 # they take the nebula stretch rather than the galaxy one. Kept as a set because
 # adding HSO to RECIPE_RULES without adding it here silently gave that recipe
 # `--lum L` (a filter it does not have) and the wrong stretch.
-NARROWBAND = {"SHO", "HSO", "HOO"}
+NARROWBAND = {"SHO", "HSO", "HOO", "HSS"}
 # Broadband recipes of a galaxy are white-balanced on the field's stars
 # (owner, 2026-10-16). Unbalanced, ngc6946 came out yellow: ~1 mag of Milky
 # Way dust reddens the galaxy and every star in the field, and wb=stars

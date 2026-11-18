@@ -410,6 +410,11 @@ Since 2026-09-25 the conductor decides both invariants (ADR 0014): every roof fi
   (halo past the disc, the existing disc-size weakness). Palettes only;
   `tone=` on LRGB/HALRGB refuses like `gain=`.
 
+  **HSS (2026-11-18, owner: "hss forget o" on IC 405)** is HOO with S-II in
+  O-III's place (Ha -> R, S-II -> G and B): a two-filter palette for a field
+  whose O-III is thin. It is in `RECIPES` and every palette rule reads it
+  like HOO; the morning render does not pick it (`RECIPE_RULES` unchanged).
+
   **The sky-anchored black is one offset for every channel (since 2026-10-25).**
   The morning render and the movie put black at each channel's sky median
   minus `--black-sigma` (0.5) times the LARGEST channel's noise sigma

@@ -71,7 +71,7 @@ _ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_FOLDER = Path.home() / "Desktop" / "astro_output"
 SITE = Path.home() / "Documents" / "development" / "taylorhogan.github.io"   # scripts/site_push.SITE
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".tif", ".tiff"}
-RECIPES = ("LRGB", "HALRGB", "HOO", "SHO", "HSO")
+RECIPES = ("LRGB", "HALRGB", "HOO", "SHO", "HSO", "HSS")
 # Defaults of stacking.stacker.stack(): the gate every stacking path runs.
 GATE_FWHM_MULT = 1.25
 GATE_STAR_FRAC = 0.5

@@ -1320,7 +1320,7 @@ def main() -> int:
     ap.add_argument("stage", choices=("stacks", "compose", "routine"))
     ap.add_argument("--dso", default="ngc5907")
     ap.add_argument("--recipe", default="LRGB",
-                    choices=("LRGB", "HALRGB", "HOO", "SHO", "HSO"))
+                    choices=("LRGB", "HALRGB", "HOO", "SHO", "HSO", "HSS"))
     ap.add_argument("--filters", default="",
                     help="override the recipe's filter list")
     ap.add_argument("--lum", default="",
