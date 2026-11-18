@@ -4,7 +4,12 @@ first, and with a night only that observing night's frames, nights being the
 frame time shifted back twelve hours so a run past midnight is one night."""
 from datetime import date, datetime
 
-from scripts import live_skymap as ls
+import pytest
+
+pytest.importorskip("numpy")          # live_skymap draws with matplotlib; the CI interpreter is pytest-only
+pytest.importorskip("matplotlib")
+
+from scripts import live_skymap as ls  # noqa: E402
 
 
 def _f(t, filt):
