@@ -9,7 +9,9 @@ The design pages are `docs/sky_ir/sky_ir_sensor.html` (the full write-up:
 parts, wiring, enclosure, firmware) and `docs/sky_ir/sky_ir_wiring_print.html`
 (one printable sheet). The firmware is `docs/sky_ir/sky-ir.yaml`; its
 secrets template is `docs/sky_ir/secrets.example.yaml`. Open the pages
-from the PC's checkout after `git pull`.
+from the PC's checkout after `git pull`. A KiCad 8 project for a carrier board (the DevKit in two sockets, the
+pull-ups, the MOSFET and headers for the off-board sensors and heater) is in
+`docs/sky_ir/kicad/`; its README lists what to confirm before ordering.
 
 ## Pins as wired (S3 numbering)
 

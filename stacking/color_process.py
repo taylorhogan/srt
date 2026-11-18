@@ -312,6 +312,68 @@ PALETTE_GAIN_SMOOTH_PX = 3.0
 PALETTE_QUIET_BKG_PX = 32
 PALETTE_LEVEL_BLOCK = 32
 PALETTE_GAIN_MAX = 6.0
+# The gain's noise knee (apply_palette_gain(knee=), in sigmas of the SMOOTH
+# part's own sky scatter; 0 is off, today's behaviour). The smooth-only gain
+# leaves the pixel noise alone but scales everything at 3 px and above,
+# and the smooth part of a sky has noise too: on IC 405 (2026-11-18) the
+# O-III plane's nebula level was 0.08 ADU against a smooth-sky scatter of
+# 0.12, the gain hit its x6 cap, and every 20-50 px excursion of the O-III
+# sky came out as a blue blotch, the S-II's (x2.8) as red ones, and the
+# whole empty sky purple. With a knee the smooth signal takes the factor
+# weighted by s^2 / (s^2 + t^2), t = knee x that scatter (1.4826 x MAD of
+# the smooth plane outside the star discs): the nebula body, many t up,
+# takes the full gain; the sky, within t, keeps its native amplitude; a
+# channel whose nebula sits at its own noise stays faint, which is what it
+# is. The weight is read off the plane smoothed to PALETTE_GAIN_KNEE_PX
+# (normalised, the star discs left out), not the 3 px smooth part: the
+# structure that mottles a gained sky lives at 16-64 px (IC 405, 64 px
+# block medians: 0.05-0.07 ADU rms in every channel, a tenth of the black
+# offset, half of it after x6), and at 16 px the photon noise has averaged
+# down to where a knee a few sigma up still sits well under the nebula (a
+# 3 px knee that cleared the mottling, 4 sigma, also took the S-II body
+# from x2.8 to x1.4). The thresholds are measured on the raw set and pinned
+# on the series (info["palette_knee"], {role: t in ADU}), because the
+# denoised planes' scatter is a fraction of the raw's. tone=hubble turns
+# it on (TONE_HUBBLE).
+PALETTE_GAIN_KNEE_SIGMA = 0.0
+PALETTE_GAIN_KNEE_PX = 16.0
+
+# --- tone: the finish on a composed palette (tone=hubble, 2026-11-18) -------
+#
+# A true-ratio SHO with the Hubble gain is still three narrow lines mapped
+# straight to red, green and blue: Ha is green, the sky sits at the routine's
+# 5 % grey, and the saturation is whatever the lines give. The published
+# "Hubble palette" pictures people compare it with are that mapping plus a
+# finish, which the owner asked for by IC 405 beside another imager's
+# (2026-11-18): the green taken out (SCNR, average-neutral, so an Ha-only
+# region goes brown-gold and an Ha+O-III region teal), the yellow-greens
+# pulled toward gold (hue_pull: hues within TONE_HUE_WIDTH of
+# TONE_HUE_CENTER move TONE_HUE_PULL of the way to TONE_HUE_TARGET; red and
+# blue are not touched, grey has no hue to move), the sky lifted to a
+# quiet grey (a pedestal per channel on the stretched image that puts each
+# channel's p20 at TONE_HUBBLE["sky"], so the sky is neutral by construction:
+# the channels' local skies sit 0.05-0.1 ADU apart after the subtraction,
+# 10-15 % of the black offset, and the routine's one shared offset leaves
+# a magenta sky on IC 405 even with no gain; 0 leaves the routine's black),
+# the midtones brought up to TONE_HUBBLE["mid"] (one gamma on every channel
+# so the field's median luminance lands there; only ever a lift, never
+# below 0.6: the routine's nebula-to-sky ratio is the published pictures'
+# ratio, they simply sit higher on the scale, median 0.23 against 0.16),
+# and the chroma
+# boost held at TONE_SATURATION instead of the morning render's 2.5. Applied
+# on the composed, stretched image (apply_tone), after the luminance step
+# and before any star recolouring: the stars are neutral under the gain and
+# a neutral pixel has no hue, so they only take the pedestal. The gain's
+# noise knee goes with it (PALETTE_GAIN_KNEE_SIGMA above; tone_knee()), or
+# the O-III sky the gain scaled is what the pedestal lifts. Palettes only,
+# like the gain. tone=None (the default) changes nothing anywhere.
+TONE = None
+TONE_HUBBLE = {"scnr": 1.0, "sky": 0.12, "mid": 0.2, "saturation": 1.3, "knee_sigma": 4.0}
+TONE_HUE_CENTER = 100.0      # deg: the yellow-green an SCNR'd Ha+S-II mix lands on
+TONE_HUE_WIDTH = 60.0        # deg: 40..160 move, red (0) and blue (240) do not
+TONE_HUE_TARGET = 40.0       # deg: gold
+TONE_HUE_PULL = 0.7
+TONE_SKY_PCT = 20.0          # the field's luminance percentile that is "the sky"
 
 
 def nebula_level(plane: np.ndarray, pct: float = PALETTE_LEVEL_PCT,
@@ -450,14 +512,19 @@ def apply_palette_gain(subbed: dict[str, np.ndarray], gain,
                        protect_stars: bool = PALETTE_PROTECT_STARS,
                        star_discs=None, info: Optional[dict] = None,
                        star_mode: str = PALETTE_STAR_MODE, quiet=None, star_arms=None,
-                       smooth_px: float = PALETTE_GAIN_SMOOTH_PX
+                       smooth_px: float = PALETTE_GAIN_SMOOTH_PX,
+                       knee=PALETTE_GAIN_KNEE_SIGMA
                        ) -> tuple[dict[str, np.ndarray], Optional[dict[str, float]]]:
     """Scale the palette planes; returns (channels, {role: factor} used).
 
     Only the plane's smooth part is scaled (*smooth_px*, PALETTE_GAIN_SMOOTH_PX):
     the residual at smaller scales, which is the noise and whatever stars the
     mask missed, keeps its native amplitude, so a gained channel's sky is no
-    noisier than the others'. 0 scales the whole plane.
+    noisier than the others'. 0 scales the whole plane. *knee* (sigmas,
+    PALETTE_GAIN_KNEE_SIGMA; or {role: t ADU} pinned from a previous call's
+    *info*["palette_knee"]) weights the smooth part's gain by
+    s^2 / (s^2 + t^2) so the smooth sky's own scatter is not scaled either;
+    0 or None scales all of it.
 
     *gain* is {role: factor} (applied as given, which is how a series pins
     one measurement) or "hubble" (measured here: each of R/G/B scaled so its
@@ -555,6 +622,9 @@ def apply_palette_gain(subbed: dict[str, np.ndarray], gain,
         planes = {id(subbed[c]): c for c in roles}
         star_common = np.mean([np.asarray(subbed[c], dtype=np.float32) - fill_of(c)
                                for c in planes.values()], axis=0).astype(np.float32)
+    knee_adu: dict[str, float] = {}
+    pinned_knee = dict(knee) if isinstance(knee, dict) else None
+    knee_sig = 0.0 if isinstance(knee, dict) or knee is None else float(knee)
     done: dict[tuple, np.ndarray] = {}          # HOO: G and B are one plane, scale it once
     for c in (touched if mask is not None else scaled):
         f = factors.get(c, 1.0)
@@ -563,22 +633,73 @@ def apply_palette_gain(subbed: dict[str, np.ndarray], gain,
             out[c] = done[key]
             continue
         p = np.asarray(subbed[c], dtype=np.float32)
-        res = p * np.float32(f)
+        t = None
         if f != 1.0 and smooth_px and smooth_px > 0:
-            # the residual took (f - 1) too much: give it back, outside the
-            # discs (inside, the star term below replaces the plane anyway)
             fine = fine_residual(p, smooth_px)
-            back = fine * np.float32(f - 1.0)
-            if mask is not None:
-                back *= (1.0 - mask)
-            res -= back
+            smooth = p - fine
+            want_knee = (pinned_knee is not None and c in pinned_knee) or knee_sig > 0
+            if want_knee:
+                # the local level at the sky-structure scale, the discs left out
+                m = knee_level(p, mask, PALETTE_GAIN_KNEE_PX)
+            if pinned_knee is not None and c in pinned_knee:
+                t = float(pinned_knee[c])
+            elif knee_sig > 0:
+                # the sky's scatter from the LOWER side of the distribution:
+                # a nebula only adds, so below the median is sky (a field the
+                # nebula half fills would double a two-sided MAD)
+                sky = m if mask is None else m[np.asarray(mask) < 0.5]
+                sky = sky[np.isfinite(sky)]
+                if sky.size:
+                    med = float(np.median(sky))
+                    sig = med - float(np.percentile(sky, 15.87))
+                else:
+                    sig = 0.0
+                t = knee_sig * sig
+            if t is not None and t > 0:
+                # the smooth part takes the factor weighted by m^2/(m^2+t^2)
+                # on the local level m: the sky's own structure (within t)
+                # keeps its amplitude, the nebula (many t up) the whole gain
+                w = m * m / (m * m + np.float32(t * t))
+                res = p + smooth * w * np.float32(f - 1.0)
+                _logger.info("Palette gain: %s knee %.3g ADU (%g px sky scatter x %.1f)",
+                             c, t, PALETTE_GAIN_KNEE_PX, knee_sig if knee_sig > 0 else float("nan"))
+            else:
+                # the residual took (f - 1) too much: give it back
+                res = p * np.float32(f) - fine * np.float32(f - 1.0)
+        else:
+            res = p * np.float32(f)
         if mask is not None:
+            # inside a disc: the fill under the star gained (the same knee, the
+            # fill is smooth) and the star's light put back on top
             fill = fill_of(c)
             star = star_common if star_common is not None else (p - fill)
-            res += mask * (star - (p - fill) * np.float32(f))
+            if t is not None and t > 0:
+                wf = m * m / (m * m + np.float32(t * t))
+                fill_g = fill + fill * wf * np.float32(f - 1.0)
+            else:
+                fill_g = fill * np.float32(f)
+            res = res * (1.0 - mask) + mask * (fill_g + star)
+        if t is not None:
+            knee_adu[c] = float(t)
         done[key] = res
         out[c] = res
+    if info is not None:
+        info["palette_knee"] = knee_adu or None
     return out, factors
+
+
+def knee_level(plane: np.ndarray, mask, sigma_px: float = PALETTE_GAIN_KNEE_PX) -> np.ndarray:
+    """The plane's local level at *sigma_px* (gaussian), the star discs in
+    *mask* (0..1, or None) left out by normalised convolution: what the gain's
+    knee weighs a pixel's gain by (PALETTE_GAIN_KNEE_PX)."""
+    from scipy.ndimage import gaussian_filter
+    p = np.nan_to_num(np.asarray(plane, dtype=np.float32))
+    if mask is None:
+        return gaussian_filter(p, float(sigma_px), mode="nearest")
+    wgt = (1.0 - np.clip(np.asarray(mask, dtype=np.float32), 0.0, 1.0))
+    num = gaussian_filter(p * wgt, float(sigma_px), mode="nearest")
+    den = gaussian_filter(wgt, float(sigma_px), mode="nearest")
+    return num / np.maximum(den, 1e-3)
 
 
 def fine_residual(plane: np.ndarray, sigma_px: float) -> np.ndarray:
@@ -1455,7 +1576,8 @@ def _prepare(channels: dict[str, np.ndarray], subtract_background: bool,
              ha_ratio: Optional[float] = None,
              info: Optional[dict] = None,
              palette_gain=PALETTE_GAIN, palette_stars=None,
-             palette_quiet: Optional[dict] = None, palette_arms=None) -> tuple[dict, float]:
+             palette_quiet: Optional[dict] = None, palette_arms=None,
+             palette_knee=PALETTE_GAIN_KNEE_SIGMA) -> tuple[dict, float]:
     """Background-subtract every channel and find the shared white point.
 
     Factored out of compose() because the per-channel exports have to be the
@@ -1509,7 +1631,7 @@ def _prepare(channels: dict[str, np.ndarray], subtract_background: bool,
     gain_info: dict = {}
     subbed, gain_used = apply_palette_gain(subbed, palette_gain, star_discs=palette_stars,
                                            info=gain_info, quiet=palette_quiet,
-                                           star_arms=palette_arms)
+                                           star_arms=palette_arms, knee=palette_knee)
     if gain_used:
         _logger.info("Palette gain: %s", describe_palette_gain(gain_used))
     # HALRGB: the blend happens here, on subtracted linear data, so the
@@ -1522,7 +1644,8 @@ def _prepare(channels: dict[str, np.ndarray], subtract_background: bool,
     if info is not None:
         info.update({"wb": wb_info, "ha_ratio": ratio, "palette_gain": gain_used,
                      "palette_stars": gain_info.get("star_discs"),
-                     "palette_arms": gain_info.get("star_arms")})
+                     "palette_arms": gain_info.get("star_arms"),
+                     "palette_knee": gain_info.get("palette_knee")})
     return subbed, (white_before if gain_used else shared_white(subbed, white_pct))
 
 
@@ -2042,7 +2165,7 @@ def effective_options(**overrides) -> dict:
             "subtract_background": SUBTRACT_BACKGROUND, "scnr": SCNR_AMOUNT,
             "ha_gain": HA_GAIN, "white_balance": WHITE_BALANCE,
             "deblur": DEBLUR_ITERS, "dering": DEBLUR_DERING, "method": DEBLUR_METHOD,
-            "palette_gain": PALETTE_GAIN}
+            "palette_gain": PALETTE_GAIN, "tone": TONE}
     opts.update({k: v for k, v in overrides.items() if k in opts})
     return opts
 
@@ -2063,6 +2186,8 @@ def describe_options(opts: dict, scale: int = 1) -> str:
         parts.append(f"ha={opts['ha_gain']:g}")
     if opts.get("palette_gain"):
         parts.append(f"gain={describe_palette_gain(opts['palette_gain'])}")
+    if opts.get("tone"):
+        parts.append(f"tone={parse_tone(opts['tone'])}")
     if opts.get("deblur"):
         parts.append(f"deblur={int(opts['deblur'])}")
         if str(opts.get("dering", DEBLUR_DERING)).lower() != DEBLUR_DERING:
@@ -2072,6 +2197,109 @@ def describe_options(opts: dict, scale: int = 1) -> str:
     if scale and scale > 1:
         parts.append(f"scale={scale:g}")
     return "  ".join(parts)
+
+
+def parse_tone(spec) -> Optional[str]:
+    """`tone=` as typed -> None or "hubble"."""
+    if spec is None or spec is False or str(spec).strip() == "":
+        return None
+    text = str(spec).strip().lower()
+    if text in ("none", "off", "0"):
+        return None
+    if text == "hubble":
+        return "hubble"
+    raise ValueError(f"tone: expected hubble or none, got {spec!r}")
+
+
+def tone_knee(tone) -> float:
+    """The palette gain's noise knee a tone asks for (PALETTE_GAIN_KNEE_SIGMA
+    when there is no tone)."""
+    return float(TONE_HUBBLE["knee_sigma"]) if parse_tone(tone) == "hubble" else PALETTE_GAIN_KNEE_SIGMA
+
+
+def tone_saturation(tone, default: float) -> float:
+    """The chroma boost a tone wants when the caller did not choose one."""
+    return float(TONE_HUBBLE["saturation"]) if parse_tone(tone) == "hubble" else float(default)
+
+
+def hue_pull(rgb: np.ndarray, center: float = TONE_HUE_CENTER, width: float = TONE_HUE_WIDTH,
+             target: float = TONE_HUE_TARGET, pull: float = TONE_HUE_PULL) -> np.ndarray:
+    """Hues within *width* degrees of *center* moved *pull* of the way to
+    *target* (full strength at the centre, tapering linearly to nothing at
+    the edge of the band); value and saturation untouched, so brightness is
+    kept and a grey pixel, which has no hue, is returned as it was."""
+    a = np.clip(np.nan_to_num(np.asarray(rgb, dtype=np.float32)), 0.0, 1.0)
+    r, g, b = a[..., 0], a[..., 1], a[..., 2]
+    mx = a.max(axis=2)
+    mn = a.min(axis=2)
+    d = mx - mn
+    with np.errstate(divide="ignore", invalid="ignore"):
+        h = np.where(mx == r, ((g - b) / d) % 6.0,
+                     np.where(mx == g, (b - r) / d + 2.0, (r - g) / d + 4.0)) * 60.0
+    h = np.where(d > 1e-6, h, 0.0)
+    w = np.clip(1.0 - np.abs(h - center) / float(width), 0.0, 1.0)
+    h2 = (h + w * (target - h) * float(pull)) % 360.0
+    # HSV back to RGB with the same value (mx) and chroma (d)
+    hp = h2 / 60.0
+    x = d * (1.0 - np.abs(hp % 2.0 - 1.0))
+    k = np.floor(hp).astype(int) % 6
+    zero = np.zeros_like(d)
+    sel = [k == 0, k == 1, k == 2, k == 3, k == 4, k == 5]
+    r2 = np.select(sel, [d, x, zero, zero, x, d])
+    g2 = np.select(sel, [x, d, d, x, zero, zero])
+    b2 = np.select(sel, [zero, zero, x, d, d, x])
+    out = np.dstack([r2, g2, b2]) + mn[..., None]
+    return np.clip(out, 0.0, 1.0).astype(np.float32)
+
+
+def lift_sky(rgb: np.ndarray, grey: float, pct: float = TONE_SKY_PCT) -> tuple[np.ndarray, dict]:
+    """A pedestal per channel that puts each channel's *pct* percentile at
+    *grey*: out = t + (1 - t) chan, t chosen for that; never lowers (t >= 0).
+    Per channel, so the sky comes out neutral whatever the channels' local
+    skies were (see TONE)."""
+    a = np.clip(np.nan_to_num(np.asarray(rgb, dtype=np.float32)), 0.0, 1.0)
+    out = np.empty_like(a)
+    sky_in, ped, sky_out = [], [], []
+    for i in range(3):
+        sky = float(np.percentile(a[..., i], pct))
+        t = float(np.clip((float(grey) - sky) / max(1.0 - sky, 1e-6), 0.0, 0.9))
+        out[..., i] = t + (1.0 - t) * a[..., i]
+        sky_in.append(round(sky, 4)); ped.append(round(t, 4)); sky_out.append(round(sky + t * (1.0 - sky), 4))
+    return np.clip(out, 0.0, 1.0), {"sky_in": sky_in, "pedestal": ped, "sky_out": sky_out}
+
+
+def apply_tone(rgb: np.ndarray, tone, scnr_done: float = 0.0,
+               info: Optional[dict] = None) -> np.ndarray:
+    """The tone's finish on a composed, stretched image (TONE): SCNR (the rest
+    of TONE_HUBBLE["scnr"] beyond what *scnr_done* already applied), the hue
+    pull, the sky pedestal. None returns *rgb* as it is."""
+    kind = parse_tone(tone)
+    if kind is None:
+        return rgb
+    spec = TONE_HUBBLE
+    out = np.clip(np.nan_to_num(np.asarray(rgb, dtype=np.float32)), 0.0, 1.0)
+    want = float(spec["scnr"])
+    if want > float(scnr_done or 0.0):
+        out = _scnr(out, want)
+    out = hue_pull(out)
+    rec = {"tone": kind}
+    if float(spec["sky"]) > 0:
+        out, lift = lift_sky(out, float(spec["sky"]))
+        rec.update(lift)
+    mid = float(spec.get("mid") or 0.0)
+    if mid > 0:
+        y = out @ np.array([0.299, 0.587, 0.114], dtype=np.float32)
+        p50 = float(np.percentile(y, 50))
+        gamma = 1.0
+        if 0.0 < p50 < mid:
+            gamma = float(np.clip(np.log(mid) / np.log(p50), 0.6, 1.0))
+            out = np.power(out, np.float32(gamma))
+        rec.update({"mid_in": round(p50, 4), "gamma": round(gamma, 4)})
+    _logger.info("Tone %s: sky %s -> %s (pedestal %s), midtone gamma %s", kind,
+                 rec.get("sky_in"), rec.get("sky_out"), rec.get("pedestal"), rec.get("gamma"))
+    if info is not None:
+        info["tone"] = rec
+    return out
 
 
 def _scnr(rgb: np.ndarray, amount: float = 1.0) -> np.ndarray:
@@ -2159,7 +2387,7 @@ def compose(channels: dict[str, np.ndarray], black_pct: float = BLACK_PCT,
             deblur: int = DEBLUR_ITERS,
             dering: str = DEBLUR_DERING,
             method: str = DEBLUR_METHOD,
-            palette_gain=PALETTE_GAIN) -> np.ndarray:
+            palette_gain=PALETTE_GAIN, tone=TONE) -> np.ndarray:
     """Combine channel stacks into an RGB image in 0..1.
 
     channels holds any of R/G/B plus an optional L, and for HALRGB an HA plane
@@ -2175,8 +2403,12 @@ def compose(channels: dict[str, np.ndarray], black_pct: float = BLACK_PCT,
     imaged; method=rl is RL on the whole luminance. See stacking/deblur.
     """
     channels = _deblurred(channels, deblur, dering, method)
+    tone = parse_tone(tone)
+    if tone is not None and "L" in channels:
+        raise ValueError(f"tone: {tone} is a palette finish; not for a colour recipe")
     subbed, white = _prepare(channels, subtract_background, mesh, white_pct, ha_gain,
-                             white_balance, palette_gain=palette_gain)
+                             white_balance, palette_gain=palette_gain,
+                             palette_knee=tone_knee(tone))
     _logger.info("Compose: shared white point %.2f ADU (p%.1f)", white, white_pct)
 
     rgb = np.dstack([_stretch(subbed[c], black_pct, white, softening, label=c)
@@ -2209,6 +2441,7 @@ def compose(channels: dict[str, np.ndarray], black_pct: float = BLACK_PCT,
         _logger.info("Stretch LSYN: black %.2f ADU (p%.1f, from the reference)", black, black_pct)
         rgb = rgb * synthetic_gain(st(subbed["LSYN"]), st(subbed["LSYN_REF"]))[:, :, None]
 
+    rgb = apply_tone(np.clip(np.nan_to_num(rgb), 0.0, 1.0), tone, scnr_done=scnr)
     return np.clip(np.nan_to_num(rgb), 0.0, 1.0)
 
 
@@ -2287,7 +2520,7 @@ def blacks_from(subbed: dict[str, np.ndarray], black_pct: float) -> dict[str, fl
 
 def compose_prepared(subbed: dict[str, np.ndarray], blacks: dict[str, float],
                      white: float, softening: float = SOFTENING,
-                     scnr: float = SCNR_AMOUNT) -> np.ndarray:
+                     scnr: float = SCNR_AMOUNT, tone=TONE) -> np.ndarray:
     """compose() from background-subtracted channels with black and white given.
 
     Same curve, same SCNR order, same luminance substitution as compose(); the
@@ -2310,6 +2543,7 @@ def compose_prepared(subbed: dict[str, np.ndarray], blacks: dict[str, float],
     elif "LSYN" in subbed and "LSYN_REF" in subbed:
         black = blacks.get("LSYN_REF", blacks.get("LSYN", 0.0))
         rgb = rgb * synthetic_gain(st(subbed["LSYN"], black), st(subbed["LSYN_REF"], black))[:, :, None]
+    rgb = apply_tone(np.clip(np.nan_to_num(rgb), 0.0, 1.0), tone, scnr_done=scnr)
     return np.clip(np.nan_to_num(rgb), 0.0, 1.0)
 
 
@@ -2414,6 +2648,8 @@ def process_dso(
     if compose_kw.get("palette_gain") is not None:
         # Typed by filter name; compose wants it by role, which needs the recipe.
         compose_kw["palette_gain"] = palette_gain_roles(recipe, compose_kw["palette_gain"])
+    if parse_tone(compose_kw.get("tone")) is not None and "L" in RECIPES.get(recipe, {}):
+        raise ValueError(f"tone: {recipe} is colour, not a palette; tone= is for HOO/SHO/HSO")
     if reuse and cache_dir is not None:
         cached = load_cached_channels(cache_dir, dso_dir.name, tag)
         if cached is not None:

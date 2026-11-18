@@ -6161,6 +6161,11 @@ def process_cmd(words: list[str], account: str) -> None:
                     which on an HII region tones Ha down 3-5x and turns the
                     true-ratio green into gold and blue. `gain=Ha:0.4` (or
                     Ha:0.4/O-III:1.5) is an explicit factor per filter.
+        tone=       palettes only. `tone=hubble` is the finish on top of the
+                    gain: green out (SCNR), yellow-greens pulled to gold, the
+                    sky lifted to a quiet grey, and the gain's noise knee on,
+                    so a filter whose nebula sits at its own noise (IC 405's
+                    O-III) stays faint instead of painting the sky.
         deblur=40   deconvolution; 0 turns it off. With the default method
                     the number only switches it on: the luminance goes
                     through the learned deconvolver (nn/deblur_model, a
@@ -6281,7 +6286,7 @@ def _process_run(words: list[str]) -> None:
              "ha": ("ha_gain", float), "wb": ("white_balance", str),
              "stars": ("star_source", str), "deblur": ("deblur", int),
              "dering": ("dering", str), "method": ("method", str),
-             "gain": ("palette_gain", str)}
+             "gain": ("palette_gain", str), "tone": ("tone", str)}
     opts = {"use_flats": True, "reuse": False}
     rest = []
     bad = []

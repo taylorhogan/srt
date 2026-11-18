@@ -79,6 +79,9 @@ EXTRA_TAGS = ("deblurred",)
 # composite, or the next class down when a field refused the deconvolution.
 # --push-all restores the triple. Extras asked for are still sent.
 PUSH_TAGS = ("learned", "denoised", "raw")
+# The morning composites' chroma boost (--saturation). 2.5 by the operator's
+# choice on 2026-10-20, after NGC 1961 at 1, 2 and 3; a tone brings its own.
+DEFAULT_SATURATION = 2.5
 
 
 def suffix(args) -> str:
@@ -311,7 +314,10 @@ def shared_from_raw(raw_info: dict) -> dict:
     return {"white_balance": "none", "wb_factors": wb, "ha_ratio": raw_info.get("ha_ratio"),
             "palette_gain": raw_info.get("palette_gain"),
             "palette_stars": raw_info.get("palette_stars"),
-            "palette_arms": raw_info.get("palette_arms")}
+            "palette_arms": raw_info.get("palette_arms"),
+            # the gain's noise knee in ADU, measured on the raw set: the
+            # denoised planes' scatter is a tenth of it
+            "palette_knee": raw_info.get("palette_knee") or 0.0}
 
 
 def common_box(meta: dict, filters, shape) -> tuple:
@@ -369,7 +375,9 @@ def log_shared_measurements(raw_info: dict, log) -> None:
     if pg:
         log("    palette gain: " + "  ".join(f"{c} x{f:.3f}" for c, f in sorted(pg.items()))
             + f"; {len(raw_info.get('palette_stars') or [])} stars found, kept out of the gain ({color_process.PALETTE_STAR_MODE})"
-            + f", spikes on {len(raw_info.get('palette_arms') or [])}")
+            + f", spikes on {len(raw_info.get('palette_arms') or [])}"
+            + ("; knee " + " ".join(f"{c} {v:.3g} ADU" for c, v in sorted(raw_info["palette_knee"].items()))
+               if raw_info.get("palette_knee") else ""))
     wb = raw_info.get("wb") or {}
     if wb.get("mode") == "stars":
         f = wb.get("factors") or {}
@@ -725,7 +733,7 @@ def starless_product(args, out_dir: Path, raw: dict, raw_info: dict, stretch: di
     subbed, _ = color_process._prepare(chans, opts["subtract_background"], opts["mesh"],
                                        opts["white_pct"], **shared)
     rgb = compose_rgb(subbed, stretch["blacks"], stretch["white"], stretch["soft"],
-                      scnr=opts["scnr"], saturation=args.saturation)
+                      scnr=opts["scnr"], saturation=args.saturation, tone=opts.get("tone"))
     path = color_process.save_rgb(rgb, out_dir / f"{args.dso}_{args.recipe}_starless.jpg", max_px=None)
     meta["starless"] = {"file": path.name, "model": str(mmeta.get("name")), "planes": planes,
                         "built": time.strftime("%Y-%m-%dT%H:%M"), "stretch": "routine", "mode": "shadow"}
@@ -967,12 +975,19 @@ def routine(args) -> int:
         return {ch: d[mapping[ch]] for ch in ("L", "R", "G", "B", "HA")
                 if ch in mapping and mapping[ch] in d}
 
+    tone = color_process.parse_tone(getattr(args, "tone", None))
+    if tone and "L" in mapping:
+        log(f"--tone {tone}: {args.recipe} is colour, not a palette -- ignored")
+        tone = None
     opts = color_process.effective_options(
         white_pct=args.white_pct, black_pct=args.black_pct, white_balance=args.wb,
-        palette_gain=palette_gain_opt(args),
+        palette_gain=palette_gain_opt(args), tone=tone,
         **({"softening": args.soft} if args.soft is not None else {}),
         **({"scnr": args.scnr} if args.scnr is not None else {}))
-    log(f"compose: {color_process.describe_options(opts)}")
+    # the chroma boost: the flag when given, else the tone's, else 2.5
+    if args.saturation is None:
+        args.saturation = color_process.tone_saturation(tone, DEFAULT_SATURATION)
+    log(f"compose: {color_process.describe_options(opts)}  saturation={args.saturation:g}")
 
     # ONE stretch, from the raw, applied to both sets — so the channel JPEGs and
     # the two composites are all on the same scale and every visible difference
@@ -984,11 +999,14 @@ def routine(args) -> int:
         to_channels(raw), opts["subtract_background"], opts["mesh"], opts["white_pct"],
         white_balance=opts["white_balance"], info=raw_info,
         palette_gain=opts["palette_gain"],
+        palette_knee=color_process.tone_knee(tone),
         # the gain's faint stars are found on the denoised planes (and the
         # bright ones on the raw), pinned on every set from here
         palette_quiet=to_channels(den) if den else None)
     log_shared_measurements(raw_info, log)
     meta["fine_mesh"] = raw_info.get("fine_mesh") or {}
+    meta["tone"] = ({"tone": tone, "saturation": args.saturation, "knee": raw_info.get("palette_knee")}
+                    if tone else None)
     # The ROUTINE stretch: the shared white from the raw set, sky-anchored
     # blacks, the options' softening. Every morning composite is on it, and
     # so is the crop, in every mode (below).
@@ -1048,7 +1066,7 @@ def routine(args) -> int:
 
     from stacking import stacker
 
-    look = {"scnr": opts["scnr"], "saturation": args.saturation,
+    look = {"scnr": opts["scnr"], "saturation": args.saturation, "tone": tone,
             "star_img": star_img, "star_mask": star_mask_arr}
 
     def emit(subbed, tag):
@@ -1197,12 +1215,14 @@ def synthetic_black(blacks: dict) -> dict:
 
 
 def compose_rgb(subbed: dict, blacks: dict, white: float, soft: float, *, scnr: float = 0.0,
-                saturation: float = 1.0, star_img=None, star_mask=None) -> np.ndarray:
+                saturation: float = 1.0, star_img=None, star_mask=None, tone=None) -> np.ndarray:
     """The finished composite of one set on one stretch: R, G, B stretched,
     SCNR, lit by L (or by the synthetic L's sharpened/unsharpened ratio),
-    chroma scaled about each pixel's luminance, the stars recoloured. Pure
-    in *subbed*; the stretch is whatever is passed, which is how the final's
-    stretch and the routine's are drawn from the same planes."""
+    chroma scaled about each pixel's luminance, the tone's finish
+    (color_process.apply_tone: green out, hues to gold, the sky lifted),
+    the stars recoloured. Pure in *subbed*; the stretch is whatever is
+    passed, which is how the final's stretch and the routine's are drawn
+    from the same planes."""
     from stacking import color_process
     rgb = np.dstack([stretch_plane(subbed[c], blacks[c], white, soft) for c in ("R", "G", "B")])
     if scnr > 0:
@@ -1225,6 +1245,8 @@ def compose_rgb(subbed: dict, blacks: dict, white: float, soft: float, *, scnr: 
         rgb = np.clip(np.nan_to_num(rgb), 0, 1)
         y = (rgb @ np.array([0.299, 0.587, 0.114], dtype=np.float32))[:, :, None]
         rgb = y + (rgb - y) * float(saturation)
+    if tone:
+        rgb = color_process.apply_tone(np.clip(np.nan_to_num(rgb), 0, 1), tone, scnr_done=scnr)
     if star_mask is not None:
         rgb = color_process.rgb_stars(np.clip(np.nan_to_num(rgb), 0, 1), star_img, star_mask)
     return np.clip(np.nan_to_num(rgb), 0, 1)
@@ -1321,9 +1343,10 @@ def main() -> int:
     # 2.5 by the operator's choice on 2026-10-20, after NGC 1961 at 1, 2 and 3:
     # the HII regions and the red field stars want it, and the one cost (the
     # cyan halos on bright stars) is the G stack's broader PSF, not the boost.
-    ap.add_argument("--saturation", type=float, default=2.5,
+    ap.add_argument("--saturation", type=float, default=None,
                     help="scale each composite's chroma about its luminance; "
-                         "1 leaves the colour as composed, 2.5 (default) boosts it")
+                         "1 leaves the colour as composed, 2.5 (the default) boosts "
+                         "it; with --tone the tone's own value is the default")
     ap.add_argument("--white-pct", type=float, default=99.95,
                     help="shared white point percentile; compose()'s 99.0 "
                          "saturates this field completely")
@@ -1355,6 +1378,12 @@ def main() -> int:
                          "independently-stretched look) or `Ha:0.4/O-III:1.5`; "
                          "measured on the raw set and pinned on the denoised and "
                          "learned composites. HOO/SHO/HSO only")
+    ap.add_argument("--tone", default="", choices=("", "none", "hubble"),
+                    help="the finish on a palette composite (color_process.TONE): "
+                         "`hubble` takes the green out (SCNR), pulls the yellow-greens "
+                         "to gold, lifts the sky to a quiet grey, holds the chroma "
+                         "boost at its own value and puts the noise knee on the "
+                         "palette gain. HOO/SHO/HSO only")
     ap.add_argument("--auto-stretch", action="store_true",
                     help="black points and softening from the data "
                          "(color_process.auto_stretch) instead of the fixed "

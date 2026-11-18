@@ -378,6 +378,37 @@ Since 2026-09-25 the conductor decides both invariants (ADR 0014): every roof fi
   over noise and it lifted the specks the denoiser kept by up to x3,
   while above 0.4 (the stars) it is unchanged.
 
+  **A palette can be finished: `tone=hubble` (2026-11-18, `--tone` on the
+  morning render, `color_process.TONE`; off by default, nothing adopted
+  yet).** The owner put another imager's IC 405 beside the morning SHO:
+  ours green on a purple sky at full saturation, theirs gold on a quiet
+  grey. The data were not that different, the finish was. The tone is
+  that finish on the composed, stretched image (`apply_tone`, after the
+  luminance step, before any star recolouring): SCNR 1.0 (an Ha-only
+  region goes brown-gold, Ha+O-III teal), the yellow-greens pulled toward
+  gold (`hue_pull`, hues 40-160 deg moved 0.7 of the way to 40), a
+  pedestal PER CHANNEL that puts each channel's p20 at 0.12 (the channels'
+  local skies sit 0.05-0.1 ADU apart after the subtraction, 10-15 % of the
+  black offset, and the routine's one shared offset left IC 405's sky
+  magenta even with no gain), a gamma that brings the median luminance to
+  0.2 (the published pictures' nebula-to-sky ratio is the routine's, they
+  sit higher on the scale), and the chroma boost at 1.3 instead of 2.5
+  (`--saturation` given wins). With it the palette gain gets a NOISE KNEE
+  (`apply_palette_gain(knee=)`, `PALETTE_GAIN_KNEE_SIGMA` 0 = today's
+  gain; the tone asks 4): the smooth part's gain is weighted by
+  m^2/(m^2+t^2) on the local level m at 16 px (`knee_level`, the star
+  discs left out), t = 4 x the sky-side scatter of m, measured on the raw
+  set and pinned on the series in ADU (`info["palette_knee"]`), because a
+  gained sky's mottling is residual sky structure at 16-64 px (0.05-0.07
+  ADU rms in every IC 405 channel, invisible at x1, half the black offset
+  at x6: blue and red blotches over the whole field) and a knee at 3 px
+  cleared it only at a strength that also took the S-II body from x2.8 to
+  x1.4. On IC 405 the knee leaves the S-II body nearly ungained too: its
+  level is 2.3 sigma above its own sky structure at 16 px, which is what
+  it is. What the tone does not fix: the magenta medium-bright stars
+  (halo past the disc, the existing disc-size weakness). Palettes only;
+  `tone=` on LRGB/HALRGB refuses like `gain=`.
+
   **The sky-anchored black is one offset for every channel (since 2026-10-25).**
   The morning render and the movie put black at each channel's sky median
   minus `--black-sigma` (0.5) times the LARGEST channel's noise sigma
