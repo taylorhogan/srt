@@ -1156,6 +1156,140 @@ def apply_ha_blend(subbed: dict[str, np.ndarray], gain: float = HA_GAIN,
     return out, ratio
 
 
+# --- colour planes matched in width -----------------------------------------
+#
+# A star's colour in an LRGB composite is the ratio of the colour planes pixel
+# by pixel, and the planes do not share a PSF: each filter is focused and shot
+# in its own hour, in its own seeing. On IC 405 (2026-11-18/19) the B frames
+# ran 5.0 px half-width against 4.0 in R and G (N.I.N.A's HFR 7.9 against
+# 7.3), so relative to green the blue light in a star's core was half what it
+# was in the wings, and every star had a yellow core inside a cyan halo
+# ("stars are an odd color and looks like a registration issue"; the
+# registration was within 0.1 px). The fix is on the linear planes, before
+# the balance and the stretch: the sharper colour planes are blurred with a
+# Gaussian to the broadest one's width, measured on the field's own stars. L
+# is never touched and L carries the detail, so the picture loses nothing a
+# viewer sees; the colour simply stops changing with radius. Broadband
+# recipes only, the caller says so (chroma_match): a palette's stars are
+# made neutral by other means. Measured on the raw set, pinned on the rest.
+CHROMA_MATCH_MIN_SIGMA = 0.3     # px: a smaller correction is the measurement's noise
+CHROMA_MATCH_MAX_SIGMA = 4.0     # px: a larger one is a bad measurement; capped and said
+CHROMA_MATCH_MAX_STARS = 400
+CHROMA_MATCH_MIN_STARS = 20
+CHROMA_MATCH_PEAK_SIGMA = 40.0   # a star is a peak this far above the reference's noise
+_HALF_TO_SIGMA = 1.0 / float(np.sqrt(2.0 * np.log(2.0)))   # Gaussian half-max radius -> sigma
+
+
+def star_half_widths(planes: dict[str, np.ndarray], ref_name: str,
+                     max_stars: int = CHROMA_MATCH_MAX_STARS) -> tuple[dict, int]:
+    """({plane: half-max radius, px}, stars): the mean star's half-max radius per plane.
+
+    Stars are peaks on the reference plane (L when the caller has it, else G)
+    CHROMA_MATCH_PEAK_SIGMA above its noise and below its brightest 0.005 %
+    of pixels (saturated cores), the brightest *max_stars* of them, 14 px
+    from any edge. Every plane is measured on the SAME stars at the SAME
+    pixels (the planes share a grid): each star's 25 px cutout has its local
+    sky (the 10-12 px annulus) taken off and is divided by its own centre,
+    the cutouts are combined by the pixel-wise median, and the half-max
+    radius is read off that mean star's radial profile by interpolation.
+    """
+    from scipy import ndimage
+    ref = np.nan_to_num(np.asarray(planes[ref_name], dtype=np.float32))
+    sample = ref[::8, ::8]
+    med = float(np.median(sample))
+    sig = 1.4826 * float(np.median(np.abs(sample - med))) or 1.0
+    top = float(np.percentile(sample, 99.995))
+    peaks = ndimage.maximum_filter(ref, size=31)
+    ys, xs = np.nonzero((ref == peaks) & (ref > med + CHROMA_MATCH_PEAK_SIGMA * sig) & (ref < top))
+    h, w = ref.shape
+    keep = (ys >= 14) & (xs >= 14) & (ys < h - 14) & (xs < w - 14)
+    ys, xs = ys[keep], xs[keep]
+    order = np.argsort(ref[ys, xs])[::-1][:max_stars]
+    ys, xs = ys[order], xs[order]
+    if len(ys) == 0:
+        return {}, 0
+    yy, xx = np.mgrid[-12:13, -12:13]
+    rr = np.hypot(yy, xx)
+    ann = (rr >= 10) & (rr < 12)
+    rings = [(rr >= i) & (rr < i + 1) for i in range(13)]
+    widths = {}
+    for name, plane in planes.items():
+        a = np.nan_to_num(np.asarray(plane, dtype=np.float32))
+        cuts = np.stack([a[y - 12:y + 13, x - 12:x + 13] for y, x in zip(ys, xs)])
+        cuts = cuts - np.median(cuts[:, ann], axis=1)[:, None, None]
+        centre = cuts[:, 12, 12]
+        ok = centre > 0
+        if int(ok.sum()) < CHROMA_MATCH_MIN_STARS:
+            continue
+        star = np.median(cuts[ok] / centre[ok][:, None, None], axis=0)
+        prof = np.array([float(star[m].mean()) for m in rings])
+        below = np.nonzero(prof < 0.5)[0]
+        if len(below) == 0 or below[0] == 0:
+            continue
+        i = int(below[0])
+        frac = (prof[i - 1] - 0.5) / max(prof[i - 1] - prof[i], 1e-9)
+        widths[name] = float(i - 1 + frac + 0.5)      # ring i spans radii i..i+1: its centre is i + 0.5
+    return widths, int(len(ys))
+
+
+def match_colour_widths(subbed: dict[str, np.ndarray], sigmas: Optional[dict] = None,
+                        info: Optional[dict] = None) -> dict[str, np.ndarray]:
+    """R, G and B brought to one star width: the sharper planes blurred to the broadest.
+
+    *sigmas* pins given per-plane Gaussian sigmas (the denoised and learned
+    sets take the raw set's); otherwise they are measured here from
+    star_half_widths and written to info["chroma_match"] as {widths, sigmas,
+    stars, reference}. A plane needing less than CHROMA_MATCH_MIN_SIGMA is
+    left as it is; more than CHROMA_MATCH_MAX_SIGMA is capped and recorded.
+    Planes not blurred come back as the same arrays. L and HA are never touched.
+    """
+    from scipy import ndimage
+    out = dict(subbed)
+    if sigmas is None:
+        if not all(c in subbed for c in ("R", "G", "B")):
+            if info is not None:
+                info["chroma_match"] = {"skipped": "needs R, G and B"}
+            return out
+        ref_name = "L" if "L" in subbed else "G"
+        widths, n = star_half_widths({c: subbed[c] for c in ("R", "G", "B")} | {ref_name: subbed[ref_name]},
+                                     ref_name)
+        rgb = {c: widths[c] for c in ("R", "G", "B") if c in widths}
+        if len(rgb) < 3:
+            if info is not None:
+                info["chroma_match"] = {"skipped": "only %d stars measured (need %d)" % (n, CHROMA_MATCH_MIN_STARS),
+                                        "stars": n, "widths": widths}
+            _logger.warning("Colour width match: left alone -- %s", info["chroma_match"]["skipped"] if info else "")
+            return out
+        broadest = max(rgb.values())
+        sigmas = {}
+        capped = []
+        for c, hw in rgb.items():
+            extra = float(np.sqrt(max((broadest * _HALF_TO_SIGMA) ** 2 - (hw * _HALF_TO_SIGMA) ** 2, 0.0)))
+            if extra < CHROMA_MATCH_MIN_SIGMA:
+                extra = 0.0
+            elif extra > CHROMA_MATCH_MAX_SIGMA:
+                capped.append(c)
+                extra = CHROMA_MATCH_MAX_SIGMA
+            sigmas[c] = round(extra, 3)
+        if info is not None:
+            info["chroma_match"] = {"widths": {c: round(v, 2) for c, v in widths.items()},
+                                    "sigmas": dict(sigmas), "stars": n, "reference": ref_name,
+                                    **({"capped": capped} if capped else {})}
+        _logger.info("Colour width match on %d stars (%s): half-max %s px; blur %s",
+                     n, ref_name, " ".join(f"{c} {v:.2f}" for c, v in sorted(widths.items())),
+                     " ".join(f"{c} sigma {v:.2f}" for c, v in sorted(sigmas.items()) if v) or "none needed")
+    for c, s in (sigmas or {}).items():
+        if c not in out or not s or float(s) <= 0.0:
+            continue
+        a = out[c]
+        nans = np.isnan(a)
+        b = ndimage.gaussian_filter(np.nan_to_num(a).astype(np.float32), float(s), truncate=3.0)
+        if nans.any():
+            b[nans] = np.nan
+        out[c] = b.astype(a.dtype, copy=False)
+    return out
+
+
 def star_white_balance(subbed: dict[str, np.ndarray],
                        max_stars: int = STAR_WB_MAX_STARS,
                        min_stars: int = STAR_WB_MIN_STARS) -> tuple[dict, dict]:
@@ -1582,7 +1716,9 @@ def _prepare(channels: dict[str, np.ndarray], subtract_background: bool,
              info: Optional[dict] = None,
              palette_gain=PALETTE_GAIN, palette_stars=None,
              palette_quiet: Optional[dict] = None, palette_arms=None,
-             palette_knee=PALETTE_GAIN_KNEE_SIGMA) -> tuple[dict, float]:
+             palette_knee=PALETTE_GAIN_KNEE_SIGMA,
+             chroma_match: bool = False,
+             chroma_sigmas: Optional[dict] = None) -> tuple[dict, float]:
     """Background-subtract every channel and find the shared white point.
 
     Factored out of compose() because the per-channel exports have to be the
@@ -1624,6 +1760,14 @@ def _prepare(channels: dict[str, np.ndarray], subtract_background: bool,
     # frame, returned the identity, and that frame got no balance at all while
     # its raw counterpart got R 1.176 / B 1.403. Same class of error the black
     # point comment above describes, one layer up.
+    # The colour planes to one star width (match_colour_widths), before the
+    # balance and the Ha blend: the balance is measured in apertures and
+    # does not care, but the Ha excess is measured against R, so R has to
+    # be its final self first. chroma_match measures (the raw set);
+    # chroma_sigmas pins what was measured (every other set of the series).
+    cm_info: dict = {}
+    if chroma_match or chroma_sigmas:
+        subbed = match_colour_widths(subbed, sigmas=chroma_sigmas, info=cm_info)
     subbed, wb_info = apply_white_balance(subbed, white_balance, wb_factors)
     # Palette gain (PALETTE_GAIN): after the balance, which it never shares a
     # recipe with. The white point is taken BEFORE the gain: the p99.95 white
@@ -1650,7 +1794,8 @@ def _prepare(channels: dict[str, np.ndarray], subtract_background: bool,
         info.update({"wb": wb_info, "ha_ratio": ratio, "palette_gain": gain_used,
                      "palette_stars": gain_info.get("star_discs"),
                      "palette_arms": gain_info.get("star_arms"),
-                     "palette_knee": gain_info.get("palette_knee")})
+                     "palette_knee": gain_info.get("palette_knee"),
+                     "chroma_match": cm_info.get("chroma_match")})
     return subbed, (white_before if gain_used else shared_white(subbed, white_pct))
 
 
@@ -2413,7 +2558,7 @@ def compose(channels: dict[str, np.ndarray], black_pct: float = BLACK_PCT,
         raise ValueError(f"tone: {tone} is a palette finish; not for a colour recipe")
     subbed, white = _prepare(channels, subtract_background, mesh, white_pct, ha_gain,
                              white_balance, palette_gain=palette_gain,
-                             palette_knee=tone_knee(tone))
+                             palette_knee=tone_knee(tone), chroma_match="L" in channels)
     _logger.info("Compose: shared white point %.2f ADU (p%.1f)", white, white_pct)
 
     rgb = np.dstack([_stretch(subbed[c], black_pct, white, softening, label=c)
@@ -3062,7 +3207,7 @@ def save_channel_jpgs(channels: dict[str, np.ndarray], out_dir: Path, dso: str,
     from stacking import stacker
     channels = _deblurred(channels, deblur, dering, method)
     subbed, white = _prepare(channels, subtract_background, mesh, white_pct, ha_gain,
-                             white_balance, palette_gain=palette_gain)
+                             white_balance, palette_gain=palette_gain, chroma_match="L" in channels)
     out_dir.mkdir(parents=True, exist_ok=True)
     written = []
     # For HALRGB, R and L here are the BLENDED planes (what the composite

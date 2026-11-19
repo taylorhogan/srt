@@ -41,9 +41,9 @@ def test_plan_finals_prefers_one_recipe_and_skips_current_records():
 
 
 def test_render_command_carries_final():
-    cmd = r.render_command("IC 410", "SHO", first=True, exptime=300, galaxy=False, final=True)
+    cmd = r.render_command("IC 410", "SHO", first=True, exptime=300, final=True)
     assert cmd[-2:] == ["--force", "--final"] and "--gain" in cmd
-    assert "--final" not in r.render_command("ic410", "SHO", first=False, exptime=300, galaxy=False)
+    assert "--final" not in r.render_command("ic410", "SHO", first=False, exptime=300)
 
 
 def test_final_record_path():

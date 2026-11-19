@@ -415,6 +415,22 @@ Since 2026-09-25 the conductor decides both invariants (ADR 0014): every roof fi
   whose O-III is thin. It is in `RECIPES` and every palette rule reads it
   like HOO; the morning render does not pick it (`RECIPE_RULES` unchanged).
 
+  **A colour recipe's R, G and B are brought to one star width before the
+  balance and the stretch (2026-11-19, `color_process.match_colour_widths`,
+  `_prepare(chroma_match=)`, measured on the raw set and pinned on the series
+  as `chroma_sigmas`).** Each filter is focused and shot in its own hour and
+  seeing: IC 405's B frames ran 5.0 px half-width against 4.0 in R and G, so
+  relative to green the blue light in a star's core was half what it was in
+  the wings, and every star had a yellow core in a cyan halo, which read as a
+  registration error (the registration was within 0.1 px). The sharper planes
+  are Gaussian-blurred to the broadest (`star_half_widths` on the field's own
+  stars, the same stars at the same pixels in every plane); L is never touched
+  and carries the detail. LRGB/HALRGB only; `--no-chroma-match` for an A/B.
+  **And every broadband recipe is white-balanced on its stars (same day):** the
+  rule was a galaxy's only, IC 405 carried no object type, and its LRGB went
+  out with the sensor's raw ratios on every star, green-cyan at the 2.5
+  saturation. `spark_morning_render.WB_STARS_RECIPES` decides; `is_galaxy` is gone.
+
   **The sky-anchored black is one offset for every channel (since 2026-10-25).**
   The morning render and the movie put black at each channel's sky median
   minus `--black-sigma` (0.5) times the LARGEST channel's noise sigma

@@ -89,25 +89,17 @@ MIN_COLOUR_FRAMES = 3
 # adding HSO to RECIPE_RULES without adding it here silently gave that recipe
 # `--lum L` (a filter it does not have) and the wrong stretch.
 NARROWBAND = {"SHO", "HSO", "HOO", "HSS"}
-# Broadband recipes of a galaxy are white-balanced on the field's stars
-# (owner, 2026-10-16). Unbalanced, ngc6946 came out yellow: ~1 mag of Milky
-# Way dust reddens the galaxy and every star in the field, and wb=stars
-# measured B x1.83 to take it out. Never for narrowband: those are palettes.
+# Broadband recipes are white-balanced on the field's stars. A galaxy's since
+# 2026-10-16 (owner): unbalanced, ngc6946 came out yellow, ~1 mag of Milky Way
+# dust reddening the galaxy and every star in the field, and wb=stars measured
+# B x1.83 to take it out. EVERY broadband recipe since 2026-11-19 (owner): the
+# rule was galaxy-only, IC 405 carried no object type, and its LRGB went out
+# with the sensor's raw ratios on every star (R 0.77, B 0.6 of G, green-cyan
+# at the 2.5 saturation). A nebula field's stars are stars just the same.
+# Never for narrowband: those are palettes.
 WB_STARS_RECIPES = {"LRGB", "HALRGB"}
 # The palette gain a recipe is rendered with (n2n_lrgb_render --gain).
 PALETTE_GAIN = {"SHO": "hubble"}
-
-
-def is_galaxy(dso: str) -> bool:
-    """The filter planner's own classifier (queued obj_type, then the grid's
-    override table / type cache / SIMBAD), so a target is a galaxy here
-    exactly when it was planned as one. Unknown is not a galaxy."""
-    try:
-        from nina_gen.nina_sequence_gen import _classify_object_type
-        return _classify_object_type(dso) == "galaxy"
-    except Exception as exc:  # noqa: BLE001 -- a lookup failure must not stop the render
-        log(f"{dso}: object type unknown ({type(exc).__name__}: {exc}); no white balance")
-        return False
 
 
 def log(m: str = "") -> None:
@@ -246,12 +238,12 @@ def order_plan(plan: list, last_times: dict) -> list:
 
 
 def render_command(dso: str, recipe: str, first: bool, exptime: int,
-                   galaxy: bool, final: bool = False) -> list[str]:
+                   final: bool = False) -> list[str]:
     """The n2n_lrgb_render.py routine invocation for one recipe of one target.
 
     Every routine render writes the raw, denoised and learned composites. A
-    galaxy's broadband recipes get --wb stars, measured on the raw set and
-    pinned on the denoised one. Only the target's first recipe rebuilds the
+    broadband recipe gets --wb stars, measured on the raw set and pinned on
+    the denoised one (WB_STARS_RECIPES). Only the target's first recipe rebuilds the
     shared channel stacks (--force); the rest reuse them (module docstring).
     *final* (D1) adds --final: the auto stretch, the QC verdict and
     <dso>/final/final.json.
@@ -260,7 +252,7 @@ def render_command(dso: str, recipe: str, first: bool, exptime: int,
     cmd = [sys.executable, os.path.join(_root, "scripts", "n2n_lrgb_render.py"),
            "routine", "--dso", dso.lower().replace(" ", ""), "--recipe", recipe,
            "--lum", lum, "--exptime", str(exptime)]
-    if galaxy and recipe in WB_STARS_RECIPES:
+    if recipe in WB_STARS_RECIPES:
         cmd += ["--wb", "stars"]
     if recipe in PALETTE_GAIN:
         cmd += ["--gain", PALETTE_GAIN[recipe]]
@@ -404,8 +396,7 @@ def run_finals(subs: Path, exptime: int, log=log) -> int:
         + (", ".join(f"{d} {r}" for d, r in todo) or "none"))
     failed = 0
     for dso, recipe in todo:
-        galaxy = is_galaxy(dso) if recipe in WB_STARS_RECIPES else False
-        cmd = render_command(dso, recipe, first=True, exptime=exptime, galaxy=galaxy, final=True)
+        cmd = render_command(dso, recipe, first=True, exptime=exptime, final=True)
         log(f"FINAL {dso} {recipe}: {' '.join(cmd[2:])}")
         t0 = time.time()
         r = subprocess.run(cmd, capture_output=True, text=True)
@@ -547,13 +538,11 @@ def main() -> int:
             log(f"budget: {spent:.0f} min spent of {args.budget_minutes:g}; "
                 f"{len(plan) - k} target(s) wait for the next run")
             break
-        galaxy = is_galaxy(dso) if WB_STARS_RECIPES & set(recipes) else False
-        if galaxy:
-            log(f"{dso}: galaxy — {' + '.join(r for r in recipes if r in WB_STARS_RECIPES)} "
-                f"white-balanced on the field's stars (wb=stars)")
+        balanced = [r for r in recipes if r in WB_STARS_RECIPES]
+        if balanced:
+            log(f"{dso}: {' + '.join(balanced)} white-balanced on the field's stars (wb=stars)")
         for i, recipe in enumerate(recipes):
-            cmd = render_command(dso, recipe, first=(i == 0), exptime=args.exptime,
-                                 galaxy=galaxy)
+            cmd = render_command(dso, recipe, first=(i == 0), exptime=args.exptime)
             # No narrowband stretch override. These used to be forced to
             # --white-pct 99 --black-pct 65, and on the 2026-08-24 trunk render that
             # put white at 4.71 ADU (clipping everything above ~3 sigma into flat

@@ -317,7 +317,9 @@ def shared_from_raw(raw_info: dict) -> dict:
             "palette_arms": raw_info.get("palette_arms"),
             # the gain's noise knee in ADU, measured on the raw set: the
             # denoised planes' scatter is a tenth of it
-            "palette_knee": raw_info.get("palette_knee") or 0.0}
+            "palette_knee": raw_info.get("palette_knee") or 0.0,
+            # the colour planes' width match, per-plane Gaussian sigmas in px
+            "chroma_sigmas": (raw_info.get("chroma_match") or {}).get("sigmas")}
 
 
 def common_box(meta: dict, filters, shape) -> tuple:
@@ -384,6 +386,14 @@ def log_shared_measurements(raw_info: dict, log) -> None:
         log("white balance from raw (%s): R x%.3f  B x%.3f — pinned on the denoised set"
             % (wb.get("why") or "%s stars" % wb.get("stars", "?"),
                f.get("R", 1.0), f.get("B", 1.0)))
+    cm = raw_info.get("chroma_match") or {}
+    if cm.get("skipped"):
+        log(f"colour width match: left alone -- {cm['skipped']}")
+    elif cm.get("sigmas") is not None:
+        blur = " ".join(f"{c} sigma {v:.2f}" for c, v in sorted(cm["sigmas"].items()) if v) or "none needed"
+        log(f"colour width match from raw ({cm.get('stars')} stars on {cm.get('reference')}): half-max "
+            + " ".join(f"{c} {v:.2f}" for c, v in sorted((cm.get("widths") or {}).items()))
+            + f" px; blur {blur}" + (" (capped)" if cm.get("capped") else "") + " -- pinned on the series")
     if raw_info.get("ha_ratio") is not None:
         log("Ha continuum ratio from raw: %.4f — pinned on the denoised set"
             % raw_info["ha_ratio"])
@@ -439,7 +449,8 @@ def compose(args) -> int:
         log(f"compose: {color_process.describe_options(opts)}")
         subbed, white = color_process._prepare(
             raw_ch, opts["subtract_background"], opts["mesh"], opts["white_pct"],
-            palette_gain=opts["palette_gain"])
+            palette_gain=opts["palette_gain"],
+            chroma_match=("L" in mapping) and getattr(args, "chroma_match", True))
         blacks = {c: float(np.nanpercentile(subbed[c], opts["black_pct"]))
                   for c in subbed}
         log(f"stretch: white {white:.2f} ADU, blacks "
@@ -533,6 +544,7 @@ def compose(args) -> int:
     subbed_raw, white = color_process._prepare(
         raw_ch, opts["subtract_background"], opts["mesh"], opts["white_pct"],
         white_balance=opts["white_balance"], info=raw_info,
+        chroma_match=("L" in mapping) and getattr(args, "chroma_match", True),
         palette_gain=opts["palette_gain"])
     log_shared_measurements(raw_info, log)
     subbed_den, _ = color_process._prepare(
@@ -998,6 +1010,8 @@ def routine(args) -> int:
     subbed_raw, white = color_process._prepare(
         to_channels(raw), opts["subtract_background"], opts["mesh"], opts["white_pct"],
         white_balance=opts["white_balance"], info=raw_info,
+        # a colour recipe's R, G, B brought to one star width (match_colour_widths)
+        chroma_match=("L" in mapping) and getattr(args, "chroma_match", True),
         palette_gain=opts["palette_gain"],
         palette_knee=color_process.tone_knee(tone),
         # the gain's faint stars are found on the denoised planes (and the
@@ -1005,6 +1019,7 @@ def routine(args) -> int:
         palette_quiet=to_channels(den) if den else None)
     log_shared_measurements(raw_info, log)
     meta["fine_mesh"] = raw_info.get("fine_mesh") or {}
+    meta["chroma_match"] = raw_info.get("chroma_match")
     meta["tone"] = ({"tone": tone, "saturation": args.saturation, "knee": raw_info.get("palette_knee")}
                     if tone else None)
     # The ROUTINE stretch: the shared white from the raw set, sky-anchored
@@ -1364,6 +1379,11 @@ def main() -> int:
                     help="rgb: also stack R, G and B onto the shared reference and "
                          "recolour the stars from them (process's stars=rgb); the "
                          "palette keeps its brightness, the nebula is untouched")
+    ap.add_argument("--no-chroma-match", dest="chroma_match", action="store_false",
+                    help="leave the colour planes at their own star widths (LRGB/HALRGB "
+                         "blur the sharper of R, G, B to the broadest by default: "
+                         "color_process.match_colour_widths)")
+    ap.set_defaults(chroma_match=True)
     ap.add_argument("--wb", default="none", choices=("none", "stars"),
                     help="white balance as the process command's wb=: `stars` "
                          "scales R and B so the field's median star is neutral. "
