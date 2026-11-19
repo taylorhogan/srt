@@ -24,7 +24,14 @@ from typing import Optional
 
 REF_EXPOSURE_S = 300.0
 GATE_MULTIPLIER = 1.25          # stacker.quality_gate's max_fwhm_multiplier default
-SHARP_ARCSEC = 2.4              # detail-channel frames must be at least this sharp
+SHARP_ARCSEC = 2.4              # detail-channel frames must be at least this sharp (overhead)
+# ...scaled by the target's best airmass to this power (2026-11-19): 2.4" is a
+# zenith number. NGC 1055 (dec 0) never rises above 48.6 deg here; its L, R, G
+# and B all sat at 3.0-3.3" median while IC 405 overhead on the same night gave
+# 2.1-2.5", so none of its 38 L frames ever counted and its meter read 0 %.
+# Seeing grows as airmass^0.6; at the transit airmass 1.33 the bar is 2.85".
+SHARP_AIRMASS_POWER = 0.6
+SHARP_MIN_ALT_DEG = 20.0        # below this the scaling stops (airmass ~2.9)
 MAX_FILTERS = 4                 # template blocks whose filter can be set
 RATIO_SCALE = 4                 # the largest share is written as this
 
@@ -94,7 +101,21 @@ def _median(xs):
     return None if not n else (s[n // 2] if n % 2 else 0.5 * (s[n // 2 - 1] + s[n // 2]))
 
 
-def tally(frames: list, exposure_s: Optional[dict] = None) -> dict:
+def sharp_limit(dec_deg, lat_deg) -> float:
+    """The detail channel's sharpness bar for a target at *dec_deg* seen from
+    *lat_deg*: SHARP_ARCSEC x (airmass at its highest) ^ SHARP_AIRMASS_POWER,
+    never below SHARP_ARCSEC. SHARP_ARCSEC when either is unknown. Pure."""
+    import math
+    try:
+        alt = 90.0 - abs(float(lat_deg) - float(dec_deg))
+    except (TypeError, ValueError):
+        return SHARP_ARCSEC
+    alt = min(90.0, max(SHARP_MIN_ALT_DEG, alt))
+    airmass = 1.0 / math.sin(math.radians(alt))
+    return round(SHARP_ARCSEC * max(1.0, airmass) ** SHARP_AIRMASS_POWER, 2)
+
+
+def tally(frames: list, exposure_s: Optional[dict] = None, sharp_arcsec: float = SHARP_ARCSEC) -> dict:
     """{filter: {"frames", "usable", "sharp", "median_fwhm"}} from frame records.
 
     *frames* are {"filter", "fwhm_arcsec", "exptime"} (frame_stats.json rows
@@ -118,7 +139,7 @@ def tally(frames: list, exposure_s: Optional[dict] = None) -> dict:
         med = _median(measured)
         usable = sum(1 for x in measured if med is None or x <= GATE_MULTIPLIER * med)
         out[f] = {"frames": len(fw), "usable": usable,
-                  "sharp": sum(1 for x in measured if x <= SHARP_ARCSEC),
+                  "sharp": sum(1 for x in measured if x <= sharp_arcsec),
                   "median_fwhm": med}
     return out
 
@@ -138,8 +159,10 @@ def advise(frames: list, obj_type: str, entry: Optional[dict] = None,
            weak_line_min_frames: int = WEAK_LINE_MIN_FRAMES,
            curve: Optional[dict] = None,
            ha_gain_set: bool = False,
-           galaxy_ha_needs_gain: bool = GALAXY_HA_NEEDS_GAIN) -> dict:
-    """Tonight's filter ratio for one target, with the reasons. Pure.
+           galaxy_ha_needs_gain: bool = GALAXY_HA_NEEDS_GAIN,
+           lat_deg: Optional[float] = None) -> dict:
+    """Tonight's filter ratio for one target, with the reasons. Pure but for
+    the site latitude, read from the config when *lat_deg* is None.
 
     obj_type: "galaxy" / "nebula" / anything else (treated as galaxy: broadband).
     entry: the queue entry (lightcurve, recipe, exposure_s, filter_plan).
@@ -166,11 +189,18 @@ def advise(frames: list, obj_type: str, entry: Optional[dict] = None,
     emission = emission or {}
     curve = curve or {}
     kind = "nebula" if obj_type == "nebula" else "galaxy"
-    have = tally(frames, entry.get("exposure_s"))
+    if lat_deg is None:
+        try:
+            from configs import config
+            lat_deg = config.data()["location"]["latitude"]
+        except Exception:  # noqa: BLE001 -- the zenith bar, as before
+            lat_deg = None
+    sharp_at = sharp_limit(entry.get("dec_deg"), lat_deg)
+    have = tally(frames, entry.get("exposure_s"), sharp_at)
     reasons = []
     res = {"dso": dso or entry.get("dso", ""), "kind": kind, "have": have, "need": {},
            "plan": None, "reasons": reasons, "tonight": tonight, "emission": emission,
-           "sat_out": []}
+           "sat_out": [], "sharp_limit": sharp_at}
 
     if entry.get("lightcurve"):
         reasons.append("monitor target (lightcurve): its own fixed plan stands")
@@ -200,8 +230,10 @@ def advise(frames: list, obj_type: str, entry: Optional[dict] = None,
         got = h["sharp"] if f == detail else h["usable"]
         need[f] = max(0.0, float(goals.get(f, 0)) - got)
         if f == detail and h["frames"] and h["sharp"] < h["usable"]:
-            reasons.append("%s: %d frames, %d usable but only %d sharp (<= %.1f\"; median %.2f\")"
-                           % (f, h["frames"], h["usable"], h["sharp"], SHARP_ARCSEC,
+            reasons.append("%s: %d frames, %d usable but only %d sharp (<= %.2f\"%s; median %.2f\")"
+                           % (f, h["frames"], h["usable"], h["sharp"], sharp_at,
+                              (", scaled for its %.0f deg transit" % (90.0 - abs(float(lat_deg) - float(entry["dec_deg"]))))
+                              if sharp_at > SHARP_ARCSEC else "",
                               h["median_fwhm"] or 0))
         ratio = emission.get(f) if f in WEAK_LINES else None
         if (ratio is not None and need[f] > 0 and float(ratio) < weak_line_ratio

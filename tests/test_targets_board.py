@@ -76,12 +76,35 @@ def _advice(sharp, frames=None, kind="nebula"):
 
 
 def test_progress_is_the_worst_filters_share_with_that_filter_named():
-    p = B.progress(_advice({"Ha": 30, "O-III": 19, "S-II": 25}, {"Ha": 35, "O-III": 25, "S-II": 25}),
+    # Ha is the nebula's detail channel (sharp frames count); O-III and S-II count usable ones.
+    p = B.progress(_advice({"Ha": 30, "O-III": 12, "S-II": 25}, {"Ha": 35, "O-III": 19, "S-II": 31}),
                    curve_done=True, nights=3, cap_factor=2.0, goals=GOALS)
     assert p["pct"] == 48 and p["limiting"] == "O-III"
-    assert p["need_frames"] == 10 + 21 + 15 and p["shot"] == 85 and p["cap"] == 240
-    assert p["nights"] == 3 and p["per_night"] == 28.3 and p["nights_to_go"] == 2   # 46 / 28.3
-    assert p["curve"] is True and p["sharp"]["S-II"] == 25 and p["goals"] == GOALS
+    assert p["need_frames"] == 10 + 21 + 9 and p["shot"] == 85 and p["cap"] == 240
+    assert p["nights"] == 3 and p["per_night"] == 28.3 and p["nights_to_go"] == 2   # 40 / 28.3
+    assert p["curve"] is True and p["counted"]["S-II"] == 31 and p["goals"] == GOALS
+    assert p["detail"] == "Ha"
+
+
+def test_progress_reads_the_advisors_need_its_filter_set_and_the_detail_rule():
+    """2026-11-19: NGC 1055 sat at 0 % on a blue with 13 usable frames and no
+    sharp one, and every galaxy waited on 36 Hα frames the plan leaves out at
+    gain 0; IC 405's weak S-II excused by the advisor counts as full."""
+    from fits_processing.filter_advisor import GOALS as G
+    galaxy = {"action": "plan", "kind": "galaxy",
+              "have": {"L": {"frames": 22, "usable": 22, "sharp": 6},
+                       "B": {"frames": 13, "usable": 13, "sharp": 0}},
+              "need": {"L": 54.0, "R": 24.0, "G": 24.0, "B": 11.0}}          # no Ha: it sat out
+    p = B.progress(galaxy, False, 4)
+    assert "Ha" not in p["goals"] and p["counted"]["B"] == 13 and p["counted"]["L"] == 6
+    assert p["limiting"] == "G" and p["pct"] == 0                               # G and R tie at 0; by name
+    galaxy["need"].update(R=4.0, G=4.0)
+    p = B.progress(galaxy, False, 4)
+    assert p["limiting"] == "L" and p["pct"] == 10                              # 6 sharp of 60
+    neb = {"action": "plan", "kind": "nebula", "have": {"Ha": {"frames": 40, "usable": 40, "sharp": 40}},
+           "need": {"Ha": 0.0, "O-III": 10.0, "S-II": 0.0}}                     # S-II excused
+    p = B.progress(neb, False, 2, goals=G["nebula"])
+    assert p["counted"]["S-II"] == 40 and p["limiting"] == "O-III" and p["pct"] == 75
 
 
 def test_progress_complete_and_unknown_pace():

@@ -220,3 +220,19 @@ def test_curve_status_reads_the_convergence_entries():
     assert st["O-III"] == {"slope_pct": -2.56, "flat": False, "snr": 1.08}
     assert st["Ha"]["flat"] is True and st["Ha"]["snr"] is None
     assert st["S-II"]["flat"] is False             # uncalibrated: not known, so not flat
+
+
+def test_sharp_bar_scales_with_the_targets_best_airmass():
+    """2026-11-19: NGC 1055 (dec 0) transits at 48.6 deg here and every one of
+    its filters sat at 3.0-3.3"; the 2.4" zenith bar counted none of its L."""
+    from fits_processing import filter_advisor as fa
+    assert fa.sharp_limit(0.443, 41.81) == 2.85
+    assert fa.sharp_limit(41.81, 41.81) == fa.SHARP_ARCSEC          # overhead: unchanged
+    assert fa.sharp_limit(None, 41.81) == fa.SHARP_ARCSEC           # unknown: the zenith bar
+    assert fa.sharp_limit(-60, 41.81) == fa.sharp_limit(-38.19, 41.81)   # floored at 20 deg
+    frames = [{"filter": "L", "fwhm_arcsec": x, "exptime": 300.0} for x in (2.3, 2.6, 2.8, 3.2)]
+    low = fa.advise(frames, "galaxy", {"dec_deg": 0.443}, lat_deg=41.81)
+    high = fa.advise(frames, "galaxy", {"dec_deg": 41.81}, lat_deg=41.81)
+    assert low["have"]["L"]["sharp"] == 3 and low["sharp_limit"] == 2.85
+    assert high["have"]["L"]["sharp"] == 1 and high["sharp_limit"] == 2.4
+    assert any("scaled for its 49 deg transit" in r for r in low["reasons"])

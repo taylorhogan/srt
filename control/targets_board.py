@@ -61,26 +61,42 @@ def progress(advice: Optional[dict], curve_done: bool, nights: int, cap_factor: 
     """How close a target is to the two things auto-stop waits for. Pure.
 
     *advice* is filter_advisor.advise()'s result (kind, have, need); the
-    depth is the worst filter's sharp frames over its goal (the advisor's
-    own arithmetic, so the bar fills exactly when its verdict flips), with
-    that filter named. *curve_done* is the convergence verdict. *nights*
-    imaged so far gives the pace, and the frames still short divided by it
-    is the nights to go. *cap_factor* > 0 adds the cap in frames shot. None
-    for a monitor or when there is no advice (no frames, no type).
+    depth is the worst filter's counted frames over its goal, with that
+    filter named, by the advisor's own arithmetic so the bar fills exactly
+    when its verdict flips: its filter set (`need`'s keys: Hα sits out of a
+    gain-0 galaxy), SHARP frames for the detail channel (L, or Hα on a
+    nebula) and USABLE frames for the rest, and a filter its weak-line rule
+    excused counts as full. Until 2026-11-19 every filter counted sharp
+    frames against the type's whole goal list, so a galaxy whose blue had no
+    frame under 2.4" sat at 0 % however deep it was (NGC 1055 at 13 usable
+    B), and every galaxy waited on 36 Hα frames the plan no longer takes.
+    *curve_done* is the convergence verdict. *nights* imaged so far gives
+    the pace, and the frames still short divided by it is the nights to go.
+    *cap_factor* > 0 adds the cap in frames shot. None for a monitor or when
+    there is no advice (no frames, no type).
     """
     if not advice or advice.get("action") == "monitor":
         return None
     kind = advice.get("kind")
+    from fits_processing.filter_advisor import DETAIL, GOALS
     if goals is None:
-        from fits_processing.filter_advisor import GOALS
         goals = GOALS.get(kind) or {}
-    if not goals:
+    need = advice.get("need") or {}
+    fset = [f for f in (need or goals) if goals.get(f)]
+    if not fset:
         return None
+    detail = DETAIL.get(kind)
     have = advice.get("have") or {}
-    sharp = {f: int((have.get(f) or {}).get("sharp") or 0) for f in goals}
-    shares = {f: min(1.0, sharp[f] / float(goals[f])) for f in goals if goals[f]}
+
+    def counted(f):
+        if f in need:
+            return max(0, int(round(float(goals[f]) - float(need[f]))))
+        h = have.get(f) or {}
+        return int(h.get("sharp" if f == detail else "usable") or 0)
+    got = {f: counted(f) for f in fset}
+    shares = {f: min(1.0, got[f] / float(goals[f])) for f in fset}
     limiting = min(shares, key=lambda f: (shares[f], f))
-    need_frames = sum(max(int(goals[f]) - sharp[f], 0) for f in goals)
+    need_frames = sum(max(int(goals[f]) - got[f], 0) for f in fset)
     shot = sum(int((h or {}).get("frames") or 0) for h in have.values())
     per_night = (shot / nights) if nights and shot else None
     if need_frames <= 0:
@@ -90,7 +106,10 @@ def progress(advice: Optional[dict], curve_done: bool, nights: int, cap_factor: 
     else:
         nights_to_go = None
     return {"pct": int(round(100 * shares[limiting])), "limiting": limiting,
-            "sharp": sharp, "goals": {f: int(v) for f, v in goals.items()},
+            # "sharp" kept for the site's reader: the frames that COUNT, which
+            # are sharp ones only for the detail filter.
+            "sharp": got, "counted": got, "detail": detail,
+            "goals": {f: int(goals[f]) for f in fset},
             "need_frames": need_frames, "shot": shot, "nights": int(nights or 0),
             "per_night": (round(per_night, 1) if per_night else None), "nights_to_go": nights_to_go,
             "cap": (int(round(cap_factor * sum(goals.values()))) if cap_factor and cap_factor > 0 else None),
