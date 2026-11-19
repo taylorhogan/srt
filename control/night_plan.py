@@ -123,7 +123,14 @@ def decide(rows, slots, min_good_hours: int = MIN_GOOD_HOURS) -> dict:
     """The noon / pre-sunset verdict from a ranking and its slots. Pure."""
     if not rows:
         return {"best": "", "good_hours": 0, "best_start": None, "will_image": False, "slots": []}
-    best, good, _alt, _type, start, _sym, _pri = rows[0]
+    # The night is judged on the best-ranked target the slot planner placed,
+    # not on the top row alone (2026-11-19): NGC 1055 at priority 100 had no
+    # good hour (trees until 21 h, the moon 21-23 h, trees again from 23:15)
+    # and called off a clear night the slots had filled with NGC 7640 and
+    # IC 405. With no slot at all, the top row speaks, as before.
+    placed = {getattr(s, "name", None) for s in slots or []}
+    best, good, _alt, _type, start, _sym, _pri = next(
+        (r for r in rows if r[0] in placed), rows[0])
     will = int(good) >= min_good_hours
     return {"best": best, "good_hours": int(good),
             "best_start": start.isoformat(timespec="minutes") if start is not None else None,

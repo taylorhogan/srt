@@ -68,6 +68,17 @@ def test_decide():
     assert off["will_image"] is False and off["slots"] == [] and off["good_hours"] == 2
 
 
+
+def test_decide_skips_a_top_row_with_no_hours_for_the_slots_it_has():
+    # 2026-11-19: the priority-100 target had 0 good hours, the slots held
+    # two others, and the night was called off on a clear forecast.
+    on = NP.decide([_row("ngc1055", 0), _row("ngc7320", 3), _row("m33", 5)], SLOTS)
+    assert on["best"] == "ngc7320" and on["good_hours"] == 3 and on["will_image"] is True
+    assert on["slots"] == RECORD
+    # No slots: the top row speaks, and a night with none is off.
+    off = NP.decide([_row("ngc1055", 0), _row("m33", 5)], [])
+    assert off["best"] == "ngc1055" and off["will_image"] is False
+
 def _sched(dso="ngc7320", will=True, slots=RECORD):
     return {"state": "WAITING_FOR_PRE_SUNSET", "dso": dso, "will image tonight": will, "slots": slots}
 
