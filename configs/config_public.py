@@ -6,7 +6,7 @@ class PublicConfig():
 
         },
         "version": {
-            "date": "2026.11.19.2"
+            "date": "2026.11.19.3"
         },
 
         "logger": {
@@ -631,6 +631,12 @@ class PublicConfig():
                      # an airline callsign's SCHEDULED route (origin, destination,
                      # airline) from the adsbdb table; False leaves it out
                      "routes": True, "route_source": "https://api.adsbdb.com/v0/callsign"},
+        # A ZWO Seestar on the house network (station mode): its pictures are
+        # pulled off the SMB share it advertises, guest, no password
+        # (scripts/seestar_pull.py). host is the mDNS name it registers;
+        # dest is a folder under this machine's image_dir.
+        "seestar": {"host": "seestar.local", "share": "EMMC Images", "root": "MyWorks",
+                    "dest": "seestar", "thumbnails": False},
         "conductor": {
             "shadow_enabled": True,
             "port": 8096,
