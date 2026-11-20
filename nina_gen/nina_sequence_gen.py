@@ -577,7 +577,7 @@ def _walk_and_replace(obj: Any, dso_name: str, coords: dict) -> None:
 
 
 def _plan_for(container: Any, dso_name: str, seconds: Optional[float],
-              preset: Optional[dict] = None) -> dict[str, int]:
+              preset: Optional[dict] = None, ids: Optional[dict] = None) -> dict[str, int]:
     """Size the SmartExposure blocks under *container* for *dso_name*.
 
     §2c resolution order: explicit `filters` plan > *preset* > need-weighted
@@ -593,6 +593,14 @@ def _plan_for(container: Any, dso_name: str, seconds: Optional[float],
     an explicit plan -- the same ratio path, the same read-back -- so the
     journal's ratio and the file's blocks agree by construction. It needs
     the hours: a preset is a share of a window, never a literal count.
+
+    The blocks' gain is written here, after the plan has named them and
+    before the read-back (*ids*: the sequence's $id index for a block whose
+    filter is a $ref). The read-back checks the gain, and until 2026-11-20
+    the callers wrote it only after this returned, so the first non-empty
+    gain table refused every plan ("block Ha is written at gain/offset
+    (-1, -1), but nina.gain says (26, 30)") and left the night with no
+    sequence on disk. The callers' later write is kept: it is idempotent.
     """
     explicit = None
     try:
@@ -630,6 +638,7 @@ def _plan_for(container: Any, dso_name: str, seconds: Optional[float],
             plan = _apply_filter_plan(container, seconds, obj_type)
     else:
         return {}
+    apply_filter_gain(container, ids=ids)
     _verify_written(container, plan, dso_name, exposures)
     return plan
 
@@ -1778,7 +1787,8 @@ def generate_slots_sequence(template_path: Path, slots: list, output_path: Path,
         if cap:
             # ...and also the cap counted from the slot's REAL start (_add_cap_span).
             _add_cap_span(c, cap, next_id)
-        plans.append(_plan_for(c, slot["name"], slot.get("seconds"), preset=slot.get("filters")))
+        plans.append(_plan_for(c, slot["name"], slot.get("seconds"), preset=slot.get("filters"),
+                               ids=_index_ids(sequence)))
         seed_focus(c, focus_model, next_id, ids=_index_ids(sequence))
         apply_filter_gain(c, ids=_index_ids(sequence))
         if k > 0:
@@ -1911,7 +1921,8 @@ def generate_sequence(
             wait_for_astro_dusk(setup, nid, shown=wall_clock(astro_dusk(end or _dt.now().astimezone())))
     _dedupe_singletons(sequence)
 
-    filter_plan = _plan_for(sequence, dso_name, above_horizon_seconds, preset=filters)
+    filter_plan = _plan_for(sequence, dso_name, above_horizon_seconds, preset=filters,
+                            ids=_index_ids(sequence))
     seed_focus(sequence, _focus_model(), [_max_id(sequence) + 1])
     apply_filter_gain(sequence, ids=_index_ids(sequence))
     _refuse_if_broken(sequence, template, output_path, lint_scripts)

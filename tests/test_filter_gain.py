@@ -100,3 +100,20 @@ def test_gain_map_reads_pairs_and_ignores_junk(monkeypatch):
     from configs import config
     monkeypatch.setattr(config, "data", lambda: {"nina": {"gain": {"Ha": [26, 30], "O-III": 26, "B": "x"}}})
     assert REAL_GAIN_MAP() == {"Ha": (26, 30), "O-III": (26, -1)}
+
+
+def test_plan_for_writes_the_gain_before_its_own_read_back(monkeypatch):
+    """2026-11-20: the first non-empty gain table refused every plan, because
+    _plan_for's read-back checked the gain the callers wrote only afterwards."""
+    c = _container(_se(1, "Ha", 6, iters=20), _se(10, "O-III", 5, iters=30),
+                   _se(20, "O-III", 5, iters=30), _se(30, "O-III", 5, iters=30))
+    monkeypatch.setattr(g, "_gain_map", lambda: {"Ha": (26, 30), "S-II": (26, 30)})
+    monkeypatch.setattr(g, "_exposures_for", lambda dso: None)
+    monkeypatch.setattr(g, "_max_seconds_for", lambda dso: None)
+    instructions = pytest.importorskip("control.instructions")   # astropy; skipped bare
+    monkeypatch.setattr(instructions, "get_filter_plan", lambda dso: None)
+    plan = g._plan_for(c, "ic405", 18000.0, preset={"Ha": 1, "S-II": 1})
+    assert set(plan) == {"Ha", "S-II"}
+    by_name = {g._block_filter_name(se): g._block_gain(se) for se in g._collect_smart_exposures(c)
+               if g._iterations(se) > 0}
+    assert by_name == {"Ha": (26, 30), "S-II": (26, 30)}
