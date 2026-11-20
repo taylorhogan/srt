@@ -76,6 +76,14 @@ Admin push notifications go via **Pushover** (`utils/pushover.py`, rate-limited 
   or the size differs, never delete, `.part` then rename; thumbnails only with `--thumbs`; `--list`,
   `--since DAYS`, `--dry-run`); `cfg["seestar"]` names host, share, root and dest. Nothing is written
   to the device, and the share is independent of the one control client the Seestar allows on port 4700.
+- **The reflection ghost** (2026-11-20, not an autonomy item; docs/GHOST_REFLECTION.md): the coloured
+  lines in NGC 1055's four-night LRGB are not Megaira: upper left a diffraction spike of the bright star
+  (its length grows with wavelength), lower right two reflection ghosts of a star OFF the chip (delta
+  Ceti, V 4.1, 35' west), each night's dash moving 1.8-2.1 x the pointing change, which the clip cannot
+  remove (two sigma a pixel, in every frame of a night). `scripts/ghost_test_sequence.py` writes the
+  five-position test on alpha Tri (copied to the PC's Sequences folder for 2026-11-20; the owner
+  loads it, the conductor's rules apply) and `scripts/ghost_test_measure.py` reads the frames into
+  the centre and magnification. The per-night mask pass in the stacker is proposed, not built.
 - **Queue fields as commands** (E3, same day): `hold <dso> [off]` (status `held` / back to `waiting`, through `set_status_db`), `moon <dso> any|avoid|dark|clear`, `maxhours <dso> N|clear` (0.25-12 h), `type <dso> galaxy|nebula|clear`, parsed by `control/queue_fields.parse` (a two-word name works; the last token is the value only when it is one the command knows) and written by `instructions.set_field_db`; each is journaled as a `QUEUE_FIELD` note. With `filters`, `reopen` and these, `my_instructions.json` needs no hand edit.
 - **Supervision** (`end_points/supervise.decide`, applied by `start_srt`): a dead scheduler or conductor relaunches alone with a priority-1 push; the social server's exit codes keep their meanings; each child has its own 5-in-10-min crash-loop guard. `morning_trigger` writes `local/spark_render/last_run.json` and pushes a failed render; `scripts/morning_watch.py` (Spark cron 10:00, the owner adds the entry) pushes when the record is missing, skipped or non-zero.
 
