@@ -10,7 +10,11 @@
 # previous session's flats. morning_trigger.py polls until the flats have gone
 # quiet, then runs the sync and the render in order. Deadline 09:30, after
 # which it proceeds anyway and says so. Log: /tmp/morning_trigger.log
-30 6 * * * /home/taylor/Documents/srt/scripts/morning_trigger.py
+# 2026-11-20: the poll no longer starts at a fixed 06:30 either (11-16..20 idled
+# 15 min to 4 h a morning after the last flat). The entry fires in the evening and
+# the script sleeps to the plan's last slot end + 85 min, reading the journal every
+# 15 min for an early end; with no plan for the night it waits for 06:30 as before.
+0 20 * * * /home/taylor/Documents/srt/scripts/morning_trigger.py
 
 
 # 2026-09-25: observatory state backup — after the PC's 11:23 IrisBackupState zip.

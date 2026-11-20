@@ -70,7 +70,7 @@ IrisSkysolveAuto, IrisShadowReport, IrisMachineSnapshot (the
 `iris-machine` repo's `snapshot.bat`) and "start iris server"
 (`start_srt.bat`). There is no IrisAllSkyMonitor task, although
 `scripts/allsky_monitor.bat` exists (checked 2026-10-30).
-Spark cron: `morning_trigger.py` 06:30, `sync_state_to_spark.bsh` 11:40,
+Spark cron: `morning_trigger.py` 20:00 (sleeps to the plan's last slot end + 85 min, 06:30 with no plan), `sync_state_to_spark.bsh` 11:40,
 `morning_watch.py` 10:00.
 
 ## publish_poll (Spark, every 15 minutes 08:00-22:00) -- added 2026-10-30

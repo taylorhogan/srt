@@ -13,7 +13,7 @@ Tailscale). `help` lists every command; `help <command>` explains one.
 
 | When | Who | What you see |
 |---|---|---|
-| 06:30 | Spark | morning_trigger waits for the flats, syncs the night's frames, renders |
+| ~80 min after the last light | Spark | morning_trigger (cron 20:00) sleeps to the plan's end + 85 min, polls until the flats are done, syncs the night's frames, renders; 06:30 on a night with no plan |
 | 07-09 | Spark | one Pushover picture per rendered target (the learned composite) |
 | 09:00 | PC | IrisMorningCheck: a push only if something is wrong (roof, plugs, disk) |
 | 09:15 | PC | IrisConvergenceRefresh: recomputes any target whose frames outran its record |

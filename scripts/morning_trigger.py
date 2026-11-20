@@ -28,6 +28,24 @@ Deadline: at --deadline the run proceeds regardless and says so loudly. A
 morning render against yesterday's flats beats no render at all, and a
 silent hang beats nothing.
 
+Since 2026-11-20 the poll does not start at a fixed clock time either. The
+cron entry fires in the evening and the script sleeps to the moment the
+flats SHOULD be done: the last slot's end in the PC's sequence_timeline.json
+(the scheduler's simulated timeline for tonight) plus --allowance minutes
+(last light to NINA_FLATS_DONE ran 74-80 min on every night of 2026-11-16..20).
+While it sleeps it reads the conductor's journal every --check-every minutes,
+one ssh, so a night that ends early -- weather, stop!, a target behind the
+trees -- ends the wait at once (NINA_FLATS_DONE or SHUTDOWN_DONE), and a
+NIGHT_END_REQUESTED pulls the expected time in to that moment plus the
+allowance. With no timeline for tonight (the noon plan called the night off,
+or refused) it sleeps to --start, 06:30, and re-reads on the way in case the
+sunset check wrote one. Before this the entry fired at 06:30 and the week of
+11-16..20 idled 15 min to 4 h 12 min a morning between the last flat and it.
+Dates: the run belongs to the MORNING it serves (morning_date: now + 12 h),
+whichever side of midnight it starts, so morning_watch's "today" and the
+once-a-day disk alert agree with it, and the journal is read for both the
+evening's and the morning's file.
+
 It then runs, in order: the Targets sync, the sentry library sync, and the
 morning render. The sentry sync is here rather than on its own 06:00 entry
 because the roof closes at 06:01-06:02 and that entry missed the morning's
@@ -47,7 +65,9 @@ exits non-zero is pushed from here as well.
 
 Cron (replaces the Targets sync, the sentry sync and the morning render):
 
-    30 6 * * * /home/taylor/Documents/srt/scripts/morning_trigger.py
+    0 20 * * * /home/taylor/Documents/srt/scripts/morning_trigger.py
+
+`--dry-run` prints what it would do now (sleep until when, and why) and exits.
 """
 import argparse
 import base64
@@ -118,16 +138,117 @@ def flats_quiet_for() -> float | None:
         return None
 
 
-def flats_done_in_journal() -> bool:
-    """NINA_FLATS_DONE in today's conductor journal. Confirming only."""
-    day = dt.date.today().isoformat()
-    out = _ps("Select-String -Path '%s\\local\\journal\\%s.jsonl' -Pattern 'NINA_FLATS_DONE' "
-              "-ErrorAction SilentlyContinue | Measure-Object | "
-              "ForEach-Object { $_.Count }" % (SRT, day))
+# --- when to start polling -------------------------------------------------
+FLATS_ALLOWANCE_MIN = 85      # last light -> NINA_FLATS_DONE: 74-80 min on 2026-11-16..20
+END_EVENTS = ("NINA_FLATS_DONE", "SHUTDOWN_DONE")   # the night is over: poll now
+PENDING_EVENT = "NIGHT_END_REQUESTED"               # lights done, flats follow
+_WATCH = END_EVENTS + (PENDING_EVENT,)
+
+
+def morning_date(now: dt.datetime) -> dt.date:
+    """The morning a run serves: tonight's, whichever side of midnight *now* is."""
+    return (now + dt.timedelta(hours=12)).date()
+
+
+def planned_end(timeline, now: dt.datetime):
+    """The last slot's end from sequence_timeline.json, if it is TONIGHT's. Pure.
+
+    Tonight's file was written on the evening's date (noon or the sunset
+    check); an older one is yesterday's night and is ignored.
+    """
+    if not isinstance(timeline, dict):
+        return None
     try:
-        return out is not None and int(out.splitlines()[-1].strip()) > 0
-    except (ValueError, IndexError):
-        return False
+        written = dt.datetime.fromisoformat(str(timeline.get("written")))
+    except (TypeError, ValueError):
+        return None
+    if written.date() != morning_date(now) - dt.timedelta(days=1):
+        return None
+    ends = []
+    for s in timeline.get("slots") or []:
+        try:
+            ends.append(dt.datetime.fromisoformat(str(s.get("end"))))
+        except (TypeError, ValueError):
+            continue
+    if not ends:
+        return None
+    end = max(ends)
+    if end.tzinfo is None and now.tzinfo is not None:
+        end = end.replace(tzinfo=now.tzinfo)
+    return end
+
+
+def wait_verdict(now: dt.datetime, timeline, events: list, start_hhmm: str = "06:30",
+                 allowance_min: int = FLATS_ALLOWANCE_MIN, check_every_min: int = 15) -> tuple:
+    """("poll", None, why) start the flats poll now, or ("sleep", until, why). Pure.
+
+    *events* is [(ts, name)] from the conductor's journal for the evening and
+    the morning. An END event means the night is over; NIGHT_END_REQUESTED
+    means the flats are running and will be done in about the allowance;
+    otherwise the plan's last slot end plus the allowance, else *start_hhmm*.
+    A sleep is never longer than *check_every_min*, so an early end is seen.
+    """
+    for ts, name in events:
+        if name in END_EVENTS:
+            return "poll", None, "journal says %s at %s" % (name, ts.strftime("%H:%M"))
+    expected, why = None, ""
+    end = planned_end(timeline, now)
+    if end is not None:
+        expected = end + dt.timedelta(minutes=allowance_min)
+        why = "last slot ends %s + %d min" % (end.strftime("%H:%M"), allowance_min)
+    for ts, name in events:
+        if name == PENDING_EVENT:
+            t = ts + dt.timedelta(minutes=allowance_min)
+            if expected is None or t < expected:
+                expected, why = t, "lights ended %s + %d min" % (ts.strftime("%H:%M"), allowance_min)
+    if expected is None:
+        hh, mm = (int(x) for x in start_hhmm.split(":"))
+        expected = dt.datetime.combine(morning_date(now), dt.time(hh, mm), tzinfo=now.tzinfo)
+        why = "no timeline for tonight: the usual %s" % start_hhmm
+    if now >= expected:
+        return "poll", None, why
+    until = min(expected, now + dt.timedelta(minutes=check_every_min))
+    return "sleep", until, why
+
+
+def read_timeline():
+    """The PC's local/sequence_timeline.json, or None."""
+    out = _ps("Get-Content -Path '%s\\local\\sequence_timeline.json' -Raw "
+              "-ErrorAction SilentlyContinue" % SRT)
+    if not out:
+        return None
+    try:
+        return json.loads(out[out.index("{"):])
+    except (ValueError, json.JSONDecodeError):
+        return None
+
+
+def journal_events(now: dt.datetime) -> list:
+    """[(ts, event)] of the night-end events in the evening's and the morning's journal."""
+    m = morning_date(now)
+    days = [(m - dt.timedelta(days=1)).isoformat(), m.isoformat()]
+    paths = ",".join("'%s\\local\\journal\\%s.jsonl'" % (SRT, d) for d in days)
+    out = _ps("Select-String -Path %s -Pattern '%s' -ErrorAction SilentlyContinue "
+              "| ForEach-Object { $_.Line }" % (paths, "|".join(_WATCH)))
+    events = []
+    for line in (out or "").splitlines():
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            rec = json.loads(line)
+            name = rec.get("event")
+            if name in _WATCH:
+                events.append((dt.datetime.fromisoformat(rec["ts"]), name))
+        except (ValueError, KeyError, TypeError):
+            continue
+    return events
+
+
+def flats_done_in_journal() -> bool:
+    """NINA_FLATS_DONE in tonight's conductor journal. Confirming only."""
+    return any(name == "NINA_FLATS_DONE"
+               for _ts, name in journal_events(dt.datetime.now().astimezone()))
 
 
 def warn_operator(message: str, priority: int = 1) -> None:
@@ -235,6 +356,12 @@ def main() -> int:
     ap.add_argument("--quiet", type=float, default=10.0,
                     help="minutes of no new flat before the session counts as finished")
     ap.add_argument("--every", type=float, default=5.0, help="minutes between polls")
+    ap.add_argument("--start", default="06:30",
+                    help="when to start polling on a night with no timeline (HH:MM)")
+    ap.add_argument("--allowance", type=int, default=FLATS_ALLOWANCE_MIN,
+                    help="minutes from the last light to the flats being done")
+    ap.add_argument("--check-every", type=int, default=15,
+                    help="minutes between journal reads while sleeping to the expected time")
     ap.add_argument("--deadline", default="09:30",
                     help="local time to give up waiting and run anyway (HH:MM)")
     ap.add_argument("--dry-run", action="store_true", help="poll and report, run nothing")
@@ -246,6 +373,24 @@ def main() -> int:
         deadline += dt.timedelta(days=1)
     log(f"=== waiting for flats (quiet {args.quiet:g} min, poll {args.every:g} min, "
         f"deadline {deadline:%H:%M})")
+
+    # Sleep to the moment the flats should be done, watching the journal for
+    # an early end on the way; the fixed 06:30 start idled hours a morning.
+    last_why = None
+    while True:
+        now = dt.datetime.now().astimezone()
+        verdict, until, why = wait_verdict(now, read_timeline(), journal_events(now),
+                                           args.start, args.allowance, args.check_every)
+        if why != last_why:
+            log(f"  {why}" + (f": sleeping until {until:%H:%M}" if verdict == "sleep" else ""))
+            last_why = why
+        if verdict == "poll":
+            log("  starting the flats poll")
+            break
+        if args.dry_run:
+            log(f"dry run: would sleep until {until:%H:%M} ({why}); exiting")
+            return 0
+        time.sleep(max(60.0, (until - now).total_seconds()))
 
     reason = None
     while reason is None:
@@ -266,7 +411,7 @@ def main() -> int:
         time.sleep(args.every * 60)
 
     log(f"flats settled ({reason}); starting the morning run")
-    today = dt.date.today().isoformat()
+    today = morning_date(dt.datetime.now().astimezone()).isoformat()
     band = check_disk(today)
     if band == "refuse":
         log("disk in the refuse band -- not syncing, not rendering")
