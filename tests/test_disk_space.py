@@ -177,3 +177,29 @@ def test_flat_purge_keeps_the_newest_n_sets_per_filter(tmp_path):
     assert len(doomed1) == 5
     _, none = suc.plan_flat_purge(by_filter, 10)
     assert none == []
+
+
+def test_purge_keeps_the_newest_sets_per_filter_and_gain(tmp_path):
+    """Narrowband moved to gain 26 on 2026-11-20: the gain-0 Ha flats that fit the
+    gain-0 Ha lights on disk must survive three nights of gain-26 flats."""
+    suc = _suc()
+    gains = {}
+    by_filter = {}
+    for i, (day, gain) in enumerate([("2026-11-15", (0, 10)), ("2026-11-17", (0, 10)), ("2026-11-19", (0, 10)),
+                                     ("2026-11-20", (26, 30)), ("2026-11-21", (26, 30)), ("2026-11-22", (26, 30)),
+                                     ("2026-11-23", (26, 30))]):
+        d = tmp_path / day / "FLAT"
+        d.mkdir(parents=True)
+        f = d / "Ha.fits"
+        f.write_bytes(b"x")
+        os.utime(f, (1_700_000_000 + i * 86400,) * 2)
+        gains[f] = gain
+        by_filter.setdefault("Ha", []).append(f)
+    desc, doomed = suc.plan_flat_purge(by_filter, 3, gain_of=lambda p: gains[p])
+    assert desc == ["Ha at gain 0/offset 10: 3 from 2026-11-19, 2026-11-17, 2026-11-15 (3 sets on disk)",
+                    "Ha at gain 26/offset 30: 3 from 2026-11-23, 2026-11-22, 2026-11-21 (4 sets on disk)"]
+    assert [str(p.relative_to(tmp_path)) for p in doomed] == ["2026-11-20/FLAT/Ha.fits"]
+    # One gain on disk: the line reads as before.
+    one = {"Ha": by_filter["Ha"][:3]}
+    desc1, none = suc.plan_flat_purge(one, 3, gain_of=lambda p: gains[p])
+    assert desc1[0].startswith("Ha: 3 from") and none == []

@@ -6,7 +6,7 @@ class PublicConfig():
 
         },
         "version": {
-            "date": "2026.11.20.3"
+            "date": "2026.11.20.4"
         },
 
         "logger": {
@@ -343,17 +343,21 @@ class PublicConfig():
             # Per-filter camera gain, {filter: [gain, offset]}, written into
             # the TakeExposure of every exposure block the generator names
             # for that filter; a filter not listed shoots at the profile's
-            # gain (-1/-1). Planned (2026-10-24): narrowband at the QHY600M's
-            # high-conversion-gain mode, {"Ha": [26, 30], "O-III": [26, 30],
-            # "S-II": [26, 30]} -- the Ha subs are read-noise limited at gain
-            # 0 (sky 6 ADU in 300 s against 3.7 e- of read noise), and gain
-            # 26 makes each one worth 2.4 of them. Left EMPTY until the
-            # N.I.N.A side is ready: the same gain in flat_sequence.json's
-            # Trained Flat Exposure for those filters, the Flat Wizard
-            # re-trained at that gain, and bias + 300 s darks shot at it
-            # (the stacker matches calibration to the lights' gain and
-            # stacks WITHOUT a term it cannot match, loudly).
-            "gain": {},
+            # gain (-1/-1). Narrowband at the QHY600M's high-conversion-gain
+            # mode since 2026-11-20 (planned 2026-10-24): the Ha subs are
+            # read-noise limited at gain 0 (sky 6 ADU in 300 s against 3.7 e-
+            # of read noise; IC 405's 47 Ha frames gave 7 ADU of noise a frame
+            # against a 3-8 ADU nebula, O-III and S-II at the noise), and gain
+            # 26 makes each one worth 2.4 of them. The N.I.N.A side that had
+            # to be ready first: flat_sequence.json's narrowband flats are
+            # Auto Exposure Flats at this gain and offset (scripts/
+            # sequence_gain.py flats; a trained flat has no table entry at a
+            # new gain), and bias + 300 s darks at it come from
+            # darks_and_bias_gain26.json (sequence_gain.py darks), run by hand
+            # once; the stacker matches calibration to the lights' gain and
+            # stacks WITHOUT a term it cannot match, loudly, so until that run
+            # a gain-26 stack has flats but no bias or dark.
+            "gain": {"Ha": [26, 30], "O-III": [26, 30], "S-II": [26, 30]},
             # Filter wheel: name -> wheel position. Taken from the flats
             # sequence, which is the one place these are known to be right --
             # it produces correctly labelled flats for every filter.

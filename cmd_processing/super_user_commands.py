@@ -10,7 +10,7 @@ import time
 from collections.abc import Callable
 from enum import Enum
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Optional, Callable
 
 if __package__ is None or __package__ == "":
     project_root = os.path.abspath(os.path.join(os.path.dirname(__file__),  '..'))
@@ -7218,33 +7218,54 @@ def _purge_bad_run(words: list[str]) -> None:
     social_server.post_social_message("\n".join(lines))
 
 
-def plan_flat_purge(by_filter: dict[str, list[Path]], keep_sets: int
+def plan_flat_purge(by_filter: dict[str, list[Path]], keep_sets: int,
+                    gain_of: Optional[Callable[[Path], tuple]] = None
                     ) -> tuple[list[str], list[Path]]:
-    """Which flats `purge` would delete, keeping the newest *keep_sets* per filter.
+    """Which flats `purge` would delete, keeping the newest *keep_sets* per filter AND gain.
 
     A session's flats live in one FLAT directory, and one directory holds
     several filters, so "newest" is decided per filter: the most recent
-    sessions (by frame mtime) that actually contain that filter. A frame is
-    kept if any filter keeps it. Returns (one description line per filter,
-    the frames to delete, sorted).
+    sessions (by frame mtime) that actually contain that filter. Since
+    2026-11-20 a filter's flats are further split by camera (gain, offset)
+    (*gain_of*, the FITS header through ``stacker.camera_gain``): the stacker
+    calibrates lights only with flats at their own gain, so when narrowband
+    moved to gain 26 the newest three sets per filter would soon all be gain
+    26 and the purge would have deleted the last flats that fit the gain-0
+    narrowband lights already on disk. A frame is kept if any (filter, gain)
+    keeps it. Returns (one description line per filter and gain, the frames
+    to delete, sorted).
     """
+    if gain_of is None:
+        from stacking import stacker
+        gain_of = stacker.camera_gain
     keep: set[Path] = set()
     kept_desc: list[str] = []
     doomed: list[Path] = []
     for filt, paths in sorted(by_filter.items()):
-        sessions: dict[Path, list[Path]] = {}
+        by_gain: dict[tuple, list[Path]] = {}
         for p in paths:
-            sessions.setdefault(p.parent, []).append(p)
-        newest = sorted(sessions, key=lambda d: max(f.stat().st_mtime for f in sessions[d]),
-                        reverse=True)[:keep_sets]
-        n_kept = sum(len(sessions[d]) for d in newest)
-        keep.update(f for d in newest for f in sessions[d])
-        names = ", ".join(d.parent.name for d in newest)
-        kept_desc.append(f"{filt}: {n_kept} from {names} ({len(sessions)} sets on disk)")
-        for d, fs in sessions.items():
-            if d not in newest:
-                doomed.extend(fs)
+            by_gain.setdefault(tuple(gain_of(p)), []).append(p)
+        for gain in sorted(by_gain, key=lambda g: (g[0] is None, g)):
+            sessions: dict[Path, list[Path]] = {}
+            for p in by_gain[gain]:
+                sessions.setdefault(p.parent, []).append(p)
+            newest = sorted(sessions, key=lambda d: max(f.stat().st_mtime for f in sessions[d]),
+                            reverse=True)[:keep_sets]
+            n_kept = sum(len(sessions[d]) for d in newest)
+            keep.update(f for d in newest for f in sessions[d])
+            names = ", ".join(d.parent.name for d in newest)
+            label = filt if len(by_gain) == 1 else f"{filt} at {_gain_text(gain)}"
+            kept_desc.append(f"{label}: {n_kept} from {names} ({len(sessions)} sets on disk)")
+            for d, fs in sessions.items():
+                if d not in newest:
+                    doomed.extend(fs)
     return kept_desc, sorted(set(doomed) - keep)
+
+
+def _gain_text(gain: tuple) -> str:
+    g = gain[0] if gain else None
+    o = gain[1] if len(gain) > 1 else None
+    return "gain ?" if g is None else f"gain {g}" + ("" if o is None else f"/offset {o}")
 
 
 def _purge_run(words: list[str]) -> None:

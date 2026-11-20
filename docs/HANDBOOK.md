@@ -165,3 +165,4 @@ A flag change needs `update` (the children re-read the config at start).
 | logs | iris.log | /tmp/morning_trigger.log, local/spark_render/morning.log, /tmp/publish_poll.log |
 | site checkout | Documents\development\taylorhogan.github.io | ~/Documents/development/taylorhogan.github.io |
 | scheduled jobs | docs/tasks/README.md (schtasks) | docs/tasks/spark_crontab.txt (cron) |
+| calibration sequences | Documents\N.I.N.A\Sequences\flat_sequence.json (nightly flats: broadband trained, narrowband auto-exposure at gain 26/30), darks_and_bias.json (gain 0) and darks_and_bias_gain26.json (hand runs, camera covered); regenerate with scripts/sequence_gain.py after a gain change | (the frames sync over) |
