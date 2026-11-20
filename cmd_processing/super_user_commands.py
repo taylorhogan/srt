@@ -4978,28 +4978,30 @@ def _parallax_run(words: list[str], account: str = "") -> None:
         social_server.post_social_message(plx.list_text(queued=queued))
         return
     if sub == "add":
-        name = " ".join(args[1:])
-        entry = plx.star(name) if name else None
-        if entry is None:
+        entries, unknown = plx.parse_add_names(args[1:])
+        if not entries:
             social_server.post_social_message("parallax add: no star '%s' in configs/parallax_stars.json.\n%s"
-                                              % (name, plx.list_text()))
+                                              % (" ".join(args[1:]), plx.list_text()))
             return
-        fields = plx.queue_fields(entry)
-        ok = instructions.add_dso_object_instruction(entry["key"], "", account or "owner", priority=fields["priority"],
-                                                     ra_deg=fields["ra_deg"], dec_deg=fields["dec_deg"], obj_type="star")
-        if not ok:
-            social_server.post_social_message("%s is already in the queue (`parallax %s` measures it)." % (entry["name"], entry["key"]))
-            return
-        for k, v in fields.items():
-            if k not in ("ra_deg", "dec_deg", "obj_type", "priority"):
-                instructions.set_field_db(entry["key"], k, v)
-        social_server.post_social_message(
-            "Queued %s as `%s`: a parallax monitor, %s %s s, %.0f min a night at priority %d, pointed at %.5f %+.5f (Gaia's 2016 "
-            "position moved to today). Gaia DR3 parallax %.1f mas. %s\nIt takes a short block every clear night; "
-            "`parallax %s` measures the nights, auto-stop retires it when the ellipse is measured to 5 %%."
-            % (entry["name"], entry["key"], "/".join(fields["filter_plan"]), "/".join(str(v) for v in fields["exposure_s"].values()),
-               fields["max_hours"] * 60, fields["priority"], fields["ra_deg"], fields["dec_deg"],
-               float(entry["gaia"]["parallax"]), entry.get("season") or "", entry["key"]))
+        if unknown:
+            social_server.post_social_message("parallax add: ignored '%s' (not a star in the catalogue)." % " ".join(unknown))
+        for entry in entries:
+            fields = plx.queue_fields(entry)
+            ok = instructions.add_dso_object_instruction(entry["key"], "", account or "owner", priority=fields["priority"],
+                                                         ra_deg=fields["ra_deg"], dec_deg=fields["dec_deg"], obj_type="star")
+            if not ok:
+                social_server.post_social_message("%s is already in the queue (`parallax %s` measures it)." % (entry["name"], entry["key"]))
+                continue
+            for k, v in fields.items():
+                if k not in ("ra_deg", "dec_deg", "obj_type", "priority"):
+                    instructions.set_field_db(entry["key"], k, v)
+            social_server.post_social_message(
+                "Queued %s as `%s`: a parallax monitor, %s %s s, %.0f min a night at priority %d, pointed at %.5f %+.5f (Gaia's 2016 "
+                "position moved to today). Gaia DR3 parallax %.1f mas. %s\nIt takes a short block every clear night; "
+                "`parallax %s` measures the nights, auto-stop retires it when the ellipse is measured to 5 %%."
+                % (entry["name"], entry["key"], "/".join(fields["filter_plan"]), "/".join(str(v) for v in fields["exposure_s"].values()),
+                   fields["max_hours"] * 60, fields["priority"], fields["ra_deg"], fields["dec_deg"],
+                   float(entry["gaia"]["parallax"]), entry.get("season") or "", entry["key"]))
         return
     dso = sub
     redo = any(a.lower() == "redo" for a in args[1:])

@@ -39,6 +39,17 @@ def test_queue_fields_point_at_the_star_today_not_at_its_2016_position():
     assert f["gaia"]["parallax"] == pytest.approx(546.976)
 
 
+def test_parse_add_names_takes_several_stars_and_two_commands_on_one_line():
+    # 2026-11-20: the owner typed `parallax add ross248 parallax add wolf359` as one message and nothing queued.
+    ents, unknown = P.parse_add_names(["ross248", "parallax", "add", "wolf359"])
+    assert [e["key"] for e in ents] == ["ross248", "wolf359"] and unknown == []
+    ents, unknown = P.parse_add_names(["Ross", "248", "and", "CN", "Leo"])
+    assert [e["key"] for e in ents] == ["ross248", "wolf359"] and unknown == ["and"]
+    ents, unknown = P.parse_add_names(["ross248", "ross248"])
+    assert [e["key"] for e in ents] == ["ross248"]
+    assert P.parse_add_names(["nope"]) == ([], ["nope"]) and P.parse_add_names([]) == ([], [])
+
+
 def test_list_text_marks_queued_chosen_and_reserve():
     txt = P.list_text(queued={"ross248"})
     assert "ross248" in txt and "queued" in txt and "chosen" in txt and "reserve" in txt and "from 2027-03" in txt

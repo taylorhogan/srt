@@ -107,6 +107,30 @@ def star(name: str, stars: Optional[list] = None) -> Optional[dict]:
     return None
 
 
+def parse_add_names(tokens: list, stars: Optional[list] = None) -> tuple:
+    """`parallax add ross248 wolf359`, `parallax add Ross 248`, or two commands
+    typed on one line (`parallax add ross248 parallax add wolf359`, 2026-11-20):
+    the catalogue entries named, longest match first, with the words
+    "parallax" and "add" skipped. -> (entries, unknown words). Pure."""
+    stars = stars if stars is not None else catalogue()
+    out, unknown, i = [], [], 0
+    while i < len(tokens):
+        hit = None
+        for j in range(len(tokens), i, -1):
+            hit = star(" ".join(tokens[i:j]), stars)
+            if hit:
+                i = j
+                break
+        if hit:
+            if hit not in out:
+                out.append(hit)
+            continue
+        if tokens[i].lower() not in ("parallax", "add"):
+            unknown.append(tokens[i])
+        i += 1
+    return out, unknown
+
+
 def queue_fields(entry: dict) -> dict:
     """The fields `parallax add` writes on the queue row for *entry*. Pure.
 
