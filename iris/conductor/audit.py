@@ -51,7 +51,7 @@ def expected_state(row: dict, converged: bool, has_frames: bool) -> str:
     status = str(row.get("status") or "").strip().lower()
     if status == "completed":
         return "RETIRED"
-    if status == "converged" or (converged and not row.get("lightcurve")):
+    if status == "converged" or (converged and not (row.get("lightcurve") or row.get("parallax"))):
         # a light-curve monitor's stack SNR never converges it (2026-10-31)
         return "CONVERGED"
     if has_frames:
@@ -111,7 +111,7 @@ def find_inconsistencies(queue_rows: list, convergence: dict,
         row = rows[0]
         status = str(row.get("status") or "").strip().lower()
         entries = convergence.get(key) or {}
-        if status in ("waiting", "in process") and converged_of(key) and not row.get("lightcurve"):
+        if status in ("waiting", "in process") and converged_of(key) and not (row.get("lightcurve") or row.get("parallax")):
             out.append("AUTO-STOP candidate: '%s' is %s in the queue but "
                        "measurably converged -- the legacy path would keep "
                        "imaging it" % (key, status))

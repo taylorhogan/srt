@@ -160,6 +160,7 @@ def build(registry: dict, rows: list, convergence: dict, plan: Optional[dict], d
             "dso": dso, "state": reg.get("state"), "priority": reg.get("priority"),
             "status": reg.get("legacy_status") or row.get("status"),
             "obj_type": row.get("obj_type"), "lightcurve": bool(row.get("lightcurve")),
+            "parallax": bool(row.get("parallax")),
             "held": row.get("status") == "held",
             "filter_plan": row.get("filter_plan"), "filter_plan_until": row.get("filter_plan_until"),
             "max_hours": row.get("max_hours"), "moon": row.get("moon"),
@@ -171,7 +172,7 @@ def build(registry: dict, rows: list, convergence: dict, plan: Optional[dict], d
             "would_stop": tonight["auto_stop"].get(key),
             "draft": draft_out,
             "on_site": key in site_ids,
-            "progress": (progress_fn(dso, row) if progress_fn and not row.get("lightcurve") else None),
+            "progress": (progress_fn(dso, row) if progress_fn and not (row.get("lightcurve") or row.get("parallax")) else None),
         })
     order = {s: i for i, s in enumerate(STATES)}
     targets.sort(key=lambda t: (order.get(t["state"], 9), -(float(t["priority"] or 0)), t["dso"]))

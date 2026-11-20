@@ -66,6 +66,13 @@ DEFAULT_CAP = 2.0                   # x the type's goal total, in frames shot
 CONVERGED = "converged"             # the queue status a live auto-stop writes
 HOLD_KEY = "auto_stop_hold_until"   # `reopen <dso> [for N]`: the last night auto-stop leaves it alone
 DEFAULT_REOPEN_NIGHTS = 7
+MONITOR_KEYS = ("lightcurve", "parallax")   # queue flags that make a row a monitor
+
+
+def is_monitor(row) -> bool:
+    """A light-curve or parallax monitor: judged by its own record, never by
+    the stack's convergence or the advisor's frame goals (2026-10-31, 2026-11-20)."""
+    return bool(any((row or {}).get(k) for k in MONITOR_KEYS))
 
 
 def mode(cfg) -> str:
@@ -184,7 +191,8 @@ def reopened(row: dict, night) -> bool:
 def candidates(rows: list, is_done_fn: Callable[[str], bool],
                advise_fn: Callable[[str, dict], Optional[dict]], night=None,
                curve_fn: Optional[Callable[[str, dict], list]] = None,
-               cap: float = 0.0) -> list:
+               cap: float = 0.0,
+               parallax_fn: Optional[Callable[[str, dict], dict]] = None) -> list:
     """The waiting rows that are done, each with its reasons. Pure.
 
     *rows* is the queue; only "waiting" / "in process" rows are judged (a
@@ -192,7 +200,8 @@ def candidates(rows: list, is_done_fn: Callable[[str], bool],
     out, a reopened one is left alone until its hold's last night, *night*).
     A light-curve monitor is judged by *curve_fn* (its stars' coverage ->
     monitor_verdict) and never by the other two; without a curve_fn it is
-    left alone. *cap* > 0 retires a target the two verdicts have not when
+    left alone. A parallax monitor (2026-11-20) likewise by *parallax_fn*
+    (photometry.parallax.coverage -> parallax_verdict). *cap* > 0 retires a target the two verdicts have not when
     its frames shot reach cap x its goals (cap_verdict); the reasons met so
     far ride along. A row that raises in a verdict is skipped, logged, never
     stopped: a crash must err toward imaging a target once more.
@@ -214,6 +223,18 @@ def candidates(rows: list, is_done_fn: Callable[[str], bool],
                 v = monitor_verdict(dso, curve_fn(dso, row))
             except Exception:                  # noqa: BLE001
                 _logger.exception("auto-stop: light-curve coverage failed for %s", dso)
+                continue
+            if v["done"]:
+                out.append(v)
+            continue
+        if row.get("parallax"):
+            if parallax_fn is None:
+                continue
+            try:
+                from photometry import parallax as _plx
+                v = _plx.parallax_verdict(dso, parallax_fn(dso, row))
+            except Exception:                  # noqa: BLE001
+                _logger.exception("auto-stop: parallax coverage failed for %s", dso)
                 continue
             if v["done"]:
                 out.append(v)
@@ -352,6 +373,18 @@ def curve_coverage(dso: str, row: dict) -> list:
     return out
 
 
+def parallax_coverage(dso: str, row: dict) -> dict:
+    """parallax_verdict's input from local/parallax: the row's star's nightly
+    points fitted for offset, motion and parallax (photometry.parallax.coverage)."""
+    from photometry import parallax as plx
+    entry = plx.star_for_row(dso, row or {})
+    if entry is None:
+        return {"complete": False, "why": ["%s is not in configs/parallax_stars.json" % dso]}
+    g = entry["gaia"]
+    doc = plx.load(entry["key"])
+    return plx.coverage(doc.get("records") or [], float(g["ra"]), float(g["dec"]))
+
+
 def is_finished(dso: str, row: Optional[dict] = None, cfg: Optional[dict] = None) -> bool:
     """Auto-stop's whole verdict for one target, as a bool: both measurements
     met, or the cap reached. Never raises (an unreadable input reads False).
@@ -362,7 +395,7 @@ def is_finished(dso: str, row: Optional[dict] = None, cfg: Optional[dict] = None
     the queue, rightly, kept imaging it. One rule, one place.
     """
     try:
-        if (row or {}).get("lightcurve"):
+        if is_monitor(row):
             return False
         from fits_processing.convergence import is_dso_done
         if cfg is None:
@@ -393,7 +426,8 @@ def evaluate(rows: list) -> list:
         from control import filter_plan
         from configs import config
         return candidates(rows, is_dso_done, advise_offline, filter_plan.night_for(datetime.now()),
-                          curve_fn=curve_coverage, cap=cap_factor(config.data()))
+                          curve_fn=curve_coverage, cap=cap_factor(config.data()),
+                          parallax_fn=parallax_coverage)
     except Exception:                          # noqa: BLE001
         _logger.exception("auto-stop evaluation failed")
         return []

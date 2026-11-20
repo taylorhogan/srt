@@ -277,6 +277,23 @@ HELP: dict[str, dict] = {
                   "Files land in local/lightcurves/aavso/<key>_<FILT>.txt on the PC under cfg['aavso']['obscode']; "
                   "upload them at https://app.aavso.org/webobs/ by hand. Nothing is sent from here."],
     },
+    "parallax": {
+        "category": "super",
+        "summary": "A nearby star's parallax from this telescope: its nightly position against Gaia's reference stars, fitted for proper motion and the yearly ellipse.",
+        "usage": ["parallax <dso>", "parallax <dso> redo", "parallax add <star>", "parallax list"],
+        "examples": ["parallax ross248", "parallax add wolf359", "parallax list"],
+        "notes": ["`parallax add <star>` queues a star from configs/parallax_stars.json as a monitor: \"parallax\": true, its own "
+                  "filter and exposure (R, 10-15 s for the chosen two), a 15-minute block every clear night at priority 50, "
+                  "pointed at the star's position today.",
+                  "Each frame is plate-solved; the Gaia DR3 references within 10' (their own motions and parallaxes applied to "
+                  "the night) fix the plate, and the star's position comes off that fit, in arcsec from its Gaia 2016.0 place.",
+                  "The year is fitted for offset, proper motion and parallax (and, from 15 nights, a refraction term as a check); "
+                  "the report compares with Gaia. Done when the nights span a year, 30 of them, and the parallax is known to 5 %; "
+                  "auto-stop reads that and nothing else.",
+                  "Runs by itself at the end of a night for every imaged target whose queue entry has \"parallax\": true.",
+                  "Files: local/parallax/<key>.json (points and fit) and <key>.png (positions by night and the ellipse); "
+                  "references in configs/parallax_refs/<key>.json. Plan and star choice: docs/PARALLAX_PLAN.md."],
+    },
     "lightcurve": {
         "category": "super",
         "summary": "One calibrated brightness per night for a monitored star, plotted; folded on its period if known.",

@@ -202,8 +202,9 @@ def advise(frames: list, obj_type: str, entry: Optional[dict] = None,
            "plan": None, "reasons": reasons, "tonight": tonight, "emission": emission,
            "sat_out": [], "sharp_limit": sharp_at}
 
-    if entry.get("lightcurve"):
-        reasons.append("monitor target (lightcurve): its own fixed plan stands")
+    if entry.get("lightcurve") or entry.get("parallax"):
+        reasons.append("monitor target (%s): its own fixed plan stands"
+                       % ("lightcurve" if entry.get("lightcurve") else "parallax"))
         res["action"] = "monitor"
         res["plan"] = entry.get("filter_plan")
         return res

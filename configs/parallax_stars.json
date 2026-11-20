@@ -1,0 +1,79 @@
+{
+  "_about": "Nearby stars for the parallax experiment (docs/PARALLAX_PLAN.md, 2026-11-20). Gaia DR3 values at epoch 2016.0; positions in degrees, parallax and proper motions in mas and mas/yr. 'plan' is what `parallax add <key>` writes on the queue row. 'refs' names the committed Gaia reference file under configs/parallax_refs/. Exposures follow the saturation rule photometry/lightcurve.py measured (G 13.5 saturates at 300 s in L): a quarter of the saturating time, R passband taken as 2.5 x L.",
+  "stars": [
+    {
+      "key": "ross248",
+      "name": "Ross 248",
+      "aliases": ["HH And", "Gliese 905", "GJ 905"],
+      "chosen": true,
+      "gaia": {"source_id": "1926461164913660160", "ra": 355.480015, "dec": 44.170376, "parallax": 316.481, "parallax_error": 0.044,
+               "pmra": 112.5, "pmdec": -1591.6, "g": 10.38, "bp_rp": 3.53, "ruwe": 1.03},
+      "plan": {"filters": {"R": 1}, "exposure_s": {"R": 10}, "max_hours": 0.25, "priority": 50},
+      "refs": "ross248",
+      "season": "evenings November to January and mornings from July; the parallax factor peaks mid-December (dusk) and mid-June (dawn)",
+      "why": "The best match to this camera and site: unsaturated at 10 s in R, 800 Gaia stars to G 17.5 within 15', transits 2 degrees from the zenith, observable tonight and on both sides of the year. 10.3 light years; in about 36,000 years it will be the nearest star to the Sun."
+    },
+    {
+      "key": "wolf359",
+      "name": "Wolf 359",
+      "aliases": ["CN Leo", "Gliese 406", "GJ 406"],
+      "chosen": true,
+      "gaia": {"source_id": "3864972938605115520", "ra": 164.103190, "dec": 7.002727, "parallax": 415.179, "parallax_error": 0.068,
+               "pmra": -3866.3, "pmdec": -2699.2, "g": 11.04, "bp_rp": 4.18, "ruwe": 0.84},
+      "plan": {"filters": {"R": 1}, "exposure_s": {"R": 15}, "max_hours": 0.25, "priority": 50},
+      "refs": "wolf359",
+      "season": "mornings from November, evenings by March, gone in May; the parallax factor peaks late November (dawn) and late May (dusk)",
+      "why": "The largest parallax this site can reach (7.9 light years, the fifth nearest system) and 4.7 arcseconds a year of proper motion, 18 pixels. Transits 55 degrees up in the south, above the low southern tree line. A thin field (126 Gaia stars to G 17.5 within 15'), so the plate uses second order only when it can."
+    },
+    {
+      "key": "barnard",
+      "name": "Barnard's Star",
+      "aliases": ["GJ 699", "V2500 Oph", "Barnard"],
+      "chosen": false,
+      "from": "2027-03",
+      "gaia": {"source_id": "4472832130942575872", "ra": 269.448503, "dec": 4.739420, "parallax": 546.976, "parallax_error": 0.040,
+               "pmra": -801.6, "pmdec": 10362.4, "g": 8.19, "bp_rp": 2.83, "ruwe": 1.1},
+      "plan": {"filters": {"R": 1}, "exposure_s": {"R": 2}, "max_hours": 0.25, "priority": 50},
+      "refs": "barnard",
+      "season": "mornings from March, evenings June to July; one side of the parallax ellipse only from this site",
+      "why": "The largest parallax of any star and 10.4 arcseconds a year of proper motion (40 pixels), but it rises in March and this site sees only one side of its year, so the parallax separates from the motion at about 5 percent. Add it in March for the motion; needs 2 s frames."
+    },
+    {
+      "key": "61cyg",
+      "name": "61 Cygni",
+      "aliases": ["61 Cyg", "Bessel's star", "Piazzi's Flying Star"],
+      "chosen": false,
+      "gaia": {"source_id": "1872046609345556480", "ra": 316.748479, "dec": 38.763862, "parallax": 285.995, "parallax_error": 0.060,
+               "pmra": 4164.2, "pmdec": 3249.6, "g": 4.77, "bp_rp": 1.46, "ruwe": 1.2,
+               "companion": {"source_id": "1872046574983497216", "ra": 316.753663, "dec": 38.756073, "parallax": 286.005, "pmra": 4106.0, "pmdec": 3155.9, "g": 5.45}},
+      "plan": {"filters": {"R": 1}, "exposure_s": {"R": 0.1}, "max_hours": 0.25, "priority": 50},
+      "refs": "61cyg",
+      "season": "evenings in November, mornings from June",
+      "why": "Bessel's star of 1838, the first parallax ever measured. At G 4.8 it saturates this camera in a tenth of a second, which leaves only the brightest reference stars in each frame; keep it as the story and not the measurement until a short-exposure test shows the centroids hold."
+    },
+    {
+      "key": "lalande21185",
+      "name": "Lalande 21185",
+      "aliases": ["GJ 411", "HD 95735"],
+      "chosen": false,
+      "gaia": {"source_id": "762815470562110464", "ra": 165.830960, "dec": 35.948653, "parallax": 392.753, "parallax_error": 0.032,
+               "pmra": -580.1, "pmdec": -4776.6, "g": 6.55, "bp_rp": 2.22, "ruwe": 0.96},
+      "plan": {"filters": {"R": 1}, "exposure_s": {"R": 0.5}, "max_hours": 0.25, "priority": 50},
+      "refs": null,
+      "season": "mornings from November, evenings to May",
+      "why": "Reserve: the fourth nearest system and nearly overhead, but at G 6.5 it needs half-second frames and a thin high-latitude field gives few references at that depth."
+    },
+    {
+      "key": "groombridge34",
+      "name": "Groombridge 34",
+      "aliases": ["GX And", "GJ 15 A"],
+      "chosen": false,
+      "gaia": {"source_id": "385334230892516480", "ra": 4.613226, "dec": 44.024787, "parallax": 280.707, "parallax_error": 0.020,
+               "pmra": 2891.5, "pmdec": 411.8, "g": 7.22, "bp_rp": 2.16, "ruwe": 1.04},
+      "plan": {"filters": {"R": 1}, "exposure_s": {"R": 1}, "max_hours": 0.25, "priority": 50},
+      "refs": null,
+      "season": "evenings November to January, mornings from July",
+      "why": "Reserve: a bright pair (the companion GJ 15 B at G 9.7 shares the parallax) overhead in autumn, 1 s frames."
+    }
+  ]
+}

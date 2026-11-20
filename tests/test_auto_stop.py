@@ -276,3 +276,18 @@ def test_is_dso_done_skips_ignored_filters(monkeypatch):
     assert not C.is_dso_done("g")
     assert C.is_dso_done("g", ignore=["Ha"])
     assert not C.is_dso_done("g", ignore=["L", "R", "Ha"])     # nothing left to judge
+
+
+def test_a_parallax_monitor_is_judged_by_its_coverage_only():
+    # 2026-11-20: a parallax row ("parallax": true) is done when photometry.parallax.coverage says the
+    # ellipse is measured; the stack's convergence and the advisor's goals never retire it.
+    rows = [{"dso": "ross248", "status": "waiting", "parallax": True},
+            {"dso": "wolf359", "status": "waiting", "parallax": True}]
+    covs = {"ross248": {"complete": True, "parallax_mas": 318.0, "err_mas": 4.0, "n": 40, "span_days": 380},
+            "wolf359": {"complete": False, "why": ["100 of 365 days of baseline", "9 of 30 nights"]}}
+    found = A.candidates(rows, lambda d: True, lambda d, r: DONE_ADVICE, parallax_fn=lambda d, r: covs[d])
+    assert [v["dso"] for v in found] == ["ross248"]
+    assert found[0]["why"] == ["parallax measured: 318.0 +/- 4.0 mas over 40 nights spanning 380 days"]
+    assert A.candidates(rows, lambda d: True, lambda d, r: DONE_ADVICE) == []     # no parallax_fn: left alone
+    assert A.is_monitor({"parallax": True}) and A.is_monitor({"lightcurve": True}) and not A.is_monitor({"dso": "m1"})
+    assert A.verdict("ross248", True, {"action": "monitor"})["done"] is False

@@ -126,7 +126,7 @@ def all_targets(image_dir) -> list:
 def _monitors(queue_path) -> list:
     try:
         with open(queue_path, encoding="utf-8") as fh:
-            return [r.get("dso") for r in json.load(fh) if r.get("lightcurve")]
+            return [r.get("dso") for r in json.load(fh) if r.get("lightcurve") or r.get("parallax")]
     except Exception:  # noqa: BLE001
         return []
 

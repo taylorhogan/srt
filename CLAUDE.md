@@ -84,6 +84,16 @@ Admin push notifications go via **Pushover** (`utils/pushover.py`, rate-limited 
   five-position test on alpha Tri (copied to the PC's Sequences folder for 2026-11-20; the owner
   loads it, the conductor's rules apply) and `scripts/ghost_test_measure.py` reads the frames into
   the centre and magnification. The per-night mask pass in the stacker is proposed, not built.
+- **A stellar parallax** (2026-11-20, not an autonomy item; docs/PARALLAX_PLAN.md): a queue row with
+  `"parallax": true` is a monitor like a light curve (advisor, auto-stop, registry, audit, board and the
+  convergence refresh all read `auto_stop.is_monitor`): `parallax add <star>` queues one from
+  `configs/parallax_stars.json` (Ross 248 and Wolf 359 chosen, R 10-15 s, 15 min a night at priority 50,
+  pointed at the star's position today), `photometry/parallax.py` measures each night's position against
+  the Gaia DR3 references of `configs/parallax_refs/` (their own motions applied to the night; the tangent
+  point is the target's 2016.0 place with no motion, so the record is the displacement Gaia would see)
+  and fits offset, proper motion and parallax over the year; done, and retired by auto-stop, when the
+  nights span a year, 30 of them, and the parallax is known to 5 % (`parallax.coverage`). The ESA Gaia
+  archive is closed 25 Nov to 2 Dec 2026 for DR4; the committed reference files need no network.
 - **Queue fields as commands** (E3, same day): `hold <dso> [off]` (status `held` / back to `waiting`, through `set_status_db`), `moon <dso> any|avoid|dark|clear`, `maxhours <dso> N|clear` (0.25-12 h), `type <dso> galaxy|nebula|clear`, parsed by `control/queue_fields.parse` (a two-word name works; the last token is the value only when it is one the command knows) and written by `instructions.set_field_db`; each is journaled as a `QUEUE_FIELD` note. With `filters`, `reopen` and these, `my_instructions.json` needs no hand edit.
 - **Supervision** (`end_points/supervise.decide`, applied by `start_srt`): a dead scheduler or conductor relaunches alone with a priority-1 push; the social server's exit codes keep their meanings; each child has its own 5-in-10-min crash-loop guard. `morning_trigger` writes `local/spark_render/last_run.json` and pushes a failed render; `scripts/morning_watch.py` (Spark cron 10:00, the owner adds the entry) pushes when the record is missing, skipped or non-zero.
 

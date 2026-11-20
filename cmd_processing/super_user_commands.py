@@ -4142,6 +4142,7 @@ def get_super_user_commands() -> dict[str, Callable]:
         "night": night_cmd,
         "lightcurve": lightcurve_cmd,
         "aavso": aavso_cmd,
+        "parallax": parallax_cmd,
         "replan": replan_cmd,
         "core2": core2_cmd,
         "rehome": rehome_cmd,
@@ -4602,7 +4603,8 @@ def doit_cmd(words: list[str], account: str) -> None:
         # A monitored star (queue entry "lightcurve": true) is measured by its
         # light curve below; a convergence curve and a per-filter contribution
         # say nothing about a Cepheid's brightness (owner, 2026-10-28).
-        eon_monitors = set(eon_lightcurve_targets([d for d in eon_dsos if d]))
+        eon_monitors = (set(eon_lightcurve_targets([d for d in eon_dsos if d]))
+                        | set(eon_parallax_targets([d for d in eon_dsos if d])))
         for eon_dso in eon_dsos:
             if eon_dso in eon_monitors:
                 _logger.info("End of night: %s is a light-curve monitor, no SNR", eon_dso)
@@ -4633,6 +4635,12 @@ def doit_cmd(words: list[str], account: str) -> None:
                 _lightcurve_run(["", "lightcurve", lc_dso])
             except Exception:
                 _logger.exception("End-of-night light curve failed for %s", lc_dso)
+        # A parallax star (2026-11-20): tonight's position against Gaia's frame.
+        for px_dso in eon_parallax_targets(eon_named):
+            try:
+                _parallax_run(["", "parallax", px_dso], "system")
+            except Exception:
+                _logger.exception("End-of-night parallax failed for %s", px_dso)
 
 
 def _newest_fits_mtime(image_dir: Path) -> float:
@@ -4937,6 +4945,73 @@ def _aavso_run(words: list[str]) -> None:
         social_server.post_social_message(f"AAVSO export failed for {dso}: {exc}")
 
 
+def parallax_cmd(words: list[str], account: str) -> None:
+    """A nearby star's parallax from this telescope (photometry/parallax).
+
+    Usage: parallax <dso> [redo]     measure every night not yet on file, refit the year
+           parallax add <star>       queue a star from configs/parallax_stars.json
+           parallax list             the catalogue and each star's season
+    Runs by itself at the end of a night for each imaged target whose queue
+    entry has "parallax": true. Measuring is a background process.
+    """
+    sub = words[2].lower() if len(words) > 2 else ""
+    if sub in ("add", "list", ""):
+        _parallax_run(words, account)
+        return
+    jobs.spawn_process(_parallax_run, args=(words, account))
+
+
+def _parallax_run(words: list[str], account: str = "") -> None:
+    from photometry import parallax as plx
+    args = [w for w in words[2:] if w.strip()]
+    if not args:
+        social_server.post_social_message("Usage: parallax <dso> [redo] | parallax add <star> | parallax list")
+        return
+    sub = args[0].lower()
+    if sub == "list":
+        queued = set()
+        try:
+            queued = {str(r.get("parallax_star") or r.get("dso")) for r in instructions.get_sorted_instructions()
+                      if r.get("parallax") and r.get("status") != "completed"}
+        except Exception:  # noqa: BLE001
+            pass
+        social_server.post_social_message(plx.list_text(queued=queued))
+        return
+    if sub == "add":
+        name = " ".join(args[1:])
+        entry = plx.star(name) if name else None
+        if entry is None:
+            social_server.post_social_message("parallax add: no star '%s' in configs/parallax_stars.json.\n%s"
+                                              % (name, plx.list_text()))
+            return
+        fields = plx.queue_fields(entry)
+        ok = instructions.add_dso_object_instruction(entry["key"], "", account or "owner", priority=fields["priority"],
+                                                     ra_deg=fields["ra_deg"], dec_deg=fields["dec_deg"], obj_type="star")
+        if not ok:
+            social_server.post_social_message("%s is already in the queue (`parallax %s` measures it)." % (entry["name"], entry["key"]))
+            return
+        for k, v in fields.items():
+            if k not in ("ra_deg", "dec_deg", "obj_type", "priority"):
+                instructions.set_field_db(entry["key"], k, v)
+        social_server.post_social_message(
+            "Queued %s as `%s`: a parallax monitor, %s %s s, %.0f min a night at priority %d, pointed at %.5f %+.5f (Gaia's 2016 "
+            "position moved to today). Gaia DR3 parallax %.1f mas. %s\nIt takes a short block every clear night; "
+            "`parallax %s` measures the nights, auto-stop retires it when the ellipse is measured to 5 %%."
+            % (entry["name"], entry["key"], "/".join(fields["filter_plan"]), "/".join(str(v) for v in fields["exposure_s"].values()),
+               fields["max_hours"] * 60, fields["priority"], fields["ra_deg"], fields["dec_deg"],
+               float(entry["gaia"]["parallax"]), entry.get("season") or "", entry["key"]))
+        return
+    dso = sub
+    redo = any(a.lower() == "redo" for a in args[1:])
+    try:
+        result = plx.run(dso, redo=redo, progress_cb=social_server.post_social_message,
+                         cancel_cb=jobs.cancel_cb_for(jobs.get_current_job()))
+        social_server.post_social_message(plx.report(result), str(result["plot"]) if result.get("plot") else None)
+    except Exception as exc:
+        _logger.exception("parallax failed for %s", dso)
+        social_server.post_social_message(f"Parallax failed for {dso}: {exc}")
+
+
 def replan_reply_text(reply, state: str = "") -> str:
     """The chat's answer to `replan` from the conductor's reply. Pure."""
     if reply is None:
@@ -4993,6 +5068,19 @@ def replan_cmd(words: list[str], account: str) -> None:
             % plan["sunset"].get("outcome"))
         return
     social_server.post_social_message(replan_reply_text(conductor_client.request_replan("chat")))
+
+
+def eon_parallax_targets(dsos: list) -> list:
+    """Which of tonight's targets are parallax monitors (queue entry "parallax": true)."""
+    out = []
+    for d in dsos:
+        try:
+            rec = instructions.get_instruction_by_dso(d) or {}
+        except Exception:
+            rec = {}
+        if rec.get("parallax"):
+            out.append(d)
+    return out
 
 
 def eon_lightcurve_targets(dsos: list) -> list:

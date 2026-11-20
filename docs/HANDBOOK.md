@@ -92,6 +92,7 @@ silence the push.
 | `overhead` | what is flying over the roof now (the Spark logs every pass by itself) |
 | `drafts`, `approve <dso>`, `reject <dso> [why]` | the publish cards (below) |
 | `lightcurve <dso>` | a monitored star's nightly points (runs itself after each night) |
+| `parallax <dso>` / `parallax add <star>` / `parallax list` | a parallax star's nightly position against Gaia and the year's fit (runs itself after each night); `add` queues one from `configs/parallax_stars.json` |
 | `aavso <dso> [filter]` | the AAVSO WebObs file for a monitor, on the PC under `local/lightcurves/aavso/`; upload it by hand at app.aavso.org/webobs (observer code `aavso.obscode`) |
 | `replan` | re-run the noon decision now |
 | `update` | pull the release and restart the children (not start_srt itself) |

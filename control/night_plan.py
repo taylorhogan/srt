@@ -243,9 +243,10 @@ def slot_filters(dso, row, advice, night=None) -> dict:
     explicit = _explicit(row, night)
     if explicit:
         from control import filter_plan
-        src = "monitor" if row.get("lightcurve") else "explicit"
+        kind = "lightcurve" if row.get("lightcurve") else ("parallax" if row.get("parallax") else None)
+        src = "monitor" if kind else "explicit"
         until = row.get(filter_plan.UNTIL_KEY)
-        why = ("monitor target (lightcurve): its own fixed plan" if src == "monitor"
+        why = ("monitor target (%s): its own fixed plan" % kind if src == "monitor"
                else "the queue's `filters` plan (explicit plans always win)")
         used = filter_plan.imaged_used(row)
         if used is not None:

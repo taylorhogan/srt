@@ -76,7 +76,7 @@ def derive_registry() -> dict:
         resolved = row.get("ra_deg") is not None or ah not in ("", "0", "None")
         if status == "completed":
             state = "RETIRED"
-        elif status == "converged" or (is_done(dso) and not row.get("lightcurve")):
+        elif status == "converged" or (is_done(dso) and not (row.get("lightcurve") or row.get("parallax"))):
             # "converged" is the auto-stop's own write (control/auto_stop,
             # 2026-10-29); is_done is the same module's full verdict (the
             # curve and the frame goals both, or the cap) so the registry
