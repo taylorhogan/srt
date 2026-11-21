@@ -6,7 +6,7 @@ class PublicConfig():
 
         },
         "version": {
-            "date": "2026.11.21.6"
+            "date": "2026.11.21.7"
         },
 
         "logger": {
@@ -604,7 +604,12 @@ class PublicConfig():
                     # the starless composite beside every palette render
                     # (nn/starsplit, docs/STARSPLIT_PLAN.md): "shadow" writes
                     # and pushes it, nothing downstream reads it; "off"
-                    "starless": "shadow"},
+                    "starless": "shadow",
+                    # a palette's stars (2026-11-21, the owner's call after IC 405's
+                    # gain-26 SHO): "learned" takes them off with nn/starsplit, gains
+                    # the starless planes and puts them back neutral, the learned
+                    # lighting weighted off them; "discs" is the rule before it
+                    "palette_stars": "learned"},
         # The gallery prose (scripts/article_prose.py, docs/ARTICLE_PROSE_PLAN.md,
         # 2026-11-05). "auto" tries the local Ollama model on the Spark, then
         # the API with cfg["anthropic"]["api_key"], then `claude -p` with the

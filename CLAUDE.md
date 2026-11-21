@@ -265,8 +265,8 @@ Since 2026-09-25 the conductor decides both invariants (ADR 0014): every roof fi
   stars, no star discs pinned; pushed after the crop; recorded in the meta as
   `starless`; palette recipes only, never in final mode. A chat `stars=none`
   cannot run on the PC (no GPU, no model), so the Spark's morning file is the
-  product. **Built 2026-11-21, behind `--palette-stars learned` (config
-  `publish.palette_stars`, default `discs` until the owner flips it):**
+  product. **Built 2026-11-21 and the DEFAULT the same evening (`--palette-stars`,
+  config `publish.palette_stars` = `learned`; `discs` is the old rule):**
   `color_process.palette_gain_split` sends the palette gain to the learned
   split's STARLESS planes and puts the star layer (subbed minus starless,
   averaged over the distinct planes) back neutral, no disc sized and no
