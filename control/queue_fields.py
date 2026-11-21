@@ -11,13 +11,14 @@ owner's words, and the command functions on the PC write through
 instructions.set_status_db (hold) and instructions.set_field_db (the rest),
 the one writer for a row's machine-read flags.
 """
-from typing import Optional
+from typing import Optional, Tuple
 
 MOON_MODES = ("any", "avoid", "dark")       # iris_astronomy.moon_cost.MODES
 TYPES = ("galaxy", "nebula")
 CLEAR_WORDS = ("clear", "none", "off", "default")
 MAX_HOURS_RANGE = (0.25, 12.0)
 FIELDS = {"moon": "moon", "maxhours": "max_hours", "type": "obj_type"}
+REPLAN_STATES = ("IDLE_DAY", "ARMED")       # where REPLAN_REQUESTED goes to PLANNING (iris/core/machine)
 USAGE = {"hold": "hold <dso> [off]", "moon": "moon <dso> any|avoid|dark|clear",
          "maxhours": "maxhours <dso> N|clear", "type": "type <dso> galaxy|nebula|clear"}
 
@@ -105,3 +106,54 @@ def describe(cmd: str, dso: str, value, row: Optional[dict] = None) -> str:
     if cmd == "maxhours":
         return f"{dso}: at most {value:g} h a night (a gap-fill block, never a main slot)"
     return f"{dso}: type {value} ({'L+RGB' if value == 'galaxy' else 'narrowband Ha/O-III/S-II'} from the next plan)"
+
+
+# ------------------------------------------------------------ tonight's plan
+
+def _squash(name) -> str:
+    return "".join(ch for ch in str(name or "").lower() if ch.isalnum())
+
+
+def _slot_for(rec: Optional[dict], dso: str) -> Optional[dict]:
+    for s in ((rec or {}).get("plan") or {}).get("slots") or []:
+        if _squash(s.get("dso")) == _squash(dso):
+            return s
+    return None
+
+
+def replan_verdict(plan: Optional[dict], dso: str) -> Tuple[bool, str]:
+    """Does a change to *dso*'s row re-run tonight's noon decision? Pure.
+
+    *plan* is iris.client.get_plan(): {"noon": record, "sunset": record}, a
+    record the NIGHT_PLAN note's data. -> (replan, text). 2026-11-20: the
+    owner set IC 405's filters after noon; the sequence followed (the next
+    generation reads the queue) but the noon "Filters tonight" line, the
+    push and the site's board kept the advisor's O-III until the sunset
+    record, and the sunset check, finding the file already right, said
+    nothing. A target in tonight's plan is replanned so the plan record,
+    the sequence and every reader of the record move together; after the
+    sunset check has decided, the change is tomorrow's and the text says
+    so; a target not in tonight's plan, no plan, or no conductor: silence,
+    the next plan reads the row."""
+    if not plan:
+        return False, ""
+    sunset = plan.get("sunset")
+    if sunset:
+        if _slot_for(sunset, dso):
+            return False, ("%s is in tonight's plan, but the sunset check has already decided and the "
+                           "sequence is written: this change applies from tomorrow's plan." % dso)
+        return False, ""
+    noon = plan.get("noon")
+    if not noon or noon.get("outcome") != "good":
+        return False, ""
+    slot = _slot_for(noon, dso)
+    if slot is None:
+        return False, ""
+    # REPLAN_REQUESTED is a transition from IDLE_DAY or ARMED only (iris/core/machine);
+    # from SLOT_IMAGING it re-seats the slot, which no row change may do by itself.
+    state = plan.get("state")
+    if state and state not in REPLAN_STATES:
+        return False, ("%s is in tonight's plan, but the conductor is in %s; the change applies to the "
+                       "next plan (`replan` by hand if you mean now)." % (dso, state))
+    return True, ("%s is in tonight's plan (%s-%s): replanning so the sequence, the filter line and the "
+                  "site's board follow." % (dso, str(slot.get("start", ""))[11:16], str(slot.get("end", ""))[11:16]))

@@ -86,7 +86,7 @@ silence the push.
 | `hold <dso>` / `hold <dso> off` | keep the planner off a target |
 | `moon <dso> any|avoid|dark` | the moon rule |
 | `maxhours <dso> N` | a short block a night (monitors) |
-| `type <dso> galaxy|nebula` | the type the filter plan reads |
+| `type <dso> galaxy|nebula` | the type the filter plan reads; this and `filters`, `moon`, `maxhours`, `hold` on a target in tonight's plan re-run the noon decision between noon and the sunset check (the sequence, the filter line and the site's board follow); after the sunset check the change is tomorrow's |
 | `reopen <dso> [for N]` | undo auto-stop: back to waiting, auto-stop held off N nights |
 | `suggest [N]` | what is worth adding this month |
 | `overhead` | what is flying over the roof now (the Spark logs every pass by itself) |

@@ -94,3 +94,58 @@ def test_moon_maxhours_type_write_the_fields(world):
     suc.type_cmd(["", "type", "nope", "nebula"], "taylor")
     assert "not in the queue" in posted[-1]
     assert len([n for n in notes if n[0] == "QUEUE_FIELD"]) == 4
+
+
+# ------------------------------------------------------------ a change replans tonight (2026-11-21)
+
+def _rec(check, dsos, outcome="good"):
+    return {"check": check, "outcome": outcome,
+            "plan": {"slots": [{"dso": d, "start": "2026-11-20T23:00-05:00", "end": "2026-11-21T04:00-05:00"} for d in dsos]}}
+
+
+def test_replan_verdict_is_pure_and_says_why():
+    """2026-11-20: `filters ic405 ...` after noon rewrote the sequence quietly while the
+    push and the board kept the advisor's O-III; a change to tonight's target replans."""
+    noon = {"noon": _rec("noon", ["ross248", "ic405"]), "sunset": None}
+    do, text = Q.replan_verdict(noon, "ic405")
+    assert do and "tonight's plan (23:00-04:00)" in text and "replanning" in text
+    assert Q.replan_verdict(noon, "IC 405")[0]                       # the name squashes
+    assert Q.replan_verdict(noon, "ngc1055") == (False, "")           # not tonight's business
+    assert Q.replan_verdict(None, "ic405") == (False, "")             # no conductor
+    assert Q.replan_verdict({"noon": None, "sunset": None}, "ic405") == (False, "")
+    assert Q.replan_verdict({"noon": _rec("noon", ["ic405"], outcome="bad"), "sunset": None}, "ic405") == (False, "")
+    after = {"noon": _rec("noon", ["ic405"]), "sunset": _rec("sunset", ["ic405"])}
+    do, text = Q.replan_verdict(after, "ic405")
+    assert not do and "sunset check has already decided" in text and "tomorrow" in text
+    assert Q.replan_verdict(after, "ngc1055") == (False, "")
+    # the machine's state: REPLAN_REQUESTED from SLOT_IMAGING would re-seat the slot
+    busy = {"noon": _rec("noon", ["ic405"]), "sunset": None, "state": "SLOT_IMAGING"}
+    do, text = Q.replan_verdict(busy, "ic405")
+    assert not do and "conductor is in SLOT_IMAGING" in text
+    assert Q.replan_verdict(dict(busy, state="ARMED"), "ic405")[0] and Q.replan_verdict(dict(busy, state="IDLE_DAY"), "ic405")[0]
+
+
+def test_type_on_tonights_target_requests_a_replan(world, monkeypatch):
+    suc, p, posted, notes = world
+    import iris.client as client
+    asked = []
+    plan = {"noon": _rec("noon", ["ic410"]), "sunset": None, "state": "IDLE_DAY"}
+    monkeypatch.setattr(client, "drives_checks", lambda: True)
+    monkeypatch.setattr(client, "get_plan", lambda *a, **k: plan)
+    monkeypatch.setattr(client, "request_replan", lambda source="chat": asked.append(source) or {"accepted": True})
+    suc.type_cmd(["", "type", "ic410", "nebula"], "taylor")
+    assert _rows(p)["ic410"]["obj_type"] == "nebula"
+    assert asked == ["chat:type"]
+    assert any("replanning so the sequence" in m for m in posted) and "Replanning:" in posted[-1]
+    # a target that is not in tonight's plan changes silently
+    suc.moon_cmd(["", "moon", "ngc7790", "dark"], "taylor")
+    assert asked == ["chat:type"] and "whenever the moon" in posted[-1]
+    # after the sunset check the change is tomorrow's
+    plan["sunset"] = _rec("sunset", ["ic410"])
+    suc.type_cmd(["", "type", "ic410", "galaxy"], "taylor")
+    assert asked == ["chat:type"] and "applies from tomorrow" in posted[-1]
+    # the conductor not driving the checks: nothing extra
+    monkeypatch.setattr(client, "drives_checks", lambda: False)
+    plan["sunset"] = None
+    suc.type_cmd(["", "type", "ic410", "nebula"], "taylor")
+    assert asked == ["chat:type"] and "narrowband" in posted[-1]

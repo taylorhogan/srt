@@ -2224,6 +2224,28 @@ def _queue_field(words: list[str], account: str, cmd: str) -> None:
     except Exception:
         _logger.exception("%s: journal note failed", cmd)
     social_server.post_social_message(queue_fields.describe(cmd, dso, p["value"], row))
+    _replan_after_change(dso, cmd)
+
+
+def _replan_after_change(dso: str, what: str) -> None:
+    """A row change on a target in tonight's plan re-runs the noon decision
+    (control/queue_fields.replan_verdict, 2026-11-21): the conductor plans
+    again, the scheduler rewrites the sequence and posts the filter line,
+    and the site's board reads the new record. Silent when the change is not
+    tonight's business; after the sunset check it says the change is
+    tomorrow's. Never raises: the row is already written."""
+    try:
+        from iris import client as conductor
+        from control import queue_fields
+        if not conductor.drives_checks():
+            return
+        replan, text = queue_fields.replan_verdict(conductor.get_plan(), dso)
+        if text:
+            social_server.post_social_message(text)
+        if replan:
+            social_server.post_social_message(replan_reply_text(conductor.request_replan("chat:" + what)))
+    except Exception:
+        _logger.exception("replan after %s %s failed", what, dso)
 
 
 def hold_cmd(words: list[str], account: str) -> None:
@@ -2392,6 +2414,8 @@ def filters_cmd(words: list[str], account: str) -> None:
         social_server.post_social_message(
             f"{dso_name}: filter plan cleared, back to the automatic split" if ok
             else f"{dso_name} not found in waiting instructions")
+        if ok:
+            _replan_after_change(dso_name, "filters")
         return
 
     dso_name = " ".join(name_parts)
@@ -2464,6 +2488,7 @@ def filters_cmd(words: list[str], account: str) -> None:
     social_server.post_social_message(
         f"{dso_name} filter plan set: {_ratio_text(plan)} -- a ratio over each night's hours"
         + tail)
+    _replan_after_change(dso_name, "filters")
 
 
 def _ratio_text(plan) -> str:

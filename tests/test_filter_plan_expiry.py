@@ -269,3 +269,38 @@ def test_filters_cmd_for_n(monkeypatch):
     monkeypatch.setattr(suc.instructions, "get_filter_plan", lambda d, night=None: None)
     suc.filters_cmd(["", "filters", "ngc1961"], "iris")
     assert "(expired 2026-10-29, 0 of 3 imaged nights used) -- no longer applies" in posted[-1]
+
+
+def test_filters_on_tonights_target_requests_a_replan(monkeypatch):
+    """2026-11-20: `filters ic405 Ha=1 S-II=1 for 1` after noon rewrote the sequence quietly
+    while the push and the site's board kept the advisor's O-III. Now it replans."""
+    suc = pytest.importorskip("cmd_processing.super_user_commands")
+    import iris.client as client
+    posted, asked = [], []
+    rows = {"ic405": {"dso": "ic405", "status": "waiting"}}
+    monkeypatch.setattr(suc.config, "data", lambda: {"nina": {"filter_wheel": {"Ha": 6, "O-III": 5, "S-II": 7}}})
+    monkeypatch.setattr(suc.social_server, "post_social_message", lambda m: posted.append(m))
+    monkeypatch.setattr(suc.instructions, "get_instruction_by_dso", lambda d: rows.get(d.lower().replace(" ", "")))
+    monkeypatch.setattr(suc.instructions, "set_filter_plan_db", lambda d, p, until=None, count=None: True)
+    monkeypatch.setattr(suc, "datetime", type("D", (), {"now": staticmethod(lambda: datetime(2026, 11, 20, 12, 45))}))
+    plan = {"noon": {"check": "noon", "outcome": "good", "plan": {"slots": [
+        {"dso": "ross248", "start": "2026-11-20T20:00-05:00", "end": "2026-11-20T21:00-05:00"},
+        {"dso": "ic405", "start": "2026-11-20T23:00-05:00", "end": "2026-11-21T04:00-05:00"}]}}, "sunset": None,
+            "state": "IDLE_DAY"}
+    monkeypatch.setattr(client, "drives_checks", lambda: True)
+    monkeypatch.setattr(client, "get_plan", lambda *a, **k: plan)
+    monkeypatch.setattr(client, "request_replan", lambda source="chat": asked.append(source) or {"accepted": True})
+    suc.filters_cmd(["", "filters", "ic405", "Ha=1", "S-II=1", "for", "1"], "iris")
+    assert "filter plan set: Ha=1, S-II=1" in posted[-3]
+    assert "ic405 is in tonight's plan (23:00-04:00)" in posted[-2] and "Replanning:" in posted[-1]
+    assert asked == ["chat:filters"]
+    suc.filters_cmd(["", "filters", "ic405", "clear"], "iris")
+    assert asked == ["chat:filters", "chat:filters"] and "Replanning:" in posted[-1]
+    # a target outside tonight's plan: the plan is written, nothing more is said
+    rows["ngc1055"] = {"dso": "ngc1055", "status": "waiting"}
+    suc.filters_cmd(["", "filters", "ngc1055", "Ha=1"], "iris")
+    assert len(asked) == 2 and "filter plan set" in posted[-1]
+    # after the sunset check: tomorrow's
+    plan["sunset"] = {"check": "sunset", "outcome": "good", "plan": plan["noon"]["plan"]}
+    suc.filters_cmd(["", "filters", "ic405", "Ha=2", "S-II=1"], "iris")
+    assert len(asked) == 2 and "applies from tomorrow's plan" in posted[-1]
