@@ -25,6 +25,10 @@ def _current_part(feats, cur):
         ("%.1f s," % dur) if dur is not None else "",
         feats.get("peak_w") or 0, feats.get("running_w") or 0)
     head = head.strip()
+    start = feats.get("start_w")
+    if start and start > 1.2 * (feats.get("peak_w") or 0):
+        # the plug's first reading caught the motor's start-up inrush: shown, not judged
+        head += ", start %.0f W" % start
     cur = cur or {}
     flags = []
     if cur.get("is_anomaly"):

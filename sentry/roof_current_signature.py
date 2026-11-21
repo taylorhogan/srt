@@ -53,6 +53,15 @@ _SIG_ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "roof_signa
 DEFAULT_HZ = 20          # poll rate; ~30 Hz is achievable over HTTP, 20 leaves headroom
 DEFAULT_SECONDS = 50     # cover the ~45s travel window in toggle_roof, plus margin
 RUNNING_MARGIN_W = 5.0   # power above baseline+this is considered "motor running"
+# The plug computes a new reading about once a second (we poll it at 20 Hz and
+# read the same number ~20 times). When its one-second window opens while the
+# motor is breaking away, the first reading of a move carries the start-up
+# inrush: 400-760 W against 310-350 W running, on 53 of 187 moves June-November
+# 2026, always the first reading, gone by the next. That is the plug's
+# sampling, not the roof, so the peak is scored after the first window and the
+# breakaway reading is kept beside it as start_w (2026-11-21).
+INRUSH_WINDOW_S = 1.1
+FEATURES_VERSION = 2     # bump when extract_features changes what a stored value means
 ANOMALY_SIGMA = 3.0      # flag features beyond mean ± this many sigma of good runs
 
 
@@ -142,6 +151,8 @@ def extract_features(sig):
     # move_duration jitters by ~1s depending on whether the inrush ledge landed
     # in a sample. RUNNING_MARGIN_W stays the floor for tiny-peak/degenerate runs.
     peak = float(p.max())
+    peak_a = float(c.max())
+    start_w = None
     run_threshold = baseline + max(RUNNING_MARGIN_W, 0.25 * (peak - baseline))
     running_mask = p > run_threshold
     if running_mask.any():
@@ -151,12 +162,27 @@ def extract_features(sig):
         duration = move_end - move_start
         running_power = float(np.median(p[running_mask]))
         running_current = float(np.median(c[running_mask]))
+        # The peak is judged after the plug's first reading of the move (the
+        # breakaway window, INRUSH_WINDOW_S); that reading is start_w.
+        first = running_mask & (t < move_start + INRUSH_WINDOW_S)
+        settled = running_mask & ~first
+        if first.any():
+            start_w = float(p[first].max())
+        if settled.any():
+            peak = float(p[settled].max())
+            peak_a = float(c[settled].max())
     else:
         move_start = move_end = duration = 0.0
         running_power = running_current = 0.0
 
-    # Energy over the whole capture via trapezoidal integration (W·s)
-    energy_ws = float(_trapezoid(p, t)) if t.size > 1 else 0.0
+    # Energy over the whole capture via trapezoidal integration (W·s), with the
+    # breakaway reading capped at the running level: it is the plug's window
+    # catching the inrush, and it put 300-400 W·s on a 3700 W·s move.
+    p_e = p.copy()
+    if running_mask.any() and start_w is not None:
+        p_e[running_mask & (t < move_start + INRUSH_WINDOW_S)] = np.minimum(
+            p_e[running_mask & (t < move_start + INRUSH_WINDOW_S)], running_power)
+    energy_ws = float(_trapezoid(p_e, t)) if t.size > 1 else 0.0
 
     # Did current settle back to baseline by the end? (move completed in window)
     tail = p[t > (t[-1] - 1.0)]
@@ -164,9 +190,11 @@ def extract_features(sig):
 
     return {
         "valid": True,
+        "features_version": FEATURES_VERSION,
         "baseline_w": round(baseline, 2),
         "peak_w": round(peak, 2),
-        "peak_a": round(float(c.max()), 3),
+        "peak_a": round(peak_a, 3),
+        "start_w": round(start_w, 2) if start_w is not None else None,
         "running_w": round(running_power, 2),
         "running_a": round(running_current, 3),
         "move_duration_s": round(duration, 2),
@@ -256,6 +284,21 @@ def load_library(direction=None, status="good"):
 # --------------------------------------------------------------------------- #
 # Comparison (scalar envelope)
 # --------------------------------------------------------------------------- #
+def features_of(sig):
+    """The signature's features at the current FEATURES_VERSION: the stored
+    block when it is current, else re-extracted from the samples (a library
+    saved before the inrush rule carries first-reading peaks). Never writes."""
+    feats = sig.get("features") or {}
+    if feats.get("valid") and feats.get("features_version") == FEATURES_VERSION:
+        return feats
+    if not sig.get("samples"):
+        return feats or {"valid": False}
+    try:
+        return extract_features(sig)
+    except Exception:  # noqa: BLE001 -- an unreadable stored trace judges nothing
+        return feats or {"valid": False}
+
+
 def compare(sig, library=None, sigma=ANOMALY_SIGMA):
     """Compare a signature's features to the good-library envelope.
 
@@ -263,7 +306,7 @@ def compare(sig, library=None, sigma=ANOMALY_SIGMA):
     """
     if library is None:
         library = load_library(direction=sig.get("direction"))
-    feats = sig.get("features") or extract_features(sig)
+    feats = features_of(sig)
 
     if not feats.get("valid"):
         return {"is_anomaly": True, "reasons": ["capture invalid / too few samples"], "detail": {}}
@@ -273,8 +316,7 @@ def compare(sig, library=None, sigma=ANOMALY_SIGMA):
 
     reasons, detail = [], {}
     for key in _ENVELOPE_KEYS:
-        good_vals = [s["features"][key] for s in library
-                     if s.get("features", {}).get("valid")]
+        good_vals = [f[key] for f in (features_of(s) for s in library) if f.get("valid")]
         if len(good_vals) < 2:
             continue
         mean = float(np.mean(good_vals))
