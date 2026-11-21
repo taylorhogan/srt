@@ -148,20 +148,28 @@ def compute_dso_convergence(dso_name: str, image_dir: Path) -> dict[str, dict]:
     # Resolved per filter inside the loop so each gets its own flat.
     for fname, paths in by_filter.items():
         try:
+            # The stack's gain rule first, so total_frames and the record's gain
+            # are the frames the curve was built on (stacker.convergence_curve
+            # applies the same rule and will find nothing more to set aside).
+            _gain, paths, aside = stacker.select_gain(paths, house=stacker.house_gain(fname))
+            if aside:
+                _logger.info("%s %s: %d frame(s) at another gain than %s set aside",
+                             dso_name, fname, len(aside), stacker.gain_label(_gain))
             calibration = stacker.calibration_from_config(fname, like=paths[0])
             measure: dict = {}
             counts, resid, slope_pct, final_rmse_pct = stacker.convergence_curve(
                 paths, filter_name=fname, calibration=calibration, measure=measure)
             results[fname] = filter_entry(counts, resid, slope_pct, final_rmse_pct, len(paths),
-                                          calibration is not None, measure, frame_facts(paths))
+                                          calibration is not None, measure, frame_facts(paths, fname))
         except Exception:
             _logger.exception("compute_dso_convergence: failed for filter '%s'", fname)
     return results
 
 
-def frame_facts(paths: list) -> dict:
+def frame_facts(paths: list, filter_name: Optional[str] = None) -> dict:
     """{"exposure_s", "gain"} of a filter's lights: the median EXPTIME and the
-    majority GAIN (stacker.select_gain); None where the headers are silent."""
+    stack's GAIN (stacker.select_gain: the house gain for *filter_name* when any
+    frame is at it, else the majority); None where the headers are silent."""
     out = {"exposure_s": None, "gain": None}
     try:
         from astropy.io import fits
@@ -179,7 +187,8 @@ def frame_facts(paths: list) -> dict:
         pass
     try:
         from stacking import stacker
-        (gain, _offset), _ok, _bad = stacker.select_gain([Path(p) for p in paths])
+        (gain, _offset), _ok, _bad = stacker.select_gain([Path(p) for p in paths],
+                                                         house=stacker.house_gain(filter_name))
         out["gain"] = gain
     except Exception:  # noqa: BLE001
         pass

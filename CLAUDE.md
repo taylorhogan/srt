@@ -492,7 +492,16 @@ Since 2026-09-25 the conductor decides both invariants (ADR 0014): every roof fi
   flats at another gain are dropped (`stacker.match_calibration`), loudly,
   with the stack running without a term it cannot match rather than with
   the wrong one. A frame with no GAIN header (the 2024 archive) matches
-  anything. This exists because narrowband is at gain 26 (the sensor's
+  anything. **The house rule beats the majority (2026-11-21, the owner's
+  call; `stacker.house_gain`, `select_gain(house=)`):** a filter the gain
+  table names is stacked from the frames at that gain alone once any light
+  is at it, however many were shot at the old one, and the convergence curve
+  and the advisor's tally (`filter_advisor.tally(house_gain=)`, the rows'
+  `gain` read from the header) count the same frames, so the goals, the
+  curve and the stack agree; on IC 405's first gain-26 night the majority
+  rule had stacked the 47 gain-0 Ha frames and set every new one aside, and
+  the owner's answer was that a target with nights ahead of it takes care of
+  itself. This exists because narrowband is at gain 26 (the sensor's
   high-conversion-gain mode; **since 2026-11-20**, `{"Ha"/"O-III"/"S-II":
   [26, 30]}`) while broadband stays at 0:
   `cfg["nina"]["gain"]` is `{filter: [gain, offset]}` and the sequence

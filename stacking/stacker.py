@@ -1748,15 +1748,19 @@ def stack(
     if not light_paths:
         raise ValueError("No light frames provided")
 
-    # One gain per stack: the lights' majority, with the calibration to match.
-    gain, light_paths, other_gain = select_gain(list(light_paths))
+    # One gain per stack: the house rule's for the filter when any light is at
+    # it (house_gain, 2026-11-21), else the lights' majority; the calibration
+    # to match.
+    house = house_gain(read_filter(Path(light_paths[0])))
+    gain, light_paths, other_gain = select_gain(list(light_paths), house=house)
     if other_gain:
-        _logger.warning("%d light(s) at another gain than the majority's %s rejected: %s",
-                        len(other_gain), gain_label(gain),
+        rule = "the house rule's" if gain == house else "the majority's"
+        _logger.warning("%d light(s) at another gain than %s %s set aside: %s",
+                        len(other_gain), rule, gain_label(gain),
                         ", ".join(sorted({gain_label(camera_gain(Path(p))) for p in other_gain})))
         if progress_cb:
-            progress_cb(f"{len(other_gain)} frame(s) at another camera gain rejected "
-                        f"(stacking at {gain_label(gain)})")
+            progress_cb(f"{len(other_gain)} frame(s) at another camera gain set aside "
+                        f"(stacking at {rule} {gain_label(gain)})")
     if not light_paths:
         raise ValueError("No light frames left at one camera gain")
     bias_paths, dark_paths, flat_paths, gain_note = match_calibration(
@@ -2122,14 +2126,56 @@ def _gain_compatible(a: tuple, b: tuple) -> bool:
     return all(x is None or y is None or x == y for x, y in zip(a, b))
 
 
-def select_gain(light_paths: list[Path]) -> tuple[tuple[Optional[int], Optional[int]], list[Path], list[Path]]:
-    """(majority gain, lights at it, lights at any other gain)."""
+def house_gain(filter_name: Optional[str]) -> Optional[tuple]:
+    """The (gain, offset) cfg["nina"]["gain"] names for *filter_name*, or None.
+
+    The house rule (2026-11-21, the owner's call): a filter the gain table
+    names is shot at that gain from now on, so its stack is built from the
+    frames at that gain alone, however many were shot at the old one. On
+    IC 405's first gain-26 night the majority rule stacked the 47 gain-0 Ha
+    frames and rejected all 33 new ones; a target with nights ahead of it
+    takes care of itself. An offset of -1 (the profile's) matches any.
+    """
+    if not filter_name:
+        return None
+    try:
+        from configs import config
+        raw = config.data().get("nina", {}).get("gain", {}) or {}
+    except Exception:  # noqa: BLE001
+        return None
+    want = str(filter_name).strip().lower()
+    for name, val in raw.items():
+        if str(name).strip().lower() != want:
+            continue
+        try:
+            if isinstance(val, (list, tuple)):
+                gain, offset = int(val[0]), (int(val[1]) if len(val) > 1 else -1)
+            else:
+                gain, offset = int(val), -1
+        except (TypeError, ValueError, IndexError):
+            return None
+        return (gain, None if offset < 0 else offset)
+    return None
+
+
+def select_gain(light_paths: list[Path], house: Optional[tuple] = None
+                ) -> tuple[tuple[Optional[int], Optional[int]], list[Path], list[Path]]:
+    """(the stack's gain, lights at it, lights at any other gain).
+
+    *house* (house_gain(filter)) wins when any light is at it; otherwise the
+    lights' majority, as before the house rule.
+    """
     groups: dict[tuple, list[Path]] = {}
     for p in light_paths:
         groups.setdefault(camera_gain(Path(p)), []).append(p)
     if not groups:
         return (None, None), [], []
-    gain = max(groups.items(), key=lambda kv: (len(kv[1]), kv[0] != (None, None)))[0]
+    # A light that KNOWS it is at the house gain brings the rule in; a silent
+    # header (the 2024 archive) rides with whichever gain is chosen.
+    if house is not None and any(g[0] is not None and _gain_compatible(g, house) for g in groups):
+        gain = house
+    else:
+        gain = max(groups.items(), key=lambda kv: (len(kv[1]), kv[0] != (None, None)))[0]
     kept = [p for p in light_paths if _gain_compatible(camera_gain(Path(p)), gain)]
     other = [p for p in light_paths if p not in set(kept)]
     return gain, kept, other
@@ -2837,6 +2883,19 @@ def convergence_curve(
     from matplotlib.ticker import FuncFormatter
 
     rng = np.random.default_rng()
+
+    # The same gain rule as stack(): the house gain for the filter when any
+    # frame is at it, else the majority; the rest never enter the curve, so
+    # the curve, the stack and the advisor's tally count the same frames.
+    house = house_gain(filter_name or read_filter(Path(paths[0])))
+    gain, paths, other_gain = select_gain(list(paths), house=house)
+    if other_gain:
+        rule = "the house rule's" if gain == house else "the majority's"
+        _logger.warning("convergence %s: %d frame(s) at another gain than %s %s set aside",
+                        filter_name, len(other_gain), rule, gain_label(gain))
+        if progress_cb:
+            progress_cb(f"{len(other_gain)} frame(s) at another camera gain set aside "
+                        f"({rule} {gain_label(gain)})")
 
     frames, accepted, fwhm_values = _prepare_for_convergence(
         paths,

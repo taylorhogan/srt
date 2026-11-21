@@ -5285,6 +5285,13 @@ def _snr_run_locked(words: list[str]) -> None:
 
     def _run_filter(fn: str, paths: list) -> None:
         jobs.raise_if_cancelled(_job_id)
+        # The stack's gain rule (the house gain for the filter when any frame
+        # is at it, else the majority), so the record counts the curve's frames.
+        _g, paths, _aside = stacker.select_gain(paths, house=stacker.house_gain(fn))
+        if _aside:
+            social_server.post_social_message(
+                f"Convergence [{fn}]: {len(_aside)} frame(s) at another gain than "
+                f"{stacker.gain_label(_g)} set aside")
         out = Path(scratch_dir) / f"convergence_{fn}.jpg"
         gold = Path(scratch_dir) / f"golden_{fn}.jpg"
         def _progress(msg: str, _fn: str = fn) -> None:
@@ -5326,7 +5333,7 @@ def _snr_run_locked(words: list[str]) -> None:
         # curve's numbers, the whole-curve curvature, and since 2026-10-30
         # the golden's emission level per second (C3).
         entry = _conv.filter_entry(counts, resid, slope_pct, final_rmse_pct, len(paths),
-                                   _calibration is not None, _measure, _conv.frame_facts(paths))
+                                   _calibration is not None, _measure, _conv.frame_facts(paths, fn))
         with _saved_lock:
             saved[fn] = entry
         social_server.post_social_message(

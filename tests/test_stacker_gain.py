@@ -118,3 +118,29 @@ def test_flats_are_gain_matched_before_the_newest_sets_cut(tmp_path, monkeypatch
     stacker._FLATS_BY_FILTER_CACHE.pop(str(root), None)
     _b, _d, f = stacker.calibration_paths_from_config("Ha", like=_fits(tmp_path / "ha.fits", 26, 30, filt="Ha"))
     assert [p.parent.parent.name for p in f] == ["2026-10-20"]       # the only gain-26 set, not cut away
+
+
+def test_the_house_gain_wins_over_the_majority_when_any_light_is_at_it(tmp_path):
+    """2026-11-21: IC 405's first gain-26 night put 33 Ha frames beside 47 at
+    gain 0; the majority rule stacked the old ones and rejected every new one."""
+    old = [_fits(tmp_path / f"o{i}.fits", 0, 10) for i in range(4)]
+    new = [_fits(tmp_path / f"n{i}.fits", 26, 30) for i in range(2)]
+    arch = _fits(tmp_path / "arch.fits")                       # no GAIN header: stacks either way
+    gain, kept, other = stacker.select_gain(old + new + [arch], house=(26, 30))
+    assert gain == (26, 30) and kept == new + [arch] and other == old
+    # nothing at the house gain yet: the majority, as before
+    gain, kept, other = stacker.select_gain(old + [arch], house=(26, 30))
+    assert gain == (0, 10) and other == []
+    # no house rule for this filter: the majority
+    gain, kept, other = stacker.select_gain(old + new, house=None)
+    assert gain == (0, 10) and other == new
+
+
+def test_house_gain_reads_the_gain_table(monkeypatch):
+    from configs import config
+    monkeypatch.setattr(config, "data", lambda: {"nina": {"gain": {"Ha": [26, 30], "S-II": [26, -1],
+                                                                   "O-III": 26, "B": "x"}}})
+    assert stacker.house_gain("Ha") == (26, 30) and stacker.house_gain("ha") == (26, 30)
+    assert stacker.house_gain("S-II") == (26, None) and stacker.house_gain("O-III") == (26, None)
+    assert stacker.house_gain("B") is None and stacker.house_gain("L") is None
+    assert stacker.house_gain(None) is None

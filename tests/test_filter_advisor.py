@@ -156,7 +156,7 @@ def test_a_weak_line_can_finish_a_target():
 
 def test_advisor_settings_read_the_config():
     base = {"weak_line_ratio": fa.WEAK_LINE_RATIO, "weak_line_min_frames": fa.WEAK_LINE_MIN_FRAMES,
-            "galaxy_ha_needs_gain": True, "ha_gain_set": False}
+            "galaxy_ha_needs_gain": True, "ha_gain_set": False, "house_gain": {}}
     assert fa.advisor_settings({}) == base
     assert fa.advisor_settings({"nina": {"advisor": {"weak_line_ratio": 0.2, "weak_line_min_frames": 9}}}) \
         == dict(base, weak_line_ratio=0.2, weak_line_min_frames=9)
@@ -236,3 +236,22 @@ def test_sharp_bar_scales_with_the_targets_best_airmass():
     assert low["have"]["L"]["sharp"] == 3 and low["sharp_limit"] == 2.85
     assert high["have"]["L"]["sharp"] == 1 and high["sharp_limit"] == 2.4
     assert any("scaled for its 49 deg transit" in r for r in low["reasons"])
+
+
+def test_frames_at_another_gain_than_the_house_rule_do_not_count():
+    """2026-11-21: narrowband is gain 26 by the house rule and the stacker sets
+    the gain-0 frames aside, so the goals must not count them either."""
+    def row(f, gain=None):
+        r = {"filter": f, "fwhm_arcsec": 2.5, "exptime": 300.0}
+        if gain is not None:
+            r["gain"] = gain
+        return r
+    fr = ([row("Ha", [0, 10])] * 47 + [row("Ha", [26, 30])] * 33 + [row("Ha")] * 2
+          + [row("L", [0, 10])] * 5)
+    t = fa.tally(fr, house_gain={"Ha": (26, 30)})
+    assert t["Ha"]["frames"] == 35 and t["L"]["frames"] == 5     # the unrecorded gain counts
+    assert fa.tally(fr)["Ha"]["frames"] == 82                     # no house rule: everything
+    assert fa.tally(fr, house_gain={"Ha": (26, None)})["Ha"]["frames"] == 35
+    s = fa.advisor_settings({"nina": {"gain": {"Ha": [26, 30], "O-III": 26, "B": "x"}}})
+    assert s["house_gain"] == {"Ha": (26, 30), "O-III": (26, None)}
+    assert fa.advisor_settings({})["house_gain"] == {}

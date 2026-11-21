@@ -115,14 +115,27 @@ def sharp_limit(dec_deg, lat_deg) -> float:
     return round(SHARP_ARCSEC * max(1.0, airmass) ** SHARP_AIRMASS_POWER, 2)
 
 
-def tally(frames: list, exposure_s: Optional[dict] = None, sharp_arcsec: float = SHARP_ARCSEC) -> dict:
+def _gain_ok(a, b) -> bool:
+    """stacker._gain_compatible without the import: equal where both know."""
+    a, b = (tuple(a) + (None, None))[:2], (tuple(b) + (None, None))[:2]
+    return all(x is None or y is None or x == y for x, y in zip(a, b))
+
+
+def tally(frames: list, exposure_s: Optional[dict] = None, sharp_arcsec: float = SHARP_ARCSEC,
+          house_gain: Optional[dict] = None) -> dict:
     """{filter: {"frames", "usable", "sharp", "median_fwhm"}} from frame records.
 
-    *frames* are {"filter", "fwhm_arcsec", "exptime"} (frame_stats.json rows
-    with the exposure added). Only frames at the filter's exposure count --
-    the entry's exposure_s if it has one, else REF_EXPOSURE_S -- so a night
-    of 10 s frames does not pass for depth.
+    *frames* are {"filter", "fwhm_arcsec", "exptime", "gain"} (frame_stats.json
+    rows with the exposure and the header's (GAIN, OFFSET) added). Only frames
+    at the filter's exposure count -- the entry's exposure_s if it has one,
+    else REF_EXPOSURE_S -- so a night of 10 s frames does not pass for depth.
+    *house_gain* is {filter: (gain, offset)} from cfg["nina"]["gain"]
+    (advisor_settings()): a frame at another gain than its filter's house gain
+    does not count either, because the stacker sets it aside (2026-11-21:
+    IC 405's 47 gain-0 Ha frames beside 33 at gain 26); a frame with no gain
+    recorded counts, as it stacks.
     """
+    house = {canonical(k): v for k, v in (house_gain or {}).items() if canonical(k)}
     by = {}
     for fr in frames:
         f = canonical(fr.get("filter"))
@@ -131,6 +144,9 @@ def tally(frames: list, exposure_s: Optional[dict] = None, sharp_arcsec: float =
         want = float((exposure_s or {}).get(f, REF_EXPOSURE_S))
         exp = fr.get("exptime")
         if exp is not None and abs(float(exp) - want) > 0.5:
+            continue
+        gain = fr.get("gain")
+        if house.get(f) is not None and gain is not None and not _gain_ok(gain, house[f]):
             continue
         by.setdefault(f, []).append(fr.get("fwhm_arcsec"))
     out = {}
@@ -160,7 +176,8 @@ def advise(frames: list, obj_type: str, entry: Optional[dict] = None,
            curve: Optional[dict] = None,
            ha_gain_set: bool = False,
            galaxy_ha_needs_gain: bool = GALAXY_HA_NEEDS_GAIN,
-           lat_deg: Optional[float] = None) -> dict:
+           lat_deg: Optional[float] = None,
+           house_gain: Optional[dict] = None) -> dict:
     """Tonight's filter ratio for one target, with the reasons. Pure but for
     the site latitude, read from the config when *lat_deg* is None.
 
@@ -177,6 +194,8 @@ def advise(frames: list, obj_type: str, entry: Optional[dict] = None,
            the night to the filters whose curve is not flat. Never changes
            "need" or "action", which auto-stop and the board read.
     ha_gain_set: cfg["nina"]["gain"] carries Hα (the narrowband gain is on).
+    house_gain: {filter: (gain, offset)} from the same table; frames at another
+                gain than their filter's do not count (tally).
            With *galaxy_ha_needs_gain* and no entry, Hα sits out of a galaxy's
            set however the entry or the frames on disk ask for it
            (GALAXY_HA_NEEDS_GAIN); a nebula is unaffected.
@@ -196,7 +215,7 @@ def advise(frames: list, obj_type: str, entry: Optional[dict] = None,
         except Exception:  # noqa: BLE001 -- the zenith bar, as before
             lat_deg = None
     sharp_at = sharp_limit(entry.get("dec_deg"), lat_deg)
-    have = tally(frames, entry.get("exposure_s"), sharp_at)
+    have = tally(frames, entry.get("exposure_s"), sharp_at, house_gain=house_gain)
     reasons = []
     res = {"dso": dso or entry.get("dso", ""), "kind": kind, "have": have, "need": {},
            "plan": None, "reasons": reasons, "tonight": tonight, "emission": emission,
@@ -345,11 +364,21 @@ def _frames_for(dso: str) -> list:
     if d is None or not (d / "frame_stats.json").exists():
         return []
     rows = json.loads((d / "frame_stats.json").read_text(encoding="utf-8"))
+    try:
+        from stacking import stacker as _stacker       # the header's (GAIN, OFFSET), cached by mtime
+    except Exception:  # noqa: BLE001
+        _stacker = None
+
+    def _gain(path):
+        if _stacker is None or not path or not Path(path).exists():
+            return None
+        return _stacker.camera_gain(Path(path))
+
     out = []
     for r in rows if isinstance(rows, list) else []:
         m = _EXP_RE.search(str(r.get("path", "")))
         out.append({"filter": r.get("filter"), "fwhm_arcsec": r.get("fwhm_arcsec"),
-                    "exptime": float(m.group(1)) if m else None})
+                    "exptime": float(m.group(1)) if m else None, "gain": _gain(r.get("path"))})
     return out
 
 
@@ -405,10 +434,27 @@ def advisor_settings(cfg: Optional[dict] = None) -> dict:
         return {"weak_line_ratio": float(a.get("weak_line_ratio", WEAK_LINE_RATIO)),
                 "weak_line_min_frames": int(a.get("weak_line_min_frames", WEAK_LINE_MIN_FRAMES)),
                 "galaxy_ha_needs_gain": bool(a.get("galaxy_ha_needs_gain", GALAXY_HA_NEEDS_GAIN)),
-                "ha_gain_set": "Ha" in (nina.get("gain") or {})}
+                "ha_gain_set": "Ha" in (nina.get("gain") or {}),
+                "house_gain": gain_table(nina.get("gain"))}
     except Exception:  # noqa: BLE001
         return {"weak_line_ratio": WEAK_LINE_RATIO, "weak_line_min_frames": WEAK_LINE_MIN_FRAMES,
-                "galaxy_ha_needs_gain": GALAXY_HA_NEEDS_GAIN, "ha_gain_set": False}
+                "galaxy_ha_needs_gain": GALAXY_HA_NEEDS_GAIN, "ha_gain_set": False, "house_gain": {}}
+
+
+def gain_table(raw) -> dict:
+    """cfg["nina"]["gain"] as {filter: (gain, offset or None)}; junk ignored.
+    The same reading as stacker.house_gain, so the tally and the stack agree."""
+    out = {}
+    for name, val in (raw or {}).items():
+        try:
+            if isinstance(val, (list, tuple)):
+                gain, offset = int(val[0]), (int(val[1]) if len(val) > 1 else -1)
+            else:
+                gain, offset = int(val), -1
+        except (TypeError, ValueError, IndexError):
+            continue
+        out[str(name)] = (gain, None if offset < 0 else offset)
+    return out
 
 
 def emission_for(dso: str) -> dict:
