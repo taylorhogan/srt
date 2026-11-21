@@ -71,8 +71,18 @@ def main() -> int:
     except Exception:  # noqa: BLE001
         logging.getLogger(__name__).exception("alerter not built; conductor runs silent")
         alerter = None
+    # The night-end signal to the Spark (iris/conductor/spark_signal,
+    # 2026-11-21): NINA_FLATS_DONE starts the Spark's morning run over ssh.
+    try:
+        from iris.conductor.spark_signal import SparkSignal
+        notifier = SparkSignal.from_config(
+            _config.data(),
+            note=lambda ev, data: journal.append("note", ev, "spark_signal", data=data))
+    except Exception:  # noqa: BLE001
+        logging.getLogger(__name__).exception("spark signal not built; the Spark runs on its clock")
+        notifier = None
     conductor = ShadowConductor(REPO_ROOT, journal, planner=planner, drives_checks=drives,
-                                alerter=alerter)
+                                alerter=alerter, notifier=notifier)
     journal.append("note", "CONDUCTOR_STARTED", "conductor",
                    data={"mode": "shadow", "state": conductor.state,
                          "drives_checks": drives})

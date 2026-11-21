@@ -14,6 +14,9 @@
 # 15 min to 4 h a morning after the last flat). The entry fires in the evening and
 # the script sleeps to the plan's last slot end + 85 min, reading the journal every
 # 15 min for an early end; with no plan for the night it waits for 06:30 as before.
+# 2026-11-21: the PC starts the run itself (iris/conductor/spark_signal: on
+# NINA_FLATS_DONE the conductor runs morning_trigger.py --signal here over ssh).
+# This entry is the fallback and leaves when a signalled run is on record.
 0 20 * * * /home/taylor/Documents/srt/scripts/morning_trigger.py
 
 

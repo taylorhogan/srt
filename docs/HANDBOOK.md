@@ -13,7 +13,8 @@ Tailscale). `help` lists every command; `help <command>` explains one.
 
 | When | Who | What you see |
 |---|---|---|
-| ~80 min after the last light | Spark | morning_trigger (cron 20:00) sleeps to the plan's end + 85 min, polls until the flats are done, syncs the night's frames, renders; 06:30 on a night with no plan |
+| the flats done (NINA_FLATS_DONE) | PC → Spark | the conductor runs one ssh command on the Spark (iris/conductor/spark_signal, the PC's own key) that starts morning_trigger `--signal`: it polls until the flats are quiet, syncs the night's frames, renders; the outcome is journaled as SPARK_SIGNALLED / SPARK_SIGNAL_FAILED |
+| ~80 min after the last light | Spark | the fallback: morning_trigger (cron 20:00) sleeps to the plan's end + 85 min reading the journal every 15 min, and runs only when no signalled run is on record for the morning (`local/spark_render/last_run.json`, a lock while one runs); 06:30 on a night with no plan |
 | 07-09 | Spark | one Pushover picture per rendered target (the learned composite) |
 | 09:00 | PC | IrisMorningCheck: a push only if something is wrong (roof, plugs, disk) |
 | 09:15 | PC | IrisConvergenceRefresh: recomputes any target whose frames outran its record |

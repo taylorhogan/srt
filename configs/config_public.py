@@ -6,7 +6,7 @@ class PublicConfig():
 
         },
         "version": {
-            "date": "2026.11.21.4"
+            "date": "2026.11.21.5"
         },
 
         "logger": {
@@ -708,6 +708,19 @@ class PublicConfig():
         "alerts": {
             "enabled": True,
             "hold_priority": 2,
+        },
+
+        # The night-end signal to the Spark (iris/conductor/spark_signal,
+        # 2026-11-21). On NINA_FLATS_DONE the conductor runs one ssh command on
+        # the Spark that starts its morning run (flats poll, sync, render); the
+        # key is the PC's own, authorized on the Spark; the Spark's 20:00
+        # morning_trigger stays as the fallback. "enabled": False = the Spark
+        # guesses from the plan, as before.
+        "spark_signal": {
+            "enabled": True,
+            "host": "100.94.42.83",
+            "user": "taylor",
+            "key": "C:/Users/iriso/.ssh/id_ed25519_iris",
         },
 
         # The moon rule (iris_astronomy/moon_cost, 2026-10-25). An hour above

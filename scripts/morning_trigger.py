@@ -78,6 +78,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from typing import Optional
 
 _root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if _root not in sys.path:
@@ -178,16 +179,32 @@ def planned_end(timeline, now: dt.datetime):
     return end
 
 
+def evening_noon(now: dt.datetime) -> dt.datetime:
+    """Noon on the evening's date: a journal record before it is another night's."""
+    return dt.datetime.combine(morning_date(now) - dt.timedelta(days=1), dt.time(12, 0),
+                               tzinfo=now.tzinfo)
+
+
+def tonights(events: list, now: dt.datetime) -> list:
+    """The events since the evening's noon. On 2026-11-21 the 11-20 file's
+    NINA_FLATS_DONE at 02:18, the PREVIOUS morning's, started the run at
+    03:30, four minutes before the first flat of the night."""
+    since = evening_noon(now)
+    return [(ts, name) for ts, name in events if ts >= since]
+
+
 def wait_verdict(now: dt.datetime, timeline, events: list, start_hhmm: str = "06:30",
                  allowance_min: int = FLATS_ALLOWANCE_MIN, check_every_min: int = 15) -> tuple:
     """("poll", None, why) start the flats poll now, or ("sleep", until, why). Pure.
 
     *events* is [(ts, name)] from the conductor's journal for the evening and
-    the morning. An END event means the night is over; NIGHT_END_REQUESTED
-    means the flats are running and will be done in about the allowance;
-    otherwise the plan's last slot end plus the allowance, else *start_hhmm*.
-    A sleep is never longer than *check_every_min*, so an early end is seen.
+    the morning; only those since the evening's noon count (tonights). An END
+    event means the night is over; NIGHT_END_REQUESTED means the flats are
+    running and will be done in about the allowance; otherwise the plan's last
+    slot end plus the allowance, else *start_hhmm*. A sleep is never longer
+    than *check_every_min*, so an early end is seen.
     """
+    events = tonights(events, now)
     for ts, name in events:
         if name in END_EVENTS:
             return "poll", None, "journal says %s at %s" % (name, ts.strftime("%H:%M"))
@@ -224,12 +241,16 @@ def read_timeline():
 
 
 def journal_events(now: dt.datetime) -> list:
-    """[(ts, event)] of the night-end events in the evening's and the morning's journal."""
+    """[(ts, event)] of tonight's night-end events in the evening's and the
+    morning's journal files, each read on its own: one Select-String over both
+    returned nothing at all while the morning's file did not yet exist (it is
+    created by the first event after midnight), so the sleeper was blind from
+    20:00 to 03:25 on 2026-11-21 and then read the previous morning's end."""
     m = morning_date(now)
     days = [(m - dt.timedelta(days=1)).isoformat(), m.isoformat()]
     paths = ",".join("'%s\\local\\journal\\%s.jsonl'" % (SRT, d) for d in days)
-    out = _ps("Select-String -Path %s -Pattern '%s' -ErrorAction SilentlyContinue "
-              "| ForEach-Object { $_.Line }" % (paths, "|".join(_WATCH)))
+    out = _ps("foreach ($p in @(%s)) { if (Test-Path $p) { Select-String -Path $p -Pattern '%s' "
+              "-ErrorAction SilentlyContinue | ForEach-Object { $_.Line } } }" % (paths, "|".join(_WATCH)))
     events = []
     for line in (out or "").splitlines():
         line = line.strip()
@@ -242,13 +263,53 @@ def journal_events(now: dt.datetime) -> list:
                 events.append((dt.datetime.fromisoformat(rec["ts"]), name))
         except (ValueError, KeyError, TypeError):
             continue
-    return events
+    return tonights(events, now)
 
 
-def flats_done_in_journal() -> bool:
+def read_last_run() -> Optional[dict]:
+    try:
+        return json.loads(LAST_RUN.read_text())
+    except (OSError, ValueError):
+        return None
+
+
+def run_decision(last_run: Optional[dict], today: dt.date, force: bool = False) -> str:
+    """"run", or why not: a morning whose run finished is not run twice. Pure.
+
+    The PC's signal and the 20:00 fallback are two instances of this script
+    for one morning (2026-11-21): whichever starts the run second finds the
+    record and leaves. A failed render is not a record, so it may be retried.
+    """
+    if force or not last_run:
+        return "run"
+    if last_run.get("date") == today.isoformat() and last_run.get("render_rc") == 0:
+        return "this morning's run is on record (written %s)" % last_run.get("written", "?")
+    return "run"
+
+
+_LOCK_FD = None
+
+
+def take_lock():
+    """The morning run's lock (STATE_DIR/morning.lock) or None if another
+    instance holds it; held until this process exits."""
+    global _LOCK_FD
+    import fcntl
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    fd = open(STATE_DIR / "morning.lock", "w")
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        fd.close()
+        return None
+    _LOCK_FD = fd
+    return fd
+
+
+def flats_done_in_journal(now: Optional[dt.datetime] = None) -> bool:
     """NINA_FLATS_DONE in tonight's conductor journal. Confirming only."""
     return any(name == "NINA_FLATS_DONE"
-               for _ts, name in journal_events(dt.datetime.now().astimezone()))
+               for _ts, name in journal_events(now or dt.datetime.now().astimezone()))
 
 
 def warn_operator(message: str, priority: int = 1) -> None:
@@ -364,6 +425,10 @@ def main() -> int:
                     help="minutes between journal reads while sleeping to the expected time")
     ap.add_argument("--deadline", default="09:30",
                     help="local time to give up waiting and run anyway (HH:MM)")
+    ap.add_argument("--signal", default="",
+                    help="started by the PC's conductor on this journal event: skip the wait, poll now")
+    ap.add_argument("--force", action="store_true",
+                    help="run even if this morning's run is already on record")
     ap.add_argument("--dry-run", action="store_true", help="poll and report, run nothing")
     args = ap.parse_args()
 
@@ -376,8 +441,12 @@ def main() -> int:
 
     # Sleep to the moment the flats should be done, watching the journal for
     # an early end on the way; the fixed 06:30 start idled hours a morning.
+    # Since 2026-11-21 the PC's conductor normally starts this script itself
+    # (--signal, iris/conductor/spark_signal) and the wait is the fallback.
+    if args.signal:
+        log(f"  signalled by the PC: {args.signal}")
     last_why = None
-    while True:
+    while not args.signal:
         now = dt.datetime.now().astimezone()
         verdict, until, why = wait_verdict(now, read_timeline(), journal_events(now),
                                            args.start, args.allowance, args.check_every)
@@ -391,6 +460,16 @@ def main() -> int:
             log(f"dry run: would sleep until {until:%H:%M} ({why}); exiting")
             return 0
         time.sleep(max(60.0, (until - now).total_seconds()))
+
+    # One run a morning: the signalled instance and the 20:00 fallback both
+    # arrive here; the second finds the record or the lock and leaves.
+    why_not = run_decision(read_last_run(), morning_date(dt.datetime.now().astimezone()), args.force)
+    if why_not != "run":
+        log(f"  {why_not}; exiting")
+        return 0
+    if take_lock() is None:
+        log("  another morning run holds the lock; exiting")
+        return 0
 
     reason = None
     while reason is None:

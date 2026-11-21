@@ -78,6 +78,38 @@ def test_journal_lines_are_parsed_from_the_select_string_output(monkeypatch):
     monkeypatch.setattr(mt, "_ps", lambda script, timeout=60: "\n".join(lines))
     ev = mt.journal_events(_t(21, 3, 0))
     assert [n for _t_, n in ev] == ["NINA_FLATS_DONE"]      # a prefixed line is skipped, DAY_TICK unwatched
-    assert mt.flats_done_in_journal() is True
+    assert mt.flats_done_in_journal(_t(21, 3, 0)) is True
     monkeypatch.setattr(mt, "_ps", lambda script, timeout=60: None)
     assert mt.journal_events(_t(21, 3, 0)) == [] and mt.read_timeline() is None
+
+
+def test_a_previous_mornings_end_record_is_not_tonights():
+    """2026-11-21: the 11-20 file's NINA_FLATS_DONE at 02:18 (the previous
+    morning's) started the run at 03:30, four minutes before the first flat."""
+    stale = [(_t(20, 2, 18), "NINA_FLATS_DONE"), (_t(20, 2, 39), "SHUTDOWN_DONE")]
+    v, until, why = mt.wait_verdict(_t(20, 20, 0), TONIGHT, stale, "06:30", 85, 15)
+    assert v == "sleep" and why.startswith("last slot ends")
+    tonight = stale + [(_t(21, 4, 27), "NINA_FLATS_DONE")]
+    assert mt.wait_verdict(_t(21, 3, 30), TONIGHT, stale, "06:30", 85, 15)[0] == "sleep"
+    v, _, why = mt.wait_verdict(_t(21, 4, 30), TONIGHT, tonight, "06:30", 85, 15)
+    assert v == "poll" and "04:27" in why
+    assert mt.evening_noon(_t(21, 3, 30)) == _t(20, 12, 0) == mt.evening_noon(_t(20, 20, 0))
+
+
+def test_journal_events_drop_the_previous_mornings_records(monkeypatch):
+    lines = ['{"seq":1,"ts":"2026-11-20T02:18:46-05:00","kind":"transition","event":"NINA_FLATS_DONE"}',
+             '{"seq":2,"ts":"2026-11-21T03:25:03-05:00","kind":"transition","event":"NIGHT_END_REQUESTED"}']
+    seen = []
+    monkeypatch.setattr(mt, "_ps", lambda script, timeout=60: (seen.append(script), "\n".join(lines))[1])
+    assert [n for _t_, n in mt.journal_events(_t(21, 3, 30))] == ["NIGHT_END_REQUESTED"]
+    assert "Test-Path" in seen[0]          # each day's file on its own: a missing one blanks nothing
+
+
+def test_a_morning_already_on_record_is_not_run_twice():
+    today = dt.date(2026, 11, 22)
+    assert mt.run_decision({"date": "2026-11-22", "render_rc": 0, "written": "x"}, today).startswith(
+        "this morning's run is on record")
+    assert mt.run_decision({"date": "2026-11-21", "render_rc": 0}, today) == "run"
+    assert mt.run_decision({"date": "2026-11-22", "render_rc": 1}, today) == "run"     # a failed render may be retried
+    assert mt.run_decision(None, today) == "run"
+    assert mt.run_decision({"date": "2026-11-22", "render_rc": 0}, today, force=True) == "run"

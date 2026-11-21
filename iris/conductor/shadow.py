@@ -250,9 +250,12 @@ class ShadowConductor:
 
     def __init__(self, repo_root: Path, journal: Journal, sun_probe=None,
                  roof_authority=None, mount_authority=None, planner=None,
-                 drives_checks=None, alerter=None):
+                 drives_checks=None, alerter=None, notifier=None):
         self.root = Path(repo_root)
         self.journal = journal
+        # The night-end signal to the Spark (iris/conductor/spark_signal,
+        # 2026-11-21): told after every journaled transition like the alerter.
+        self.notifier = notifier
         # docs/AUTOMATION_PLAN.md B1: the bell. Told after every journaled
         # transition; a hold entered or a blocking failure reaches the phone.
         # None (tests, or alerts.enabled False) = silent, as before 2026-10-29.
@@ -977,6 +980,11 @@ class ShadowConductor:
                         self.alerter.on_transition(event, prev, self.state, payload)
                     except Exception:  # noqa: BLE001
                         _logger.exception("alerter failed on %s", event)
+                if self.notifier is not None:
+                    try:
+                        self.notifier.on_transition(event, prev, self.state, payload)
+                    except Exception:  # noqa: BLE001
+                        _logger.exception("notifier failed on %s", event)
                 return Verdict("transition", self.state, would_refuse=would, seq=e.seq)
             if out.kind == "rejected":
                 e = self.journal.append("rejected", event, source,

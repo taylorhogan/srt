@@ -16,6 +16,7 @@ owner's password manager; this page says which exist and what each is for.
 |---|---|---|---|
 | Domain irisscience.org | the registrar in the owner's password manager | the public site and the subscriber mail | registrar login |
 | Web host | a Linux host on the tailnet (100.91.17.119, user taylor); Caddy serves /srv/iris-site, pulled from GitHub every 5 minutes; `iris-subscribe` holds the subscriber list and sends announcements | the site and the announcements | ssh key `~/.ssh/id_ed25519_iris` on the PC only |
+| PC → Spark ssh | the PC's `C:\Users\iriso\.ssh\id_ed25519_iris` public key in the Spark's `~/.ssh/authorized_keys` (2026-11-21), for the night-end signal (iris/conductor/spark_signal) | the Spark's 20:00 morning_trigger runs unsignalled from the plan's end + 85 min; nothing is lost | the key file on the PC |
 | Cloudflare tunnel | the public face of the web host | the public site (the tailnet copy still works) | Cloudflare login |
 | Tailscale | every machine: PC, Spark, web host, the owner's phone | the chat from anywhere, the Spark's sync, publishing, the site pull trigger | Tailscale admin login; each machine is enrolled |
 | GitHub | taylorhogan/srt (this repo; CI gates `release`) and taylorhogan/taylorhogan.github.io (the site) | `update` stops pulling; publishing stops; CI stops | the owner's GitHub account; both machines hold push rights through their git credentials |
