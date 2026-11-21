@@ -255,3 +255,32 @@ def test_http_provider_failure_is_a_503(store):
         assert code == 503 and "try again later" in body
     finally:
         srv.shutdown()
+
+
+def test_resend_requests_carry_their_own_user_agent():
+    """2026-11-21: Resend's Cloudflare front answers urllib's default
+    User-Agent with 403 "error code: 1010"; every confirmation failed."""
+    seen = []
+
+    class _R:
+        status = 200
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+
+    def opener(req, timeout=None):
+        seen.append(req)
+        return _R()
+
+    m = s.Resend("re_test", opener=opener)
+    m.send([{"to": "a@example.com"}])
+    ua = seen[0].get_header("User-agent")
+    assert ua and not ua.startswith("Python-urllib")
+
+
+def test_a_failed_confirmation_does_not_hold_the_retry_a_day(store):
+    """2026-11-21: the send failed (403), the row kept its sent stamp, and
+    the next sign-up within 24 h would have mailed nothing."""
+    assert store.subscribe("a@example.com", now=1000.0)
+    assert store.subscribe("a@example.com", now=1060.0) is None    # sent: held
+    store.mail_failed("a@example.com")
+    assert store.subscribe("a@example.com", now=1120.0)            # not sent: mails again

@@ -401,7 +401,10 @@ def _site_plan_is_todays() -> bool:
     from control import night_plan_status
     try:
         doc = night_plan_status.read(_PLAN_STATUS_PATH, max_age_h=None)
-        if not doc:
+        if not doc or doc.get("verdict") == "skip":
+            # A noon "no imaging" card is not tonight's plan (2026-11-19: a
+            # replan called the night on, the restart regenerated quietly,
+            # and the site and Pushover kept the skip).
             return False
         written = datetime.fromisoformat(doc["written"])
         now = _local_now()
@@ -1368,13 +1371,22 @@ def driven_cycle():
     # --- noon
     rec, first = _await_record(poller, "noon", until=sunset)
     resumed = bool(rec) and first and _record_age_s(rec) > _RESUMED_AGE_S
-    if rec is None or rec.get("outcome") != "good":
+    while rec is None or rec.get("outcome") != "good":
         if resumed:
             # Restarted on a day already called off: it was said at the time.
-            LOGGER.info("Skipping tonight — restarted after a %s noon plan", rec.get("outcome"))
+            LOGGER.info("Skipping tonight — restarted after a %s noon plan", (rec or {}).get("outcome"))
+        else:
+            _skip_noon(rec, "the conductor gave no noon plan before the sunset check")
+        # A night called off at noon can still be called on by a `replan`
+        # until the sunset check (2026-11-19: the replan made a good plan at
+        # 13:50 and the scheduler, back asleep until tomorrow, never saw it).
+        rec, _ = _await_record(poller, "noon", until=sunset - timedelta(minutes=10),
+                               after_seq=int((rec or {}).get("seq") or 0))
+        if rec is None:
             return
-        _skip_noon(rec, "the conductor gave no noon plan before the sunset check")
-        return
+        resumed = False
+        set_state(State.NOON_CHECK)
+        LOGGER.info("A replan after a night off: %s (seq %s)", rec.get("outcome"), rec.get("seq"))
     reply = poller.poll() or {}
     if resumed and reply.get("sunset"):
         # Restarted after tonight's sunset decision: the run was launched (or

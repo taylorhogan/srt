@@ -119,6 +119,13 @@ class Store:
         self.db.commit()
         return token
 
+    def mail_failed(self, email: str) -> None:
+        """The confirmation for *email* was not sent: clear its sent stamp so
+        the next sign-up mails at once instead of waiting out the 24 h."""
+        self.db.execute("UPDATE subscribers SET confirm_sent_at=NULL WHERE email=? AND status='pending'",
+                        (email,))
+        self.db.commit()
+
     def confirm(self, token: str):
         """-> email confirmed by this one-shot token, or None."""
         row = self._by_token("confirm_token", token)
@@ -253,7 +260,11 @@ class Resend:
         req = urllib.request.Request(
             self.url if single else self.url + "/batch",
             data=json.dumps(messages[0] if single else messages).encode("utf-8"),
+            # A User-Agent of our own: Resend's Cloudflare front answers
+            # urllib's default "Python-urllib/3.x" with 403 "error code: 1010"
+            # (2026-11-21, the first sign-up's confirmation).
             headers={"Authorization": "Bearer " + self.key, "Content-Type": "application/json",
+                     "User-Agent": "iris-subscribe/1.0 (+https://irisscience.org)",
                      "Idempotency-Key": secrets.token_hex(16)},
             method="POST")
         with self.opener(req, timeout=30) as r:
@@ -435,6 +446,7 @@ def make_handler(store: Store, limiter: RateLimiter, mailer):
                 answer = {"ok": True, "message": "Check your inbox for a confirmation email."}
                 if not limiter.allow_request(ip):
                     return self._json(200, answer)             # same answer: nothing to learn
+                token = None
                 try:
                     store.purge_pending()
                     token = store.subscribe(email)
@@ -442,6 +454,10 @@ def make_handler(store: Store, limiter: RateLimiter, mailer):
                         mailer.send([confirmation_message(email, token)])
                 except Exception as exc:  # noqa: BLE001
                     sys.stdout.write("subscribe failed: %s\n" % exc); sys.stdout.flush()
+                    if token:
+                        # Not sent, so not "sent within 24 h": a retry must mail
+                        # (2026-11-21: the first sign-up's failed send held it a day).
+                        store.mail_failed(email)
                     return self._json(503, {"error": "could not send the confirmation; try again later"})
                 return self._json(200, answer)
             self._json(404, {"error": "not found"})

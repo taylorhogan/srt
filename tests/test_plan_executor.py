@@ -197,6 +197,32 @@ def test_a_restart_on_a_skipped_day_says_nothing_again(monkeypatch):
     assert not w.kinds("chat") and not w.kinds("cal")
 
 
+def test_a_replan_after_a_night_off_calls_the_night_on(monkeypatch):
+    """2026-11-19: noon called the night off, the owner's `replan` made a good
+    plan at 13:50, and the scheduler, back asleep until tomorrow, never saw it."""
+    bad = rec("noon", "bad", 5, plan=dict(PLAN, will_image=False, good_hours=0, slots=[]))
+    w = World(monkeypatch, [reply(bad), reply(bad), reply(bad),
+                            reply(rec("noon", "good", 8)), reply(rec("noon", "good", 8)),
+                            reply(rec("noon", "good", 8)),
+                            reply(rec("noon", "good", 8), rec("sunset", "good", 9))])
+    S.driven_cycle()
+    assert w.kinds("skip_site")                       # the noon skip was said
+    assert [g[1] for g in w.kinds("generate")] == ["ngc7790"]
+    assert w.kinds("launch") == [("launch",)]
+
+
+def test_a_restart_on_a_skipped_day_still_hears_a_replan(monkeypatch):
+    bad = rec("noon", "bad", 5, plan=dict(PLAN, will_image=False, slots=[]))
+    w = World(monkeypatch, [reply(bad), reply(bad),
+                            reply(rec("noon", "good", 8)), reply(rec("noon", "good", 8)),
+                            reply(rec("noon", "good", 8), rec("sunset", "good", 9))],
+              now=datetime(2026, 10, 16, 13, 50, tzinfo=TZ))
+    S.driven_cycle()
+    assert not w.kinds("skip_site")                   # the skip is not said twice
+    assert [g[1] for g in w.kinds("generate")] == ["ngc7790"]
+    assert w.kinds("launch") == [("launch",)]
+
+
 def test_a_bad_sunset_skips_the_launch(monkeypatch):
     w = World(monkeypatch, [reply(rec("noon", "good", 5)), reply(rec("noon", "good", 5)),
                             reply(rec("noon", "good", 5), rec("sunset", "bad", 9,
@@ -374,3 +400,18 @@ def test_filters_post_shows_the_sequences_real_slot_times(tmp_path, monkeypatch)
     assert plan["slots"][0]["start"].startswith("2026-11-16T19:00")      # the plan is not touched
     other = dict(plan, slots=[slot("m31", "19:00", "20:00")])
     assert S._plan_with_real_times(other) is other
+
+
+def test_a_noon_skip_card_is_not_todays_plan(monkeypatch, tmp_path):
+    """2026-11-19: the restart after a replan took the noon skip card for
+    tonight's plan and regenerated quietly; the site kept "no imaging"."""
+    from control import night_plan_status
+    p = tmp_path / "status.json"
+    monkeypatch.setattr(S, "_PLAN_STATUS_PATH", str(p))
+    monkeypatch.setattr(S, "_local_now", lambda: datetime(2026, 10, 16, 15, 0, tzinfo=TZ))
+    monkeypatch.setattr(night_plan_status, "read", lambda path, max_age_h=None: {
+        "written": "2026-10-16T12:00:42-04:00", "verdict": "skip"})
+    assert S._site_plan_is_todays() is False
+    monkeypatch.setattr(night_plan_status, "read", lambda path, max_age_h=None: {
+        "written": "2026-10-16T12:00:42-04:00", "verdict": "imaging"})
+    assert S._site_plan_is_todays() is True
