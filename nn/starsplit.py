@@ -34,6 +34,17 @@ OVERLAP = 128
 # 69/40 -> 0/0 ADU, within 40 px 21/12 -> 1.1/1.0 (the sky's 0.98).
 FILL_PEAK_ADU = 1200.0
 FILL_R_MIN, FILL_R_MAX, FILL_BOX = 8, 30, 48
+# The HALO of a saturated star (2026-11-21): the compact fill stops where the
+# ring's pixels are no longer 3 rms off, but a 6th-magnitude star's halo is
+# 1-3 rms a pixel out to 300 px and coherent, and under a x6 palette gain it
+# was a magenta cloud round AE Aur in the split render of IC 405 (S-II: 12
+# ADU at 80 px, 1.8 at 160, 1.0 at 200, 0.5 at 300). For a star above
+# FILL_HALO_PEAK_ADU the ring MEDIAN (noise averaged down) is followed out
+# until it is within FILL_HALO_STOP_RMS of the level beyond, up to
+# FILL_HALO_R_MAX, and that hole is filled the same way.
+FILL_HALO_PEAK_ADU = 20000.0
+FILL_HALO_R_MAX = 500
+FILL_HALO_STOP_RMS = 0.1
 
 
 def build(features=(32, 64, 128, 256)):
@@ -119,6 +130,40 @@ def fill_bright_residuals(frame: np.ndarray, starless: np.ndarray, peak_adu: flo
         n += 1
     if n:
         log(f"    bright-star fill: {n} star(s) above {peak_adu:.0f} ADU")
+    # the halos of the saturated stars
+    n_halo = 0
+    for o in sel:
+        if float(o["peak"]) < FILL_HALO_PEAK_ADU:
+            continue
+        y, x = int(round(o["y"])), int(round(o["x"]))
+        R = FILL_HALO_R_MAX + 120
+        y0, y1, x0, x1 = max(0, y - R), min(h, y + R + 1), max(0, x - R), min(w, x + R + 1)
+        c = np.where(np.isfinite(out[y0:y1, x0:x1]), out[y0:y1, x0:x1], med).astype(np.float64)
+        yy, xx = np.mgrid[y0 - y:y1 - y, x0 - x:x1 - x]
+        rr = np.hypot(yy, xx)
+        beyond = (rr >= FILL_HALO_R_MAX) & (rr < FILL_HALO_R_MAX + 100)
+        if not beyond.any():
+            continue
+        base = float(np.median(c[beyond]))
+        stop = FILL_HALO_STOP_RMS * max(rms, 1e-6)
+        r_halo = None
+        for r in range(FILL_R_MAX, FILL_HALO_R_MAX, 10):
+            ring = (rr >= r) & (rr < r + 10)
+            if ring.any() and float(np.median(c[ring])) - base < stop:
+                r_halo = float(r)
+                break
+        if r_halo is None:
+            r_halo = float(FILL_HALO_R_MAX)
+        if r_halo <= FILL_R_MAX + 10:
+            continue                     # no halo past the compact fill
+        hole = rr <= r_halo
+        filled = sl_mod.normalised_fill(c, hole)
+        feather = np.clip((rr - r_halo) / 16.0, 0, 1)
+        patch = feather * c + (1 - feather) * filled
+        region = out[y0:y1, x0:x1]
+        out[y0:y1, x0:x1] = np.where(np.isfinite(region), patch, region).astype(out.dtype)
+        n_halo += 1
+        log(f"    halo fill: star at ({x}, {y}) to {r_halo:.0f} px")
     # the arms
     if arms is None and len(sel):
         discs = [(float(o["x"]), float(o["y"]), float(cp.radius_from_dex(np.log10(max(float(o["peak"]) / max(rms, 1e-6), 1.0)))))

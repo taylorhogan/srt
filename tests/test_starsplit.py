@@ -174,3 +174,27 @@ def test_faint_residual_fill_takes_small_stars_and_keeps_a_knot():
         assert abs(float(out["Ha"][y, x])) < 1.5                        # the star is gone
     assert float(out["Ha"][300, 300]) > 10.0                             # the knot stays
     assert abs(float(out["S-II"][80, 60])) < 1.0
+
+
+def test_a_saturated_stars_halo_is_filled_out_to_where_it_ends():
+    """2026-11-21: AE Aur's halo, 1-3 rms a pixel out to 300 px, stayed in the
+    starless plane under the 30 px compact fill and took the x6 gain."""
+    pytest.importorskip("sep")
+    from nn import starsplit
+    rng = np.random.default_rng(3)
+    h = w = 1400
+    y, x = np.mgrid[0:h, 0:w].astype(np.float32)
+    r = np.hypot(x - 700, y - 700)
+    sky = 100.0 + rng.normal(0, 4.0, (h, w)).astype(np.float32)
+    core = 60000.0 * np.exp(-r ** 2 / (2 * 4.0 ** 2))
+    halo = 40.0 * np.exp(-r / 80.0)                        # 4 ADU at 184 px, 1 at 295 px
+    frame = (sky + core + halo).astype(np.float32)
+    starless = (sky + halo).astype(np.float32)             # the network took the core, left the halo
+    out, n = starsplit.fill_bright_residuals(frame, starless, log=lambda s: None, arms=[])
+    def ring(a, r0):
+        m = (r >= r0) & (r < r0 + 10)
+        return float(np.median(a[m]))
+    assert ring(starless, 150) - 100.0 > 5.0               # the halo was there
+    assert abs(ring(out, 150) - 100.0) < 1.0               # and is gone
+    assert abs(ring(out, 60) - 100.0) < 1.5
+    assert abs(ring(out, 600) - ring(starless, 600)) < 0.2  # beyond the halo nothing moved

@@ -693,6 +693,40 @@ def push_final_crop(args, out_dir: Path, written: list, tag: str, crops: dict, r
     return push_crop(args, out_dir, written, tag, crops, log)
 
 
+def _cfg_palette_stars() -> str:
+    try:
+        return str((config.data().get("publish") or {}).get("palette_stars") or "discs")
+    except Exception:  # noqa: BLE001
+        return "discs"
+
+
+def split_planes(raw: dict, den: dict, log=print) -> tuple:
+    """(starless raw, starless denoised or None, model meta): every plane of
+    *raw* through the learned split (nn/starsplit, the bright-star and arm
+    fill), the starless planes denoised with the plane's own model when the
+    render has a denoised set, the faint residual stars the network leaves
+    filled on the denoised set (so they ride in the star layer, neutral,
+    instead of taking the gain). For color_process._prepare(palette_starless=)."""
+    from nn import denoiser, starsplit
+    model, mmeta, dev = starsplit.load()
+    sl_raw: dict = {}
+    sl_den: dict = {}
+    den_models: dict = {}
+    for f in raw:
+        sl, _ = starsplit.split_frame(raw[f], model, dev, log=log)
+        sl = np.nan_to_num(sl, nan=float(np.nanmedian(sl))).astype(np.float32)
+        sl_raw[f] = sl
+        if den and f in den:
+            mp = os.path.join(_root, DOMAIN_MODELS[domain_for(f)])
+            if mp not in den_models:
+                den_models[mp] = denoiser.load_model(Path(mp))
+            h, w = sl.shape
+            sl_den[f] = denoiser.denoise_frame(sl, den_models[mp], device=dev)[:h, :w]
+    if sl_den:
+        sl_den, _ = starsplit.fill_faint_residuals(sl_den, log=log)
+    return sl_raw, (sl_den or None), mmeta
+
+
 def _cfg_starless() -> str:
     try:
         return str((config.data().get("publish") or {}).get("starless") or "shadow")
@@ -1006,10 +1040,29 @@ def routine(args) -> int:
     # between raw and denoised is the model's. compose() would instead pick
     # black per channel by percentile, which lands at a different ADU on a
     # denoised channel and manufactures a colour shift.
+    # The palette's stars from the learned split (2026-11-21, --palette-stars
+    # learned, config publish.palette_stars): the gain goes to the starless
+    # planes and the star layer goes back neutral; the learned lighting is
+    # weighted off the stars. Palette recipes only; a split that fails
+    # leaves the disc rule in place and says so.
+    split_raw = split_den = None
+    narrow = {"Ha", "O-III", "S-II"}
+    if (getattr(args, "palette_stars", "discs") == "learned" and opts["palette_gain"] is not None
+            and set(mapping.values()) <= narrow):
+        t0 = time.time()
+        try:
+            split_raw, split_den, smeta = split_planes(raw, den, log)
+            log(f"palette stars: learned split ({smeta.get('name')}) in {time.time() - t0:.0f}s"
+                + ("" if split_den else "; no denoised set, the raw star layer on every composite"))
+            meta["palette_stars"] = {"source": "learned", "model": str(smeta.get("name"))}
+        except Exception as e:  # noqa: BLE001
+            log(f"palette stars: learned split failed ({type(e).__name__}: {e}) -- discs as before")
+            split_raw = split_den = None
     raw_info = {}
     subbed_raw, white = color_process._prepare(
         to_channels(raw), opts["subtract_background"], opts["mesh"], opts["white_pct"],
         white_balance=opts["white_balance"], info=raw_info,
+        palette_starless=to_channels(split_raw) if split_raw else None,
         # a colour recipe's R, G, B brought to one star width (match_colour_widths)
         chroma_match=("L" in mapping) and getattr(args, "chroma_match", True),
         palette_gain=opts["palette_gain"],
@@ -1084,7 +1137,7 @@ def routine(args) -> int:
     look = {"scnr": opts["scnr"], "saturation": args.saturation, "tone": tone,
             "star_img": star_img, "star_mask": star_mask_arr}
 
-    def emit(subbed, tag):
+    def emit(subbed, tag, star_layer=None):
         # HALRGB: R and L are the blended planes; HA is the raw Ha stack and
         # HA_EXCESS the emission map that was added (black at 0: it is
         # zero-floored, so it has no sky to anchor to).
@@ -1106,7 +1159,9 @@ def routine(args) -> int:
             pth = out_dir / f"{args.dso}_{args.recipe}_{tag}_{names[ch]}.jpg"
             img.save(pth, quality=92, optimize=True)
             written.append(pth)
-        rgb = compose_rgb(subbed, blacks, white, soft, **look)
+        sw = (color_process.star_weight(star_layer, white, soft) if star_layer is not None
+              and "LSYN" in subbed else None)
+        rgb = compose_rgb(subbed, blacks, white, soft, **look, star_weight=sw)
         pth = color_process.save_rgb(rgb, out_dir / f"{args.dso}_{args.recipe}_{tag}.jpg",
                                      max_px=args.max_px)
         written.append(pth)
@@ -1118,7 +1173,8 @@ def routine(args) -> int:
                     # the routine stretch, not the final's
                     if "LSYN" in subbed and "LSYN" not in routine["blacks"]:
                         synthetic_black(routine["blacks"])
-                    src = compose_rgb(subbed, routine["blacks"], routine["white"], routine["soft"], **look)
+                    src = compose_rgb(subbed, routine["blacks"], routine["white"], routine["soft"], **look,
+                                      star_weight=sw)
                 rec = auto_crop.propose(src, obj_type)
                 rec["tag"] = tag
                 rec["stretch"] = "routine"      # never the final's (above)
@@ -1145,7 +1201,8 @@ def routine(args) -> int:
         # composite blue (2026-10-09), which reads as the model's fault.
         subbed_den, _ = color_process._prepare(
             to_channels(den), opts["subtract_background"], opts["mesh"],
-            opts["white_pct"], **shared_from_raw(raw_info))
+            opts["white_pct"], **shared_from_raw(raw_info),
+            palette_starless=to_channels(split_den) if split_den else None)
         emit(subbed_den, "denoised")
 
     # The third class: the denoised set (raw when no model applies) with its
@@ -1161,10 +1218,13 @@ def routine(args) -> int:
                                         iters=args.deblur or color_process.DEBLUR_ITERS,
                                         no_l=args.no_l)
         if lea is not None:
+            lea_info: dict = {}
+            sl_for_lea = split_den if (split_den and den) else split_raw
             subbed_lea, _ = color_process._prepare(
                 lea, opts["subtract_background"], opts["mesh"],
-                opts["white_pct"], **shared_from_raw(raw_info))
-            emit(subbed_lea, lea_tag)
+                opts["white_pct"], **shared_from_raw(raw_info), info=lea_info,
+                palette_starless=to_channels(sl_for_lea) if sl_for_lea else None)
+            emit(subbed_lea, lea_tag, star_layer=lea_info.get("palette_star_layer"))
 
     # Optional: the same set through the starless deconvolution, the third
     # composite from 2026-10-19 to 10-21, kept for comparison (--deblur N).
@@ -1230,7 +1290,8 @@ def synthetic_black(blacks: dict) -> dict:
 
 
 def compose_rgb(subbed: dict, blacks: dict, white: float, soft: float, *, scnr: float = 0.0,
-                saturation: float = 1.0, star_img=None, star_mask=None, tone=None) -> np.ndarray:
+                saturation: float = 1.0, star_img=None, star_mask=None, tone=None,
+                star_weight=None) -> np.ndarray:
     """The finished composite of one set on one stretch: R, G, B stretched,
     SCNR, lit by L (or by the synthetic L's sharpened/unsharpened ratio),
     chroma scaled about each pixel's luminance, the tone's finish
@@ -1249,9 +1310,12 @@ def compose_rgb(subbed: dict, blacks: dict, white: float, soft: float, *, scnr: 
             sc = np.where(rl > 1e-4, lum / np.maximum(rl, 1e-4), 0.0)
         rgb = rgb * np.clip(sc, 0.0, color_process.MAX_LUM_BOOST)[:, :, None]
     elif "LSYN" in subbed and "LSYN_REF" in subbed:
+        # star_weight (the learned split's star layer on this stretch): the
+        # ratio is weighted off the stars, which go back as imaged
         rgb = rgb * color_process.synthetic_gain(
             stretch_plane(subbed["LSYN"], blacks["LSYN"], white, soft),
-            stretch_plane(subbed["LSYN_REF"], blacks["LSYN_REF"], white, soft))[:, :, None]
+            stretch_plane(subbed["LSYN_REF"], blacks["LSYN_REF"], white, soft),
+            star_weight=star_weight)[:, :, None]
     if saturation != 1.0:
         # Chroma scaled about each pixel's own luminance, so brightness is
         # untouched and only the colour difference from grey grows (or
@@ -1451,6 +1515,11 @@ def main() -> int:
                     help="D1: stretch with auto_stretch_v2, judge the best composite with "
                          "render_qc, write <dso>/final/<dso>_<recipe>_final.jpg + final.json "
                          "and push the picture with the verdict (publishes nothing)")
+    ap.add_argument("--palette-stars", default=_cfg_palette_stars(), choices=("discs", "learned"),
+                    help="a palette's stars: 'discs' neutralises them under peak-sized discs (the rule "
+                         "to 2026-11-21); 'learned' takes them off with nn/starsplit, gains the starless "
+                         "planes and puts the stars back neutral, the learned lighting weighted off them "
+                         "(config publish.palette_stars)")
     ap.add_argument("--starless", default=_cfg_starless(), choices=("shadow", "off"),
                     help="write and push the starless composite beside a palette render "
                          "(nn/starsplit; config publish.starless)")

@@ -693,6 +693,66 @@ def apply_palette_gain(subbed: dict[str, np.ndarray], gain,
     return out, factors
 
 
+PALETTE_STAR_SOURCE = "discs"       # "learned": the star layer from nn/starsplit, no discs (2026-11-21)
+STAR_WEIGHT_FULL = 0.15             # a star layer this bright (stretched) switches the learned lighting off
+
+
+def palette_gain_split(subbed: dict, starless: dict, gain, info: Optional[dict] = None,
+                       knee=PALETTE_GAIN_KNEE_SIGMA, smooth_px: float = PALETTE_GAIN_SMOOTH_PX
+                       ) -> tuple[dict, Optional[dict], Optional[np.ndarray]]:
+    """The palette gain with the stars taken off first (2026-11-21).
+
+    *starless* is {role: plane} from the learned split (nn/starsplit), on the
+    same subtraction as *subbed*. The gain goes to the starless planes alone
+    (apply_palette_gain with no discs, the smooth-part and knee rules as
+    before) and the star layer, subbed - starless averaged over the distinct
+    planes so a star is the same in every channel (the "neutral" rule), goes
+    back on top. No disc is sized, no fill is painted: on IC 405's first
+    gain-26 SHO the discs were the white cores of AE Aur and its neighbour
+    while their halos and spikes ran 300 px, every pixel outside the disc
+    took S-II x5.4 and O-III x6 and clipped magenta, and the block fill
+    under one disc went wrong beside a saturated neighbour. Returns
+    (channels, {role: factor}, star layer); (subbed, None, None) with no gain.
+    """
+    roles = [c for c in ("R", "G", "B") if c in subbed and c in starless]
+    if gain is None or not roles:
+        return subbed, None, None
+    gained, factors = apply_palette_gain({c: starless[c] for c in roles}, gain,
+                                         protect_stars=False, info=info, knee=knee, smooth_px=smooth_px)
+    if not factors:
+        return subbed, None, None
+    distinct = {id(subbed[c]): c for c in roles}
+    star = np.mean([np.nan_to_num(np.asarray(subbed[c], dtype=np.float32)
+                                  - np.asarray(starless[c], dtype=np.float32))
+                    for c in distinct.values()], axis=0).astype(np.float32)
+    out = dict(subbed)
+    done: dict[int, np.ndarray] = {}
+    for c in roles:
+        k = id(subbed[c])
+        if k not in done:
+            done[k] = (np.asarray(gained[c], dtype=np.float32) + star).astype(np.float32)
+        out[c] = done[k]
+    if info is not None:
+        info["star_source"] = "learned"
+        info["star_discs"] = None
+        info["star_arms"] = None
+    _logger.info("Palette gain: stars from the learned split put back neutral (%d planes)", len(distinct))
+    return out, factors, star
+
+
+def star_weight(star_layer: np.ndarray, white: float, soft: float,
+                full: float = STAR_WEIGHT_FULL) -> np.ndarray:
+    """0..1 per pixel: how much of the picture there is star light, from the
+    star layer on the composite's own stretch; 1 where the layer's stretched
+    value reaches *full*. The learned lighting ratio is weighted by 1 - w
+    (synthetic_gain(star_weight=)), because the deconvolved synthetic L pulls
+    a star's wing into its core and the ratio dipped below 1 in a ring round
+    every medium star (IC 405, 2026-11-21: dark halos)."""
+    y = np.clip(np.nan_to_num(star_layer) / max(float(white), 1e-6), 0.0, 1.0)
+    st = np.arcsinh(y / soft) / np.arcsinh(1.0 / soft)
+    return np.clip(st / max(float(full), 1e-6), 0.0, 1.0).astype(np.float32)
+
+
 def knee_level(plane: np.ndarray, mask, sigma_px: float = PALETTE_GAIN_KNEE_PX) -> np.ndarray:
     """The plane's local level at *sigma_px* (gaussian), the star discs in
     *mask* (0..1, or None) left out by normalised convolution: what the gain's
@@ -802,7 +862,7 @@ LEARNED_BOOST_FLOOR = 0.1
 
 
 def synthetic_gain(lum: np.ndarray, ref: np.ndarray,
-                   floor: float = LEARNED_BOOST_FLOOR) -> np.ndarray:
+                   floor: float = LEARNED_BOOST_FLOOR, star_weight=None) -> np.ndarray:
     """The brightness factor a deconvolved synthetic luminance applies, from
     the stretched deconvolved frame and the stretched frame it was made from
     (stacking/deblur.SYNTHETIC_LUM / _REF, same black, same white, same
@@ -817,6 +877,9 @@ def synthetic_gain(lum: np.ndarray, ref: np.ndarray,
     if floor and floor > 0:
         conf = np.clip((np.nan_to_num(ref) - floor) / floor, 0.0, 1.0)
         g = 1.0 + (g - 1.0) * conf
+    if star_weight is not None:
+        # the stars are put back as imaged: the ratio never touches them
+        g = 1.0 + (g - 1.0) * (1.0 - np.clip(np.asarray(star_weight, dtype=np.float32), 0.0, 1.0))
     return g.astype(np.float32)
 
 # Per-channel inspection JPEGs are capped at the preview's size; full resolution
@@ -1718,7 +1781,8 @@ def _prepare(channels: dict[str, np.ndarray], subtract_background: bool,
              palette_quiet: Optional[dict] = None, palette_arms=None,
              palette_knee=PALETTE_GAIN_KNEE_SIGMA,
              chroma_match: bool = False,
-             chroma_sigmas: Optional[dict] = None) -> tuple[dict, float]:
+             chroma_sigmas: Optional[dict] = None,
+             palette_starless: Optional[dict] = None) -> tuple[dict, float]:
     """Background-subtract every channel and find the shared white point.
 
     Factored out of compose() because the per-channel exports have to be the
@@ -1732,6 +1796,10 @@ def _prepare(channels: dict[str, np.ndarray], subtract_background: bool,
     set's back in as wb_factors / ha_ratio / palette_gain so both share one
     balance, blend and gain. *palette_quiet* is the denoised set, when the
     caller has it, for the gain's faint-star search (join_quiet_stars).
+    *palette_starless* ({role: starless plane, sky in, the learned split of
+    the same channels) sends the gain through palette_gain_split instead:
+    no discs, the star layer back neutral; info["palette_star_layer"] is
+    that layer, info["palette_star_source"] "learned".
     """
     if subtract_background:
         subbed = {k: _remove_gradient(v, mesh, info=info, name=k) for k, v in channels.items()}
@@ -1778,9 +1846,18 @@ def _prepare(channels: dict[str, np.ndarray], subtract_background: bool,
     # plane clip harder, which they did anyway.
     white_before = shared_white(subbed, white_pct)
     gain_info: dict = {}
-    subbed, gain_used = apply_palette_gain(subbed, palette_gain, star_discs=palette_stars,
-                                           info=gain_info, quiet=palette_quiet,
-                                           star_arms=palette_arms, knee=palette_knee)
+    star_layer = None
+    if palette_starless and palette_gain is not None:
+        # the starless planes on the SAME subtraction as their channels
+        sl = {c: np.asarray(palette_starless[c], dtype=np.float32)
+              - (np.asarray(channels[c], dtype=np.float32) - np.asarray(subbed[c], dtype=np.float32))
+              for c in palette_starless if c in subbed and c in channels}
+        subbed, gain_used, star_layer = palette_gain_split(subbed, sl, palette_gain,
+                                                           info=gain_info, knee=palette_knee)
+    else:
+        subbed, gain_used = apply_palette_gain(subbed, palette_gain, star_discs=palette_stars,
+                                               info=gain_info, quiet=palette_quiet,
+                                               star_arms=palette_arms, knee=palette_knee)
     if gain_used:
         _logger.info("Palette gain: %s", describe_palette_gain(gain_used))
     # HALRGB: the blend happens here, on subtracted linear data, so the
@@ -1795,6 +1872,8 @@ def _prepare(channels: dict[str, np.ndarray], subtract_background: bool,
                      "palette_stars": gain_info.get("star_discs"),
                      "palette_arms": gain_info.get("star_arms"),
                      "palette_knee": gain_info.get("palette_knee"),
+                     "palette_star_source": gain_info.get("star_source", "discs") if gain_used else None,
+                     "palette_star_layer": star_layer,
                      "chroma_match": cm_info.get("chroma_match")})
     return subbed, (white_before if gain_used else shared_white(subbed, white_pct))
 

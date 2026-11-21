@@ -265,8 +265,27 @@ Since 2026-09-25 the conductor decides both invariants (ADR 0014): every roof fi
   stars, no star discs pinned; pushed after the crop; recorded in the meta as
   `starless`; palette recipes only, never in final mode. A chat `stars=none`
   cannot run on the PC (no GPU, no model), so the Spark's morning file is the
-  product. Next: `apply_palette_gain(star_source="learned")` judged by eye
-  beside the hand rules.**
+  product. **Built 2026-11-21, behind `--palette-stars learned` (config
+  `publish.palette_stars`, default `discs` until the owner flips it):**
+  `color_process.palette_gain_split` sends the palette gain to the learned
+  split's STARLESS planes and puts the star layer (subbed minus starless,
+  averaged over the distinct planes) back neutral, no disc sized and no
+  fill painted; `synthetic_gain(star_weight=)` weights the learned
+  lighting ratio off the stars (`star_weight`, the layer on the
+  composite's own stretch, `STAR_WEIGHT_FULL` 0.15), because the
+  deconvolved synthetic L pulled every medium star's wing into its core
+  and the ratio dipped below 1 in a ring round each (IC 405's first
+  gain-26 SHO: dark halos); and `starsplit.fill_bright_residuals` grew a
+  HALO stage for saturated stars (`FILL_HALO_PEAK_ADU` 20000: the ring
+  median followed out to `FILL_HALO_R_MAX` 500 px until within 0.1 rms of
+  the level beyond), because AE Aur's halo, 1-3 rms a pixel to 300 px,
+  stayed in the starless plane under the 30 px compact fill and took the
+  x6 gain as a magenta cloud. On that SHO the disc rule had left AE Aur
+  and its neighbour magenta with magenta spikes (discs 60 px, halos 300)
+  and a stepped magenta block where a disc's fill met a saturated
+  neighbour; the split render shows them white with neutral halos and the
+  medium stars without rings. The render's `split_planes` reuses the
+  starless product's split and denoise.**
 
   **The morning render cuts every channel to the common footprint (since
   2026-10-28).** The stacker crops a lone stack to where 80 % of its frames

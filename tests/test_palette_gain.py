@@ -467,3 +467,50 @@ def test_hss_is_hoo_with_s_ii_for_o_iii():
     assert cp.palette_gain_roles("HSS", "S-II:2") == {"G": 2.0, "B": 2.0}
     assert cp.palette_gain_roles("HSS", "hubble") == "hubble"
     assert cp.stretch_class("HSS") == "narrowband"
+
+
+# The stars from the learned split (2026-11-21): the gain goes to the starless
+# planes, the star layer goes back the same in every channel, and the learned
+# lighting ratio is weighted off the stars.
+
+def _field(star_peak=400.0, neb=20.0):
+    y, x = np.mgrid[0:96, 0:96].astype(np.float32)
+    star = star_peak * np.exp(-((x - 48) ** 2 + (y - 48) ** 2) / (2 * 2.5 ** 2))
+    neb_plane = np.full((96, 96), neb, dtype=np.float32)
+    return star, neb_plane
+
+
+def test_split_gain_leaves_the_star_neutral_and_gains_the_nebula_only():
+    star, neb = _field()
+    # S-II (R) is a quarter of Ha (G); the star is 3x brighter through S-II than Ha
+    r = neb * 0.25 + 3 * star
+    subbed = {"R": r, "G": neb + star, "B": r}                 # B is R's plane (HOO-style: one object)
+    starless = {"R": neb * 0.25, "G": neb, "B": neb * 0.25}
+    info = {}
+    out, factors, layer = cp.palette_gain_split(subbed, starless, "hubble", info=info, knee=0.0, smooth_px=0)
+    assert factors["R"] == pytest.approx(4.0) and factors["G"] == 1.0
+    # the nebula took the gain: R's sky far from the star is Ha's level now
+    assert out["R"][5, 5] == pytest.approx(out["G"][5, 5], rel=1e-3)
+    # the star is the same in every channel at its centre (neutral), not 3x
+    assert out["R"][48, 48] == pytest.approx(out["G"][48, 48], rel=1e-4)
+    assert out["R"][48, 48] == pytest.approx(out["B"][48, 48], rel=1e-4)
+    # and the layer is the mean of the two distinct star profiles (3x and 1x: 2x)
+    assert layer[48, 48] == pytest.approx(2 * 400.0, rel=0.01)
+    assert info["star_source"] == "learned" and info["star_discs"] is None
+    # no gain: untouched
+    same, none, nolayer = cp.palette_gain_split(subbed, starless, None)
+    assert none is None and nolayer is None and same is subbed
+
+
+def test_star_weight_switches_the_learned_lighting_off_on_the_stars():
+    star, _ = _field(star_peak=100.0)
+    w = cp.star_weight(star, white=100.0, soft=0.025)
+    assert w[48, 48] == pytest.approx(1.0) and w[5, 5] == pytest.approx(0.0)
+    assert 0.0 < w[48, 56] < 1.0                       # the skirt ramps
+    ref = np.full((96, 96), 0.5, dtype=np.float32)
+    lum = ref * 0.6                                     # a ring the deconvolution darkened
+    plain = cp.synthetic_gain(lum, ref)
+    assert plain[48, 48] == pytest.approx(0.6, rel=1e-3)
+    weighted = cp.synthetic_gain(lum, ref, star_weight=w)
+    assert weighted[48, 48] == pytest.approx(1.0, rel=1e-3)        # the star: untouched
+    assert weighted[5, 5] == pytest.approx(0.6, rel=1e-3)          # the sky: the ratio as before
