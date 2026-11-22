@@ -221,3 +221,25 @@ def test_a_full_disk_is_an_emergency_push_and_the_rest_are_routine():
     assert push_priority(["disk nearly full: 20 GB free on the image drive -- image!! refuses"]) == 2
     assert push_priority(["roof NOT confirmed closed", "telescope mount is powered ON"]) == 0
     assert push_priority([]) == 0
+
+
+def test_the_host_count_line_parses_and_anything_else_is_none():
+    from scripts.morning_check import parse_subscriber_count
+    assert parse_subscriber_count(
+        "confirmed 2, pending 0, unsubscribed 1, articles announced 67\n") == {
+        "confirmed": 2, "pending": 0, "unsubscribed": 1}
+    assert parse_subscriber_count("sudo: a password is required") is None
+    assert parse_subscriber_count(None) is None
+
+
+def test_the_daily_line_names_free_disk_and_subscribers():
+    from scripts.morning_check import report_line, NOT_MEASURED
+    disk = {"usage": {"path": "C:/", "free_gb": 412.4, "total_gb": 930.0}}
+    subs = {"confirmed": 2, "pending": 1, "unsubscribed": 0}
+    assert report_line(disk, subs) == (
+        "disk 412 GB free of 930 GB; 2 subscribers (1 awaiting confirmation)")
+    assert report_line(disk, {"confirmed": 1, "pending": 0, "unsubscribed": 0}).endswith(
+        "; 1 subscriber")
+    assert report_line({"usage": None}, None) == (
+        "disk free space unreadable; subscribers: web host did not answer")
+    assert report_line(NOT_MEASURED, None).startswith("disk free space unreadable")

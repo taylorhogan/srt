@@ -1,14 +1,14 @@
 """morning_check.py -- is the observatory in its daytime rest state?
 
-    python scripts/morning_check.py            # check, push only on a problem
+    python scripts/morning_check.py            # check and push the report
     python scripts/morning_check.py --dry-run  # check and print, never push
-    python scripts/morning_check.py --always-push  # push the result even when clear
-    python scripts/morning_check.py --always-push-until 2026-09-19  # ... through that date
 
 Run daily at 09:00 by the scheduled task IrisMorningCheck (morning_check.cmd).
-It pushes ONLY when something is wrong (operator, 2026-09-19, after the daily
-trial); the speed test is measured and logged every morning either way and its
-numbers ride along on an alert. User request 2026-09-16. Every morning all of
+It pushes EVERY morning since 2026-11-22 (owner: "the number of subscribers and
+free disk space"); from 2026-09-19 to then it pushed only when something was
+wrong. The push carries the verdict, the speed test, the image drive's free
+space and the site's email list (confirmed subscribers, read from the web host
+over ssh: a host that does not answer is a line, never a problem). User request 2026-09-16. Every morning all of
 these must hold:
 
   roof closed        vision: roof tag decoded at its shut position
@@ -271,6 +271,50 @@ def read_disk():
     warn_gb, refuse_gb = disk_space.thresholds(cfg)
     return {"usage": disk_space.usage(disk_space.data_path(cfg)),
             "warn_gb": warn_gb, "refuse_gb": refuse_gb}
+
+
+def parse_subscriber_count(text):
+    """{"confirmed", "pending", "unsubscribed"} from the host's
+    `iris-subscribe count` line, or None when it is not that line. Pure."""
+    import re
+    m = re.search(r"confirmed (\d+), pending (\d+), unsubscribed (\d+)", text or "")
+    if not m:
+        return None
+    return {"confirmed": int(m.group(1)), "pending": int(m.group(2)),
+            "unsubscribed": int(m.group(3))}
+
+
+def read_subscribers(timeout_s=45):
+    """The site's email list from the web host (scripts/host/iris_subscribe.py),
+    over the same ssh the live feed and site_push use, or None. Never raises:
+    the list is a line in the report, not a check, so a host that does not
+    answer is said and nothing else."""
+    import subprocess
+    try:
+        from scripts import live_push
+        out = subprocess.run(
+            ["ssh", "-i", live_push.KEY] + live_push._SSH_OPTS
+            + [live_push.HOST, "sudo -n -u irismail iris-subscribe count"],
+            capture_output=True, text=True, timeout=timeout_s)
+        return parse_subscriber_count(out.stdout)
+    except Exception:  # noqa: BLE001
+        _logger.warning("morning check: could not read the subscriber count", exc_info=True)
+        return None
+
+
+def report_line(disk, subscribers):
+    """The every-morning line: free disk and the email list. Pure."""
+    u = (disk or {}).get("usage") if disk is not NOT_MEASURED else None
+    disk_part = ("disk %.0f GB free of %.0f GB" % (u["free_gb"], u["total_gb"])
+                 if u else "disk free space unreadable")
+    if subscribers is None:
+        subs_part = "subscribers: web host did not answer"
+    else:
+        subs_part = "%d subscriber%s" % (subscribers["confirmed"],
+                                         "" if subscribers["confirmed"] == 1 else "s")
+        if subscribers["pending"]:
+            subs_part += " (%d awaiting confirmation)" % subscribers["pending"]
+    return disk_part + "; " + subs_part
 
 
 def north_rehome_step(dry_run=False):
@@ -687,6 +731,7 @@ def main():
     history = _speed_history()
     speed, speed_tries = read_speed(history)
     disk = read_disk()
+    subscribers = read_subscribers()
     problems, warnings = evaluate(vision, kasa, pegasus, speed, history, cameras,
                                   pegasus_recovery=recovery, disk=disk)
     warnings += read_roof_moves()
@@ -698,7 +743,8 @@ def main():
              "ok": not problems, "problems": problems, "warnings": warnings,
              "vision": vision, "kasa": kasa, "pegasus": pegasus,
              "pegasus_recovery": recovery, "speed": speed,
-             "speed_attempts": speed_tries, "cameras": cameras, "disk": disk}
+             "speed_attempts": speed_tries, "cameras": cameras, "disk": disk,
+             "subscribers": subscribers}
     _append_log(entry)
     print(json.dumps(entry, indent=2, default=str))
 
@@ -709,13 +755,8 @@ def main():
         speed_line += " (after %d attempts; %s)" % (
             len(speed_tries),
             "; ".join(t["suspect"] for t in speed_tries if t["suspect"]))
-    if not problems and not warnings and not args.always_push:
-        _logger.info("morning check: %s", speed_line)
-        _logger.info("morning check: all clear (scope tag %s/%s frames, %.1f px off park)",
-                     vision.get("scope_tag_frames"), vision.get("frames"),
-                     float(vision.get("worst_corner_px") or 0.0))
-        return 0
-
+    # Every morning pushes since 2026-11-22 (owner: the subscriber count and the
+    # free disk, every day); --always-push is kept so old task lines still parse.
     if problems:
         lines = ["Iris morning check FAILED:"] + ["- " + p for p in problems]
     elif warnings:
@@ -727,6 +768,7 @@ def main():
                  % (vision.get("scope_tag_frames"), vision.get("frames"),
                     float(vision.get("worst_corner_px") or 0.0))]
     lines.append(speed_line)
+    lines.append(report_line(disk, subscribers))
     lines += ["- warning: " + w for w in warnings]
     msg = "\n".join(lines)
     _logger.warning(msg.replace("\n", " | "))

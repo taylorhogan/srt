@@ -26,7 +26,9 @@ Tailscale). `help` lists every command; `help <command>` explains one.
 | sunset | PC | the sunset check confirms or regenerates; the roof opens; N.I.N.A runs |
 | dawn | PC | park, close, flats; end.py's push says the roof is confirmed closed |
 
-**A quiet day is a good day.** The watchdogs push only on failure. If you want
+**A quiet day is a good day.** The watchdogs push only on failure, except the 09:00
+morning check, which pushes every morning (since 2026-11-22): its verdict, the internet
+speed, free disk on the image drive and the site's subscriber count. If you want
 proof of life, type `status`. It answers with the north camera's picture and its roof-tag offset, then Iris cam's picture with the scope tag's offset from the park pose and the limit (187 px): the roof is the north camera's word, the scope is Iris cam's.
 
 ## 2. The alerts, and what to do
