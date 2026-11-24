@@ -316,7 +316,7 @@ def make_stacking_movie(
         ckpt()
         paths = by_filter[filt]
         say(f"{filt}: registering {len(paths)} frames…")
-        cal = stacker.calibration_from_config(filt if use_flats else None, like=paths[0])
+        cal = stacker.calibration_from_config(filt if use_flats else None, like=paths)
         pre = load_precomputed_fwhm_stars(dso_dir, paths, arcsec)
         frames, accepted, fwhm = stacker._prepare_for_convergence(
             paths, register=True, downscale_to=downscale_to,

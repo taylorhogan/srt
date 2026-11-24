@@ -424,19 +424,46 @@ def results_dir(dso_name: str) -> Path:
     return out
 
 
+def stack_like(lights, filter_name: Optional[str] = None) -> Optional[Path]:
+    """The light whose camera gain the stack of *lights* will be built at, or None.
+
+    The same rule as stack(): the house gain for the filter when any light is
+    at it (house_gain), else the lights' majority (select_gain). Every caller
+    that asked for calibration "like paths[0]" got the FIRST light's gain, and
+    on a target shot at gain 0 before its filter moved to 26 that is the old
+    gain: IC 405's every gain-26 stack to 2026-11-24 was handed the gain-0
+    bias, darks and flats, which stack() then dropped as mismatched, and the
+    nebula was rendered uncalibrated (no bias, no flat) while gain-26 flats sat
+    on disk. *lights* may be one path too.
+    """
+    if lights is None:
+        return None
+    if isinstance(lights, (str, Path)):
+        return Path(lights)
+    paths = [Path(p) for p in lights]
+    if not paths:
+        return None
+    _gain, kept, _other = select_gain(paths, house=house_gain(filter_name))
+    return kept[0] if kept else paths[0]
+
+
 def calibration_paths_from_config(
     filter_name: Optional[str] = None,
-    like: Optional[Path] = None,
+    like=None,
 ) -> tuple[list[Path], list[Path], list[Path]]:
     """(bias, dark, flat) frame paths from the ``calibration`` config block.
 
     Flats are only returned when *filter_name* is given, since they are
     per-filter, and they are matched by FITS header rather than by directory
-    layout (see flats_by_filter). *like* is a light frame: with it, only the
-    calibration at that frame's camera gain is returned (match_calibration),
-    since a master at another gain is worse than none.
+    layout (see flats_by_filter). *like* is a light frame, or the stack's
+    whole list of lights: with it, only the calibration at the gain the stack
+    will be built at is returned (stack_like, match_calibration), since a
+    master at another gain is worse than none. Pass the LIST wherever the
+    lights may mix gains (2026-11-24): the first light's gain is not the
+    stack's once a filter has moved to another.
     """
     from configs import config
+    like = stack_like(like, filter_name)
     cal = config.data().get("calibration", {}) or {}
     bias = _collect_fits(Path(cal["bias_dir"])) if cal.get("bias_dir") else []
     dark = _collect_fits(Path(cal["dark_dir"])) if cal.get("dark_dir") else []
@@ -482,12 +509,13 @@ def _dedupe(paths: list[Path]) -> list[Path]:
 
 
 def calibration_from_config(filter_name: Optional[str] = None,
-                            like: Optional[Path] = None) -> Optional[CalibrationSet]:
+                            like=None) -> Optional[CalibrationSet]:
     """Build the masters named by ``calibration`` config, or None.
 
     Pass *filter_name* to get that filter's flat attached as well; without it
     the set is bias+dark only, because a flat is meaningless across filters.
-    Pass *like*, one of the lights, to get the masters at its camera gain.
+    Pass *like*, the stack's lights (or one of them), to get the masters at the
+    gain the stack is built at (stack_like).
     """
     try:
         bias, dark, flat = calibration_paths_from_config(filter_name, like=like)
@@ -1565,7 +1593,7 @@ def _vignette_map(paths: list[Path], ny: int = 8, nx: int = 12) -> Optional[np.n
     medians), so the two line up cell for cell. Cached per master flat."""
     try:
         filt = str(fits.getheader(paths[0]).get("FILTER", "")).strip()
-        cal = calibration_from_config(filt or None, like=paths[0])
+        cal = calibration_from_config(filt or None, like=paths)
         if cal is None or cal.flat_npy is None:
             return None
         key = str(cal.flat_npy)

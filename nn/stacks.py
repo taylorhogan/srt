@@ -241,7 +241,9 @@ def stack_paths(
 
     if len(paths) < max(1, int(min_frames)):
         return None
-    bias, dark, flat = stacker.calibration_paths_from_config(filter_name, like=Path(paths[0]))
+    # The whole list, not paths[0]: the stack is built at the house gain (or
+    # the majority's), and the first light may be at the old one (2026-11-24).
+    bias, dark, flat = stacker.calibration_paths_from_config(filter_name, like=[Path(p) for p in paths])
     if not bias and not dark:
         progress_cb("    no calibration masters in config — stacking uncalibrated")
     img, _meta = stacker.stack(

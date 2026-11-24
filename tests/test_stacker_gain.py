@@ -144,3 +144,37 @@ def test_house_gain_reads_the_gain_table(monkeypatch):
     assert stacker.house_gain("S-II") == (26, None) and stacker.house_gain("O-III") == (26, None)
     assert stacker.house_gain("B") is None and stacker.house_gain("L") is None
     assert stacker.house_gain(None) is None
+
+
+def test_calibration_follows_the_stack_gain_not_the_first_light(tmp_path, monkeypatch):
+    """2026-11-24: IC 405's lights ran gain 0 for five nights before Ha moved to
+    26. Every caller asked for calibration like paths[0], the oldest frame, so
+    the gain-0 masters were handed to a stack built at 26 and dropped there:
+    the nebula rendered with no bias and no flat while gain-26 flats sat on
+    disk. The list decides by the stack's own rule."""
+    bdir, ddir, froot = tmp_path / "bias", tmp_path / "dark", tmp_path / "flats"
+    (froot / "2026-11-23" / "FLAT").mkdir(parents=True)
+    bdir.mkdir(); ddir.mkdir()
+    _fits(bdir / "b0.fits", 0, 10, imagetyp="BIAS"); _fits(bdir / "b26.fits", 26, 30, imagetyp="BIAS")
+    _fits(ddir / "d0.fits", 0, 10, imagetyp="DARK")
+    _fits(froot / "2026-11-23" / "FLAT" / "f0.fits", 0, 10, filt="Ha", imagetyp="FLAT")
+    _fits(froot / "2026-11-23" / "FLAT" / "f26.fits", 26, 30, filt="Ha", imagetyp="FLAT")
+    from configs import config
+    cfg = {"calibration": {"bias_dir": str(bdir), "dark_dir": str(ddir), "flat_root": str(froot)},
+           "nina": {"gain": {"Ha": [26, 30]}}}
+    monkeypatch.setattr(config, "data", lambda: cfg)
+    stacker._FLATS_BY_FILTER_CACHE.pop(str(froot), None)
+    old = [_fits(tmp_path / ("old%d.fits" % i), 0, 10, filt="Ha") for i in range(3)]
+    new = [_fits(tmp_path / ("new%d.fits" % i), 26, 30, filt="Ha") for i in range(2)]
+    # the house gain: 26 wins though the first light, and the majority, are at 0
+    assert stacker.stack_like(old + new, "Ha") == new[0]
+    b, d, f = stacker.calibration_paths_from_config("Ha", like=old + new)
+    assert [p.name for p in b] == ["b26.fits"] and d == [] and [p.name for p in f] == ["f26.fits"]
+    # no house gain for the filter: the majority, as stack() would choose
+    cfg["nina"] = {}
+    assert stacker.stack_like(old + new, "Ha") == old[0]
+    b, d, f = stacker.calibration_paths_from_config("Ha", like=old + new)
+    assert [p.name for p in b] == ["b0.fits"] and [p.name for p in d] == ["d0.fits"] and [p.name for p in f] == ["f0.fits"]
+    # one path still works as before
+    b, _d, _f = stacker.calibration_paths_from_config("Ha", like=new[0])
+    assert [p.name for p in b] == ["b26.fits"]
