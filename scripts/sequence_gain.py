@@ -125,8 +125,30 @@ def convert_flats(seq: dict, gain_map: dict, min_s: float = 2.0, max_s: float = 
     return changed
 
 
+LOOP = "NINA.Sequencer.Conditions.LoopCondition, NINA.Sequencer"
+
+
+def reset_progress(seq: dict) -> int:
+    """Every loop condition back to 0 completed iterations. Returns how many were not.
+
+    N.I.N.A saves a sequence with its run state: the hand-made darks_and_bias.json
+    on the PC was saved after a run with its bias loop at 50/50 and its dark loop
+    at 1/20, and the gain-26 copy inherited both. Loaded, N.I.N.A skipped the bias
+    block outright (2026-11-24: "Iterations: 50/50 ... Items[SKIPPED]") and took
+    19 darks, and the operator, watching the bias block finish at once, took it
+    for done. A generated sequence starts from nothing."""
+    n = 0
+    for node in walk(seq):
+        if node.get("$type") == LOOP and int(node.get("CompletedIterations", 0) or 0):
+            n += 1
+        if node.get("$type") == LOOP:
+            node["CompletedIterations"] = 0
+    return n
+
+
 def convert_darks(seq: dict, gain: int, offset: int, name: Optional[str] = None) -> dict:
-    """Gain and offset onto every BIAS and DARK exposure. Returns counts by type."""
+    """Gain and offset onto every BIAS and DARK exposure, every loop counter back
+    to 0 (``reset_progress``). Returns counts by type."""
     counts: dict = {}
     for node in walk(seq):
         if node.get("$type") == TAKE and str(node.get("ImageType", "")).upper() in ("BIAS", "DARK"):
@@ -135,6 +157,7 @@ def convert_darks(seq: dict, gain: int, offset: int, name: Optional[str] = None)
             node["ExposureCount"] = 0
             kind = str(node["ImageType"]).upper()
             counts[kind] = counts.get(kind, 0) + 1
+    reset_progress(seq)
     if name and isinstance(seq, dict) and "Name" in seq:
         seq["Name"] = name
     return counts

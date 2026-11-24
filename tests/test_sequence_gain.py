@@ -96,6 +96,23 @@ def test_darks_and_bias_take_the_gain_and_a_new_name():
     assert takes[1]["ExposureTime"] == 300.0
 
 
+def test_darks_start_from_nothing_whatever_the_template_had_run():
+    """2026-11-24: the template was saved after a run (bias 50/50, dark 1/20); N.I.N.A
+    loaded the copy, skipped the bias block and took 19 darks."""
+    loop = lambda idn, done, n: {"$id": idn, "$type": sg.LOOP, "CompletedIterations": done, "Iterations": n}
+    seq = {"$id": "1", "$type": "root", "Name": "darks_and_bias",
+           "Items": {"$values": [
+               {"$id": "2", "$type": "x", "Conditions": {"$values": [loop("8", 50, 50)]},
+                "Items": {"$values": [_take("3", "BIAS", 0.0001)]}},
+               {"$id": "4", "$type": "x", "Conditions": {"$values": [loop("9", 1, 20)]},
+                "Items": {"$values": [_take("5", "DARK", 300.0)]}},
+           ]}}
+    sg.convert_darks(seq, 26, 30, "darks_and_bias_gain26")
+    loops = [n for n in sg.walk(seq) if n.get("$type") == sg.LOOP]
+    assert [(l["CompletedIterations"], l["Iterations"]) for l in loops] == [(0, 50), (0, 20)]
+    assert sg.reset_progress(seq) == 0
+
+
 def test_reference_check_catches_a_forward_ref_and_a_duplicate_id():
     assert sg.check_refs(_flats_seq()) == []
     bad = {"$id": "1", "a": {"$ref": "9"}, "b": {"$id": "1"}}
