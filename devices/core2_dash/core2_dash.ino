@@ -80,9 +80,11 @@ static bool haveData = false;
 // astronomical dusk otherwise, imaging or not. Every page 5 s (owner 2026-11-14).
 // The cloud page (2026-11-15): the night's hours, the forecast cover the
 // planner uses, a split mark where the models disagree.
-enum Page { PG_STATUS, PG_BIG_TIME, PG_BIG_TWI, PG_BIG_CLOUD, PG_BIG_VIEW, PG_BIG_COUNT, PG_BIG_FWHM, PG_BIG_LAST,
+// The seeing page (2026-11-25): the 850 hPa wind for the hour under way in
+// the server's color, the advisor's label, and the night's worst hour.
+enum Page { PG_STATUS, PG_BIG_TIME, PG_BIG_TWI, PG_BIG_CLOUD, PG_BIG_SEEING, PG_BIG_VIEW, PG_BIG_COUNT, PG_BIG_FWHM, PG_BIG_LAST,
             PG_BIG_SKY, PG_BIG_DEW, PG_NPAGES };
-static const uint32_t PAGE_MS[PG_NPAGES] = {5000, 5000, 5000, 5000, 5000, 5000, 5000, 5000, 5000, 5000};
+static const uint32_t PAGE_MS[PG_NPAGES] = {5000, 5000, 5000, 5000, 5000, 5000, 5000, 5000, 5000, 5000, 5000};
 static long serverSec = -1;                    // seconds since local midnight at the last good reply
 static int page = PG_STATUS;
 static uint32_t pageStart = 0;
@@ -494,6 +496,20 @@ static void paintBigCloud() {
   plainFont();
 }
 
+// The seeing wind: km/h at the level the site's FWHM follows (850 hPa), the
+// hour under way, in the server's color (green good, amber fair, red poor or
+// bad), its label, and the worst hour of the coming night.
+static void paintBigSeeing() {
+  JsonObject s = doc["se"];
+  fitText("SEEING wind", 120, 30, 228, 40, &fonts::FreeSansBold24pt7b, TFT_LIGHTGREY);
+  fitText(String((int)(s["w"] | 0)), 120, 140, 228, 130, &fonts::Font7, colorFor(s["c"]));
+  fitText("km/h  " + String((const char*)(s["s"] | "?")), 120, 238, 228, 44,
+          &fonts::FreeSansBold24pt7b, colorFor(s["c"]));
+  if (!s["mx"].isNull())
+    fitText("tonight to " + String((int)s["mx"]), 120, 290, 228, 36, &fonts::FreeSansBold24pt7b, TFT_LIGHTGREY);
+  plainFont();
+}
+
 // Page B: the target, then one line per filter: "Ha: 12".
 static void paintBigCount() {
   JsonObject im = doc["im"];
@@ -584,6 +600,7 @@ static bool pageHasData(int p) {
     case PG_BIG_TIME:  return haveData;
     case PG_BIG_TWI:   return haveData && !doc["tw"].isNull();
     case PG_BIG_CLOUD: return haveData && doc["cl"]["h"].size() > 0;
+    case PG_BIG_SEEING: return haveData && !doc["se"].isNull();
     case PG_BIG_VIEW:  return jpgLen > 0 && !doc["view"].isNull();
     case PG_BIG_COUNT:
     case PG_BIG_FWHM:
@@ -663,6 +680,7 @@ static void paint() {
   if (page == PG_BIG_TIME) paintBigTime();
   else if (page == PG_BIG_TWI) paintBigTwilight();
   else if (page == PG_BIG_CLOUD) paintBigCloud();
+  else if (page == PG_BIG_SEEING) paintBigSeeing();
   else if (page == PG_BIG_VIEW) paintBigView();
   else if (page == PG_BIG_DEW) paintBigDew();
   else if (page == PG_BIG_COUNT) paintBigCount();

@@ -812,6 +812,66 @@ def read_clouds(cfg: dict, now: datetime) -> Optional[dict]:
         return None
 
 
+# The seeing page (2026-11-25, owner: "the current seeing wind speed"): the
+# wind at the level that predicts this site's seeing (weather.SEEING_LEVEL_HPA,
+# 850 hPa, not the jet) for the hour under way, the advisor's label for it,
+# and the night's worst hour, which is the number the filter advisor plans
+# the detail channel by (filter_advisor.tonight_conditions).
+SEEING_COLOR = {"good": "g", "fair": "a", "poor": "r", "bad": "r"}
+_seeing_cache: dict = {}
+
+
+def seeing_page(times: list, winds: list, now_key: str, night_keys=()) -> Optional[dict]:
+    """{"w": km/h now, "s": label, "c": color, "mx": the night's worst km/h or None}.
+
+    *times* are Open-Meteo's local "YYYY-mm-ddTHH:00" keys parallel to *winds*;
+    *now_key* is the hour under way, *night_keys* tonight's dark hours. No wind
+    for the hour under way is no page. Pure."""
+    from iris_astronomy.weather import seeing_from_wind
+    by = {t: w for t, w in zip(times, winds) if w is not None}
+    w = by.get(now_key)
+    if w is None:
+        return None
+    night = [by[k] for k in night_keys if k in by]
+    label = seeing_from_wind(w)
+    return {"w": int(round(w)), "s": label, "c": SEEING_COLOR.get(label, "x"),
+            "mx": int(round(max(night))) if night else None}
+
+
+def _open_meteo_seeing(lat: float, lon: float, tz: str) -> tuple:
+    """(local hour keys, km/h at SEEING_LEVEL_HPA) from Open-Meteo, cached 30 min."""
+    import time
+    import requests
+    from iris_astronomy.weather import SEEING_LEVEL_HPA
+    hit = _seeing_cache.get("om")
+    if hit and time.monotonic() - hit[0] < CLOUD_CACHE_S:
+        return hit[1]
+    field = "wind_speed_%dhPa" % SEEING_LEVEL_HPA
+    r = requests.get("https://api.open-meteo.com/v1/forecast", timeout=10, params={
+        "latitude": lat, "longitude": lon, "hourly": field, "timezone": tz, "forecast_days": 2})
+    r.raise_for_status()
+    hourly = r.json()["hourly"]
+    out = (list(hourly["time"]), list(hourly[field]))
+    _seeing_cache["om"] = (time.monotonic(), out)
+    return out
+
+
+def read_seeing(cfg: dict, now: datetime) -> Optional[dict]:
+    try:
+        from zoneinfo import ZoneInfo
+        from control.slot_plan import dark_hour_grid
+        loc = cfg["location"]
+        lat, lon, tz = float(loc["latitude"]), float(loc["longitude"]), loc["timezone"]
+        times, winds = _open_meteo_seeing(lat, lon, tz)
+        local = now.replace(tzinfo=ZoneInfo(tz)) if now.tzinfo is None else now
+        win = night_window(now, lat, lon, tz)
+        keys = [h.strftime("%Y-%m-%dT%H:00") for h in dark_hour_grid(*win)] if win else []
+        return seeing_page(times, winds, local.strftime("%Y-%m-%dT%H:00"), keys)
+    except Exception:  # noqa: BLE001 -- no page is a normal answer
+        _logger.debug("dash seeing failed", exc_info=True)
+        return None
+
+
 def read_twilight(cfg: dict, now: datetime) -> Optional[dict]:
     try:
         loc = cfg["location"]
@@ -878,6 +938,7 @@ def build(cfg: dict) -> dict:
     out["dew"] = read_dew()
     out["tw"] = read_twilight(cfg, now)
     out["cl"] = read_clouds(cfg, now)
+    out["se"] = read_seeing(cfg, now)
     # The sky camera's newest frame (?part=view); the display fetches the
     # picture only when this id changes.
     out["view"] = sky_view_info(view_frame(newest_sky_frame(_capture_dir(cfg)), read_seen())[0])

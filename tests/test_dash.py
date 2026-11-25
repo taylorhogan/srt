@@ -367,3 +367,16 @@ def test_real_slot_times_ignore_a_stale_or_different_timeline():
     assert dash.real_slot_times(plan, other, now) is None
     assert dash.real_slot_times(plan, stale, now) is None
     assert dash.real_slot_times(plan, None, now) is None
+
+
+def test_seeing_page_is_the_hour_under_way_and_the_nights_worst():
+    pytest.importorskip("astral")      # weather imports it; not on the bare CI runner
+    times = ["2026-11-25T14:00", "2026-11-25T15:00", "2026-11-25T19:00", "2026-11-25T20:00", "2026-11-25T21:00"]
+    winds = [27.4, 18.0, 33.0, 46.2, None]
+    s = dash.seeing_page(times, winds, "2026-11-25T14:00", times[2:])
+    assert s == {"w": 27, "s": "fair", "c": "a", "mx": 46}      # 20-30 fair; the None hour is left out
+    good = dash.seeing_page(times, winds, "2026-11-25T15:00")
+    assert good["s"] == "good" and good["c"] == "g" and good["mx"] is None
+    assert dash.seeing_page(times, winds, "2026-11-25T20:00")["c"] == "r"     # 46: bad
+    assert dash.seeing_page(times, winds, "2026-11-25T21:00") is None          # no wind for the hour
+    assert dash.seeing_page(times, winds, "2026-11-25T16:00") is None
