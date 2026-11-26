@@ -160,7 +160,7 @@ def speed_warning(speed, history):
 
 def evaluate(vision, kasa, pegasus, speed=NOT_MEASURED, speed_history=(),
              cameras=None, pegasus_recovery=None, disk=NOT_MEASURED,
-             panel=NOT_MEASURED):
+             panel=NOT_MEASURED, panel_seen=None):
     """(problems, warnings) from the readings. Pure, so it can be tested.
 
     vision  : {"closed", "parked", "camera", "why", "scope_tag_frames", "frames",
@@ -169,11 +169,14 @@ def evaluate(vision, kasa, pegasus, speed=NOT_MEASURED, speed_history=(),
                a name absent from resolved did not answer discovery
     pegasus : {port: level} or None when the box could not be read
     disk    : {"usage": utils.disk_space.usage(...) or None, "warn_gb", "refuse_gb"}
-    panel   : hardware_control.flat_panel.status(): the flat panel's light. Lit
-              is a problem (it holds its state, and on 2026-11-25 it sat at
-              full brightness for a day and a half after a failed flats run);
-              unreadable is a warning, since the port is busy whenever
-              N.I.N.A is open by hand.
+    panel   : hardware_control.flat_panel.status(): the flat panel's light by
+              its driver. Lit is a problem (it holds its state, and on
+              2026-11-25 it sat at full brightness for a day and a half after
+              a failed flats run); unreadable is a warning, since the port is
+              busy whenever N.I.N.A is open by hand.
+    panel_seen : flat_panel.seen_lit() on the vision read's frame: Iris cam
+              sees the whole panel, and its word beats the driver's, which
+              reported "off" while the panel was lit (2026-11-26).
     cameras : {alias: "on" | "switched_on" | "off" | "unknown"} for the cameras
               the safety reads depend on. The plugs above are LAN relay reads;
               a camera switched off in the Kasa app is a cloud fact, and until
@@ -257,8 +260,8 @@ def evaluate(vision, kasa, pegasus, speed=NOT_MEASURED, speed_history=(),
         if warn:
             warnings.append(warn)
 
-    if panel is not NOT_MEASURED:
-        prob, warn = panel_verdict(panel)
+    if panel is not NOT_MEASURED or panel_seen:
+        prob, warn = panel_verdict(None if panel is NOT_MEASURED else panel, panel_seen)
         if prob:
             problems.append(prob)
         if warn:
@@ -266,18 +269,37 @@ def evaluate(vision, kasa, pegasus, speed=NOT_MEASURED, speed_history=(),
     return problems, warnings
 
 
-def panel_verdict(panel):
-    """(problem, warning) for the flat panel reading. Pure."""
+def panel_verdict(panel, seen=None):
+    """(problem, warning) for the flat panel: the camera's reading decides
+    when it has one, the driver's otherwise. Pure."""
     from hardware_control import flat_panel
+    if seen and seen.get("ok"):
+        if seen["lit"]:
+            return ("flat panel light ON: %s; driver says %s -- a failed flats run "
+                    "leaves it lit; `panel off`"
+                    % (flat_panel.describe_seen(seen),
+                       flat_panel.describe(panel).replace("flat panel ", "") if panel else "nothing")), None
+        return None, None
     if not panel:
         return None, None
     if panel.get("ok"):
         if panel.get("light") == "on":
             return (flat_panel.describe(panel)
-                    + " -- a failed flats run leaves it lit; `panel off` or the "
-                    "Kasa app"), None
+                    + " -- a failed flats run leaves it lit; `panel off`"), None
         return None, None
-    return None, flat_panel.describe(panel)
+    return None, flat_panel.describe(panel) + "; " + flat_panel.describe_seen(seen)
+
+
+def read_panel_camera():
+    """The flat panel on the frame the vision read just took, or why not."""
+    from hardware_control import flat_panel
+    from sentry import kasa_state
+    from configs import config
+    try:
+        return flat_panel.seen_lit(kasa_state.last_frame, config.data())
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "lit": None, "panel": None, "wall": None, "excess": None,
+                "why": "camera reading failed: %s" % exc}
 
 
 def read_flat_panel():
@@ -342,9 +364,9 @@ def read_subscribers(timeout_s=45):
         return None
 
 
-def report_line(disk, subscribers, panel=None):
+def report_line(disk, subscribers, panel=None, seen=None):
     """The every-morning line: free disk, the email list and, when it read
-    off, the flat panel. Pure."""
+    dark or off, the flat panel (the camera's word first). Pure."""
     u = (disk or {}).get("usage") if disk is not NOT_MEASURED else None
     disk_part = ("disk %.0f GB free of %.0f GB" % (u["free_gb"], u["total_gb"])
                  if u else "disk free space unreadable")
@@ -356,7 +378,10 @@ def report_line(disk, subscribers, panel=None):
         if subscribers["pending"]:
             subs_part += " (%d awaiting confirmation)" % subscribers["pending"]
     line = disk_part + "; " + subs_part
-    if panel and panel.get("ok") and panel.get("light") == "off":
+    if seen and seen.get("ok"):
+        if not seen.get("lit"):
+            line += "; flat panel dark on camera"
+    elif panel and panel.get("ok") and panel.get("light") == "off":
         line += "; flat panel off"
     return line
 
@@ -777,8 +802,10 @@ def main():
     disk = read_disk()
     subscribers = read_subscribers()
     panel = read_flat_panel()
+    panel_seen = read_panel_camera()
     problems, warnings = evaluate(vision, kasa, pegasus, speed, history, cameras,
-                                  pegasus_recovery=recovery, disk=disk, panel=panel)
+                                  pegasus_recovery=recovery, disk=disk, panel=panel,
+                                  panel_seen=panel_seen)
     warnings += read_roof_moves()
     n_warn, n_prob = north_rehome_step(dry_run=args.dry_run)
     warnings += n_warn
@@ -789,7 +816,8 @@ def main():
              "vision": vision, "kasa": kasa, "pegasus": pegasus,
              "pegasus_recovery": recovery, "speed": speed,
              "speed_attempts": speed_tries, "cameras": cameras, "disk": disk,
-             "subscribers": subscribers, "flat_panel": panel}
+             "subscribers": subscribers, "flat_panel": panel,
+             "flat_panel_camera": panel_seen}
     _append_log(entry)
     print(json.dumps(entry, indent=2, default=str))
 
@@ -813,7 +841,7 @@ def main():
                  % (vision.get("scope_tag_frames"), vision.get("frames"),
                     float(vision.get("worst_corner_px") or 0.0))]
     lines.append(speed_line)
-    lines.append(report_line(disk, subscribers, panel))
+    lines.append(report_line(disk, subscribers, panel, panel_seen))
     lines += ["- warning: " + w for w in warnings]
     msg = "\n".join(lines)
     _logger.warning(msg.replace("\n", " | "))

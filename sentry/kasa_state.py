@@ -159,6 +159,9 @@ VIEW_WIDTH = 1280
 # Introspection for callers that want to log why, mirroring
 # vision_safety.last_match.
 last_detail: dict = {}
+# The raw frame of the last gating read, for readings that are not the
+# verdict's (hardware_control.flat_panel.seen_lit, 2026-11-26).
+last_frame = None
 
 
 def _sun_altitude():
@@ -539,6 +542,8 @@ def _write_view(img, found, parked_ref, shut_ref, scope, roof, star_ref=None, st
     With *archive_when* (gating reads) the picture is also kept under
     ARCHIVE_DIR, since cam_view is overwritten by the next read.
     """
+    global last_frame
+    last_frame = img   # the morning check reads the flat panel on it
     try:
         path = (config.data()["camera safety"].get("cam_view")
                 or "./base_images/cam_view.jpg")

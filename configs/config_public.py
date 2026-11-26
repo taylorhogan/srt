@@ -6,7 +6,7 @@ class PublicConfig():
 
         },
         "version": {
-            "date": "2026.11.26.1"
+            "date": "2026.11.26.2"
         },
 
         "logger": {
@@ -435,6 +435,15 @@ class PublicConfig():
             "scope_view": "./base_images/scope_view.jpg",
             # Iris cam's own annotated park/roof read (sentry/kasa_state.py).
             "cam_view": "./base_images/cam_view.jpg",
+            # The flat panel on Iris cam's frame (hardware_control.flat_panel.
+            # seen_lit, read by the morning check): the panel's upper-left
+            # quadrant and the pine wall beside it, x, y, w, h on the 1280 x 720
+            # frame at the reference pose; lit when the panel's median grey
+            # exceeds the wall's by flat_panel_glow_min (2026-11-26: lit 251-255
+            # against 121-134, off 185 against 150).
+            "flat_panel_box": [590, 100, 110, 90],
+            "flat_panel_wall_box": [860, 100, 120, 90],
+            "flat_panel_glow_min": 70,
             "processed_view": "./base_images/processed.jpg",
             "no_image": "./base_images/no_image.jpg",
             # Output of the `live` command: a no-light, exposure-optimized view of

@@ -541,7 +541,10 @@ Since 2026-09-25 the conductor decides both invariants (ADR 0014): every roof fi
   lives inside each filter's block and is skipped when the block fails, and on
   2026-11-25 a run with no filter wheel (every narrowband Auto Exposure Flat
   saturated) left the panel at full brightness for a day and a half; the
-  morning check reads the panel (lit is a failure line) and `panel [off]` is
+  morning check reads the panel by its driver AND on Iris cam's frame
+  (`flat_panel.seen_lit`, `kasa_state.last_frame`; the camera's word wins,
+  since the driver said off while the panel was lit; lit is a failure line)
+  and `panel [off]` is
   the hand switch. The driver caches its state, so the off step is on-at-1
   then off, never a bare off. The purge keeps its newest sets per (filter, gain), so a filter's
   gain-0 flats survive its move to 26 for the gain-0 lights already on disk.

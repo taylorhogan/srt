@@ -75,3 +75,26 @@ def test_the_flats_routine_says_so_when_the_panel_is_not_confirmed_off(monkeypat
                         lambda: fp.parse('{"error":"port COM5 is denied"}'))
     suc._flat_panel_off()
     assert len(posts) == 1 and "NOT confirmed off" in posts[0] and "denied" in posts[0]
+
+
+def _frame(panel_grey, wall_grey):
+    np = pytest.importorskip("numpy")
+    f = np.full((720, 1280, 3), wall_grey, dtype=np.uint8)
+    f[60:300, 560:820] = panel_grey      # the panel square, both boxes' worth
+    return f
+
+
+def test_the_camera_tells_a_lit_panel_from_a_dark_one():
+    np = pytest.importorskip("numpy")
+    lit = fp.seen_lit(_frame(252, 130))
+    assert lit["ok"] and lit["lit"] and lit["panel"] == 252 and lit["wall"] == 130
+    dark = fp.seen_lit(_frame(185, 150))
+    assert dark["ok"] and not dark["lit"]
+    assert fp.describe_seen(lit) == "camera sees it LIT (panel 252, wall 130)"
+    assert fp.describe_seen(dark).startswith("camera sees it dark")
+    assert not fp.seen_lit(None)["ok"]
+    assert "smaller" in fp.seen_lit(np.zeros((100, 100, 3), dtype=np.uint8))["why"]
+    # the boxes and the margin come from the config when it names them
+    cfg = {"camera safety": {"flat_panel_box": [0, 0, 10, 10], "flat_panel_wall_box": [20, 20, 10, 10],
+                             "flat_panel_glow_min": 200}}
+    assert not fp.seen_lit(_frame(252, 130), cfg)["lit"]

@@ -271,3 +271,26 @@ def test_a_lit_flat_panel_is_a_problem_and_an_unreadable_one_a_warning():
     assert report_line(disk, subs, off).endswith("; flat panel off")
     assert report_line(disk, subs, lit) == report_line(disk, subs)
     assert report_line(disk, subs, busy) == report_line(disk, subs)
+
+
+def test_the_cameras_word_on_the_panel_beats_the_drivers():
+    from scripts.morning_check import panel_verdict, report_line
+    from hardware_control import flat_panel as fp
+    off = fp.parse('{"state":1,"brightness":0,"max":255}')
+    busy = fp.parse('{"error":"port COM5 is denied"}')
+    seen_lit = {"ok": True, "lit": True, "panel": 251, "wall": 131, "excess": 120, "why": None}
+    seen_dark = {"ok": True, "lit": False, "panel": 181, "wall": 145, "excess": 36, "why": None}
+    no_frame = {"ok": False, "lit": None, "panel": None, "wall": None, "excess": None,
+                "why": "no camera frame"}
+    prob, warn = panel_verdict(off, seen_lit)
+    assert prob.startswith("flat panel light ON: camera sees it LIT") and "driver says light off" in prob
+    assert panel_verdict(busy, seen_dark) == (None, None)      # the camera answered; no warning
+    prob, warn = panel_verdict(busy, no_frame)
+    assert prob is None and "denied" in warn and "no camera frame" in warn
+    assert panel_verdict(None, seen_lit)[0].endswith("driver says nothing -- a failed flats run "
+                                                       "leaves it lit; `panel off`")
+    disk = {"usage": {"path": "C:/", "free_gb": 412.4, "total_gb": 930.0}}
+    subs = {"confirmed": 2, "pending": 0, "unsubscribed": 0}
+    assert report_line(disk, subs, busy, seen_dark).endswith("; flat panel dark on camera")
+    assert report_line(disk, subs, off, no_frame).endswith("; flat panel off")
+    assert report_line(disk, subs, off, seen_lit) == report_line(disk, subs)

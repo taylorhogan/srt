@@ -177,3 +177,66 @@ if __name__ == "__main__":
     st = ensure_off() if "off" in sys.argv[1:] else status()
     print(describe(st))
     sys.exit(0 if st.get("ok") else 1)
+
+
+# --- the camera's word -------------------------------------------------------
+# Iris cam sees the whole panel square-on from its reference pose, with the
+# inside light on (every gating read switches it on). Measured on the frames of
+# 2026-11-26: the lit panel's median grey was 251-255 against the pine wall
+# beside it at 121-134; off, 185 against 150. The driver had reported "off"
+# while the panel was lit, so the picture, not the driver, decides "lit".
+
+GLOW_MIN = 70          # panel median minus wall median, grey levels, lit above it
+PANEL_BOX = (590, 100, 110, 90)   # x, y, w, h on the 1280 x 720 frame: the panel's
+                                  # upper-left quadrant, clear of the tube end and
+                                  # of the annotation text
+WALL_BOX = (860, 100, 120, 90)    # the pine wall at the same height
+
+
+def _box(cfg, key, default):
+    try:
+        b = (cfg or {}).get("camera safety", {}).get(key)
+        if b and len(b) == 4:
+            return tuple(int(v) for v in b)
+    except Exception:  # noqa: BLE001
+        pass
+    return default
+
+
+def seen_lit(frame, cfg=None):
+    """What Iris cam's frame says about the panel. Pure.
+
+    frame : the raw BGR frame of a gating read (kasa_state.last_frame), or
+            None. Returns {"ok", "lit", "panel", "wall", "excess", "why"};
+            ``ok`` False when there is no frame or the boxes fall outside it.
+    """
+    if frame is None:
+        return {"ok": False, "lit": None, "panel": None, "wall": None,
+                "excess": None, "why": "no camera frame"}
+    try:
+        import numpy as np
+        g = frame if frame.ndim == 2 else frame.mean(axis=2)
+        px, py, pw, ph = _box(cfg, "flat_panel_box", PANEL_BOX)
+        wx, wy, ww, wh = _box(cfg, "flat_panel_wall_box", WALL_BOX)
+        if py + ph > g.shape[0] or px + pw > g.shape[1] or wy + wh > g.shape[0] \
+                or wx + ww > g.shape[1]:
+            return {"ok": False, "lit": None, "panel": None, "wall": None,
+                    "excess": None, "why": "frame %dx%d smaller than the boxes"
+                    % (g.shape[1], g.shape[0])}
+        panel = float(np.median(g[py:py + ph, px:px + pw]))
+        wall = float(np.median(g[wy:wy + wh, wx:wx + ww]))
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "lit": None, "panel": None, "wall": None,
+                "excess": None, "why": "frame unreadable: %s" % exc}
+    glow_min = float(((cfg or {}).get("camera safety", {}) or {}).get("flat_panel_glow_min", GLOW_MIN))
+    excess = panel - wall
+    return {"ok": True, "lit": excess > glow_min, "panel": round(panel), "wall": round(wall),
+            "excess": round(excess), "why": None}
+
+
+def describe_seen(seen):
+    """One line for the camera's reading. Pure."""
+    if not seen or not seen.get("ok"):
+        return "camera: no reading (%s)" % ((seen or {}).get("why") or "no frame")
+    return "camera sees it %s (panel %d, wall %d)" % (
+        "LIT" if seen["lit"] else "dark", seen["panel"], seen["wall"])
