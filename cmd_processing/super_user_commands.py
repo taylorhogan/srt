@@ -25,6 +25,7 @@ from hardware_control import sonos_utils
 from hardware_control import utl_shelly
 from hardware_control import pwi4_utils
 from hardware_control import pegasus
+from hardware_control import flat_panel
 from cmd_processing import social_server
 from cmd_processing import jobs
 from utils import utils, pushover
@@ -2187,6 +2188,39 @@ def overhead_cmd(words: list[str], account: str) -> None:
     jobs.spawn(_run)
 
 
+def panel_words(words: list[str]):
+    """("status" | "off", None) or (None, error) from the words after `panel`. Pure."""
+    rest = [w.lower() for w in words[1:]]
+    if not rest:
+        return "status", None
+    if rest == ["off"]:
+        return "off", None
+    return None, "Usage: panel  (the light's state)  |  panel off"
+
+
+def panel_cmd(words: list[str], account: str) -> None:
+    """The flat panel's light. Usage: panel | panel off
+
+    Reads the Alnitak panel through its ASCOM driver (hardware_control.
+    flat_panel), or switches it off. The port is N.I.N.A's while N.I.N.A is
+    open, so during a run the answer is the driver's refusal, not a reading.
+    Built 2026-11-26, the day after a failed flats run left the panel lit.
+    """
+    what, err = panel_words(words)
+    if err:
+        social_server.post_social_message(err)
+        return
+
+    def _run():
+        try:
+            st = flat_panel.ensure_off() if what == "off" else flat_panel.status()
+            social_server.post_social_message(flat_panel.describe(st))
+        except Exception as exc:  # noqa: BLE001
+            _logger.exception("panel failed")
+            social_server.post_social_message(f"panel failed: {exc!r}")
+    jobs.spawn(_run)
+
+
 def _queue_field(words: list[str], account: str, cmd: str) -> None:
     """hold / moon / maxhours / type (E3): the queue's hand-set fields as commands."""
     from control import queue_fields
@@ -4142,6 +4176,7 @@ def get_super_user_commands() -> dict[str, Callable]:
         "drafts": drafts_cmd,
         "suggest": suggest_cmd,
         "overhead": overhead_cmd,
+        "panel": panel_cmd,
         "hold": hold_cmd,
         "moon": moon_cmd,
         "maxhours": maxhours_cmd,
@@ -4791,6 +4826,7 @@ def do_flats() -> bool:
             break
 
     _logger.info("Flats complete")
+    _flat_panel_off()
     # This is the call that threw at 03:14 on 2026-08-16, after logging nothing
     # useful: the mount stayed powered for the rest of the night. Now it is
     # checked and said out loud, because a mount left on is the thing that then
@@ -4805,6 +4841,31 @@ def do_flats() -> bool:
             "in the Kasa app, or the roof cannot be closed")
     social_server.post_social_message("Flats sequence complete")
     return True
+
+
+def _flat_panel_off() -> dict:
+    """The panel's light off, whichever way the flats ended.
+
+    The sequence turns the light off inside each filter's own block, and
+    N.I.N.A skips the rest of a block that fails: on 2026-11-25 the filter
+    wheel never connected, every narrowband Auto Exposure Flat saturated and
+    failed, and the last block left the panel lit at 255. The sequence's
+    closing steps and the stall kill above touch PWI4 and the Pegasus ports,
+    not the panel, which holds its state; it was found lit a day and a half
+    later. So the routine switches it off itself through the driver
+    (hardware_control.flat_panel) once N.I.N.A has let go of the port, and
+    says so when it cannot.
+    """
+    st = flat_panel.ensure_off()
+    line = flat_panel.describe(st)
+    if st.get("ok") and st.get("light") == "off":
+        _logger.info("After flats: %s (verified)", line)
+    else:
+        _logger.error("After flats: %s", line)
+        social_server.post_social_message(
+            "Flats done, but the flat panel light is NOT confirmed off: %s "
+            "-- switch it off by hand" % line)
+    return st
 
 
 def doflats_cmd(words: list[str], account: str) -> None:

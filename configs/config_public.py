@@ -6,7 +6,7 @@ class PublicConfig():
 
         },
         "version": {
-            "date": "2026.11.25.1"
+            "date": "2026.11.26.1"
         },
 
         "logger": {
@@ -328,6 +328,10 @@ class PublicConfig():
             # every generation. Centres the autofocus sweep and is what
             # N.I.N.A restores when a run fails. False = sequences as before.
             "focus_seed": True,
+            # The flat panel's ASCOM driver (ProgID), for the panel-off step after
+            # every flats run, the morning check's reading and the `panel` command
+            # (hardware_control.flat_panel). N.I.N.A's profile names the same driver.
+            "flat_panel_progid": "ASCOM.OptecAlnitak.CoverCalibrator",
             # No "focus_track" any more (2026-09-14): a focuser move INSIDE
             # a SmartExposure fails N.I.N.A's validation and the whole block
             # is skipped -- the night ran with no exposures until relaunched.

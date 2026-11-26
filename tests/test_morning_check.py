@@ -243,3 +243,31 @@ def test_the_daily_line_names_free_disk_and_subscribers():
     assert report_line({"usage": None}, None) == (
         "disk free space unreadable; subscribers: web host did not answer")
     assert report_line(NOT_MEASURED, None).startswith("disk free space unreadable")
+
+
+def test_a_lit_flat_panel_is_a_problem_and_an_unreadable_one_a_warning():
+    from scripts.morning_check import panel_verdict, evaluate, report_line
+    from hardware_control import flat_panel as fp
+    lit = fp.parse('{"state":3,"brightness":255,"max":255}')
+    off = fp.parse('{"state":1,"brightness":0,"max":255}')
+    busy = fp.parse('{"error":"port COM5 is denied"}')
+    prob, warn = panel_verdict(lit)
+    assert prob.startswith("flat panel light ON at 255") and "panel off" in prob and warn is None
+    assert panel_verdict(off) == (None, None)
+    prob, warn = panel_verdict(busy)
+    assert prob is None and warn.startswith("flat panel unreadable")
+    assert panel_verdict(None) == (None, None)
+
+    vision = {"closed": True, "parked": True, "camera": True, "scope_tag_frames": 3,
+              "frames": 3, "worst_corner_px": 1.0}
+    kasa = {"resolved": {"Telescope mount": 0, "Roof motor": 0}, "error": None}
+    base = evaluate(vision, kasa, {1: 0, 2: 0, 3: 0})
+    with_lit = evaluate(vision, kasa, {1: 0, 2: 0, 3: 0}, panel=lit)
+    assert len(with_lit[0]) == len(base[0]) + 1
+    assert evaluate(vision, kasa, {1: 0, 2: 0, 3: 0}, panel=off) == base
+
+    disk = {"usage": {"path": "C:/", "free_gb": 412.4, "total_gb": 930.0}}
+    subs = {"confirmed": 2, "pending": 0, "unsubscribed": 0}
+    assert report_line(disk, subs, off).endswith("; flat panel off")
+    assert report_line(disk, subs, lit) == report_line(disk, subs)
+    assert report_line(disk, subs, busy) == report_line(disk, subs)

@@ -79,6 +79,7 @@ Restricted to super users. These control observatory hardware and the imaging pi
 | `type <dso> galaxy\|nebula\|clear` | The object type the filter plan reads | `type sh2-92 nebula` |
 | `suggest [N]` | What is worth adding to the queue this month, with reasons (nothing is queued) | `suggest 5` |
 | `overhead` | What is flying over the observatory now, from the public ADS-B feed, nearest first | `overhead` |
+| `panel [off]` | The flat panel's light through its ASCOM driver: read it, or switch it off (the flats routine does this itself after every run) | `panel off` |
 | `approve <dso>` | Approve the Spark's publish draft for the site (by its hash; nothing publishes while `publish.gate` is `shadow`) | `approve ic410` |
 | `reject <dso> [why]` | Reject the draft; a re-render makes a fresh one | `reject ic410 stars too red` |
 | `drafts` | The drafts awaiting a decision | `drafts` |

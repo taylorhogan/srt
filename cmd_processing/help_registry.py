@@ -618,6 +618,15 @@ HELP: dict[str, dict] = {
         "notes": ["The Spark logs every pass inside 5 km of the roof in the Observatory feed by itself "
                   "(scripts/overhead_watch.py, every minute); this is the on-demand look out to 15 nm."],
     },
+    "panel": {
+        "category": "super",
+        "summary": "The flat panel's light: read it through its ASCOM driver, or switch it off.",
+        "usage": ["panel", "panel off"],
+        "examples": ["panel", "panel off"],
+        "notes": ["The flats routine switches the panel off itself after every run, and the morning "
+                  "check reads it; this is the hand switch. While N.I.N.A is open it holds the "
+                  "panel's port and the answer is the driver's refusal."],
+    },
     "suggest": {
         "category": "super",
         "summary": "What is worth adding to the queue this month, with reasons; nothing is queued.",

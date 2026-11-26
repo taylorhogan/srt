@@ -535,7 +535,15 @@ Since 2026-09-25 the conductor decides both invariants (ADR 0014): every roof fi
   validation), written by `scripts/sequence_gain.py flats` from the gain
   table; `sequence_gain.py darks` makes `darks_and_bias_gain26.json` (50
   bias + 20 x 300 s) for the one hand run that gives gain 26 its bias and
-  dark. The purge keeps its newest sets per (filter, gain), so a filter's
+  dark. **After every flats run, however it ended, the routine switches the
+  panel's light off through its ASCOM driver
+  (`hardware_control.flat_panel.ensure_off`, 2026-11-26):** N.I.N.A's light-off
+  lives inside each filter's block and is skipped when the block fails, and on
+  2026-11-25 a run with no filter wheel (every narrowband Auto Exposure Flat
+  saturated) left the panel at full brightness for a day and a half; the
+  morning check reads the panel (lit is a failure line) and `panel [off]` is
+  the hand switch. The driver caches its state, so the off step is on-at-1
+  then off, never a bare off. The purge keeps its newest sets per (filter, gain), so a filter's
   gain-0 flats survive its move to 26 for the gain-0 lights already on disk.
 
   Flats live per session as `<flat_root>/<date>/FLAT` with every filter mixed
