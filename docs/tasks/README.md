@@ -104,6 +104,25 @@ the config stops it without touching cron.
 `scripts/overhead_watch.py --dry-run` prints the lines and posts nothing;
 `--now` prints what the feed hears, like the chat's `overhead`.
 
+## seestar_watch (Spark, every minute) -- added 2026-11-27
+
+How long the Seestar stays on the house wifi and when it drops. One TCP
+probe a minute of `seestar.local`'s SMB port (`cfg["seestar"]["watch_port"]`,
+445); DOWN after `down_after` (2) consecutive misses, dated from the first
+miss, so a one-minute blip is counted in the state file and not announced;
+UP on the first answer. Each change is one line in the Observatory feed
+("Seestar off the wifi at 192.168.87.250, after 3 h 12 min up") and one
+record in `local/seestar_watch.jsonl`; the current state is
+`local/seestar_watch.json`. Nothing is written to the device.
+
+```
+* * * * * /home/taylor/Documents/srt/scripts/seestar_watch.py >> /tmp/seestar_watch.log 2>&1
+```
+
+`scripts/seestar_watch.py --report [DAYS]` summarises the sessions and gaps;
+`--status` prints the state; `--dry-run` probes and prints without touching
+the state or the chat.
+
 ## suggest_targets (Spark, Mondays 12:30) -- added 2026-10-30
 
 Posts the week's queue suggestions to the web chat (docs/AUTOMATION_PLAN.md

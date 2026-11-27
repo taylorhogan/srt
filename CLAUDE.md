@@ -76,6 +76,11 @@ Admin push notifications go via **Pushover** (`utils/pushover.py`, rate-limited 
   or the size differs, never delete, `.part` then rename; thumbnails only with `--thumbs`; `--list`,
   `--since DAYS`, `--dry-run`); `cfg["seestar"]` names host, share, root and dest. Nothing is written
   to the device, and the share is independent of the one control client the Seestar allows on port 4700.
+  **Its presence on the wifi is watched (2026-11-27, `scripts/seestar_watch.py`, Spark cron every
+  minute, the owner adds it):** a TCP probe of the SMB port, DOWN after `down_after` (2) consecutive
+  misses dated from the first miss, UP on the first answer, one line in the Observatory feed per
+  change with the length of the session or the gap, the log in `local/seestar_watch.jsonl`,
+  `--report [DAYS]` for the sessions and gaps.
 - **The reflection ghost** (2026-11-20, not an autonomy item; docs/GHOST_REFLECTION.md): the coloured
   lines in NGC 1055's four-night LRGB are not Megaira: upper left a diffraction spike of the bright star
   (its length grows with wavelength), lower right two reflection ghosts of a star OFF the chip (delta

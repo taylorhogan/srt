@@ -30,3 +30,4 @@
 # feed, around the clock (owner). One poll of the public ADS-B feed a minute;
 # state in local/overhead_state.json; a feed or chat outage is silence.
 * * * * * /home/taylor/Documents/srt/scripts/overhead_watch.py >> /tmp/overhead_watch.log 2>&1
+* * * * * /home/taylor/Documents/srt/scripts/seestar_watch.py >> /tmp/seestar_watch.log 2>&1

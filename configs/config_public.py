@@ -6,7 +6,7 @@ class PublicConfig():
 
         },
         "version": {
-            "date": "2026.11.26.2"
+            "date": "2026.11.27.1"
         },
 
         "logger": {
@@ -658,7 +658,12 @@ class PublicConfig():
         # (scripts/seestar_pull.py). host is the mDNS name it registers;
         # dest is a folder under this machine's image_dir.
         "seestar": {"host": "seestar.local", "share": "EMMC Images", "root": "MyWorks",
-                    "dest": "seestar", "thumbnails": False},
+                    "dest": "seestar", "thumbnails": False,
+                    # scripts/seestar_watch.py (Spark cron, every minute): a TCP
+                    # probe of the SMB port; DOWN after down_after consecutive
+                    # misses (a one-minute blip is not a chat line), UP on the
+                    # first answer. Transitions in local/seestar_watch.jsonl.
+                    "watch_port": 445, "down_after": 2, "probe_timeout_s": 3.0},
         "conductor": {
             "shadow_enabled": True,
             "port": 8096,
